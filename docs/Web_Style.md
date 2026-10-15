@@ -1312,7 +1312,10 @@ duration and shared easing curve. A dismissing notification retains its final
 content only until the exit finishes, becomes inert and accessibility-hidden
 immediately, and cannot dispatch another action. The semantic element and its
 layout remain unchanged during the fade. Reappearance cancels stale removal;
-reduced motion skips both animations and any visual exit retention. Loading
+reduced motion skips both transitions and any visual exit retention. Interrupted
+menu, dialog and notice transitions reverse from the currently displayed opacity
+without flashing back to a keyframe endpoint. A newly inserted surface starts
+transparent through the shared starting style. Loading
 skeletons, whole-page error states and conversation text retain their own existing
 presentation rather than acquiring a notification wrapper.
 
@@ -2275,3 +2278,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Hand visible text and ready attachments to the outgoing message immediately on valid Send. Retain the original snapshot until authorized acceptance, restore untouched input on refusal or uncertainty, and preserve newly typed text and later attachments. Keep exact request recovery, navigation drafts, IME and separate queue/Stop behavior; authoritative v2 refusals show Not sent. |
 
 - 2026-10-15 — Add shared opacity arrivals for stable route surfaces and retained service re-entry (300 ms), and newly sent/live assistant messages (200 ms). Preserve drafts, focus, scroll, controller identity and history; streaming updates do not restart an arrival. Cancel stale transitions and honor live reduced-motion preference changes.
+
+- 2026-10-15 — Preserve displayed opacity when menu, dialog or notification presence reverses mid-transition. Use shared opacity transitions with starting styles for first appearance; retain immediate inert exits, focus behavior, drafts and reduced-motion removal.
