@@ -243,7 +243,7 @@ async fn exact_scope_revision_requires_matching_durable_event_and_preserves_lega
         .await
         .is_err());
     let event = SandboxEventKind::ServiceAccessRevised {
-        scope: scope.clone(),
+        scope: Box::new(scope.clone()),
     };
     let mut forged = next.clone();
     forged.runtime.as_mut().unwrap().runtime_id = "different-runtime".into();

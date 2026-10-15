@@ -184,7 +184,9 @@ async fn revise_hot(
             expected_revision: active.revision,
             sandbox: Box::new(changed),
             event_at: rfc3339_at(*now),
-            event: SandboxEventKind::ServiceAccessRevised { scope },
+            event: SandboxEventKind::ServiceAccessRevised {
+                scope: Box::new(scope),
+            },
         })
         .await
         .unwrap();

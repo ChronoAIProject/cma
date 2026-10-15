@@ -17,7 +17,9 @@ async fn hot_scope(harness: &Harness, active: &Sandbox, now: SystemTime) -> u64 
             expected_revision: active.revision,
             sandbox: Box::new(granted),
             event_at: rfc3339_at(now),
-            event: SandboxEventKind::ServiceAccessRevised { scope },
+            event: SandboxEventKind::ServiceAccessRevised {
+                scope: Box::new(scope),
+            },
         })
         .await
         .unwrap();
