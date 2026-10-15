@@ -11,6 +11,8 @@ fn services(names: &[&str]) -> Vec<ServiceId> {
 fn live() -> Sandbox {
     let mut value = sandbox();
     value.revision = 1;
+    value.runtime.as_mut().unwrap().provision_generation = Some(1);
+    value.lifecycle.runtime_generation_high_water = 1;
     value.credential.reaches = services(&["baseline", "repository"]);
     value.work = SandboxWorkState::new(
         SandboxWorkStep::WaitForCredentialRotation,
@@ -151,7 +153,7 @@ fn startup_scope_follows_runtime_generation_and_survives_a_process_boot_rebind()
 
 #[test]
 fn live_revision_refuses_unsettled_or_foreign_authority_atomically() {
-    for case in 0..14 {
+    for case in 0..15 {
         let mut value = live();
         let mut owner = value.owner.clone();
         let mut desired = services(&["baseline"]);
@@ -178,11 +180,12 @@ fn live_revision_refuses_unsettled_or_foreign_authority_atomically() {
             10 => value.credential.key_generation = u64::MAX,
             11 => value.credential.key_generation = u64::MAX - 1,
             12 => value.revision = u64::MAX,
-            _ => {
+            13 => {
                 desired = (0..33)
                     .map(|index| ServiceId::new(format!("service-{index}")))
                     .collect()
             }
+            _ => value.runtime.as_mut().unwrap().provision_generation = None,
         }
         let before = value.clone();
         assert!(
