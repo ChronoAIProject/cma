@@ -181,6 +181,7 @@ export function SharedAgent({
         ) : null}
         {conversation === undefined ? null : (
           <MessageStream
+            unknownUserName="Participant"
             emptyMessage="No messages yet."
             conversation={conversation}
             approvalBusy={busy}

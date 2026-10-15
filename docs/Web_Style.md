@@ -199,6 +199,11 @@ themes; components still never read static tokens directly:
 | `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
 | `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
 
+Message-avatar fallback aliases are also appearance-independent:
+`--dsw-alias-avatar-bg` is `coal 950` (`#060606`), and
+`--dsw-alias-avatar-label` is `coal 50` (`#EDF2E2`). They retain a black circle
+with readable initials in either theme.
+
 - **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
   cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
 - **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
@@ -675,9 +680,23 @@ Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
 Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
 The owner's message is right-aligned on the existing accent wash, capped at the
-smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
+smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
+
+Every user or Agent message has a 32px circular avatar beside its reading column,
+separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
+name uses caption ink at 12/18, weight 600, with 4px before the content. The Agent
+name is always **Chrono Agent**, with a bundled, static front-face capture of the
+existing §23 3D character; message rows do not start WebGL scenes. Personal user
+messages use the current signed-in display name and avatar, falling back to the
+account handle and then **You**. Missing, unsafe or failed avatar images show
+centered uppercase initials at 12/18, weight 600, on the avatar fallback aliases.
+Only HTTPS avatar URLs and local absolute paths are rendered, without a referrer.
+Names wrap instead of widening the message column. Avatars are decorative beside
+the visible name. Durable, streaming and optimistic messages use the same layout
+and identity. Shared messages without author identity say **Participant**, never
+the viewer's name. Identity rendering does not alter message text or attribution.
 
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
@@ -2197,3 +2216,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |
 
 | 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
+
+| 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
