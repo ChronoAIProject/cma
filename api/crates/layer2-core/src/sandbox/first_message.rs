@@ -61,6 +61,14 @@ impl FirstMessageFailure {
     }
 }
 
+/// Recorded at admission; legacy messages without this field remain unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirstMessagePurpose {
+    Setup,
+    Task,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FirstMessageRecord {
@@ -69,6 +77,8 @@ pub struct FirstMessageRecord {
     pub origin_key: String,
     pub text: String,
     pub payload_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<FirstMessagePurpose>,
     pub state: FirstMessageDelivery,
     pub attempt: u32,
     pub recovery_generation: u32,
@@ -103,6 +113,7 @@ impl FirstMessageRecord {
             common_binding: None,
             origin_key: origin_key.into(),
             payload_sha256: hex_sha256(text.as_bytes()),
+            purpose: Some(FirstMessagePurpose::Task),
             text,
             state: FirstMessageDelivery::Queued,
             attempt: 0,

@@ -138,7 +138,7 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
         )],
         AgentLogKind::RuntimeMetadataChanged { metadata } => vec![delta(
             "/runtimeMetadata",
-            json!({"workingDirectory": metadata.working_directory, "description": metadata.description}),
+            json!({"workingDirectory": metadata.working_directory, "description": metadata.description, "descriptionSource": metadata.description_source, "descriptionIsSetupPreview": metadata.description_is_setup_preview}),
         )],
         AgentLogKind::UsageUpdated {
             input_tokens,

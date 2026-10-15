@@ -56,9 +56,20 @@ string_enum! { /// Stop reason accepted by the owner-facing command.
     pub enum StopReason { Owner => "owner" }
 }
 
+string_enum! { /// Authoritative first-message admission purpose; absent on legacy records.
+    pub enum FirstMessagePurpose { Setup => "setup", Task => "task" }
+}
+string_enum! { /// Provenance of a provider description; absent when unknown.
+    pub enum AgentDescriptionSource { ProviderTitle => "provider_title", PromptPreview => "prompt_preview" }
+}
+
 /// Durable state of the message supplied at Agent creation.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FirstMessageState {
+    /// Admission purpose; absent means unknown.
+    pub purpose: Option<FirstMessagePurpose>,
+    /// Exact durable turn, once dispatch is fenced.
+    pub turn_sequence: Option<u64>,
     /// Current delivery state.
     pub state: FirstMessageDelivery,
     /// Queue timestamp.
@@ -401,6 +412,10 @@ pub struct AgentRuntimeMetadata {
     pub working_directory: Option<String>,
     /// Provider conversation description.
     pub description: Option<String>,
+    /// Explicit title or prompt preview; absent means unknown.
+    pub description_source: Option<AgentDescriptionSource>,
+    /// True only when exact input evidence identifies an automatic setup preview.
+    pub description_is_setup_preview: Option<bool>,
 }
 /// Actual consumed usage within one durable Agent turn.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

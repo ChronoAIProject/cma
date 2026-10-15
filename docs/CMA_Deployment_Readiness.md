@@ -1206,3 +1206,34 @@ optional intent remain readable. Never remove scope revisions, rewrite historica
 receipts, or restart user runtimes to recover an older reader. The runtime wire
 credential operation already supports replacing the in-memory key on the pinned
 live runtime; this change does not require a new home file or a Pod replacement.
+
+
+### Runtime title provenance reader floor
+
+Automatic first-message purpose and runtime description provenance add optional
+fields to two strict persisted structures: `FirstMessageRecord.purpose` and
+`AgentRuntimeMetadata.description_source` / `description_is_setup_preview`.
+The latter is nested both in Agent observations and `RuntimeMetadataChanged`
+log records. Current readers accept old records with these fields absent; missing
+purpose/source remains unknown and the setup flag defaults to false. Payload
+hashes, creation fingerprints, turn identities and history remain unchanged.
+
+Deploy the compatible API reader before the new runtime image and frontend.
+Any API rollback target must include these readers before new durable writes
+occur: new Agent admissions write purpose even while older runtimes are retained.
+A pre-feature API binary uses `deny_unknown_fields` and cannot safely read these
+new records. Restoring that binary after feature writes is unsupported.
+
+A safe rollback restores the previous Web and default runtime selection while
+retaining the compatible API reader. Existing Sandboxes keep their pinned image,
+home, conversation and history. Never strip fields/events, rotate a live Sandbox,
+or restore an earlier database snapshot to accommodate an old reader. This reader
+floor is a release constraint; old-binary rollback has not been demonstrated.
+
+The title bridge change requires a new runtime image for new allocations. Retained
+runtimes emit unknown provenance until they supply positive evidence. The pinned
+local provider test proves empty-conversation reload, exact multiline prompt
+identity on completion and history reload, native explicit-title priority even
+when equal to the preview, and native `thread/settings/update` to metadata on the
+same running process/thread. It uses Codex 0.147.0, ACP 1.4.0 and a local Responses
+fixture. It does not establish production acceptance or generate semantic titles.

@@ -37,6 +37,15 @@ async fn lifecycle_replay_keeps_one_agent_worktree_log_and_original_api_actor() 
     );
     let original = left.unwrap();
     assert_eq!(original, right.unwrap());
+    assert_eq!(
+        original
+            .conversation
+            .first_message
+            .as_ref()
+            .unwrap()
+            .purpose,
+        Some(FirstMessagePurpose::Setup)
+    );
     let reopened = AgentService::new(
         store.clone(),
         profiles.clone(),
