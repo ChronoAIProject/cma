@@ -624,6 +624,13 @@ long contents scroll inside the body. Radius remains 16px. The overlay portals
 to the document root and locks background scrolling. Anchored selection menus
 and tooltips retain their menu semantics and are not modal dialogs.
 
+At viewport widths or heights of 480px or less, the entire card scrolls instead
+of shrinking the body between the header and footer. Content keeps its natural
+height so every field, close control and footer action remains reachable. The
+same centered card bounds, padding, radius and 20% margins still apply.
+Shared input wrappers may shrink to their available width without forcing a
+narrow dialog to scroll horizontally.
+
 Closed dialogs release their focus trap and return focus immediately. Their inert,
 accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
 then unmounts. Initially closed dialogs render nothing. Focus is trapped only
@@ -2230,3 +2237,4 @@ draft. Summary readers never receive the management history control.
 
 | 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
 | 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
+| 2026-10-15 | Let the whole modal card scroll at viewport widths or heights of 480px or less. Preserve the shared centered geometry and 20% margins while keeping fields, Close and footer actions reachable instead of collapsing the body to zero height; let shared input wrappers shrink within the narrow content width. |
