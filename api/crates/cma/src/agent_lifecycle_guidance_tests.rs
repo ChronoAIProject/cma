@@ -13,6 +13,7 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
             managed_agent_instructions: Some(GITHUB_API_V1.into()),
+            setup_message: None,
             request,
             resolved_image: None,
             capacity: None,

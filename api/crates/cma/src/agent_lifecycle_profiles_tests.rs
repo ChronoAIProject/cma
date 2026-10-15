@@ -21,6 +21,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
     let input = LifecycleInput {
         behavior: LifecycleBehavior::PromptRepository,
         managed_agent_instructions: None,
+        setup_message: None,
         request,
         resolved_image: None,
         capacity: Some(SandboxCapacity::default()),

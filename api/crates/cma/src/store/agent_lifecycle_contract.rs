@@ -17,6 +17,7 @@ pub(in crate::store) async fn verify(db: &Database) {
     let input = LifecycleInput {
         behavior: LifecycleBehavior::PromptRepository,
         managed_agent_instructions: Some(crate::agent_lifecycle::guidance::GITHUB_API_V1.into()),
+        setup_message: Some("Original admitted setup message".into()),
         actor: Some(layer2_core::resource_access::ResourceActor::Api {
             subject: owner.clone(),
             delegation_id: Some("original-grant".into()),
