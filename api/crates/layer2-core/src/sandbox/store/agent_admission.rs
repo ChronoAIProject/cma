@@ -129,12 +129,13 @@ impl AgentAdmission {
             return Ok(None);
         }
         let request = self.first_message.as_ref().expect("checked first prompt");
-        let record = FirstMessageRecord::new(
+        let mut record = FirstMessageRecord::new(
             agent.creation_key.clone(),
             request.text.clone(),
             self.event_at.clone(),
         )
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        record.purpose = request.purpose;
         if agent.status != AgentStatus::Starting {
             if agent.work.lease.is_some() || agent.work.step != AgentWorkStep::None {
                 return Err(SandboxStoreError::Conflict);

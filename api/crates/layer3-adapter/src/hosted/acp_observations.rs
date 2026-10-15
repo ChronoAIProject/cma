@@ -1,4 +1,7 @@
-use crate::{ConversationMetadata, ConversationUpdate, ConversationUsage};
+use crate::{
+    ConversationDescriptionInput, ConversationDescriptionSource, ConversationMetadata,
+    ConversationUpdate, ConversationUsage,
+};
 use serde_json::Value;
 
 /// Extension owned by the hosting bridge, decoded below the domain boundary.
@@ -16,6 +19,18 @@ pub(super) fn observation(value: &Value) -> Option<ConversationUpdate> {
         return Some(ConversationUpdate::Metadata(ConversationMetadata {
             working_directory: text("workingDirectory"),
             description: text("description"),
+            description_source: match text("descriptionSource").as_deref() {
+                Some("provider_title") => Some(ConversationDescriptionSource::ProviderTitle),
+                Some("prompt_preview") => Some(ConversationDescriptionSource::PromptPreview),
+                _ => None,
+            },
+            description_input: text("descriptionInput").and_then(|input| {
+                match text("descriptionInputPosition").as_deref() {
+                    Some("current") => Some(ConversationDescriptionInput::Current(input)),
+                    Some("first") => Some(ConversationDescriptionInput::First(input)),
+                    _ => None,
+                }
+            }),
         }));
     }
     let usage = extension.get("usageSnapshot")?;
@@ -57,5 +72,39 @@ mod tests {
         )
         .is_none());
         assert!(observation(&serde_json::json!({"sessionUpdate":"session_info_update","_meta":{"other":{"cwd":"/different"}}})).is_none());
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    #[test]
+    fn observation_preserves_exact_input_evidence_without_guessing_missing_source() {
+        let mut value = serde_json::json!({"sessionUpdate":"session_info_update","_meta":{"cma":{"runtimeMetadata":{
+            "description":"Setup exact input", "descriptionSource":"prompt_preview",
+            "descriptionInput":"Setup exact\ninput", "descriptionInputPosition":"first"
+        }}}});
+        let Some(ConversationUpdate::Metadata(metadata)) = observation(&value) else {
+            panic!("metadata")
+        };
+        assert_eq!(
+            metadata.description_source,
+            Some(ConversationDescriptionSource::PromptPreview)
+        );
+        assert_eq!(
+            metadata.description_input,
+            Some(ConversationDescriptionInput::First(
+                "Setup exact\ninput".into()
+            ))
+        );
+        value["_meta"]["cma"]["runtimeMetadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("descriptionSource");
+        let Some(ConversationUpdate::Metadata(metadata)) = observation(&value) else {
+            panic!("metadata")
+        };
+        assert_eq!(metadata.description_source, None);
     }
 }

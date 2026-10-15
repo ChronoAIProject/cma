@@ -14,7 +14,10 @@ mod capabilities;
 mod checkpoint;
 mod conversation;
 mod conversation_observation;
-pub use conversation_observation::{ConversationMetadata, ConversationUsage};
+pub use conversation_observation::{
+    ConversationDescriptionInput, ConversationDescriptionSource, ConversationMetadata,
+    ConversationUsage,
+};
 mod conversation_channel;
 mod error;
 mod home_finality;

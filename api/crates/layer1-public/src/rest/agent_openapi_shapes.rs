@@ -161,6 +161,11 @@ pub(crate) struct InstanceProfileReferenceView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct FirstMessageStateView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    purpose: Option<layer2_core::sandbox::FirstMessagePurpose>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_sequence: Option<u64>,
     #[schema(value_type = String)]
     state: FirstMessageDelivery,
     queued_at: String,
@@ -282,6 +287,8 @@ impl AgentView {
                 .as_ref()
                 .map(|message| FirstMessageStateView {
                     state: message.state,
+                    purpose: message.purpose,
+                    turn_sequence: message.turn_sequence,
                     queued_at: message.queued_at.clone(),
                     completed_at: message.completed_at.clone(),
                     failed_at: message.failed_at.clone(),

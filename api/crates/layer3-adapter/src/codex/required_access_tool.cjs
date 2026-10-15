@@ -3,7 +3,7 @@ const { createHash } = require("node:crypto");
 const { readFileSync, writeFileSync } = require("node:fs");
 const { bridgePath } = require("./persist_conversations.cjs");
 
-const sourceSha256 = "37a48cf95b5e58b175fd3e9b89d4761d8af1ba23f256d08edfecd087407dda18";
+const sourceSha256 = "99076a9022c0e09108ac1cb95186c8ddf0b64b7fb30b37158c9483c5c3e9a4d0";
 const before = `        case "http":
           return {
             "url": mcpServer.url,`;

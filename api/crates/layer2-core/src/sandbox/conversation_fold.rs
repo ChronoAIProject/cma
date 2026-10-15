@@ -64,6 +64,7 @@ pub(super) fn fold_update(
                 layer3_adapter::ConversationMetadata {
                     description,
                     working_directory: None,
+                    ..Default::default()
                 },
                 appended_at,
             )
