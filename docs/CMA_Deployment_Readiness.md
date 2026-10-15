@@ -1007,6 +1007,13 @@ authority, a changed Agent identity or a later incompatible manual lifecycle
 must not be borrowed as authorization to continue the workflow.
 
 New Agents negotiate explicit ACP HTTP MCP support before tool installation.
+The pinned Codex bridge marks the injected `cma_access` server as required, so
+new and prepared conversation opens wait for its discovery before accepting the
+first task. Failed discovery fails the open instead of silently omitting the
+owner permission tool. Discovery authentication uses a read-only transaction
+snapshot of the capability receipt, creation lineage, current runtime and
+unexpired delivered key; it never writes the Agent being published. Tool calls
+and consent admission retain their independent current-authority write fences.
 Retained Agents without a confirmed tool-open receipt continue without the new
 tool; deploying an API image does not modify their live conversations. A worker
 takeover for a previously enrolled Agent preserves its bearer and exact native
