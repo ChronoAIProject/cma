@@ -5,6 +5,42 @@ import { at, binding, cursor, harness, item, json, page } from './controller.fix
 
 beforeEach(() => sessionStorage.clear());
 
+it('does not invent a lost-update warning when opening an active turn from recorded history', async () => {
+  const h = harness();
+  h.snapshot.mockResolvedValue(
+    json(
+      page(
+        [
+          item(1, { type: 'turn_started', turn_sequence: 1 }, binding),
+          item(2, {
+            type: 'tool_started',
+            call_id: 'read',
+            title: 'Read file',
+            kind: 'read',
+            status: 'running',
+          }),
+        ],
+        2,
+      ),
+    ),
+  );
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(h.streaming).toBe(true));
+  await act(async () => {
+    h.gap('reconnected', 1);
+    h.gap('reconnected', 1);
+  });
+  expect(result.current.state).toMatchObject({
+    conversation: {
+      activeRunId: '1',
+      cursor: 2,
+      recovery: [],
+      toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })],
+    },
+  });
+  unmount();
+});
+
 it('keeps an idle conversation clear of loss notices when its stream connects after pause and resume', async () => {
   const h = harness();
   h.snapshot.mockResolvedValue(

@@ -15,6 +15,7 @@ import { ReferenceLink } from '../profiles/ReferenceLink';
 import { sandboxChildrenAvailable, sandboxChildrenReadable, sandboxChildStatus } from './lifecycle';
 import { statusLabel } from '../vocabulary/status';
 import { codexProviderName, isCodexConnection } from '../profiles/modelProvider';
+import { Resources } from '../agent/Resources';
 
 export function SandboxOverview({
   client,
@@ -128,8 +129,37 @@ export function SandboxOverview({
     (id) => !isCodexConnection(id),
   );
   const available = sandboxChildrenAvailable(sandbox);
+  const resourceAgent = contents?.agents.find((agent) => agent.status !== 'deleted');
   return (
     <>
+      <section className="sandbox-page__band">
+        <h2>Machine resources</h2>
+        {resourceAgent === undefined ? (
+          <p>Resources are available when this Sandbox has an Agent.</p>
+        ) : (
+          <Resources
+            agentId={resourceAgent.id}
+            sandboxId={sandbox.id}
+            sandboxProfile={sandbox.profile}
+            availability={
+              sandbox.status === 'active' &&
+              sandbox.runtimeVersion &&
+              !busy &&
+              !sandbox.lifecycle?.operation
+                ? { state: 'live', runtimeVersion: sandbox.runtimeVersion }
+                : sandbox.status === 'paused'
+                  ? {
+                      state: 'paused',
+                      notice: 'Sandbox paused. Live resources resume when it is active.',
+                    }
+                  : {
+                      state: 'unavailable',
+                      notice: 'Live resources will be available when the Sandbox is active.',
+                    }
+            }
+          />
+        )}
+      </section>
       <section className="sandbox-page__band">
         <h2>Agent access</h2>
         <dl>
