@@ -1,0 +1,52 @@
+.composer-commands {
+  position: fixed;
+  z-index: 100;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 12px;
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.composer-commands__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-commands__item:hover,
+.composer-commands__item[aria-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.composer-commands__name {
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 14px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+
+.composer-commands__description,
+.composer-commands__empty {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  overflow-wrap: anywhere;
+}
+
+.composer-commands__empty {
+  margin: 0;
+  padding: 8px 10px;
+}

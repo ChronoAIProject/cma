@@ -1,9 +1,19 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { systemText } from './build/systemText';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react()],
+  css: { postcss: { plugins: [systemText()] } },
+  server: {
+    fs: {
+      // Shared public documentation and SDK sources are outside the web package.
+      allow: ['.', '../sdk/typescript/src', '../docs', '../api/crates/cmaeg/assets/docs'].map(
+        (path) => fileURLToPath(new URL(path, import.meta.url)),
+      ),
+    },
+  },
   resolve: {
     alias: {
       '@chronoai/cma-sdk': fileURLToPath(

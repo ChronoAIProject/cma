@@ -1,33 +1,19 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { StateDot, type StateDotState } from '../ui/StateDot';
+import { StateDot } from '../ui/StateDot';
 import { statusLabel } from '../vocabulary/status';
 
-export function dotFor(status: string): StateDotState {
-  if (status === 'failed' || status === 'deleted' || status === 'retired') return 'error';
-  if (status === 'paused' || status === 'waiting_approval') return 'warning';
-  if (
-    [
-      'working',
-      'starting',
-      'provisioning',
-      'installing',
-      'pausing',
-      'reviving',
-      'rotating',
-      'credential_rotating',
-      'retiring',
-      'removing',
-    ].includes(status)
-  )
-    return 'ongoing';
-  return 'done';
-}
-
-export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: ReactNode) {
+export function stateMeta(
+  status: Parameters<typeof statusLabel>[0],
+  extra?: ReactNode,
+  resource: 'agent' | 'sandbox' | 'workspace' = 'agent',
+) {
   return (
     <>
       <span className="tree-row__state">
-        <StateDot state={dotFor(status)} size={8} />
+        {(resource === 'agent' && status === 'working') ||
+        (resource === 'sandbox' && status === 'active') ? (
+          <StateDot state="done" size={8} />
+        ) : null}
         {statusLabel(status)}
       </span>
       {extra}
@@ -70,4 +56,13 @@ export function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
     row.querySelector<HTMLElement>('.tree-row__label')?.click();
     event.preventDefault();
   }
+}
+
+export function activityLabel(value: string, now = Date.now()): string {
+  const elapsed = Math.max(0, now - Date.parse(value));
+  if (!Number.isFinite(elapsed)) return 'Unknown activity';
+  if (elapsed < 60_000) return 'Now';
+  if (elapsed < 3_600_000) return `${String(Math.floor(elapsed / 60_000))}m`;
+  if (elapsed < 86_400_000) return `${String(Math.floor(elapsed / 3_600_000))}h`;
+  return `${String(Math.floor(elapsed / 86_400_000))}d`;
 }

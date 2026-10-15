@@ -38,6 +38,7 @@ export async function followV2Agent(
         await v2.authorize(signal);
         await v2.events.events(v2.journal.agentId, {
           afterCursor: cursor,
+          messageBindings: true,
           signal,
           onEvent(frame) {
             signal.throwIfAborted();

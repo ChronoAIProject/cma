@@ -10,6 +10,8 @@ import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
 import { descriptionSource, mergeRuntimeMetadata } from './runtimeMetadata';
+import { sessionCommands } from './slashCommands';
+import { number, object, text } from './conversationValues';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -22,20 +24,6 @@ export type {
   ConversationState,
   RecoveryNotice,
 } from './model';
-
-function object(value: unknown): Readonly<Record<string, unknown>> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : undefined;
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function number(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
 
 function messageStatus(outcome: Readonly<Record<string, unknown>>) {
   return outcome.type === 'failed' ? 'error' : 'complete';
@@ -108,6 +96,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   const kind = event.kind;
   const next = { ...state, cursor: event.seq };
   switch (kind.type) {
+    case 'available_commands_set':
+      return { ...next, availableCommands: sessionCommands(kind.commands) };
+    case 'runtime_generation_retired':
+      return { ...next, availableCommands: undefined };
     case 'conversation_opened':
     case 'turn_started':
       return {
@@ -318,6 +310,11 @@ function patchState(
   const path = text(item.path);
   const operation = text(item.op);
   if (path === undefined || operation === undefined) return state;
+  if (path === '/availableCommands')
+    return {
+      ...state,
+      availableCommands: operation === 'remove' ? undefined : sessionCommands(item.value),
+    };
   if (path.startsWith('/pendingApprovals/')) {
     const id = path.slice('/pendingApprovals/'.length).replaceAll('~1', '/').replaceAll('~0', '~');
     if (operation === 'remove') {

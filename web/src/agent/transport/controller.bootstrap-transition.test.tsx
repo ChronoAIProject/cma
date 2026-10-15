@@ -4,9 +4,8 @@ import { AGENT_DETAIL } from '../../test/agent';
 import { BOOTSTRAP_AGENT, bootstrapSandbox } from '../../test/bootstrap';
 import { sandboxFixture } from '../../test/hierarchy';
 import { useAgentController } from '../controller';
-import { cursor, harness, incarnation, item, json, page } from './controller.fixture';
+import { cursor, harness, incarnation, item, json, page, queuedPage } from './controller.fixture';
 import { agentTransportJournal } from './journal';
-import { queuedObservation } from './queued.fixture';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => {
@@ -20,19 +19,19 @@ it('retains bootstrap admission through runtime binding, snapshot refresh, tail 
   const detail = vi.spyOn(h.client, 'readAgent').mockResolvedValue(BOOTSTRAP_AGENT);
   const parent = vi.spyOn(h.client, 'readSandbox').mockResolvedValue(bootstrapSandbox());
   const created = item(1, { type: 'created', workspace_id: 'wsp_1', worktree_id: 'wkt_1' });
+  const input = 'Continue after the original first message';
   h.snapshot.mockImplementation(async () => json(page([created], 1)));
-  h.observeQueued.mockImplementation(async () => json(queuedObservation()));
+  h.listQueued.mockImplementation(async () => json(queuedPage(input)));
   const view = renderHook(() => useAgentController(h.client, 'agt_1', { viewerId: 'alice' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(view.result.current.inputAvailability.allowed).toBe(true);
   expect(view.result.current.resourceAvailability.state).toBe('inactive');
   const onAccepted = vi.fn();
-  const input = 'Continue after the original first message';
   await act(() => view.result.current.send(input, onAccepted));
   const journal = agentTransportJournal(sessionStorage, 'alice', 'agt_1');
   const retained = journal.read();
   expect(retained).toMatchObject({ state: 'accepted', input });
-  expect(view.result.current.queuedMessage?.message).toBe(input);
+  expect(view.result.current.queuedInputs?.items[0]?.input).toBe(input);
 
   // Runtime and conversation binding advance the same durable Agent log. The
   // server's cursor incarnation depends only on Agent ID and created_at.
@@ -50,7 +49,9 @@ it('retains bootstrap admission through runtime binding, snapshot refresh, tail 
   detail.mockResolvedValue(AGENT_DETAIL);
   parent.mockResolvedValue(sandboxFixture());
   h.snapshot.mockImplementation(async () => json(page(prepared, 8)));
-  h.observeQueued.mockImplementation(async () => json(queuedObservation('resp_1', 8, false)));
+  h.listQueued.mockImplementation(async () =>
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [] }),
+  );
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(view.result.current.state).toMatchObject({
     detail: { status: 'ready' },

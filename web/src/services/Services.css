@@ -4,98 +4,87 @@
   flex-direction: column;
   min-width: 0;
 }
+/* The service switch is part of the shared sidebar, never a page header. */
 .service-tabs {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: none;
+  isolation: isolate;
+  margin-block: 8px 12px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+.service-tabs__indicator {
+  position: absolute;
+  z-index: -1;
+  inset: 3px auto 3px 3px;
+  width: calc((100% - 6px) / 3);
+  border-radius: 7px;
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+.service-tabs[data-selected='gateway'] .service-tabs__indicator {
+  transform: translateX(100%);
+}
+.service-tabs a,
+.service-tabs button {
   display: flex;
-  flex: 0 0 44px;
-  align-items: stretch;
-  gap: 8px;
-  padding: 0 20px;
-  overflow-x: auto;
-  background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-.service-tabs__brand {
-  display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  flex: none;
-  color: var(--dsw-alias-label-primary);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-decoration: none;
-}
-.service-tabs__brand:hover {
-  color: var(--dsw-alias-brand-text);
-}
-.service-tabs a.service-tabs__brand {
-  padding-inline: 0;
-}
-.service-tabs__build {
-  flex: none;
-  align-self: center;
-  max-width: 11ch;
-  margin-top: 12px;
-  margin-left: -4px;
-  overflow: hidden;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--dsw-alias-label-secondary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  line-height: 18px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.service-tabs__mark {
-  width: 26px;
-  height: 26px;
-  color: var(--dsw-alias-brand-primary);
-}
-.service-tabs__mark svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.service-tabs__divider {
-  width: 1px;
-  height: 22px;
-  align-self: center;
-  flex: none;
-  background: var(--dsw-alias-border-l1);
-}
-.service-tabs a {
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  white-space: nowrap;
-  font-size: 14px;
-  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 0.6875rem;
+  line-height: 1.25;
+  text-align: center;
   text-decoration: none;
-  border-bottom: 2px solid transparent;
+  cursor: pointer;
 }
 .service-tabs a[aria-current='page'] {
   color: var(--dsw-alias-label-primary);
-  border-bottom-color: var(--dsw-alias-label-primary);
+  font-weight: 600;
 }
-.service-tabs__description {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
-  margin-left: auto;
-  padding-left: 16px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
+.service-tabs button:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
 }
-.service-tabs__description strong {
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
+.service-tabs a:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 .service-tabs a:focus-visible,
 .service-link:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+.service-tabs[data-collapsed] {
+  grid-template-columns: 1fr;
+  margin-inline: -4px;
+}
+.service-tabs[data-collapsed] a span,
+.service-tabs[data-collapsed] button span {
+  display: none;
+}
+.service-tabs[data-collapsed] .service-tabs__indicator {
+  width: auto;
+  height: calc((100% - 6px) / 3);
+  inset-inline: 3px;
+}
+.service-tabs[data-collapsed][data-selected='gateway'] .service-tabs__indicator {
+  transform: translateY(100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .service-tabs__indicator {
+    transition: none;
+  }
 }
 .service-shell__body {
   flex: 1;
@@ -214,27 +203,11 @@
   .service-page {
     padding: 16px;
   }
-  .service-tabs {
-    gap: 0;
-    padding-inline: 4px;
-  }
-  .service-tabs a {
-    padding-inline: 7px;
-    font-size: 12px;
-  }
-  .service-tabs__description {
-    display: none;
-  }
-  .service-tabs__brand span:last-child {
-    display: none;
-  }
-  .service-tabs__divider {
-    display: none;
-  }
 }
-@media (max-width: 360px) {
-  .service-tabs a {
-    padding-inline: 4px;
-    font-size: 11px;
-  }
+
+.portal-home {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
 }
