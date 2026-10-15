@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { LandingCharacter } from '../landing/LandingCharacter';
 import './Thinking.css';
 import { TurnUsage } from './TurnUsage';
+import type { VisibleText } from './tokenEstimate';
 
 export interface ThinkingActivityBody {
   readonly text: string;
@@ -25,6 +26,8 @@ interface ThinkingProps {
   readonly activities?: readonly ThinkingActivity[];
   readonly startedAt?: string;
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly visibleText?: readonly VisibleText[];
+  readonly visibleAnchor?: readonly VisibleText[];
 }
 
 export function summaryOf(text: string): string {
@@ -54,7 +57,14 @@ export function activitySummary(activity: ThinkingActivity): string {
 }
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
-export function Thinking({ text = '', activities = [], startedAt, usage }: ThinkingProps) {
+export function Thinking({
+  text = '',
+  activities = [],
+  startedAt,
+  usage,
+  visibleText,
+  visibleAnchor,
+}: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -94,7 +104,7 @@ export function Thinking({ text = '', activities = [], startedAt, usage }: Think
         <LandingCharacter compact state="running" />
         <span className="thinking__title">Thinking</span>
         {seconds === undefined ? null : <span className="thinking__elapsed">for {seconds}s</span>}
-        <TurnUsage usage={usage} />
+        <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />
         <span className="thinking__dot" aria-hidden="true" />
         <span className="thinking__summary">{summary || 'Waiting for the next update'}</span>
         <span className="sr-only">, reasoning not kept after this turn</span>
