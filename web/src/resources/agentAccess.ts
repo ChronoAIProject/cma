@@ -19,6 +19,11 @@ export function useAgentAccess(
     readonly agentId: string;
     readonly viewerId?: string;
     readonly context?: object;
+    readonly lineage: {
+      readonly agentId: string;
+      readonly workspaceId: string;
+      readonly sandboxId: string;
+    };
   }>();
   const read = useMemo(
     () =>
@@ -29,7 +34,17 @@ export function useAgentAccess(
             signal.throwIfAborted();
             if (detail.id !== agentId) throw new Error('Agent access identity changed.');
             if (detail.access !== 'shared') {
-              setPersonal({ client, agentId, viewerId, context });
+              setPersonal({
+                client,
+                agentId,
+                viewerId,
+                context,
+                lineage: {
+                  agentId: detail.id,
+                  workspaceId: detail.workspace.id,
+                  sandboxId: detail.sandbox.id,
+                },
+              });
               return { value: { detail } };
             }
             setPersonal(undefined);
@@ -56,6 +71,8 @@ export function useAgentAccess(
   return {
     ...result,
     personalReady,
+    personalLineage:
+      personalReady && result.state.status === 'ready' ? personal.lineage : undefined,
     personalReadOnly: personalReady && result.state.status !== 'ready',
   };
 }

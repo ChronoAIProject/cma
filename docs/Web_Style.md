@@ -768,6 +768,16 @@ still freshly checks account identity and the server independently authorizes
 admission and execution, including required connections before dispatch. No extra
 preparation notice is introduced.
 
+The same current personal access read may supply immutable Agent, Workspace and
+Sandbox IDs to overlap fresh reads. Load the Workspace beside the Agent after
+the normal v2 entry identity check, then verify both fresh projections against
+those IDs before the final account check and any publication. Observe the parent
+Sandbox while history loads; that observation never admits input before the
+complete authorized conversation is ready. Owner/client/access changes,
+visibility loss, observation expiry and newly discovered bootstrap authority
+retain their existing invalidation and recheck behavior. A changed lineage
+requires a new load and cannot reuse the previously loaded view.
+
 A newly admitted Agent may open while its recorded state is **Starting**, after
 verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
 an operation or save in progress. The server may also explicitly prove the exact
@@ -2119,3 +2129,4 @@ draft. Summary readers never receive the management history control.
 
 | 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |
 | 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
+| 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |

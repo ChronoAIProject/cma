@@ -99,6 +99,7 @@ function ConsoleContent({
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
     suspended: accessUncertain,
+    authorizedLineage: agentAccess.personalLineage,
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
         ? navigation.items
