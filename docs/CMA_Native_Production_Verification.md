@@ -780,3 +780,42 @@ Evidence: `/tmp/cma-hot-fixture-home-20261015`,
 `/tmp/cma-prod-attachment-boundaries-20261015/proof.json`,
 `/tmp/cma-hot-production-browser-20261015/resume-file-persistence-proof.json`,
 and `/tmp/cma-test-credit-grant-20261015`.
+
+## 2026-10-15 production hot key replacement
+
+Agent Manager source `8cad5bcd71134811bdaf057d080897c11a5fddfd` was deployed
+as digest `sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b`
+with one Ready replica (generation 37). New allocations use runtime source
+`ff9834c43ca3b4468c5755277af5ff7e4c543cdd`, digest
+`sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae`.
+The exact local Linux runtime image campaign passed all 34 checks, including
+the installed GitHub CLI's denial, live grant and removal on one runtime.
+The deployment automatically established its exact default pool with target 1
+and Ready 1; the older manual target-2 activation helper refused the different
+capacity without modifying the existing target.
+
+The retained `af2f8231` runtime fixture had automatically paused from inactivity
+before acceptance. One explicit preparatory resume retained its original home
+and completed in 21.437 seconds (public acknowledgment 235 ms). Both subsequent
+key-update cases held the same Pod UID, Claim, PVC/PV, image, restart count,
+runtime boot and conversation throughout; no lifecycle mutation was used to
+complete either scope update.
+
+| Actual production case | Approval to installed key and old-key revocation | Approval to confirmed original-session callback | Approval to durable Succeeded |
+| --- | --- | --- | --- |
+| Quiet Agent; callback is Message | 1.309 s | 1.752 s | 1.975 s |
+| Busy Agent; callback is Steer into the original active turn | 1.521 s | 1.856 s | 1.964 s |
+
+Timing starts before final approval HTTP dispatch and ends at local monotonic
+receipt from a prestarted, read-only database observer. It includes observer
+transport overhead. Success requires the new credential installed, no old-key
+revocation debt, exact approved scope and confirmed command delivery. The model
+also acknowledged once in the preserved conversation: 8.508 seconds for idle
+and 27.698 seconds for busy (which intentionally held a tool open). Model
+generation completion is separate from delivery of the callback.
+
+Both actual MCP requests used the already-connected mandatory baseline services.
+These two passes do not establish optional GitHub grant/removal or fresh external
+OAuth timing. Evidence: `/tmp/cma-hot-scope-live-8cad5bcd-active-20261015`,
+`/tmp/cma-hot-service-release-20261015`, and
+`/tmp/cma-runtime-ff9834c4-image-evidence.json`.
