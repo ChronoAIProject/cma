@@ -391,17 +391,10 @@ impl ControlPlaneComposition {
             .merge(model_routes)
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
-            .merge(layer1_public::rest::agent_attachments_router(
-                layer2_core::sandbox::agent_attachments::AgentAttachmentService::new(
-                    resource_access.clone(),
-                    adapter.clone(),
-                ),
-            ))
-            .merge(layer1_public::rest::agent_artifacts_router(
-                layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
-                    stores.sandbox_model.clone(),
-                    resource_access.clone(),
-                ),
+            .merge(routes::agent_files(
+                stores.sandbox_model.clone(),
+                resource_access.clone(),
+                adapter.clone(),
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
