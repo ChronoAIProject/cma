@@ -35,16 +35,25 @@ impl NyxidServiceConnectionBroker {
             return Ok(Vec::new());
         }
         let credential = self.credential(owner).await?;
-        let response = self
-            .send(
-                self.http
-                    .get(self.endpoint(CATALOG_PATH))
-                    .bearer_auth(credential.expose()),
-                false,
-            )
-            .await?;
-        let catalog: Catalog = decode(response).await?;
-        let connections = self.user_services(&credential).await?;
+        // Both owner-bound reads use the same resolved credential. Neither
+        // depends on the other's response; retain catalog-first decode errors
+        // and validate both before projecting any connection metadata.
+        let (catalog, connections) = tokio::join!(
+            async {
+                let response = self
+                    .send(
+                        self.http
+                            .get(self.endpoint(CATALOG_PATH))
+                            .bearer_auth(credential.expose()),
+                        false,
+                    )
+                    .await?;
+                decode::<Catalog>(response).await
+            },
+            self.user_services(&credential),
+        );
+        let catalog = catalog?;
+        let connections = connections?;
         if catalog.services.len() > MAX_CATALOG_ROWS {
             return Err(malformed());
         }
@@ -106,3 +115,7 @@ impl NyxidServiceConnectionBroker {
             .collect())
     }
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;
