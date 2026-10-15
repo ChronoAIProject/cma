@@ -6,6 +6,7 @@ import { StreamEntry, type Entry } from './StreamEntry';
 import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
+import { UserMessage } from './UserMessage';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -107,7 +108,7 @@ export function MessageStream({
       {optimisticMessages?.map((message) => (
         <article className="message message--user" aria-label="You" key={`local:${message.id}`}>
           <span className="message__role">You</span>
-          <p>{message.content}</p>
+          <UserMessage content={message.content} />
           <span className="message__delivery" role="status">
             {message.state === 'sending'
               ? 'Sending…'

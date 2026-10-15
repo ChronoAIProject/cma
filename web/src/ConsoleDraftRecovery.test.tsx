@@ -179,7 +179,9 @@ it.each(['viewer', 'agent', 'client'])(
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
     rerender(test.show());
     await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      scope === 'agent' ? 'Private original draft' : '',
+    );
     expect(test.runAgent).not.toHaveBeenCalled();
     unmount();
   },

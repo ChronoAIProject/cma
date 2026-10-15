@@ -357,6 +357,27 @@ export function AgentSurface({
           controlsUnavailable={controller.controlsUnavailable}
           requestPending={controller.pendingMessage !== undefined}
           acceptedMessage={controller.acceptedMessage}
+          uploadAttachment={
+            readOnly ||
+            verified === undefined ||
+            lifecycleClient?.uploadAgentAttachment === undefined
+              ? undefined
+              : async (file, options) => {
+                  const uploaded = await lifecycleClient.uploadAgentAttachment!(
+                    agentId,
+                    file,
+                    options,
+                  );
+                  if (
+                    uploaded.agentId !== agentId ||
+                    !uploaded.path.startsWith('/home/attachments/')
+                  )
+                    throw new Error(
+                      'The upload could not be verified for this Agent. Retry the upload.',
+                    );
+                  return uploaded;
+                }
+          }
           inputAvailability={
             readOnly
               ? {
