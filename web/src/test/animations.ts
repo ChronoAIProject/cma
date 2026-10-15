@@ -1,8 +1,13 @@
 import { vi } from 'vitest';
 
 class ObservedAnimation extends EventTarget {
-  readonly cancel = vi.fn(() => this.dispatchEvent(new Event('cancel')));
+  playState: AnimationPlayState = 'running';
+  readonly cancel = vi.fn(() => {
+    this.playState = 'idle';
+    this.dispatchEvent(new Event('cancel'));
+  });
   finish() {
+    this.playState = 'finished';
     this.dispatchEvent(new Event('finish'));
   }
 }

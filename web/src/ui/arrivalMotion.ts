@@ -1,7 +1,11 @@
 import { useLayoutEffect, useRef } from 'react';
 
 /** Animate an existing surface; identity, focus and layout remain owned by its caller. */
-export function animateArrival(element: HTMLElement, pace: 'normal' | 'slow' = 'normal') {
+export function animateArrival(
+  element: HTMLElement,
+  pace: 'normal' | 'slow' = 'normal',
+  fromOpacity = 0,
+) {
   if (typeof element.animate !== 'function' || element.closest('[hidden], [inert]')) return;
   const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
   if (preference.matches) return;
@@ -17,7 +21,7 @@ export function animateArrival(element: HTMLElement, pace: 'normal' | 'slow' = '
     : pace === 'slow'
       ? 300
       : 200;
-  const animation = element.animate([{ opacity: 0 }, { opacity: 1 }], {
+  const animation = element.animate([{ opacity: fromOpacity }, { opacity: 1 }], {
     duration,
     easing: style.getPropertyValue('--ds-ease-in-out').trim() || 'cubic-bezier(0.4, 0, 0.2, 1)',
   });
@@ -43,12 +47,28 @@ export function useViewArrival<Element extends HTMLElement = HTMLElement>(
 ) {
   const ref = useRef<Element>(null);
   const previous = useRef({ identity, visible });
+  const interrupted = useRef<{ element: Element; opacity: number } | undefined>(undefined);
   useLayoutEffect(() => {
     const changed = previous.current.identity !== identity || previous.current.visible !== visible;
     previous.current = { identity, visible };
+    const continuation = interrupted.current;
+    interrupted.current = undefined;
     if (!visible || (!changed && !enterOnMount) || ref.current === null) return;
-    const animation = animateArrival(ref.current, 'slow');
-    return () => animation?.cancel();
+    const element = ref.current;
+    const animation = animateArrival(
+      element,
+      'slow',
+      continuation?.element === element ? continuation.opacity : 0,
+    );
+    return () => {
+      // Read the presented opacity before cancel reveals the underlying style. A fast
+      // second navigation continues this surface's fade instead of flashing it blank.
+      if (animation?.playState === 'running' || animation?.playState === 'paused') {
+        const opacity = Number.parseFloat(getComputedStyle(element).opacity);
+        if (Number.isFinite(opacity)) interrupted.current = { element, opacity };
+      }
+      animation?.cancel();
+    };
   }, [identity, visible, enterOnMount]);
   return ref;
 }
