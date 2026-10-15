@@ -26,27 +26,22 @@ const PublicJourney = lazy(() =>
 );
 
 import type { AppRouter, AppRoute } from './routing/routes';
-import { ServiceTabs } from './services/ServiceTabs';
 import { ServicePage } from './services/ServicePage';
-import { ImageManager } from './services/ImageManager';
 import { EventGateway } from './services/EventGateway';
 import { ServiceBody } from './services/ServiceBody';
+import { ServiceSwitchMotion } from './services/ServiceSwitchMotion';
+import { PortalFrame } from './shell/PortalFrame';
+import { SIDEBAR_AUTO_COLLAPSE } from './shell/columns';
 
 export function App() {
   const router = useAppRouter();
   const { state: identity } = useAuth();
   const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
-  const service =
-    router.route.kind === 'image_manager'
-      ? 'image-manager'
-      : router.route.kind === 'event_gateway'
-        ? 'event-gateway'
-        : undefined;
-  const [visitedServices, setVisitedServices] = useState<
-    readonly ('event-gateway' | 'image-manager')[]
-  >(service ? [service] : []);
-  if (service && !visitedServices.includes(service))
-    setVisitedServices([...visitedServices, service]);
+  const service = router.route.kind === 'event_gateway' ? 'event-gateway' : undefined;
+  const [visitedGateway, setVisitedGateway] = useState(service !== undefined);
+  if (service && !visitedGateway) setVisitedGateway(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebar = { sidebarCollapsed, onSidebarCollapsedChange: setSidebarCollapsed };
   const home = router.route.kind === 'home';
   const agentVisible = service === undefined && !home;
   const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(
@@ -59,33 +54,68 @@ export function App() {
   }
   const publicJourney = router.route.kind === 'public_trigger' || router.route.kind === 'launch';
   if (publicJourney) return <AgentApp router={router} />;
+  const navigateService = (next: AppRoute) =>
+    router.navigate(next.kind === 'agent_manager' ? lastAgentRoute : next);
   return (
-    <div className="service-shell">
-      <ServiceTabs route={router.route} onNavigate={router.navigate} />
-      {home ? (
-        <ServiceBody>
-          <HomeLanding router={router} />
-        </ServiceBody>
-      ) : null}
-      {agentVisible || visitedAgent ? (
-        <ServiceBody visible={agentVisible}>
-          <AgentApp router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }} />
-        </ServiceBody>
-      ) : null}
-      {visitedServices.map((visited) => (
-        <ServiceBody key={visited} visible={service === visited}>
-          <ServicePage key={`${visited}:${identityKey}`} service={visited}>
-            {(session, denied) =>
-              visited === 'image-manager' ? (
-                <ImageManager session={session} denied={denied} />
-              ) : (
-                <EventGateway session={session} denied={denied} />
-              )
-            }
-          </ServicePage>
-        </ServiceBody>
-      ))}
-    </div>
+    <ServiceSwitchMotion current={service ? 'gateway' : 'agent'}>
+      <div className="service-shell">
+        {home ? (
+          <ServiceBody>
+            <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
+              <HomeLanding router={router} />
+            </PortalFrame>
+          </ServiceBody>
+        ) : null}
+        {agentVisible || visitedAgent ? (
+          <ServiceBody visible={agentVisible}>
+            <AgentApp
+              router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
+              onServiceNavigate={navigateService}
+              {...sidebar}
+            />
+          </ServiceBody>
+        ) : null}
+        {visitedGateway ? (
+          <ServiceBody visible={service === 'event-gateway'}>
+            <ServicePage
+              key={`event-gateway:${identityKey}`}
+              service="event-gateway"
+              renderStatus={(content) => (
+                <PortalFrame
+                  route={{ kind: 'event_gateway' }}
+                  onNavigate={navigateService}
+                  {...sidebar}
+                >
+                  {content}
+                </PortalFrame>
+              )}
+            >
+              {(session, denied, notice) => (
+                <EventGateway
+                  session={session}
+                  denied={denied}
+                  onNavigate={() => {
+                    if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE) setSidebarCollapsed(true);
+                  }}
+                >
+                  {({ sidebar: navigation, content }) => (
+                    <PortalFrame
+                      route={{ kind: 'event_gateway' }}
+                      onNavigate={navigateService}
+                      navigation={navigation}
+                      {...sidebar}
+                    >
+                      {notice}
+                      {content}
+                    </PortalFrame>
+                  )}
+                </EventGateway>
+              )}
+            </ServicePage>
+          </ServiceBody>
+        ) : null}
+      </div>
+    </ServiceSwitchMotion>
   );
 }
 function HomeLanding({ router }: { readonly router: AppRouter }) {
@@ -103,7 +133,17 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
     />
   );
 }
-function AgentApp({ router }: { readonly router: AppRouter }) {
+function AgentApp({
+  router,
+  sidebarCollapsed,
+  onSidebarCollapsedChange,
+  onServiceNavigate,
+}: {
+  readonly router: AppRouter;
+  readonly sidebarCollapsed?: boolean;
+  readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
+  readonly onServiceNavigate?: (route: AppRoute) => void;
+}) {
   const { state, signIn, signOut } = useAuth();
   const client = useCmaClient();
   const creation = useCreationClient();
@@ -152,12 +192,22 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
   }
   if (state.status === 'anonymous') {
     return (
-      <SignInLanding
-        onSignIn={async () => {
-          retainFatherDraftForSignIn();
-          await signIn(router.route.kind === 'home' ? '/agent-manager' : window.location.pathname);
-        }}
-      />
+      <PortalFrame
+        route={router.route}
+        onNavigate={onServiceNavigate ?? router.navigate}
+        sidebarCollapsed={sidebarCollapsed ?? false}
+        onSidebarCollapsedChange={onSidebarCollapsedChange ?? (() => {})}
+        landing
+      >
+        <SignInLanding
+          onSignIn={async () => {
+            retainFatherDraftForSignIn();
+            await signIn(
+              router.route.kind === 'home' ? '/agent-manager' : window.location.pathname,
+            );
+          }}
+        />
+      </PortalFrame>
     );
   }
   return (
@@ -168,6 +218,9 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
         route={router.route}
         onNavigate={router.navigate}
         hierarchyRevision={hierarchyRevision}
+        sidebarCollapsed={sidebarCollapsed}
+        onSidebarCollapsedChange={onSidebarCollapsedChange}
+        onServiceNavigate={onServiceNavigate}
         onCreate={
           creation === undefined
             ? undefined

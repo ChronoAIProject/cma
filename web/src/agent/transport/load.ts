@@ -53,7 +53,7 @@ export async function loadV2Agent(
       if (pageCursor !== undefined) await v2.authorize(signal);
       signal.throwIfAborted();
       v2.journal.read();
-      return await v2.events.snapshot(agentId, { pageCursor, signal });
+      return await v2.events.snapshot(agentId, { pageCursor, signal, messageBindings: true });
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
       return undefined;

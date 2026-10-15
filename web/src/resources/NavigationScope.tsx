@@ -20,14 +20,17 @@ export function useNavigationScope(client: ResourceViewsClient | undefined, scop
   const selected = organizations.find((choice) => choice.id === organization);
   const options = [
     { value: '', label: 'Personal' },
-    { value: 'shared', label: 'Shared with me' },
+    { value: 'shared', label: 'Shared' },
     ...organizations.map((choice, index) => ({
       value: scopeValue(choice.id),
-      label: choice.display_name?.trim() || `Organization ${index + 1}`,
+      label: `${choice.display_name?.trim() || `Organization ${index + 1}`} (Organization)`,
     })),
   ];
   if (organization !== undefined && selected === undefined)
-    options.push({ value: scopeValue(organization), label: 'Selected organization' });
+    options.push({
+      value: scopeValue(organization),
+      label: 'Selected organization (Organization)',
+    });
   return { options, selected, unavailable: current.state.status === 'error' };
 }
 

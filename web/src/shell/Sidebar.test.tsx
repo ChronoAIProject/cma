@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
 
 it.each([true, false])(
-  'retains account and hierarchy controls without duplicating the global brand with creation %s',
+  'retains account and hierarchy controls with the shared brand with creation %s',
   (canCreateAgent) => {
     const draw = (collapsed: boolean, status: string) => (
       <Sidebar
@@ -23,8 +23,8 @@ it.each([true, false])(
       [false, 'Active'],
     ] as const) {
       rerender(draw(collapsed, status));
-      expect(screen.queryByRole('link', { name: 'CMA home' })).not.toBeInTheDocument();
-      expect(screen.queryByLabelText(/^Build /)).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
+      expect(screen.getByLabelText(/^Build /)).toBeInTheDocument();
       expect(screen.getByText('Account')).toBeInTheDocument();
     }
     expect(screen.getByText('Active')).toBeInTheDocument();
@@ -58,4 +58,30 @@ it('keeps New agent separate from sidebar collapse and permission gating', async
     />,
   );
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
+});
+
+it('keeps navigation mounted across collapse and exposes separate trigger creation', async () => {
+  const create = vi.fn();
+  const draw = (collapsed: boolean) => (
+    <Sidebar
+      collapsed={collapsed}
+      onToggleCollapsed={vi.fn()}
+      account={<span>Account</span>}
+      navigation={<input aria-label="Navigation draft" defaultValue="retained" />}
+      canCreateTrigger
+      onNewTrigger={create}
+    />
+  );
+  const actor = userEvent.setup();
+  const { rerender } = render(draw(false));
+  const draft = screen.getByRole('textbox', { name: 'Navigation draft' });
+  await actor.type(draft, ' state');
+  await actor.click(screen.getByRole('button', { name: 'New agent trigger' }));
+  expect(create).toHaveBeenCalledOnce();
+  rerender(draw(true));
+  expect(draft).toBeInTheDocument();
+  expect(draft).not.toBeVisible();
+  rerender(draw(false));
+  expect(screen.getByRole('textbox', { name: 'Navigation draft' })).toBe(draft);
+  expect(draft).toHaveValue('retained state');
 });

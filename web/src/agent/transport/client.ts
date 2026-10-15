@@ -45,13 +45,23 @@ export class AgentV2Session {
     }
   }
 
-  pending(): { readonly input?: string; readonly accepted?: string; readonly control?: boolean } {
+  pending(): {
+    readonly input?: string;
+    readonly accepted?: string;
+    readonly acceptedSteering?: string;
+    readonly control?: boolean;
+  } {
     try {
       const input = this.journal.read();
+      const control = this.journal.readControl();
       return {
         accepted: input?.state === 'accepted' ? input.input : undefined,
+        acceptedSteering:
+          control?.commandId != null && control.body.command.type === 'steer'
+            ? control.body.command.text
+            : undefined,
         input: input?.state === 'pending' ? input.input : undefined,
-        control: this.journal.readControl()?.commandId === null,
+        control: control?.commandId === null,
       };
     } catch {
       // A stale view may finish rendering while sign-out invalidates its journal.
