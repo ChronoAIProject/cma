@@ -372,3 +372,51 @@ Typed `ApiError` codes include `invalid_agent_cursor`, `agent_cursor_beyond_head
 `agent_read_unavailable`. A `cma.agent.error` frame reaches the consumer and then
 rejects observation without acknowledging a cursor. Changed incarnation requires
 rebuilding normalized history for the new resource.
+
+### Edit pending input in place
+
+The public queue lists every editable human/API message in its original admission
+order, including messages submitted from another tab. The server admits at most
+64 pending commands. HTTP pages contain at most four entries and a nullable
+`next_after` admission-order cursor, keeping worst-case JSON escaping within the
+SDK's unchanged 8 MiB response limit. The SDK reader follows these pages and
+returns the full bounded list; it rejects repeated cursors, duplicate commands or
+more than 64 accumulated entries. Pages observe current state independently;
+concurrent edits to earlier pages appear on the next refresh. Refresh after admission,
+edit, cancellation, observed conversation changes, and returning to the page.
+The ledger does not emit conversation events before dispatch; clients displaying
+an active queue should also refresh periodically to observe other tabs.
+
+An edit preserves the source command, response and queue position. It replaces
+the complete text, including packed attachment text, only before runtime dispatch.
+Persist the route, exact source revision, text and a new idempotency key before
+sending. A lost reply must be recovered with identical bytes and the same key.
+`queued_input_not_admitted` proves the original revision is stale; refresh the
+queue before creating another intent. The edit receipt returns its immutable
+replacement text and resulting revision, alongside the source's current status.
+Removal continues to use queued cancellation with a fresh observation.
+
+```typescript
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function editFirstQueuedInput(
+  client: ReturnType<typeof createClient>,
+  agentId: string,
+  retainedEditKey: string,
+) {
+  const queue = await client.responsesV2.listQueuedInputs(agentId);
+  const item = queue.data[0];
+  if (item?.editable) {
+    await client.responsesV2.editQueuedInput(
+      agentId,
+      item.response.receipt.response_id!,
+      {
+        source_command_id: item.response.receipt.command_id,
+        expected_command_revision: item.command_revision,
+        text: 'Updated message, including any attachment text',
+      },
+      { idempotencyKey: retainedEditKey },
+    );
+  }
+}
+```

@@ -9,6 +9,37 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait]
 impl AgentCommandStore for InMemorySandboxStore {
+    async fn edit_queued_input(
+        &self,
+        request: crate::sandbox::agent_io::QueuedInputReservation,
+    ) -> Result<crate::sandbox::agent_io::QueuedInputOutcome, CommandLedgerError> {
+        super::queued_inputs::apply(self, request)
+    }
+    async fn list_queued_inputs(
+        &self,
+        agent_id: &crate::AgentId,
+    ) -> Result<Vec<AdmittedAgentCommand>, CommandLedgerError> {
+        let state = self.lock();
+        let mut records: Vec<_> = state
+            .agent_commands
+            .values()
+            .filter(|record| {
+                &record.receipt.envelope.agent_id == agent_id
+                    && crate::sandbox::agent_io::queued_cancellation_eligible(record)
+                    && crate::sandbox::agent_io::queued_input_editable_actor(record)
+            })
+            .cloned()
+            .collect();
+        records.sort_by_key(|record| record.receipt.agent_order);
+        if records.len() > crate::sandbox::agent_io::MAX_COMMAND_QUEUE_CAPACITY as usize {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        for record in &records {
+            record.validate()?;
+        }
+        Ok(records)
+    }
+
     async fn cancel_queued_response(
         &self,
         request: crate::sandbox::agent_io::QueuedCancellationReservation,
@@ -69,6 +100,30 @@ impl AgentCommandStore for InMemorySandboxStore {
             .agent_commands
             .values()
             .filter(|record| record.receipt.envelope.external_event_key().as_deref() == Some(key));
+        let record = matches.next().cloned();
+        if matches.next().is_some() {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if let Some(record) = &record {
+            record.validate()?;
+        }
+        Ok(record)
+    }
+
+    async fn get_operation_command(
+        &self,
+        agent_id: &crate::AgentId,
+        operation_sequence: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let state = self.lock();
+        let mut matches = state.agent_commands.values().filter(|record| {
+            &record.receipt.envelope.agent_id == agent_id
+                && record
+                    .work
+                    .dispatch
+                    .as_ref()
+                    .is_some_and(|dispatch| dispatch.operation_sequence == operation_sequence)
+        });
         let record = matches.next().cloned();
         if matches.next().is_some() {
             return Err(CommandLedgerError::Corrupt);

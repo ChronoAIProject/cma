@@ -61,6 +61,9 @@ mod provenance_inventory;
 mod queued_cancellations;
 #[cfg(test)]
 mod queued_cancellations_tests;
+mod queued_inputs;
+#[cfg(test)]
+mod queued_inputs_tests;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;

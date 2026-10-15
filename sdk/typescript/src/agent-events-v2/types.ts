@@ -5,6 +5,7 @@ import {
   enumeration,
   integer,
   nullable,
+  optional,
   positiveInteger,
   text,
   type Output,
@@ -44,6 +45,7 @@ const itemFields = {
   sequence: positiveInteger,
   appended_at: identifier,
   kind: nullable(v2AgentEventKind),
+  message_command_id: optional(identifier),
   response_binding: nullable(
     strict({ command_id: identifier, response_id: identifier, turn_sequence: positiveInteger }),
   ),
@@ -82,6 +84,11 @@ export function validateItem(
     throw new ProtocolError('Agent event refers to a future turn');
   if (item.kind?.type === 'turn_started' && item.kind.turn_sequence !== item.sequence)
     throw new ProtocolError('Agent turn start does not identify its own log row');
+  if (
+    item.message_command_id !== undefined &&
+    (item.kind?.type !== 'message' || item.kind.role !== 'user')
+  )
+    throw new ProtocolError('Agent message command binding requires a user message');
   if (
     item.response_binding !== null &&
     (item.kind?.type !== 'turn_started' ||
