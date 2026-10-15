@@ -46,6 +46,7 @@ pub(in crate::store) async fn verify(db: &Database) {
     changed.actor = None;
     changed.behavior = LifecycleBehavior::Legacy;
     changed.managed_agent_instructions = Some("A later deployment's instructions".into());
+    changed.setup_message = Some("A later deployment's setup message".into());
     let CreateResult::Existing(replayed) =
         store.create(&owner, "exact-intent", changed).await.unwrap()
     else {
@@ -61,6 +62,7 @@ pub(in crate::store) async fn verify(db: &Database) {
         replayed.input.managed_agent_instructions,
         input.managed_agent_instructions
     );
+    assert_eq!(replayed.input.setup_message, input.setup_message);
     assert_eq!(
         store
             .replay(&owner, "exact-intent", &request)
@@ -94,6 +96,7 @@ pub(in crate::store) async fn verify(db: &Database) {
         .unwrap()
         .unwrap();
     assert_eq!(context_record.id, context_id);
+    assert_eq!(context_record.input.setup_message, contextual.setup_message);
     assert_eq!(
         context_record.input.request.workspace_id.as_deref(),
         Some("wk_context")

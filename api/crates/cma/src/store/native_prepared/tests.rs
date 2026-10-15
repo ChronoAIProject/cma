@@ -407,6 +407,7 @@ async fn admission(
                 managed_agent_instructions: Some(
                     crate::agent_lifecycle::guidance::GITHUB_API_V1.into(),
                 ),
+                setup_message: None,
                 request: serde_json::from_value(serde_json::json!({"name":"Prepared test"}))
                     .unwrap(),
                 resolved_image: None,

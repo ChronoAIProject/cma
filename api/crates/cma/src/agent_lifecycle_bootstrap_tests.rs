@@ -30,6 +30,18 @@ async fn bootstrap_facade_publishes_exact_hierarchy_before_runtime_and_replays_l
     let (recorded, agent, workspace) = f.published().await;
     assert!(!task.is_finished());
     assert_eq!(agent.status, AgentStatus::Starting);
+    assert_eq!(
+        recorded.input.setup_message,
+        Some(validation::setup_message(&recorded.input.request))
+    );
+    assert_eq!(
+        agent
+            .conversation
+            .first_message
+            .as_ref()
+            .map(|message| &message.text),
+        recorded.input.setup_message.as_ref()
+    );
     assert_eq!(agent.work.step, AgentWorkStep::WaitForWorkspace);
     assert_eq!(agent.sandbox_id, f.sandbox.id);
     assert_eq!(workspace.status, WorkspaceStatus::Preparing);
@@ -93,6 +105,10 @@ async fn bootstrap_facade_publishes_exact_hierarchy_before_runtime_and_replays_l
     let (_, replayed, same_workspace) = f.published().await;
     assert!(!replay.is_finished());
     assert_eq!(replayed.id, agent.id);
+    assert_eq!(
+        replayed.conversation.first_message,
+        agent.conversation.first_message
+    );
     assert_eq!(same_workspace.id, workspace.id);
     assert_eq!(
         f.store

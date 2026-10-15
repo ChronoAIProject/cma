@@ -199,7 +199,7 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
             .map(layer2_core::ServiceId::new)
             .collect::<Vec<_>>()
     );
-    let prompt = validation::first_message(&request);
+    let prompt = validation::setup_message(&request);
     assert!(prompt.contains("https://github.com/org/project"));
     assert!(prompt.contains("feature/setup"));
     assert!(prompt.contains("use gh api through CMA's api-github"));
@@ -212,22 +212,76 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
     assert!(prompt.contains("Use API source checkout instead of gh repo clone"));
     assert!(prompt.contains("no Sandbox restart is needed"));
     assert!(prompt.contains("Do not ask the user to paste a secret"));
-    let repeated = validation::first_message(
+    let repeated = validation::setup_message(
         &serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap(),
     );
     assert_eq!(repeated, prompt);
 }
 
 #[test]
-fn empty_workspace_guidance_defers_api_repository_creation_until_requested() {
-    let request = serde_json::from_value(json!({"name":"Empty workspace"})).unwrap();
-    let prompt = validation::first_message(&request);
-    assert!(prompt.contains("Keep this workspace ready for the user's next task"));
-    assert!(prompt.contains("When the user asks to create a repository"));
-    assert!(prompt.contains("POST /user/repos or /orgs/{org}/repos"));
-    assert!(prompt.contains("do not create one during this readiness step"));
-    assert!(prompt.contains("updating refs without force"));
-    assert!(!prompt.contains("The user selected this GitHub repository"));
+fn empty_workspace_setup_waits_for_user_tasks_without_optional_access_requests() {
+    for context in [
+        json!({}),
+        json!({"workspace_id":"existing"}),
+        json!({"sandbox_id":"existing"}),
+    ] {
+        let mut request = json!({"name":"Empty workspace"});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(context.as_object().unwrap().clone());
+        let request = serde_json::from_value(request).unwrap();
+        let prompt = validation::setup_message(&request);
+        assert!(prompt.contains("Preserve existing files and changes"));
+        assert!(prompt.contains("local workspace readiness only"));
+        assert!(prompt.contains("no repository or external-service task has been requested"));
+        assert!(prompt.contains("Do not probe GitHub or other optional services, or request access merely for readiness"));
+        assert!(prompt.contains("wait for the user's next task"));
+        assert!(!prompt.contains("agent_key_scope_revision"));
+        assert!(!prompt.contains("The user selected this GitHub repository"));
+        // Later user-requested GitHub work still has the fixed API/MCP guidance.
+        let profile = guidance::provisioning_request(&request, Some(guidance::GITHUB_API_V1));
+        let instructions = profile.profile.unwrap().system_prompt.unwrap();
+        assert!(instructions.contains("POST /user/repos or /orgs/{org}/repos"));
+        assert!(instructions.contains("agent_key_scope_revision"));
+        assert!(instructions.contains("tarball/{sha}"));
+    }
+}
+
+#[test]
+fn admitted_setup_replays_exact_captured_message_and_legacy_fallback() {
+    for repository in [
+        json!(null),
+        json!({"url":"https://github.com/org/project","ref":"feature/setup"}),
+    ] {
+        for instructions in [None, Some(guidance::GITHUB_API_V1)] {
+            let mut old: LifecycleInput = serde_json::from_value(json!({
+                "behavior":"prompt_repository", "managed_agent_instructions":instructions,
+                "request":{"name":"Admitted", "repository":repository}, "resolved_image":null
+            }))
+            .unwrap();
+            assert!(old.setup_message.is_none());
+            let original = validation::first_message(&old.request);
+            assert_eq!(
+                validation::admitted_first_message(&old),
+                Some(original.clone())
+            );
+            // Exact admitted bytes win over a later deployment's prompt builder.
+            old.setup_message = Some("Original admitted setup\nRetain these bytes.\n".into());
+            let restored: LifecycleInput =
+                serde_json::from_slice(&serde_json::to_vec(&old).unwrap()).unwrap();
+            assert_eq!(
+                validation::admitted_first_message(&restored),
+                old.setup_message
+            );
+            assert_ne!(
+                validation::admitted_first_message(&restored),
+                Some(original)
+            );
+            old.behavior = LifecycleBehavior::Legacy;
+            assert_eq!(validation::admitted_first_message(&old), None);
+        }
+    }
 }
 
 #[test]
