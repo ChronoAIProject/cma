@@ -167,6 +167,7 @@ applies with all media flags off.**
 | `CMAEG_ACCEPT_BUDGET_MS` | positive integer, ms | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
 | `CMAEG_TURN_TIMEOUT_MS` | positive integer, ms | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
+| `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2093,3 +2094,51 @@ chat or stale revision is refused, duplicate delivery creates no second provider
 turn, and two chats with equal platform message IDs edit their exact own message.
 Neither transport acknowledgment nor a confirmed card send proves child-bot
 provisioning succeeded; verify the provider's creation receipt separately.
+
+## Coordinated complete-reply rollout
+
+Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` until the NyxID dependency is ready.
+This default preserves existing short and long reply behavior and its known
+chunk/URL/reply-token limitations. Enabling the switch is the operator's explicit
+attestation of the following deployed contract; the gateway has no wire-level
+capability negotiation or per-part completion metadata.
+
+1. Upgrade and verify NyxID's ordinary and thread reply paths. Both must accept
+   the full existing `/api/v1/channel-relay/reply` text, split at final platform
+   limits without truncation or excerpt limits, track every send and return a
+   valid 200 `{message_id,platform_message_id?}` receipt only after all parts are
+   accepted. Exercise the exact thread part-count cap and one part over it
+   (formerly 64). An over-cap request may be explicitly refused before any
+   platform send or use a verified fallback preserving the full content; it must
+   never silently send a prefix. The 2 MiB gateway budget does not guarantee
+   NyxID/platform acceptance of every payload. One reply token must authorize all
+   internal parts. Partial/failed/uncertain sends must return non-200, even when an earlier platform part has succeeded.
+2. Verify the full body budget through NyxID and intervening proxies: CMAEG allows
+   at most 2097152 serialized JSON bytes, including escaping and identifiers.
+   Its 128 KiB tool ingress and 256 KiB automatic output remain unchanged;
+   sanitization/JSON can expand bytes fourfold. A larger aggregate is refused as
+   `relay_request_too_large` before token claim or IO, without truncation.
+3. Measure ordinary and thread completion with Chinese, emoji, long URLs, code,
+   block degradation and maximum escaping expansion. Confirm all platform parts
+   and intact content at the destination. Exercise a partial provider failure,
+   lost/malformed response and a 429 after an earlier successful part; verify
+   the logical send is unknown and is not replayed. Success means platform
+   acceptance, not recipient delivery/read confirmation.
+4. Verify timing against the existing 5 s complete exchange timeout
+   (`CMAEG_NYXID_REPLY_TIMEOUT_MS=5000`) and 8 s external tool deadline, including
+   pacing/queueing. Long platform sends may exceed these budgets. Do not infer
+   failure to send from a timeout, or increase one timeout without coordinating
+   the tool/proxy deadlines and deployment manifests.
+5. Set `CMAEG_NYXID_COMPLETE_REPLIES=true` only after those acceptance checks.
+   Native Telegram chunking and interactive/edit one-part constraints stay in
+   effect. Acks, progress notices and intentional replies remain separate.
+   Complete-mode 429s preserve the route cooldown and return
+   `unknown:rate_limited_unconfirmed` without retrying; other lost/invalid/failed
+   receipts are also unknown and suppress automatic fallback answers.
+
+Rollback selects `false` for future sends and restores legacy behavior; it must
+not replay uncertain requests from complete mode. No durable delivery or
+exactly-once platform effects are promised. Local fake transport and paused-time
+integration tests establish the CMAEG contract only. They do not establish that
+a deployed NyxID, proxy or IM platform satisfies it. Record actual deployment
+versions, all-parts platform observations and timing evidence before activation.

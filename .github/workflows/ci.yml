@@ -308,8 +308,14 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
       - uses: taiki-e/install-action@nextest
+      - name: Image normalization budgets
+        # Measure the existing wall-time and memory limits without competing
+        # test processes. Both commands retain the same workspace build.
+        run: >-
+          cargo nextest run --workspace --locked -E 'binary(=media_image_peak)'
+          --test-threads 1 --success-output final
       - name: Tests
-        run: cargo nextest run --workspace --locked
+        run: cargo nextest run --workspace --locked -E 'not binary(=media_image_peak)'
       - name: Isolated Linux Workspace removal writer boundary
         run: >-
           cargo test --locked -p layer4-runtime
