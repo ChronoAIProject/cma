@@ -24,6 +24,8 @@ use crate::{
 
 #[path = "adapter_agent.rs"]
 mod agent;
+#[path = "adapter_attachment.rs"]
+mod attachment;
 #[path = "adapter_checkpoint.rs"]
 mod checkpoint;
 #[path = "adapter_context.rs"]
