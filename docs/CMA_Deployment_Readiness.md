@@ -5,13 +5,34 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+At 12:26 SGT, API `6571e110` remains deployed. Web `53bbe2f7` replaced
+`47b56be7` at 12:25:35 SGT with verified public assets. Live Stop, exact interruption
+and one completed follow-up now pass; original-volume resume also passes identity
+checks, with 505 ms acceptance and 26.353 s actual readiness. The first API6571
+creation sample completed functionally but exceeded five seconds (5.224 s to
+source-flow Send eligibility). Fresh optimized-Web timing and actual browser
+acceptance remain pending. The following 12:16 snapshot is historical.
+
 PR #1027 is being tested through authorized local production builds. As of
-10:35 SGT on 2026-10-15, Agent Manager source `74842c4a` and Web source
-`47b56be7` are deployed in the existing CMA cluster. Their immutable image and
-running Pod identities were verified, along with the public Web asset hash.
-Combined API `6571e110` has been built and scanned locally, but its registry
-upload and deployment await Google reauthentication. It is not the live version.
-The five-second creation goal is not yet consistently met; source-ordered
+12:16 SGT on 2026-10-15, Agent Manager source `6571e110` and Web source
+`47b56be7` are deployed in the existing CMA cluster. The combined API image
+`sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d`
+was published after Google authentication was restored. Generation 31 and its
+exact imageID were Ready at 12:16:26 SGT; authenticated owner access and retained
+fixture identities, settings and history passed continuity checks. Branch head
+`0c16330e` passed all 15 CI jobs; it is separate from the deployed image source.
+Runtime `cad2058`, Event Gateway and the shared Web image remain unchanged,
+and Image Manager remains undeployed. The Deployment keeps prepared target one
+and singleton/Recreate operation. Strict kubeconform validated all 48 resources
+without skips; kube-linter and HTTPRoute ownership checks passed.
+
+The API748 optional-GitHub existing-Sandbox diagnostic passed, and the 12:16
+read-only follow-up confirmed the original Claim, Sandbox, PVC and PV identities
+and full-home template mount. Two retired test fixtures also passed exact native
+resource absence checks. These diagnostic and cleanup results do not establish
+final API6571 acceptance. Browser/model, fresh warm creation and live Stop
+verification are still pending. The five-second creation goal is not yet
+consistently met; source-ordered
 measurements are not browser measurements. Current candidate evidence and
 remaining acceptance gaps are recorded in the
 [PR #1027 verification](CMA_Native_Production_Verification.md#local-production-candidates--pr-1027).

@@ -2,15 +2,46 @@
 
 ## Local production candidates — PR #1027
 
-This is an interim observation at 10:35 SGT on 2026-10-15, not a declaration
-that the complete acceptance bar passed. Authorized local builds allow
-production testing while required GitHub checks continue. The PR remains
+Current follow-up at **12:26 SGT**: API `6571e110` is deployed and the connection
+publication repair passed a fresh functional creation sample. Web `53bbe2f7`
+completed rollout at 12:25:35 SGT, generation 110, image
+`sha256:ce38cb25177810a323cf81adbba7674ca205b449e12eb5154b0202e2be002df7`.
+The public and running-Pod asset `index-C3GzMrh2.js` both hash to
+`6ea9604030383aa3d98082db420b837364bbccfa2ceb4813200bf007f0aa5bca`.
+This Web change counts successful request time toward lifecycle polling cadence;
+67 focused creation tests, type checking, lint and the production build passed.
+
+The first Web47/API6571 source-flow sample executed its original first prompt
+and queued user input successfully. Send eligibility took **5,223.763 ms**, and
+the durable acknowledgement took **6,317.150 ms**, so its five-second timing
+checks failed. A fresh Web53 sample is in progress; actual browser click-to-input
+acceptance remains pending computer-use permissions.
+
+Live Stop on API6571 passed: a fresh observed intent was accepted in
+**305.879 ms**, the exact active response became interrupted about **4.039 s**
+after intent, and one follow-up input was accepted in **777.614 ms** and completed.
+The first attempt had returned a definite revision refusal and was not replayed.
+The passing attempt encountered a transient Mongo write conflict and recovered
+within the bounded retry budget. API identity remained stable with zero restarts.
+Resume acceptance took **505.250 ms**, and actual runtime readiness took
+**26,353.341 ms**. Original Claim, Sandbox, PVC, PV and conversation identities
+were preserved. This run does not repeat the earlier full-home byte/metadata test.
+
+Evidence: `/tmp/cma-web-rollout-53bbe2f7/verified.json`,
+`/tmp/cma-source-final-web47-api6571-pilot01-evidence/report.json`, and
+`/tmp/cma-stop-response-6571e110-complete-frozen-20261015-01/acceptance-report.json`.
+The dated 12:16 checkpoint below records the preceding Web image and results
+that were still pending at that time.
+
+This is an interim observation at 12:16 SGT on 2026-10-15, not a declaration
+that the complete acceptance bar passed. Authorized local builds are being
+tested in production; source CI is recorded separately below. The PR remains
 unmerged. CMA stays in its original cluster, runtime workloads stay in the
 separate agent-sandbox cluster, and Image Manager remains undeployed.
 
 | Deployed component | Source | Immutable registry digest |
 | --- | --- | --- |
-| Agent Manager, generation 30 | `74842c4aabd467055e91882eb3e720c8cc9e042d` | `sha256:1650c4c85e438b20ce240ba1aa3da74462d737ee01367a2f4c3756f2870bda6f` |
+| Agent Manager, generation 31 | `6571e110d443bbb321251313f101702b05942a68` | `sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d` |
 | Shared Web, generation 109 | `47b56be7c35c89c3813f8da981af533f00b608d5` | `sha256:27a307765d40554c9a2afa399626abb9a0a5fcfcc4fd69461bd089c310ffbb85` |
 
 Registry manifests, Linux/amd64 platform manifests and source labels were
@@ -21,16 +52,21 @@ Pod and public response:
 `2a9e09486bc9b5af4e89a1d73e934ea795abcaf89b57b5c043066710e748dda2`.
 The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
 
-Combined API source `6571e110d443bbb321251313f101702b05942a68` has completed a
-local Linux/amd64 release build and fixed HIGH/CRITICAL vulnerability scan.
-Its local image digest is
-`sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d`.
-Registry upload and production access are blocked by Google reauthentication;
-this candidate has not been deployed. Branch head `f1b36939` adds only a test
-lint correction. Its CI run
-[38668427088](https://github.com/ChronoAIProject/cma/actions/runs/38668427088)
-passed all 15 jobs, including Backend, Event Gateway latency and all five image
-builds and scans. These checks do not replace pending production acceptance.
+Google authentication was restored, and the combined API image was published
+and deployed. At **12:16:26 SGT**, generation 31 was Ready with the exact image
+above and Pod UID `f6ed0152-f991-4b0a-8126-525a16121685`. The authenticated owner
+session and both retained fixtures passed continuity checks: the protected
+baseline kept all 15 turns, and the recovered fixture kept its completed turn,
+identities and settings. Branch head `0c16330e` passed all 15 CI jobs; the
+deployed image source remains `6571e110`, not that later branch head. The local
+Linux/amd64 build and fixed HIGH/CRITICAL scan passed. Current browser/model,
+fresh warm creation and live Stop acceptance remain pending.
+
+The synchronized Deployment preserves runtime `cad2058`, the prepared target
+of one, and singleton/Recreate behavior; the shared ConfigMap default remains
+zero. Repository manifest checks passed: kubeconform v0.8.0 validated all 48
+resources with strict schemas and none skipped, kube-linter 0.8.3 found no
+errors, and HTTPRoute backend ownership matched exactly.
 
 | Boundary and evidence | Result | Interpretation |
 | --- | --- | --- |
@@ -44,9 +80,9 @@ builds and scans. These checks do not replace pending production acceptance.
 The source measurement runs actual production SDK, authentication, loader,
 connection-preparation and input-admission functions. It omits React effects,
 DOM rendering, browser connection reuse and background navigation traffic;
-it is not a conservative upper bound for browser performance. Current Computer
-Use has no available browser surface, so this candidate's browser timing,
-popup and external OAuth callback remain unverified. The first connection
+it is not a conservative upper bound for browser performance. This candidate's
+browser timing, popup and external OAuth callback remain unverified at this
+observation. The first connection
 check was successfully reused once in the new sample; most remaining delay
 occurred before the operation exposed its Agent, then during sequential loading.
 The next Web5c6 sample improved input timing but exposed an execution failure:
@@ -55,8 +91,8 @@ Mongo write conflicts exhausted connection-publication retries after the new
 the ordinary command expired. Both acceptance flags remain failed. The repair
 for known-aborted publication and exact-lease retry passed 124 worker/store
 regressions and strict Clippy, including ordinary worker reconnection and
-unknown-commit protection; live verification awaits deployment. The
-new Web47b source only extracts TypeScript declarations to meet the source
+unknown-commit protection; the repair is now deployed and live verification
+remains pending. The new Web47b source only extracts TypeScript declarations to meet the source
 size gate; its emitted controller behavior is unchanged.
 
 The latest resume retained the original Claim, Sandbox and PVC, replaced only
@@ -84,7 +120,7 @@ encountered transient Mongo transaction conflicts. Admission exhausted all five
 attempts; no domain revision refusal was observed. The exact original key was
 then definitively resolved as not admitted after natural completion. A bounded
 backoff fix passed 17 real Mongo and 26 core regressions and strict Clippy, and is
-included in the built candidate. No successful live Stop is claimed here.
+included in the deployed candidate. No successful live Stop is claimed here.
 An ordinary second Agent in a prepared Sandbox exposed an MCP authority
 binding defect. The fix and real Mongo regression passed and the fix is deployed
 in API748. A subsequent public functional diagnostic created one optional-GitHub
@@ -93,10 +129,22 @@ original Sandbox revived automatically, and the exact repository first prompt
 completed. The new Workspace source was `empty`, defaults and mandatory scopes
 matched, and the original Agent's history was unchanged. Completion took
 63,999.656 ms including revival and repository setup; this is not a warm-pool
-performance result. Native identity, browser and final candidate verification
-remain pending. Exhausted
+performance result. At 12:16 SGT, a read-only native follow-up confirmed the
+original Claim, Sandbox, PVC and PV identities, Bound home volume and whole
+`/home` template mount. The Sandbox was Suspended with no owned Pods. This
+closes native identity verification for the API748 diagnostic; browser and
+final API6571 contextual verification remain pending. Exhausted
 owner Sandbox quota is now a terminal creation conflict in production, rather than an
 endless transient retry. Future samples must have quota headroom.
+
+Two attributable old test Sandboxes were retired through one public DELETE
+each. Requests were accepted in 221.418 and 222.041 ms; public Retired was
+observed after 35.007 and 64.618 seconds, with both original transcripts
+unchanged. The complete owner inventory then showed seven nonretired Sandboxes
+and three quota slots available. At 12:16 SGT, complete native namespace lists
+confirmed both original Claims, Sandboxes, PVCs and owned Pods absent, checking
+exact names and UIDs, including terminating objects. This is cleanup evidence,
+not a final-candidate deletion or browser performance pass.
 
 Private evidence: `/tmp/cma-api-rollout-74842c4a`,
 `/tmp/cma-web-rollout-47b56be7`,
@@ -110,6 +158,15 @@ Private evidence: `/tmp/cma-api-rollout-74842c4a`,
 is in `/tmp/cma-api-local-scan-6571e110-final`,
 `/tmp/cma-prepared-connection-recovery-validation-20261015.json`, and
 `/tmp/cma-public-existing-sandbox-api748-diagnostic-20261015-01`.
+The current rollout and continuity receipts are
+`/tmp/cma-api-rollout-6571e110/provenance.json`, `verified-binding.json`, and
+`continuity-recheck-01/verified.json` in that directory. Cleanup and native
+follow-up receipts are
+`/tmp/cma-old-sandbox-public-cleanup-20261015-01/report-final.json`,
+`/tmp/cma-native-public-diagnostics-postauth-20261015-01/cleanup-native-absence.json`,
+and `contextual-parent-native-identity.json` in the latter directory.
+Manifest validation is recorded in
+`/tmp/cma-api-manifest-validation-6571e110-20261015.json`.
 These operator artifacts remain
 outside the repository. Existing failed reports are preserved unchanged.
 
