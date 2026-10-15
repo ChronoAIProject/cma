@@ -37,12 +37,19 @@ it('renders all three canonical documents with complete navigation and all revie
   expect(article.querySelector('code.language-mermaid')).toBeNull();
   expect(article.querySelector('a[href*="CMAEG_Operations"]')).toBeNull();
   expect(article.querySelector('a[href*="CMA_Public_APIs"]')).toBeNull();
+  // Role enumeration repeatedly runs jsdom selectors against the full-document
+  // data URL. Select native links directly, retaining name and visibility checks.
   const header = within(container.querySelector('header')!);
-  expect(header.getByRole('link', { name: 'OpenAPI JSON' })).toHaveAttribute(
-    'href',
-    '/api/event-gateway/openapi.json',
-  );
-  const download = header.getByRole('link', { name: 'Download document' });
+  const openApi = header.getByText('OpenAPI JSON', { selector: 'a[href]' });
+  expect(openApi).not.toHaveAttribute('role');
+  expect(openApi).toHaveAccessibleName('OpenAPI JSON');
+  expect(openApi).toBeVisible();
+  expect(openApi).toHaveAttribute('href', '/api/event-gateway/openapi.json');
+  const download = header.getByText('Download document', { selector: 'a[href]' });
+  expect(download).not.toHaveAttribute('role');
+  expect(download).toHaveAccessibleName('Download document');
+  expect(download).toBeVisible();
+  expect(download).toHaveAttribute('download', 'agent-event-gateway.md');
   const markdown = decodeURIComponent(download.getAttribute('href')!.split(',').slice(1).join(','));
   expect(markdown).not.toContain('](CMAEG_Protocol.md');
   for (const id of ids) expect(markdown).toContain(`<a id="${id}"></a>`);
