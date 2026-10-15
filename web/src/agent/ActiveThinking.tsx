@@ -11,6 +11,11 @@ export function ActiveThinking({ conversation }: { readonly conversation: Conver
       <Thinking
         key={runId}
         startedAt={conversation.activeRunStartedAt}
+        usage={
+          String(conversation.usage?.currentTurn?.turnSequence) === runId
+            ? conversation.usage?.currentTurn
+            : undefined
+        }
         text={conversation.reasoning
           .filter((item) => item.runId === runId)
           .map((item) => item.content)

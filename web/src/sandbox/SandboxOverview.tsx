@@ -22,6 +22,7 @@ export function SandboxOverview({
   sandbox,
   permissions,
   busy,
+  stale = false,
   onAction,
   onNavigate,
 }: {
@@ -29,6 +30,7 @@ export function SandboxOverview({
   readonly sandbox: SandboxDetail;
   readonly permissions: TreePermissions;
   readonly busy: boolean;
+  readonly stale?: boolean;
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
@@ -145,6 +147,9 @@ export function SandboxOverview({
               sandbox.status === 'active' &&
               sandbox.runtimeVersion &&
               !busy &&
+              !stale &&
+              sandbox.lifecycle !== undefined &&
+              !sandbox.lifecycle.checkpoint &&
               !sandbox.lifecycle?.operation
                 ? { state: 'live', runtimeVersion: sandbox.runtimeVersion }
                 : sandbox.status === 'paused'

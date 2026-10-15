@@ -44,9 +44,13 @@ export function App() {
   >(service ? [service] : []);
   if (service && !visitedServices.includes(service))
     setVisitedServices([...visitedServices, service]);
-  const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(router.route);
-  const [visitedAgent, setVisitedAgent] = useState(service === undefined);
-  if (service === undefined && lastAgentRoute !== router.route) {
+  const home = router.route.kind === 'home';
+  const agentVisible = service === undefined && !home;
+  const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(
+    agentVisible ? router.route : { kind: 'agent_manager' },
+  );
+  const [visitedAgent, setVisitedAgent] = useState(agentVisible);
+  if (agentVisible && lastAgentRoute !== router.route) {
     setLastAgentRoute(router.route);
     setVisitedAgent(true);
   }
@@ -55,11 +59,14 @@ export function App() {
   return (
     <div className="service-shell">
       <ServiceTabs route={router.route} onNavigate={router.navigate} />
-      {service === undefined || visitedAgent ? (
-        <div className="service-shell__body" hidden={service !== undefined}>
-          <AgentApp
-            router={{ ...router, route: service === undefined ? router.route : lastAgentRoute }}
-          />
+      {home ? (
+        <div className="service-shell__body">
+          <HomeLanding router={router} />
+        </div>
+      ) : null}
+      {agentVisible || visitedAgent ? (
+        <div className="service-shell__body" hidden={!agentVisible}>
+          <AgentApp router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }} />
         </div>
       ) : null}
       {visitedServices.map((visited) => (
@@ -76,6 +83,21 @@ export function App() {
         </div>
       ))}
     </div>
+  );
+}
+function HomeLanding({ router }: { readonly router: AppRouter }) {
+  const { state, signIn } = useAuth();
+  if (state.status === 'checking') return <BrandLoading />;
+  return (
+    <SignInLanding
+      onSignIn={async () => {
+        if (state.status === 'authenticated') router.navigate({ kind: 'agent_manager' });
+        else {
+          retainFatherDraftForSignIn();
+          await signIn('/agent-manager');
+        }
+      }}
+    />
   );
 }
 function AgentApp({ router }: { readonly router: AppRouter }) {
@@ -125,14 +147,10 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
       </main>
     );
   }
-  if (state.status === 'anonymous' || router.route.kind === 'home') {
+  if (state.status === 'anonymous') {
     return (
       <SignInLanding
         onSignIn={async () => {
-          if (state.status === 'authenticated') {
-            router.navigate({ kind: 'agent_manager' });
-            return;
-          }
           retainFatherDraftForSignIn();
           await signIn(router.route.kind === 'home' ? '/agent-manager' : window.location.pathname);
         }}

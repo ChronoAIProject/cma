@@ -7,17 +7,17 @@ import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { currentAgentStatus, sameAgent } from './status';
-import { mergeTranscriptSnapshot } from './chronology';
 import { useSandboxInput } from './sandboxInput';
-import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
+import { foldLiveEvent } from './conversation';
 import { useRetainedAgentState } from './retainedState';
-import { reopenAgent } from './reopenAgent';
-import { foldV2Frame, foldV2Item } from './transport/projection';
+import { reopenAgent, refreshConversation } from './reopenAgent';
+import { foldV2Frame } from './transport/projection';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedMessage } from './transport/queuedStatus';
+import { presentAgent } from './presentation';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
   AgentCommand,
@@ -31,26 +31,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return error instanceof Error ? error.message : 'The Agent operation did not complete.';
-}
-
-function refreshConversation(
-  current: ConversationState,
-  next: Awaited<ReturnType<typeof loadAgent>>,
-): ConversationState {
-  if (next.v2Items !== undefined) {
-    if (current.agentIncarnation !== next.conversation.agentIncarnation)
-      throw new Error('Agent snapshot changed conversation identity.');
-    return next.v2Items.reduce(foldV2Item, current);
-  }
-  if (current.cursor > next.conversation.cursor) return current;
-  const folded = next.durableEvents.reduce(foldAgentEvent, current);
-  return {
-    ...mergeTranscriptSnapshot(folded, next.conversation, current.cursor),
-    usage:
-      (next.conversation.usage?.throughSeq ?? 0) >= (folded.usage?.throughSeq ?? 0)
-        ? next.conversation.usage
-        : folded.usage,
-  };
 }
 
 export function useAgentController(
@@ -450,15 +430,7 @@ export function useAgentController(
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined ? undefined : recoverPending,
-    state:
-      state.status === 'ready' &&
-      displayedStatus !== undefined &&
-      displayedStatus !== state.detail.status
-        ? {
-            ...state,
-            detail: { ...state.detail, status: displayedStatus },
-          }
-        : state,
+    state: presentAgent(state, displayedStatus),
     inputAvailability: suspended
       ? {
           allowed: false,

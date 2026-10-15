@@ -6,6 +6,7 @@ import { LandingCharacter } from './landing/LandingCharacter';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
+import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
 import { AgentDetails } from './agent/Details';
 import { useAgentController } from './agent/controller';
@@ -58,6 +59,9 @@ function ConsoleContent({
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [positions] = useState(() => new AgentViewPositions());
+  const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
+  const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
@@ -188,6 +192,7 @@ function ConsoleContent({
       agentId={route.agentId}
       viewerId={user.id}
       controller={agent}
+      viewPosition={viewPosition}
       accessUncertain={accessUncertain}
       accessAuthorized={agentAccess.personalReady && !accessUncertain}
       detailsOpen={detailsOpen}
@@ -387,7 +392,11 @@ function ConsoleContent({
                           agent.state.status === 'ready' &&
                           agent.state.detail.id === route.agentId &&
                           sameAgent(agent.state.detail, summary)
-                            ? { ...summary, status: agent.state.detail.status }
+                            ? {
+                                ...summary,
+                                status: agent.state.detail.status,
+                                runtimeMetadata: agent.state.detail.runtimeMetadata,
+                              }
                             : summary,
                         ),
                       })),
