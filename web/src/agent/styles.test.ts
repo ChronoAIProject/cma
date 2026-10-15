@@ -19,7 +19,7 @@ function declaration(rules: CSSRuleList, selector: string): CSSStyleDeclaration 
   return (rule as CSSStyleRule).style;
 }
 
-describe('pre-refactor conversation geometry with readable labels', () => {
+describe('conversation geometry with readable labels', () => {
   it('retains the original Thinking spacing and capped body without lowering contrast', () => {
     const rules = sheet('Thinking.css');
     expect(declaration(rules, '.thinking').getPropertyValue('margin-bottom')).toBe('');
@@ -34,15 +34,18 @@ describe('pre-refactor conversation geometry with readable labels', () => {
     );
   });
 
-  it('retains the original composer capsule and internal spacing with a readable placeholder', () => {
+  it('centers the compact composer field and lets its editor expand upward', () => {
     const rules = sheet('Agent.css');
     const capsule = declaration(rules, '.agent-composer__capsule');
-    expect(capsule.getPropertyValue('gap')).toBe('12px');
-    expect(capsule.getPropertyValue('padding')).toBe('10px 0px 0px');
-    expect(capsule.getPropertyValue('border-radius')).toBe('22px');
-    expect(capsule.getPropertyValue('background')).toBe('var(--dsw-specific-input-major)');
+    expect(capsule.getPropertyValue('height')).toBe('38px');
+    expect(capsule.getPropertyValue('position')).toBe('relative');
+    const editor = declaration(rules, '.agent-composer__editor');
+    expect(editor.getPropertyValue('position')).toBe('absolute');
+    expect(editor.getPropertyValue('bottom')).toBe('0');
+    expect(editor.getPropertyValue('background')).toBe('var(--dsw-specific-input-major)');
     const field = declaration(rules, '.agent-composer textarea');
-    expect(field.getPropertyValue('max-height')).toBe('336px');
+    expect(field.getPropertyValue('max-height')).toBe('36px');
+    expect(field.getPropertyValue('padding')).toBe('6px 12px 6px 16px');
     expect(field.getPropertyValue('font-size')).toBe('16px');
     expect(field.getPropertyValue('line-height')).toBe('24px');
     expect(
@@ -50,24 +53,19 @@ describe('pre-refactor conversation geometry with readable labels', () => {
     ).toBe('var(--dsw-alias-label-caption)');
   });
 
-  it('keeps Send and Stop at the original 34px circle with a separate 44px mobile hit area', () => {
+  it('uses compact 32px Send and Stop controls with 44px mobile targets', () => {
     const rules = sheet('Agent.css');
     const submit = declaration(rules, '.agent-composer .agent-composer__submit');
-    expect(submit.getPropertyValue('width')).toBe('34px');
-    expect(submit.getPropertyValue('height')).toBe('34px');
+    expect(submit.getPropertyValue('width')).toBe('32px');
+    expect(submit.getPropertyValue('height')).toBe('32px');
     expect(submit.getPropertyValue('border-radius')).toBe('50%');
     const media = Array.from(rules).find(
       (rule) => rule instanceof CSSMediaRule && rule.conditionText === '(max-width: 30rem)',
     ) as CSSMediaRule;
     const narrow = declaration(media.cssRules, '.agent-composer .agent-composer__submit');
-    expect(narrow.getPropertyValue('width')).toBe('');
-    expect(narrow.getPropertyValue('height')).toBe('');
-    expect(narrow.getPropertyValue('position')).toBe('relative');
+    expect(narrow.getPropertyValue('width')).toBe('44px');
+    expect(narrow.getPropertyValue('height')).toBe('44px');
     expect(narrow.getPropertyValue('justify-self')).toBe('center');
-    const hit = declaration(media.cssRules, '.agent-composer__submit::after');
-    expect(hit.getPropertyValue('position')).toBe('absolute');
-    expect(hit.getPropertyValue('inset')).toBe('-5px');
-    expect(hit.getPropertyValue('content')).toBe('""');
   });
 
   it('retains the original 12px gaps in both metrics rows', () => {
