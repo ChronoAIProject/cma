@@ -121,3 +121,16 @@ These are GitHub API writes with the user's requested scope. They do not
 authenticate native Git network commands. Do not extract tokens, change the
 runtime's `gh` auth/configuration, embed credentials in Git remotes, or ask the
 user to paste a secret.
+
+## Runtime verification on 15 October 2026
+
+A disposable CMA Agent used the installed `gh api` against the existing NyxID
+connection to resolve the private `ChronoAIProject/cma` default branch `develop`
+to `bd072483a7dd96260ca6587ec97ca7697de2bdcf`, download its tarball, validate and
+extract it, and initialize a local Git workspace. The 7,688,879-byte archive has
+SHA-256 `cc73373ea42b81acb7c9c84c76ab4c2edc23955a16712611e471be2f6238ab21` and
+4,703 archive entries. An independent read of the same Pod confirmed that hash,
+README presence, `git rev-parse --is-inside-work-tree=true`, and branch `develop`.
+The test did not run repository code or perform a native Git network operation.
+This verifies the source workflow on the current runtime; new persistent system
+instructions require a separate new-Agent check after their API deployment.
