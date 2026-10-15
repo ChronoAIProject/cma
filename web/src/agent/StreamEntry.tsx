@@ -17,6 +17,7 @@ import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
 import { ActivityBody } from './Thinking';
 import { isPendingTool } from './toolStatus';
+import { UserMessage } from './UserMessage';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -46,7 +47,7 @@ export function StreamEntry({
       >
         <span className="message__role">{message.role === 'user' ? 'You' : 'Agent'}</span>
         {message.role === 'user' ? (
-          <p>{message.content}</p>
+          <UserMessage content={message.content} />
         ) : (
           <MessageContent content={message.content} streaming={message.status === 'streaming'} />
         )}
