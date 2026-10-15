@@ -204,6 +204,13 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "org-inventory-invalid-authority-injection",
         Classification::QueryShape,
     ),
+    ("agent-service-access-missing-key", Classification::Local),
+    ("agent-service-access-invalid-key", Classification::Local),
+    ("agent-service-access-invalid-json", Classification::RawJson),
+    (
+        "agent-service-access-missing-media-type",
+        Classification::MediaType,
+    ),
     ("sandbox-service-access-missing-key", Classification::Local),
     ("sandbox-service-access-invalid-key", Classification::Local),
     (

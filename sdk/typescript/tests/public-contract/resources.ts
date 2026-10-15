@@ -30,6 +30,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/agents/{id}/skills': ({ client, param }) => client.agents.skills(param('id')),
   'POST /api/v1/agents/{id}/skills': ({ client, param, body, command }) =>
     client.agents.installSkill(param('id'), body, command),
+  'PUT /api/v1/agents/{id}/service-access': ({ client, param, body, command }) =>
+    client.agents.updateServiceAccess(param('id'), body, command),
   'GET /api/v1/agents/{id}/access-requests': ({ client, param }) =>
     client.agents.accessRequests(param('id')),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/approve': ({
