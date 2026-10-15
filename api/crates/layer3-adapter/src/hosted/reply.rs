@@ -21,6 +21,7 @@ pub(super) fn expect_ack(response: ResponseFrame) -> crate::Result<()> {
 
 pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
+        ResponseFrame::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
         ResponseFrame::CacheSkillArchive { .. } => WireOperation::CacheSkillArchive,
         ResponseFrame::RuntimeStatus(_) => WireOperation::RuntimeStatus,
         ResponseFrame::ToolProxyStatus(_) => WireOperation::ToolProxyStatus,
@@ -53,6 +54,8 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
     if failure.retryable {
         AdapterError::Unavailable(detail)
+    } else if failure.code == "attachment_upload_conflict" {
+        AdapterError::OperationIdentityConflict(detail)
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
     } else {
@@ -62,6 +65,7 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
 
 pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
+        WireOperation::UploadAgentAttachment => "upload agent attachment",
         WireOperation::CacheSkillArchive => "cache skill archive",
         WireOperation::RuntimeStatus => "runtime status",
         WireOperation::ToolProxyStatus => "runtime tool endpoint status",

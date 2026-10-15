@@ -15,6 +15,7 @@ import {
 } from './discovery.js';
 import type { OperationOptions } from './http.js';
 import { Agents } from './agents.js';
+import { AgentAttachments } from './agents/attachments.js';
 import { Marketplace } from './marketplace.js';
 import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
@@ -44,6 +45,7 @@ export class Cma {
   readonly gatewayInteractions: GatewayInteractions;
   readonly eventWorkerProfiles: EventWorkerProfiles;
   readonly agents: Agents;
+  readonly agentAttachments: AgentAttachments;
   readonly resourceAccess: ResourceAccess;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
@@ -79,6 +81,7 @@ export class Cma {
     this.gatewayInteractions = new GatewayInteractions(this.#config);
     this.eventWorkerProfiles = new EventWorkerProfiles(this.#config);
     this.agents = new Agents(this.#config);
+    this.agentAttachments = new AgentAttachments(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);

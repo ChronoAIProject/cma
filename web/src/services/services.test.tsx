@@ -170,13 +170,29 @@ describe('independent CMA service navigation', () => {
     for (const kind of ['image_manager', 'event_gateway'] as const)
       expect(parseRoute(routePath({ kind }))).toEqual({ kind });
   });
+  it('shows one home brand with its adjacent build and preserves modified navigation', () => {
+    const navigate = vi.fn();
+    render(<ServiceTabs route={{ kind: 'image_manager' }} onNavigate={navigate} />);
+    const home = screen.getByRole('link', { name: 'CMA home' });
+    const build = screen.getByLabelText(/^Build /);
+    expect(home).toHaveAttribute('href', '/');
+    expect(home.nextElementSibling).toBe(build);
+    expect(build.tagName).toBe('SUB');
+    fireEvent.click(home, { ctrlKey: true });
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(home);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'home' });
+    fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+    expect(navigate).toHaveBeenLastCalledWith({ kind: 'agent_manager' });
+  });
+
   it('a gateway authorization failure remains local to the gateway', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
     vi.stubGlobal('fetch', fetcher);
     render(<ServicePage service="event-gateway">{() => <p>private channels</p>}</ServicePage>);
     expect(await screen.findByRole('link', { name: 'Sign in with NyxID' })).toHaveAttribute(
       'href',
-      '/api/event-gateway/auth/login',
+      '/auth/login?return_to=%2Fevent-gateway',
     );
     expect(screen.queryByText('private channels')).toBeNull();
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/event-gateway/auth/session');

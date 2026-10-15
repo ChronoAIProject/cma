@@ -109,6 +109,10 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
+        if let Some(update) = super::acp_observations::observation(value) {
+            self.route_update(session, update, updates).await;
+            return;
+        }
         match serde_json::from_value::<SessionUpdate>(value.clone()) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)

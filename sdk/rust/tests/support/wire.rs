@@ -22,6 +22,7 @@ pub struct Expected {
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub body: Option<Value>,
+    pub raw_body: Option<Vec<u8>>,
     pub status: u16,
     pub response_headers: BTreeMap<String, String>,
     pub response: Vec<u8>,
@@ -132,8 +133,12 @@ async fn handle(
     let bytes = to_bytes(request.into_body(), 2 * 1024 * 1024)
         .await
         .unwrap();
-    let actual = (!bytes.is_empty()).then(|| serde_json::from_slice::<Value>(&bytes).unwrap());
-    assert_eq!(actual, expected.body);
+    if let Some(raw) = expected.raw_body {
+        assert_eq!(bytes.as_ref(), raw);
+    } else {
+        let actual = (!bytes.is_empty()).then(|| serde_json::from_slice::<Value>(&bytes).unwrap());
+        assert_eq!(actual, expected.body);
+    }
     let mut response = Response::builder().status(StatusCode::from_u16(expected.status).unwrap());
     for (name, value) in expected.response_headers {
         response = response.header(name, value);
@@ -178,5 +183,6 @@ pub fn json(
         response_headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
         response: serde_json::to_vec(&response).unwrap(),
         chunks: None,
+        raw_body: None,
     }
 }

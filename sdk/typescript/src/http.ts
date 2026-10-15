@@ -31,6 +31,8 @@ export interface OperationOptions {
 export interface RequestOptions extends OperationOptions {
   readonly method?: string;
   readonly body?: unknown;
+  /** Binary body for upload endpoints; mutually exclusive with JSON body. */
+  readonly rawBody?: Blob;
   readonly headers?: HeadersInit;
   readonly expectedStatus?: number | readonly number[];
 }
@@ -211,7 +213,10 @@ async function send(
   requestId: string,
 ): Promise<CompletedResponse> {
   throwIfSignalAborted(signal);
-  let body: string | undefined;
+  if (options.body !== undefined && options.rawBody !== undefined) {
+    throw new ValidationError('request cannot contain both JSON and binary bodies');
+  }
+  let body: string | Blob | undefined = options.rawBody;
   if (options.body !== undefined) {
     try {
       body = JSON.stringify(options.body);

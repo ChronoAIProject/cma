@@ -105,6 +105,17 @@ impl CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    async fn upload_agent_attachment(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentAttachmentRequest,
+        content: Vec<u8>,
+    ) -> crate::Result<crate::AgentAttachmentReceipt> {
+        self.hosted
+            .upload_agent_attachment(handle, request, content)
+            .await
+    }
+
     async fn reserve_home_request(
         &self,
         runtime: &RuntimeProvisionRequest,
@@ -472,3 +483,6 @@ impl SandboxAdapter for CodexAdapter {
 #[cfg(test)]
 #[path = "golden_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod attachments_tests;

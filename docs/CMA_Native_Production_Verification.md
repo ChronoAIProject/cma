@@ -1,5 +1,102 @@
 # CMA native Sandbox production verification
 
+## Attachment, usage and message release — 15 October, 16:47 SGT
+
+The observed production deployment is now:
+
+| Component | Image source | Generation | Immutable image digest |
+|---|---|---|---|
+| Agent Manager | `264389425a1472d10d9215362b917274120c4f3e` | 36 | `sha256:e3f890a687980d641db113a742179e2899c0dda898f5950a8a5f28f3cebef4ee` |
+| Web | `a76ecc467c8a1fb57fceb61c810a945bfdf5c5f6` | 113 | `sha256:83fc18c4fcbd8fc8fa4edd61a4670fd295a32ef59a29529606e99678194d0946` |
+| Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
+| Default runtime | `af2f8231f74aa4c37d6f083269810a81a1c65ec4` | — | `sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d` |
+
+The three control-plane images use the existing
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02` repository
+with names `cma-api`, `cma-web` and `cma-cmaeg`. The runtime is
+`asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime`.
+Exact registry source labels, index/platform digests and image scans passed;
+no fixable HIGH or CRITICAL findings were reported. Builds used immutable Git
+archives. Agent Manager first became healthy with runtime `84ca616c` retained;
+then its default was switched to `af2f8231` and the singleton restarted, before
+Web activation. Existing owner Sandboxes retain their recorded image.
+
+All three Deployments have one Ready replica, matching observed generations,
+expected image IDs and Pod→ReplicaSet→Deployment ownership. Public asset
+`index-D4q48F_C.js` matches the running Web Pod byte for byte at SHA-256
+`958ae3a30989744194089a43d05fd5dabbebac4cd2c390e1a8d79ebf44dcb51d`.
+The expected build identity and per-reply token UI are present. The 16 shared
+login regressions passed, including common subject, anonymous rejection,
+wrong/missing-Origin write rejection, bearer/cookie conflict, allowlisted proxy
+routes and absence of a second Event Gateway browser login. No channel was
+created by the deliberately rejected write probes.
+
+The Web preserves each turn's reported input/output on its final assistant
+reply, restores those values from durable usage events, and explicitly marks
+unavailable counts. Animation never exceeds reported values. Routine reconnects
+remain quiet for 2.5 seconds; short refresh notices clear only on their applicable
+validated events. Actual history gaps and authorization failures remain distinct.
+Ordinary Responses-v2 sends no longer perform the redundant connection catalog
+preflight; backend admission and account fencing remain authoritative. The final
+combined suite passed **202 files / 1,895 tests**, TypeScript, full lint/format
+and the CSS collision check. Local 390px/1440px token component layouts were
+inspected; they are not production browser timing evidence.
+
+At **16:50:50 SGT**, the exact default policy
+`367c27e1708efb063261bf2894fb554fd3f621b80ee821324163bac4d6050379`
+had one observed Ready replica in its CMA-created warm pool. A read-only check
+verified the exact pool/template UID relation, runtime image, full-`/home` mount,
+initializer, fresh volume claim template and `OnRootMismatch` policy. This
+capacity observation does not establish prepared-Agent readiness or creation
+latency. No manual remote pool mutation was required.
+
+The runtime attachment publication passed 13 native fixtures, its runtime
+contract, full-home replay and an actual Linux upload/replay/recreation probe.
+Agent Manager includes the attachment-aware status reader, attachment API,
+first-message publication/lease repair, pause quiescence and explicit failed
+scope-request retry. Approved scope access still waits for owner resume under
+the deployed paused-Sandbox workflow. A no-pause key update is separate follow-up
+work and must not be inferred from this deployment.
+
+Event Gateway was deployed in the preceding coherent `477bf801` batch and is
+retained here. Its Docker Desktop amd64 emulation gate failed on `close_range`;
+that standard emulated build did not pass. The exact original binaries and media
+fixtures then passed the native amd64 sandbox gate and nine media tests in a
+temporary nonprivileged, credential-free CMA Pod. Derived packaging checks the
+binary/fixture hashes against the native gate receipt
+`e584ee6731a0b7560dd7c55d09c18a84166175607226510a574553a05534b0b7`.
+The temporary Pod was removed. This exception does not claim the emulated gate
+succeeded or alter the sandbox controller.
+
+**Full goal acceptance remains pending.** The preceding API477/runtime84 sample
+passed functional execution, with interface eligibility at 2.656 s, durable input
+receipt at 3.236 s and live connection publication at 4.917 s; operation success
+and Agent Ready arrived at 5.406 s, so its complete performance result failed.
+The prior actual resume was approximately 21.7 s. These results belong to the
+preceding source pair; fresh exact-release lifecycle measurements are still
+required. Public HTTP/artifact verification does not establish browser paint
+latency or external OAuth/popup behavior. No available browser surface has
+provided those production measurements.
+
+After any `af2f8231` allocation, every Agent Manager reader must understand
+`agent_attachment_upload`; reverting the default cannot repair retained runtime
+status parsing. Do not restore `477bf801` or an earlier incompatible reader.
+Keep the attachment-aware `26438942` digest as the compatible floor alongside
+all earlier durable-event compatibility requirements. Preserve the original
+PVCs, histories and immutable runtime identities during any recovery.
+
+Evidence is retained locally in
+`/tmp/cma-ux-final-release-20261015/live-084714`,
+`/tmp/cma-ux-final-release-20261015/verification-084714`,
+`/tmp/cma-ux-final-release-20261015/{cma-agent-manager,cma-web}`,
+`/tmp/cma-ux-final-release-20261015/warm-pool-af2/ready-target1.json`,
+`/tmp/cma-runtime-publication-af2f8231`,
+`/tmp/cma-eg-native-gate-477bf801`, and
+`/tmp/cma-public-prepared-477bf801-runtime84-independent-02/report.json`.
+CMA remains in its original Tokyo cluster; Image Manager remains undeployed.
+No infra-owned agent-sandbox controller, RBAC or storage policy was changed.
+The following sections retain older observations and do not describe current pins.
+
 ## Immediate message display and prepared admission — 15 October, 13:29 SGT
 
 The outgoing-message change is deployed in Web source `1d337c1a`, generation

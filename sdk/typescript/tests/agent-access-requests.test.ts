@@ -81,3 +81,16 @@ it('validates service bounds and command identity before transport', async () =>
   ).toThrow(ValidationError);
   expect(test.calls).toEqual([]);
 });
+it('retains failed predecessor identity on a fresh pending consent attempt', async () => {
+  const test = transport();
+  const failed = { ...pending, id: `aar_${'a'.repeat(64)}`, status: 'failed' };
+  const next = { ...pending, id: `aar_${'b'.repeat(64)}`, retry_of: failed.id };
+  test.answer({ items: [next, failed] });
+  expect(await test.client.agents.accessRequests('agent-one')).toEqual({ items: [next, failed] });
+  for (const retry_of of ['foreign', next.id]) {
+    test.answer({ items: [{ ...next, retry_of }] });
+    await expect(test.client.agents.accessRequests('agent-one')).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+  }
+});

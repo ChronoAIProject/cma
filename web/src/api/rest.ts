@@ -153,6 +153,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
       return value;
     },
+    uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
@@ -235,6 +236,14 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       return {
         agentId: value.agent_id,
         throughSeq: value.through_seq,
+        currentTurn:
+          value.current_turn === undefined
+            ? undefined
+            : {
+                turnSequence: value.current_turn.turn_sequence,
+                inputTokens: value.current_turn.input_tokens,
+                outputTokens: value.current_turn.output_tokens,
+              },
         inputTokens: value.input_tokens,
         outputTokens: value.output_tokens,
         contextUsed: value.context_used,

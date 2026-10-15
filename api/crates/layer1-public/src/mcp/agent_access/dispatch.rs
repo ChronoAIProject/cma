@@ -30,21 +30,11 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
             return rpc_error(id, -32602, "Invalid tool arguments");
         }
         return match state.admission.request(requester, proposal).await {
-            Ok(request) => {
-                let value = json!({
-                    "request_id":request.id,"agent_id":request.agent_id,"status":request.status,
-                    "services":request.services,
-                    "message":"The request is recorded. Service access changes only after explicit owner approval and CMA confirmation.",
-                });
-                result(
-                    id,
-                    json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false}),
-                )
-            }
+            Ok(request) => result(id, super::reply::admitted(request)),
             Err(error) => {
                 let message = match error {
                     AgentAccessError::Conflict => {
-                        "This request key is already bound to a different proposal"
+                        "This request key or retry predecessor is already bound to another attempt. Reuse the exact original proposal to observe it. After a failed result, use its next_request with a new request_key and retry_of; never change an existing key's services or reason."
                     }
                     AgentAccessError::Invalid => "The access request is invalid",
                     AgentAccessError::NotFound | AgentAccessError::Forbidden => {
@@ -104,7 +94,7 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
                     "protocolVersion":VERSION,
                     "serverInfo":{"name":"cma-agent-access","version":"1"},
                     "capabilities":{"tools":{"listChanged":false}},
-                    "instructions":"Use agent_key_scope_revision when a required NyxID service lacks permission. Reuse request_key on retries. The tool only requests owner consent; wait for CMA to confirm the update before retrying the service.",
+                    "instructions":"Use agent_key_scope_revision when a required NyxID service lacks permission. Reuse request_key only to recover or observe the same attempt. When status is failed and the owner asks to retry, submit the returned next_request as a new attempt; keep that new key on transport retries. Failed attempts retain their history and do not grant consent to a new attempt. Wait for owner approval and CMA confirmation before retrying the service.",
                 }),
             )
         }
@@ -137,8 +127,9 @@ fn list() -> Value {
             "type":"object","additionalProperties":false,
             "required":["request_key","services","reason"],
             "properties":{
-                "request_key":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.:-]+$","description":"Stable idempotency key for this exact proposal; reuse it on retries."},
-                "services":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}},
+                "request_key":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.:-]+$","description":"Stable idempotency key for this exact attempt. Reuse for transport retries or observation. A failed result is permanent for this key; an owner-requested new attempt uses next_request's fresh key and retry_of."},
+                "retry_of":{"type":"string","pattern":"^aar_[a-f0-9]{64}$","description":"Failed request ID being retried. Use the fresh request_key from next_request. The failed record remains unchanged and the new attempt requires fresh owner approval. Active, denied or succeeded requests cannot be retried this way."},
+                "services":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"description":"Canonical NyxID service slugs, not display names. GitHub repository access uses api-github (GitHub OAuth) or api-github-pat (Personal Access Token); request the applicable service, not the unregistered slug github.","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}},
                 "reason":{"type":"string","minLength":1,"maxLength":2048,"description":"Explain to the owner why the Agent needs these services."},
             },
         },

@@ -133,6 +133,20 @@ pub(super) fn project(
                     total_tokens: input_tokens.saturating_add(*output_tokens),
                 })
             }
+            AgentLogKind::UsageUpdated {
+                turn_sequence: Some(observed_turn),
+                turn_input_tokens,
+                turn_output_tokens,
+                ..
+            } if *observed_turn == turn => {
+                response.usage = Some(ResponseUsage {
+                    input_tokens: *turn_input_tokens,
+                    output_tokens: *turn_output_tokens,
+                    input_tokens_details: InputTokenDetails::default(),
+                    output_tokens_details: OutputTokenDetails::default(),
+                    total_tokens: turn_input_tokens.saturating_add(*turn_output_tokens),
+                });
+            }
             AgentLogKind::ConversationGap { frames } if turn_active => {
                 lost_frames = lost_frames.saturating_add(*frames);
             }

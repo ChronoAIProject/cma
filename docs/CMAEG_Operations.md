@@ -151,10 +151,10 @@ applies with all media flags off.**
 | `CMAEG_MONGODB_URI` | connection URI | Required by the management integration tests and the independent gateway store | MongoDB connection for Event Gateway channel and credential records; keep it in a Secret. |
 | `CMAEG_MONGODB_DATABASE` | database name | Required by the management integration tests and the independent gateway store | Database name for Event Gateway records. |
 | `CMAEG_MONGODB_AUTHORITY_MODE` | `isolated` or `shared-schema` | Defaults to `isolated`; production uses `shared-schema` in `chrono-bot` | Shared mode admits a database-scoped credential while migrations and stores remain confined to `eg_*` collections. |
-| `CMAEG_NYXID_CLIENT_ID` | string | Required when browser service authentication is enabled | NyxID OAuth client ID used by the Event Gateway management surface. |
-| `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | NyxID OAuth client secret; inject through a Secret and never a ConfigMap. |
-| `CMAEG_WEB_ORIGIN` | origin URL | Required when browser service authentication is enabled | Exact browser origin accepted by Event Gateway authentication and callback checks. |
-| `CMAEG_COOKIE_KEY_FILE` | file path | Required when browser service authentication is enabled | Mounted key material used to sign CMAEG browser cookies. |
+| `CMAEG_NYXID_CLIENT_ID` | string | Required with independent Gateway storage | Reuses Agent Manager's NyxID client ID through its Deployment ConfigMap reference; the Gateway independently verifies the forwarded bearer. |
+| `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | Reuses Agent Manager's client secret through a Secret reference; never put it in a ConfigMap. |
+| `CMAEG_WEB_ORIGIN` | legacy name | Unused by the shared portal | Retained compatibility constant; exact-origin browser checks now run in Agent Manager's portal bridge. |
+| `CMAEG_COOKIE_KEY_FILE` | legacy name | Unused by the shared portal | Retained compatibility constant; the portal uses the existing CMA browser session and no separate Gateway cookie key. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
 | `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | positive integer, ms | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |

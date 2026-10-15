@@ -18,7 +18,12 @@ import type {
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
-import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
+import type {
+  AccessibleAgentSource,
+  AgentAttachment,
+  AgentProvenance,
+  AgentResources,
+} from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
@@ -135,6 +140,11 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly uploadAgentAttachment?: (
+    id: string,
+    file: File,
+    options: CommandOptions,
+  ) => Promise<AgentAttachment>;
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */

@@ -27,6 +27,7 @@ impl MongoSandboxStore {
                 }
                 return Ok(record);
             }
+            super::retry::validate(self, &requester, &proposal, &id, session).await?;
             if self
                 .agent_access_requests
                 .count_documents(

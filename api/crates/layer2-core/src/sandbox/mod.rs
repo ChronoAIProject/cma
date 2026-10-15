@@ -3,6 +3,7 @@
 mod admin;
 mod agent;
 pub mod agent_artifacts;
+pub mod agent_attachments;
 mod agent_context;
 pub mod agent_io;
 pub mod agent_live_skills;
@@ -19,6 +20,7 @@ mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
 mod agent_reads_fold;
+mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -31,6 +33,11 @@ mod checkpoint_writer_recovery;
 pub mod control;
 mod conversation;
 mod conversation_fold;
+mod conversation_observation;
+mod conversation_observation_fold;
+pub use conversation_observation::{
+    AgentObservations, AgentRuntimeMetadata, AgentTurnUsage, AgentUsageCheckpoint,
+};
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;

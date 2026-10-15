@@ -212,6 +212,7 @@ pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
         // JSON quotation keeps user supplied URL/ref data distinct from instructions.
         let repository = serde_json::to_string(repository).expect("repository is serializable");
         message.push_str(&format!("The user selected this GitHub repository: {repository}. Set up this repository in your current workspace using your available tools. Preserve any existing files and changes. "));
+        message.push_str("For missing GitHub permission, the NyxID service slug is api-github (GitHub OAuth), or api-github-pat when the user uses the Personal Access Token service. Request the applicable service through CMA. ");
     } else {
         message.push_str("Keep this workspace ready for the user's next task. ");
     }

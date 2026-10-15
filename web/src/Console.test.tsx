@@ -79,9 +79,9 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
-  expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
+  expect(screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ })).toBeInTheDocument();
   await act(async () => accept());
-  expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('treeitem', { name: /Sandbox Machine - 1/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await actor.click(screen.getByText('Deletion progress (1)'));
   await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
@@ -132,7 +132,7 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   );
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
-  const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
+  const sandbox = screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
   expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
