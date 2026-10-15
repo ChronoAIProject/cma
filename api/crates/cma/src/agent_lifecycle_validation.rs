@@ -212,7 +212,7 @@ pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
         // JSON quotation keeps user supplied URL/ref data distinct from instructions.
         let repository = serde_json::to_string(repository).expect("repository is serializable");
         message.push_str(&format!("The user selected this GitHub repository: {repository}. Set up this repository in your current workspace using your available tools. Preserve any existing files and changes. "));
-        message.push_str("For missing GitHub permission, the NyxID service slug is api-github (GitHub OAuth), or api-github-pat when the user uses the Personal Access Token service. Request the applicable service through CMA. ");
+        message.push_str("The genuine gh CLI already routes GitHub API requests through CMA's api-github (GitHub OAuth) service. If that access is missing, request api-github through agent_key_scope_revision and wait for CMA's confirmed update; no Sandbox restart is needed. This API connection does not authenticate native git clone/fetch/push. If setup requires that unavailable transport, report the limitation and preserve the workspace. ");
     } else {
         message.push_str("Keep this workspace ready for the user's next task. ");
     }
