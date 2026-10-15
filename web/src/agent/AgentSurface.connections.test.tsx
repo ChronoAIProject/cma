@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../test/agent';
+import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
+import { createClient } from '@chronoai/cma-sdk';
+import { AgentV2Session } from './transport/client';
+import { agentTransportJournal } from './transport/journal';
+import { prepareAgentConnections } from '../connections/preparation';
 import { workspaceFixture } from '../test/hierarchy';
 import { ConnectionFailure, connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentSurface } from './AgentSurface';
@@ -40,7 +44,9 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-async function setup() {
+async function setup(prepared = false, detailsOpen = false, finishConnections?: () => void) {
+  const lifecycleClient = agentClient();
+  if (prepared) prepareAgentConnections(lifecycleClient, 'agt_1', 'owner').handoff();
   const send = vi.fn<AgentController['send']>().mockResolvedValue(undefined);
   const controller: AgentController = {
     state: {
@@ -48,6 +54,16 @@ async function setup() {
       detail: AGENT_DETAIL,
       workspace: workspaceFixture(),
       conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+      ...(prepared
+        ? {
+            v2: new AgentV2Session(
+              createClient(),
+              agentTransportJournal(sessionStorage, 'owner', 'agt_1'),
+              'owner',
+              { storage: sessionStorage, currentUser: async () => 'owner' },
+            ),
+          }
+        : {}),
     },
     inputAvailability: { allowed: true },
     resourceAvailability: { state: 'live', runtimeVersion: 'runtime-one' },
@@ -64,18 +80,102 @@ async function setup() {
       agentId="agt_1"
       viewerId="owner"
       controller={controller}
-      detailsOpen={false}
+      lifecycleClient={prepared ? lifecycleClient : undefined}
+      detailsOpen={detailsOpen}
       onDetailsOpenChange={vi.fn()}
       onNavigate={vi.fn()}
     />,
   );
   const field = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(field, { target: { value: '  Keep this message  ' } });
+  if (finishConnections !== undefined) await act(async () => finishConnections());
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
-  return { ...view, send, field, controller };
+  return { ...view, send, field, controller, lifecycleClient };
 }
 
 const submit = () => fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+
+it('consumes a fresh creation check for the first v2 send and checks the next send normally', async () => {
+  const test = await setup(true);
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+  await act(async () => submit());
+  expect(test.send).toHaveBeenCalledExactlyOnceWith('Keep this message', expect.any(Function));
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+  fireEvent.change(test.field, { target: { value: 'Next message' } });
+  await act(async () => submit());
+  expect(connectionClient.check).toHaveBeenCalledTimes(2);
+  expect(test.send).toHaveBeenLastCalledWith('Next message', expect.any(Function));
+});
+
+it('checks again after opening settings instead of reusing creation connection readiness', async () => {
+  const test = await setup(true);
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      lifecycleClient={test.lifecycleClient}
+      controller={test.controller}
+      detailsOpen
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  submit();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+});
+
+it('does not replenish creation readiness while initially open settings are awaiting connections', async () => {
+  let finish!: (report: ConnectionReport) => void;
+  vi.mocked(connectionClient.check).mockReturnValueOnce(
+    new Promise((resolve) => (finish = resolve)),
+  );
+  const test = await setup(true, true, () => finish(connected));
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      lifecycleClient={test.lifecycleClient}
+      controller={test.controller}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  submit();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+  expect(connectionClient.check).toHaveBeenCalledTimes(3);
+});
+
+it('discards creation readiness when the observed service grants change', async () => {
+  const test = await setup(true);
+  if (test.controller.state.status !== 'ready') throw new Error('Ready fixture');
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      lifecycleClient={test.lifecycleClient}
+      controller={{
+        ...test.controller,
+        state: {
+          ...test.controller.state,
+          detail: { ...test.controller.state.detail, reach: ['new-service'] },
+        },
+      }}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  submit();
+  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
+  expect(test.send).not.toHaveBeenCalled();
+});
 
 it('cancels a pending connection check when access becomes uncertain and never releases its captured send', async () => {
   const test = await setup();
