@@ -60,6 +60,8 @@ data:
   CMAEG_ACCEPT_BUDGET_MS: "20000"
   CMAEG_TURN_TIMEOUT_MS: "600000"
   CMAEG_NYXID_REPLY_TIMEOUT_MS: "5000"
+  # Enable only after verifying NyxID ordinary/thread splitting and full-send receipts.
+  CMAEG_NYXID_COMPLETE_REPLIES: "false"
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."

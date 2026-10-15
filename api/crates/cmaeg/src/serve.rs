@@ -13,7 +13,10 @@ use crate::{
 };
 
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
-pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) async fn serve(
+    config: Config,
+    complete_replies: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
@@ -55,6 +58,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_complete_replies(complete_replies)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
