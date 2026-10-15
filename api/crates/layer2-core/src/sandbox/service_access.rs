@@ -142,7 +142,7 @@ impl Sandbox {
                 &scope.services,
                 at.into(),
             )?;
-            return if &actual == scope && &expected == next {
+            return if &actual == scope.as_ref() && &expected == next {
                 Ok(())
             } else {
                 Err(invalid_access())

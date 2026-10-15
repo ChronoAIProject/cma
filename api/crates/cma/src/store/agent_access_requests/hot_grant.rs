@@ -103,7 +103,9 @@ async fn apply(
         .revise_live_service_access(&record.requester.owner, &services, at.clone())
         .map_err(|_| AgentAccessError::Conflict)?;
     let floor = scope.credential_generation_floor;
-    let event = SandboxEventKind::ServiceAccessRevised { scope };
+    let event = SandboxEventKind::ServiceAccessRevised {
+        scope: Box::new(scope),
+    };
     current
         .validate_service_access_transaction(&sandbox, &event, &at)
         .map_err(|_| AgentAccessError::Conflict)?;
