@@ -37,9 +37,14 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: TargetedControlSubmission,
     ) -> Result<TargetedControlStatusView, TargetedControlError> {
-        let (authorized, request) = self
+        let (authorized, mut request) = self
             .prepare_targeted(context, credential, source, submission)
             .await?;
+        // Both store phases share one retry scheduling budget. Active database
+        // attempts and ambiguous commits must still finish normally; this is
+        // separate from the original credential authority deadline.
+        request.retry_deadline =
+            Some(tokio::time::Instant::now() + std::time::Duration::from_secs(5));
         let resource = ResourceTarget::Agent {
             agent_id: request.command.envelope.agent_id.clone(),
         };

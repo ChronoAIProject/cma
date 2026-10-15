@@ -10,6 +10,9 @@ pub struct TargetedControlReservation {
     /// Fresh internal authorization observation, independent of original intent.
     pub observed_agent_revision: u64,
     pub agent_created_at: String,
+    /// Request-local retry scheduling budget shared by inspection and admission.
+    /// This does not alter credential authority, fingerprints or persisted receipts.
+    pub retry_deadline: Option<tokio::time::Instant>,
 }
 
 impl TargetedControlReservation {

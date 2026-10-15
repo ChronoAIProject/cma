@@ -26,7 +26,8 @@ pub(super) async fn apply(
             "scope": request.command.scope(), "key_sha256": &request.command.key_sha256,
         })
         .session(&mut *session)
-        .await?
+        .await
+        .map_err(|error| trace_rejection(request, "existing_lookup", error.into()))?
         .as_ref()
         .map(|document| request.replay(records::read(document)?, binding(document)?))
         .transpose()?;
@@ -38,7 +39,8 @@ pub(super) async fn apply(
             .agent_commands
             .find_one(doc! { "_id": existing.binding.response_command_id.as_str() })
             .session(&mut *session)
-            .await?
+            .await
+            .map_err(|error| trace_rejection(request, "existing_response", error.into()))?
             .as_ref()
             .map(records::read)
             .transpose()?
@@ -46,23 +48,20 @@ pub(super) async fn apply(
         existing
             .binding
             .validate_response(&existing.record, &response)?;
-        fences::resources(store, &agent, &parent, session)
-            .await
-            .map_err(|error| trace_rejection(request, "resources", error))?;
+        fences::resources(store, request, &agent, &parent, session).await?;
         return Ok(TargetedControlInspection::Existing(Box::new(existing)));
     }
     let stale = request.command.expected_agent_revision < agent.revision;
     if mode == Mode::Lookup || (mode == Mode::Inspect && !stale) {
-        fences::resources(store, &agent, &parent, session)
-            .await
-            .map_err(|error| trace_rejection(request, "resources", error))?;
+        fences::resources(store, request, &agent, &parent, session).await?;
         return Ok(TargetedControlInspection::Missing);
     }
     let response = store
         .agent_commands
         .find_one(doc! { "response_id": request.target.response_id.as_str() })
         .session(&mut *session)
-        .await?
+        .await
+        .map_err(|error| trace_rejection(request, "response_lookup", error.into()))?
         .as_ref()
         .map(records::read)
         .transpose()?
@@ -72,9 +71,7 @@ pub(super) async fn apply(
         // This successful outcome is returned only after commit. Writing the
         // current resources conflicts with any in-flight older admission;
         // the monotonically newer Agent revision then rules out later admission.
-        fences::resources(store, &agent, &parent, session)
-            .await
-            .map_err(|error| trace_rejection(request, "resources", error))?;
+        fences::resources(store, request, &agent, &parent, session).await?;
         return Ok(TargetedControlInspection::NotAdmitted);
     }
     request
@@ -121,7 +118,8 @@ pub(super) async fn apply(
     let changed = store.agent_commands.update_one(
         doc! { "_id": result.binding.command_id.as_str(), "revision": revision, "explicit_control": { "$exists": false } },
         doc! { "$set": { "explicit_control": sidecar } },
-    ).session(&mut *session).await?;
+    ).session(&mut *session).await
+        .map_err(|error| trace_rejection(request, "sidecar", error.into()))?;
     if changed.matched_count != 1 {
         return Err(trace_rejection(
             request,
