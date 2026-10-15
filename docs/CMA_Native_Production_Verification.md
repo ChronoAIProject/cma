@@ -1,12 +1,12 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 21:03 SGT
+## Current production — 15 October, 21:18 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `d21ba8aadf8265dd82b814ad2114b85696c5e06f` | 41 | `sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1` |
+| Agent Manager | `ba86143134dbd3e5d351348a69f0cb53bce27edb` | 42 | `sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b` |
 | Web | `0785d32885529244f9a1b0f5004d45f03849c3ab` | 119 | `sha256:a6c4a04e1202879e515b5366705ee6b1f69d88783048f0e3c556402d1023c011` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
@@ -1157,3 +1157,18 @@ The Agent recalled its pre-rollout marker and color correctly. Its Pod changed
 through explicit pause/resume, while its pinned old runtime and complete home
 remained intact. Full backend resume in this sample took 23.273 seconds; this
 is separate from the foreground input goal.
+
+## Persistent GitHub guidance API — 15 October, 21:18 SGT
+
+Agent Manager `ba861431` is deployed as generation 42 with its exact immutable
+image, source and Pod ownership verified. It has one Ready replica and zero
+restarts; authenticated public Agent and Sandbox reads pass. The image scan
+reports no fixable HIGH/CRITICAL findings. An immediate post-rollout public read
+returned 503 during backend convergence; the later exact verification passed.
+The default runtime, full-home mode, prepared target one and existing runtime
+images remain unchanged. New admissions capture versioned GitHub API guidance;
+new prepared profiles include the same bytes. Old operations replay their
+original profile/home payload. All 108 focused CMA contracts, two generic core
+publication contracts and strict Clippy passed before building. The current
+reader supports both old empty preparation and captured instructions; keep that
+reader compatibility for any API rollback.

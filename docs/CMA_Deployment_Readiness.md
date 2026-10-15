@@ -8,8 +8,8 @@ This document keeps operational instructions and dated infra diagnostics.
 The current deployment is recorded in the linked verification document and
 immutable manifests. On 15 October at 21:03 SGT, Web `0785d328` (generation 119)
 is live with smooth route/message/menu transitions and immediate visible draft
-handoff. Agent Manager remains `d21ba8aa` (generation 41) while the new captured
-GitHub API instructions are being built. The default runtime is `d97121b5`;
+handoff. Agent Manager `ba861431` (generation 42) was verified live at 21:18 SGT with
+the new captured GitHub API instructions. The default runtime is `d97121b5`;
 existing owner runtimes keep their pinned images and full-home volumes. The
 accepted repository workflow is authenticated `gh api` source download plus a
 local Git workspace, independently verified on a production testing Agent.
