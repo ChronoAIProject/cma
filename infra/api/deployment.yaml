@@ -19,17 +19,17 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-26438942"
+        chrono.ai/goal-build: "goal-20261015-8cad5bcd"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:e3f890a687980d641db113a742179e2899c0dda898f5950a8a5f28f3cebef4ee"
+        cma.chronoai.dev/api-image-digest: "sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "264389425a1472d10d9215362b917274120c4f3e"
-        cma.chronoai.dev/image-digest: "sha256:e3f890a687980d641db113a742179e2899c0dda898f5950a8a5f28f3cebef4ee"
-        cma.chronoai.dev/image-source: "264389425a1472d10d9215362b917274120c4f3e"
-        cma.chronoai.dev/local-build: "goal-20261015-26438942"
-        cma.chronoai.dev/observed-image-provenance-sha256: "1b04e1f47544b05f2d655811880d96ce05f65fbb92373f503dbec6943e51a59a"
+        cma.chronoai.dev/candidate: "8cad5bcd71134811bdaf057d080897c11a5fddfd"
+        cma.chronoai.dev/image-digest: "sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b"
+        cma.chronoai.dev/image-source: "8cad5bcd71134811bdaf057d080897c11a5fddfd"
+        cma.chronoai.dev/local-build: "goal-20261015-8cad5bcd"
+        cma.chronoai.dev/observed-image-provenance-sha256: "45099518a2b737aeb1ff1b8830fbaedbc6b18adcca1f09c6c21ed386f202d1a7"
         # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d"
+        cma.chronoai.dev/runtime-image: "sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -64,7 +64,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:e3f890a687980d641db113a742179e2899c0dda898f5950a8a5f28f3cebef4ee
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
