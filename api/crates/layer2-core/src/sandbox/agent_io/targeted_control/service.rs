@@ -101,6 +101,7 @@ impl AgentCommandService {
             target: submission.target,
             observed_agent_revision: agent.revision,
             agent_created_at: agent.created_at.clone(),
+            retry_deadline: None,
         };
         request.validate()?;
         Ok((authorized, request))
