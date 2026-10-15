@@ -5,8 +5,8 @@ use super::super::{
     AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandSubmissionSource,
 };
 use super::{
-    ResponseControlRuntimeSupport, TargetedControlInspection, TargetedControlStatusView,
-    TargetedControlSubmission,
+    ResponseControlRuntimeSupport, TargetedControlInspection, TargetedControlReservation,
+    TargetedControlStatusView, TargetedControlSubmission,
 };
 
 /// Additive interface error; v1 admission errors and persisted failures retain
@@ -46,7 +46,12 @@ impl AgentCommandService {
         let capability = command_capability(&request.command.envelope.command);
         let result = self
             .with_authority_bound(&authorized, capability, async {
-                match self.store.inspect_targeted_control(request.clone()).await? {
+                match self
+                    .store
+                    .inspect_targeted_control(request.clone())
+                    .await
+                    .map_err(|error| trace_rejection(&request, "inspect", error))?
+                {
                     TargetedControlInspection::Existing(existing) => return Ok(*existing),
                     TargetedControlInspection::NotAdmitted => {
                         return Err(TargetedControlError::NotAdmitted)
@@ -65,13 +70,19 @@ impl AgentCommandService {
                     .await?
                     .ok_or(CommandLedgerError::NotFound)?;
                 // A stale target cannot be mislabeled as an unsupported operation.
-                request.validate_target(agent, &response)?;
+                request
+                    .validate_target(agent, &response)
+                    .map_err(|error| trace_rejection(&request, "observed_target", error))?;
                 if !ResponseControlRuntimeSupport::from_runtime(&agent.capabilities)
                     .supports(&request.command.envelope.command)
                 {
                     return Err(TargetedControlError::CapabilityUnsupported);
                 }
-                Ok(self.store.reserve_targeted_control(request.clone()).await?)
+                Ok(self
+                    .store
+                    .reserve_targeted_control(request.clone())
+                    .await
+                    .map_err(|error| trace_rejection(&request, "reserve", error))?)
             })
             .await;
         self.fence(&authorized, &resource, capability).await?;
@@ -79,4 +90,21 @@ impl AgentCommandService {
         let result = request.replay(result.record, Some(result.binding))?;
         Ok(TargetedControlStatusView::from_record(&result))
     }
+}
+
+fn trace_rejection(
+    request: &TargetedControlReservation,
+    stage: &'static str,
+    error: CommandLedgerError,
+) -> CommandLedgerError {
+    tracing::warn!(
+        agent_id = %request.command.envelope.agent_id,
+        response_id = %request.target.response_id,
+        expected_agent_revision = request.command.expected_agent_revision,
+        observed_agent_revision = request.observed_agent_revision,
+        stage,
+        code = error.code(),
+        "response control public admission refused"
+    );
+    error
 }
