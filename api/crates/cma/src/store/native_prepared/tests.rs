@@ -13,6 +13,7 @@ pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod installation_transfer_tests;
 pub(crate) mod open_ready_fixture;
+mod tool_enrollment_tests;
 mod workspace_proof_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";

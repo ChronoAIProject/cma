@@ -25,6 +25,22 @@ pub(in crate::store) async fn prepared_conversation(
         return Ok(None);
     }
     let tree = lineage.worktree.as_ref().ok_or_else(fail)?;
+    // Preparation belongs to its one adopted Agent, not every later Agent in
+    // the same Sandbox. Ordinary children enroll their own fresh tool binding.
+    // A different identity must never borrow any part of the prepared handoff.
+    if agent.id != prepared.id {
+        if agent.work.warm_conversation_id.is_some()
+            || agent.worktree_id == prepared.worktree_id
+            || tree.id == prepared.worktree_id
+            || agent.origin
+                == (AgentOrigin::Lifecycle {
+                    operation_id: owned.operation_id.clone(),
+                })
+        {
+            return Err(fail());
+        }
+        return Ok(None);
+    }
     let conversation = prepared.conversation_id.as_ref().ok_or_else(fail)?;
     let expected = AgentOpenRequest::new(
         format!("agent:{}:open:v1", prepared.id),
