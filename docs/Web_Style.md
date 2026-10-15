@@ -1020,12 +1020,15 @@ identity changes. Mounting a conversation does not start machine-resource polls.
 
 The conversation footer contains Context quota and cumulative Agent input/output
 tokens, including earlier turns and preserved across compaction. The Thinking
-row shows the current turn's input/output totals. Unreported usage says waiting;
-it is never estimated from text, elapsed time or the context quota. Each reported
+row shows the current turn's input/output totals. Unreported input and output
+each say unavailable, with an explanation that some existing Agents only report
+totals after a turn finishes. Missing counts are never displayed as zero or
+estimated from text, elapsed time or the context quota. Each reported
 increase animates towards that actual value over 600ms, never beyond it. Values
 use tabular numerals; reduced motion and hidden documents settle immediately.
 Accessible labels expose the actual count without announcing every animation
-frame. A new turn resets only its own counters.
+frame. The cumulative footer uses the same observed-count animation. A new turn
+resets only its own counters.
 
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
@@ -2164,3 +2167,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Unify dialogs at centered 60vw/60dvh bounds; replace creation steps with confirmed circular progress; move the sole brand/build to the global home link; use runtime directory and description labels; fix scope/skill row heights; retain Agent navigation history and cursor replay; move machine metrics to Sandbox details and show cumulative/current-turn tokens with bounded observed-count animation. |
 
 | 2026-10-15 | Accept pasted images and dropped or selected files in the message composer. Show fixed-height upload records, image thumbnails, bounded two-file concurrency, individual retry/removal, and compact sent-file records. Wait for persistent upload receipts before sending exact sandbox paths. Retain up to six viewer-scoped drafts and ready attachments across navigation; abort in-flight uploads on departure and keep explicit same-key retry. |
+
+| 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
