@@ -29,6 +29,10 @@ export class AgentV2Session {
     this.responses = sdk.responsesV2;
   }
 
+  get owner(): string {
+    return this.user;
+  }
+
   async authorize(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     this.journal.read();
@@ -60,10 +64,12 @@ export class AgentV2Session {
     input: string,
     onAccepted: (receipt: V2ResponseReceipt) => void,
     signal?: AbortSignal,
+    onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
   ) {
     await this.authorize(signal);
     return submitAgentInput(this.sdk, this.journal, input, {
       onAccepted,
+      onReceiptObserved,
       signal,
       authorize: () => this.authorize(signal),
     });

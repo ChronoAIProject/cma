@@ -11,6 +11,7 @@ import type { CmaWebClient, CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
 import type { AgentV2Session } from './transport/client';
+import type { MessageAcceptance } from './controllerTypes';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 
 interface Options {
@@ -76,7 +77,8 @@ export function useAgentActions({
   const run = useCallback(
     async (
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
-      onAccepted?: () => void,
+      onAccepted?: (receipt?: MessageAcceptance) => void,
+      onReceiptObserved?: (receipt: MessageAcceptance) => void,
     ) => {
       if (
         currentContext.current !== context ||
@@ -117,12 +119,16 @@ export function useAgentActions({
           } else
             await session.send(
               approval,
-              () => {
+              (receipt) => {
                 if (controller.signal.aborted || currentContext.current !== context) return;
                 accepted = true;
-                onAccepted?.();
+                onAccepted?.(receipt);
               },
               controller.signal,
+              (receipt) => {
+                if (!controller.signal.aborted && currentContext.current === context)
+                  onReceiptObserved?.(receipt);
+              },
             );
           return;
         }
@@ -148,7 +154,7 @@ export function useAgentActions({
               if (controller.signal.aborted || event.threadId !== agentId) return;
               if (!accepted && event.type !== 'RUN_ERROR') {
                 accepted = true;
-                onAccepted?.();
+                onAccepted?.({ runId: event.runId });
               }
               applyLive(event);
             },

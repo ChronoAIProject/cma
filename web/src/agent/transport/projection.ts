@@ -47,6 +47,15 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
               turnSequence: item.response_binding.turn_sequence,
             },
     };
+  if (item.kind?.type === 'message' && item.kind.role === 'user' && state.responseBinding)
+    next = {
+      ...next,
+      messages: next.messages.map((message) =>
+        message.id === `event:${item.sequence}`
+          ? { ...message, commandId: state.responseBinding!.commandId }
+          : message,
+      ),
+    };
   if (next.activeRunId === undefined) next = { ...next, responseBinding: undefined };
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
     next = {

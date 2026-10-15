@@ -191,6 +191,12 @@
   line-height: 18px;
 }
 
+.message__delivery {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .approval__eyebrow {
   display: block;
   margin-bottom: 4px;
