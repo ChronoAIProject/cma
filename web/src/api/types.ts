@@ -141,7 +141,12 @@ export interface Worktree {
   readonly agentId?: string;
 }
 
+export interface AgentRuntimeMetadata {
+  readonly workingDirectory?: string;
+  readonly description?: string;
+}
 export interface AgentSummary {
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly worktreeId: string;
   readonly workspaceId: string;
@@ -193,6 +198,7 @@ export interface FirstMessageState {
 }
 
 export interface AgentDetail {
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly status: AgentStatus;
   /** Current server proof of the lifecycle-owned bootstrap lineage. */
@@ -260,6 +266,11 @@ export interface AgentEvent {
 }
 
 export interface AgentUsage {
+  readonly currentTurn?: {
+    readonly turnSequence: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly agentId: string;
   readonly throughSeq: number;
   readonly inputTokens: number;

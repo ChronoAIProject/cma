@@ -258,6 +258,7 @@ impl AgentAdmission {
             capabilities: self.capabilities.clone(),
             status: AgentStatus::Starting,
             conversation: ConversationState {
+                observations: Default::default(),
                 settings: None,
                 conversation_id: None,
                 runtime_generation: None,

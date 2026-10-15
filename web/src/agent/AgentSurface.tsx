@@ -16,7 +16,7 @@ import './Agent.css';
 import { AgentHeader } from './AgentHeader';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
-import { Resources } from './Resources';
+import { UsageFooter } from './UsageFooter';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
@@ -27,6 +27,7 @@ import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
+import type { AgentViewPosition } from './viewPosition';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -37,6 +38,7 @@ interface AgentSurfaceProps {
   readonly viewerId?: string;
   readonly agentId: string;
   readonly controller: AgentController;
+  readonly viewPosition?: AgentViewPosition;
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
@@ -72,6 +74,7 @@ export function AgentSurface({
   draft,
   agentId,
   controller,
+  viewPosition,
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
@@ -85,7 +88,9 @@ export function AgentSurface({
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
-    state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
+    state.status === 'ready'
+      ? `${state.detail.runtimeMetadata?.description || state.detail.title || 'Untitled agent'} · CMA`
+      : undefined;
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -176,7 +181,8 @@ export function AgentSurface({
 
   const { detail, conversation } = state;
   const status = detail.status;
-  const title = detail.title?.trim() || 'Untitled agent';
+  const title =
+    detail.runtimeMetadata?.description?.trim() || detail.title?.trim() || 'Untitled agent';
   const pausedNotice =
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice
@@ -204,6 +210,7 @@ export function AgentSurface({
         agentId={agentId}
         owner={viewerId}
         granted={detail.reach}
+        sandboxStatus={detail.sandbox.status}
         enabled={!readOnly && viewerId !== undefined}
       />
       <AgentHeader
@@ -223,7 +230,7 @@ export function AgentSurface({
               onNavigate={onNavigate}
             />
             <span aria-hidden="true">/</span>
-            <span>{detail.workspace.name}</span>
+            <span>{detail.runtimeMetadata?.workingDirectory || detail.workspace.path}</span>
             <span aria-hidden="true">/</span>
             <span>Agent</span>
           </>
@@ -319,6 +326,7 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          viewPosition={viewPosition}
           conversation={conversation}
           optimisticMessages={optimistic.messages}
           approvalBusy={approvalBusy}
@@ -350,6 +358,27 @@ export function AgentSurface({
           controlsUnavailable={controller.controlsUnavailable}
           requestPending={controller.pendingMessage !== undefined}
           acceptedMessage={controller.acceptedMessage}
+          uploadAttachment={
+            readOnly ||
+            verified === undefined ||
+            lifecycleClient?.uploadAgentAttachment === undefined
+              ? undefined
+              : async (file, options) => {
+                  const uploaded = await lifecycleClient.uploadAgentAttachment!(
+                    agentId,
+                    file,
+                    options,
+                  );
+                  if (
+                    uploaded.agentId !== agentId ||
+                    !uploaded.path.startsWith('/home/attachments/')
+                  )
+                    throw new Error(
+                      'The upload could not be verified for this Agent. Retry the upload.',
+                    );
+                  return uploaded;
+                }
+          }
           inputAvailability={
             readOnly
               ? {
@@ -375,20 +404,30 @@ export function AgentSurface({
           onSend={async (content, onAccepted) => {
             if (readOnly || verified === undefined) return;
             const message = optimistic.begin(content);
+            const send = () => {
+              void controller
+                .send(
+                  content,
+                  (receipt) => {
+                    if (message.accepted(receipt)) onAccepted();
+                  },
+                  message.observed,
+                )
+                .then(message.settled, message.settled);
+            };
+            if (
+              state.v2?.owner === (viewerId ?? verified.owner) &&
+              controller.resourceAvailability.state === 'live'
+            ) {
+              // The transport rechecks identity and the backend admits this durable
+              // command. Runtime permission requests use the Agent access dialog.
+              send();
+              return;
+            }
             await connections.checkAndRun(
               { type: 'agent', id: agentId },
               viewerId ?? verified.owner,
-              () => {
-                void controller
-                  .send(
-                    content,
-                    (receipt) => {
-                      if (message.accepted(receipt)) onAccepted();
-                    },
-                    message.observed,
-                  )
-                  .then(message.settled, message.settled);
-              },
+              send,
               state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
               message.cancelled,
             );
@@ -405,14 +444,7 @@ export function AgentSurface({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      <Resources
-        key={agentId}
-        agentId={agentId}
-        sandboxId={detail.sandbox.id}
-        sandboxProfile={detail.sandbox.profile}
-        availability={controller.resourceAvailability}
-        usage={conversation.usage}
-      />
+      <UsageFooter usage={conversation.usage} />
     </section>
   );
 }

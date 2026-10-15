@@ -1,4 +1,4 @@
-import type { AgentStatus, AgentUsage } from '../api/types';
+import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
 
 export interface ConversationMessage {
   readonly order?: number;
@@ -53,6 +53,8 @@ export interface RecoveryNotice {
   readonly detail: string;
   readonly url?: string;
   readonly code?: string;
+  /** Live recovery clears only after the corresponding observation is restored. */
+  readonly clearsOn?: 'live-update' | 'recorded-turn';
 }
 
 export interface ConversationState {
@@ -69,6 +71,8 @@ export interface ConversationState {
   readonly approvals: readonly ApprovalRequest[];
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
+  readonly turnUsage?: Readonly<Record<string, NonNullable<AgentUsage['currentTurn']>>>;
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */
   readonly activeRunStartedAt?: string;

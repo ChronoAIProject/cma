@@ -4,6 +4,7 @@ export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 
 export type AppRoute =
   | { readonly kind: 'home' }
+  | { readonly kind: 'agent_manager' }
   | { readonly kind: 'event_gateway' }
   | { readonly kind: 'image_manager' }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
@@ -70,7 +71,7 @@ export function parseRoute(pathname: string): AppRoute {
       case 'image-manager':
         return { kind: 'image_manager' };
       case 'agent-manager':
-        return { kind: 'home' };
+        return { kind: 'agent_manager' };
       case 'agents':
         return { kind: 'inventory' };
       case 'bots':
@@ -137,6 +138,8 @@ export function routePath(route: AppRoute): string {
   switch (route.kind) {
     case 'home':
       return '/';
+    case 'agent_manager':
+      return '/agent-manager';
     case 'event_gateway':
       return '/event-gateway';
     case 'image_manager':

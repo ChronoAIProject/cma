@@ -2,6 +2,7 @@ use layer3_adapter::wire::WireOperation;
 
 pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
     Some(match tag {
+        "upload_agent_attachment" => WireOperation::UploadAgentAttachment,
         "cache_skill_archive" => WireOperation::CacheSkillArchive,
         "runtime_status" => WireOperation::RuntimeStatus,
         "tool_proxy_status" => WireOperation::ToolProxyStatus,

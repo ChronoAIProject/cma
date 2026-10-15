@@ -387,6 +387,7 @@ fn app_return_target(value: &str) -> Result<String, ()> {
         return Err(());
     }
     match segments.as_slice() {
+        ["agent-manager" | "event-gateway" | "image-manager"] => {}
         ["t", public_id] if opaque_path_segment(public_id) => {}
         ["t", public_id, placement_id]
             if opaque_path_segment(public_id) && opaque_path_segment(placement_id) => {}

@@ -69,7 +69,9 @@ export function TreeRow({
         {icon}
       </span>
       <span className="tree-row__content">
-        <span className="tree-row__name">{label}</span>
+        <span className="tree-row__name" title={label}>
+          {label}
+        </span>
         {meta === undefined ? null : <span className="tree-row__meta">{meta}</span>}
       </span>
     </>

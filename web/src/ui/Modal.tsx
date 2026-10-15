@@ -46,7 +46,7 @@ interface ModalProps {
    * header, close key and body padding are dropped.
    */
   readonly headless?: boolean;
-  /** Extra class for width only. The card's other geometry is fixed. */
+  /** Additional surface class; card sizing and placement remain shared. */
   readonly placement?: string;
 }
 

@@ -3,6 +3,7 @@
 mod acp;
 mod acp_handshake;
 mod acp_inbound;
+mod acp_observations;
 mod acp_settings;
 mod acp_turn;
 mod adapter;

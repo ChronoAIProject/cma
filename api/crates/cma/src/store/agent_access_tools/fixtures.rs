@@ -42,7 +42,9 @@ pub(crate) fn sandbox(suffix: &str) -> Sandbox {
                 provider_key_id: "provider-key".into(),
                 provider_state_version: 1,
                 issued_at: NOW.into(),
-                expires_at: "2026-10-05T00:00:00Z".into(),
+                expires_at: layer2_core::rfc3339_at(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+                ),
                 grant_fingerprint: "a".repeat(64),
             }),
             pending: None,

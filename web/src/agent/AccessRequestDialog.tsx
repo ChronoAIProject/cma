@@ -7,17 +7,20 @@ import { ScopePicker } from './ScopePicker';
 import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
 import { accessRequests, validAccessServices, type AgentAccessRequest } from './accessRequests';
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
+import type { SandboxStatus } from '../api/types';
 
 export function AgentAccessRequests({
   agentId,
   owner,
   granted,
   enabled,
+  sandboxStatus,
 }: {
   readonly agentId: string;
   readonly owner?: string;
   readonly granted: readonly string[];
   readonly enabled: boolean;
+  readonly sandboxStatus?: SandboxStatus;
 }) {
   const [requests, setRequests] = useState<readonly AgentAccessRequest[]>([]);
   const [error, setError] = useState<string>();
@@ -80,6 +83,7 @@ export function AgentAccessRequests({
           request={request}
           owner={owner}
           granted={granted}
+          sandboxStatus={sandboxStatus}
           onUpdate={(value) =>
             setRequests((items) => items.map((item) => (item.id === value.id ? value : item)))
           }
@@ -95,6 +99,7 @@ function AccessRequestDialog({
   request,
   owner,
   granted,
+  sandboxStatus,
   onUpdate,
   onRefresh,
   onClose,
@@ -102,6 +107,7 @@ function AccessRequestDialog({
   readonly request: AgentAccessRequest;
   readonly owner?: string;
   readonly granted: readonly string[];
+  readonly sandboxStatus?: SandboxStatus;
   readonly onUpdate: (request: AgentAccessRequest) => void;
   readonly onRefresh: () => void;
   readonly onClose: () => void;
@@ -252,7 +258,8 @@ function AccessRequestDialog({
       <p>{request.reason}</p>
       <p>
         Approving briefly pauses and resumes this shared Sandbox to update its Agent keys. Other
-        Agents keep their conversation history.
+        Agents keep their conversation history. If the Sandbox is already paused, the request waits
+        until you resume it.
       </p>
       {request.status === 'pending' ? (
         <ScopePicker
@@ -271,14 +278,19 @@ function AccessRequestDialog({
       )}
       {request.status === 'connecting' || request.status === 'applying' ? (
         <p role="status">
-          Verifying the updated Agent key in the runtime. The original Agent will be notified
-          automatically after verification.
+          {sandboxStatus === 'paused'
+            ? 'The Sandbox is paused. Your approval is saved; CMA will notify the Agent after the Sandbox is running and the updated key is verified.'
+            : sandboxStatus === 'pausing'
+              ? 'Waiting for the Sandbox to finish pausing before continuing the access update.'
+              : 'Verifying the updated Agent key in the runtime. The original Agent will be notified automatically after verification.'}
         </p>
       ) : null}
       {request.status === 'failed' ? (
         <p role="alert">
-          {request.error ??
-            'Access could not be applied. The Agent has not been notified that access is ready.'}
+          {request.error === 'access_update_cannot_continue'
+            ? 'This access update could not be completed. Ask the Agent to create a new access request. Repeating this failed request does not restart it.'
+            : (request.error ??
+              'Access could not be applied. The Agent has not been notified that access is ready.')}
         </p>
       ) : null}
       {saved.error ? <p role="alert">{saved.error}</p> : null}

@@ -127,6 +127,7 @@ pub struct AgentHomeRemoveReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
+    UploadAgentAttachment,
     CacheSkillArchive,
     RuntimeStatus,
     ToolProxyStatus,
@@ -187,6 +188,7 @@ pub enum CheckpointUploadResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
+    UploadAgentAttachment(crate::AgentAttachmentUpload),
     CacheSkillArchive(crate::SkillArchive),
     RuntimeStatus(crate::RuntimeStatusRequest),
     ToolProxyStatus(crate::ToolProxyRequest),
@@ -216,6 +218,7 @@ pub enum RequestFrame {
 impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
+            Self::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
             Self::CacheSkillArchive(_) => WireOperation::CacheSkillArchive,
             Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
             Self::ToolProxyStatus(_) => WireOperation::ToolProxyStatus,
@@ -248,6 +251,7 @@ impl RequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
+    UploadAgentAttachment(crate::AgentAttachmentReceipt),
     CacheSkillArchive { sha256: String },
     RuntimeStatus(crate::RuntimeStatus),
     ToolProxyStatus(crate::ToolProxyStatus),
