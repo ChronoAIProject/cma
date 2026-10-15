@@ -36,10 +36,20 @@ does not wait behind that turn. The model's response may finish later. Scope
 updates preserve the live Sandbox, Pod and conversations. Optional services can
 also be removed through the owner's public service-access Save; all Agents in
 the Sandbox share the resulting key and the required platform baseline remains
-selected. A denied
-request never includes an automatic retry instruction. GitHub access uses the
-canonical service slug `api-github` or `api-github-pat`, selected for the owner's
-connection type; `github` is not a registered service slug.
+selected. A denied request never includes an automatic retry instruction.
+
+The runtime's genuine `gh` CLI already routes GitHub API requests through CMA's
+`api-github` (GitHub OAuth) service. Request `api-github` when that access is
+missing and wait for CMA's confirmed update; no Sandbox restart or personal
+secret is needed. `github` is not a registered service slug. Other services,
+including `api-github-pat`, remain independent requestable capabilities; granting
+`api-github-pat` alone does not configure this runtime's `gh` route.
+
+This API connection does not authenticate native `git clone`, `git fetch` or
+`git push`. An optional repository is passed to the Agent for setup using its
+available tools; CMA does not clone it on the Agent's behalf. If setup requires
+unavailable Git transport, the Agent must report that limitation and preserve
+the workspace rather than request a secret or restart the Sandbox.
 
 The owner-facing access-request list includes optional `retry_of` so clients can
 associate a new consent request with the preserved failed attempt. Approval and
