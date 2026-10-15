@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
@@ -16,12 +16,13 @@ import './Agent.css';
 import { AgentHeader } from './AgentHeader';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
-import { UsageFooter } from './UsageFooter';
+import type { SteeringMode } from './SteeringMode';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
-import { QueuedMessageNotice } from './QueuedMessageNotice';
+import { QueuedMessages } from './QueuedMessages';
+import type { UploadAttachment } from './attachments';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
@@ -86,6 +87,7 @@ export function AgentSurface({
   accessUncertain = false,
   accessAuthorized = false,
 }: AgentSurfaceProps) {
+  const [steeringMode, setSteeringMode] = useState<SteeringMode>('queue');
   const headingRef = useRef<HTMLHeadingElement>(null);
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
@@ -203,6 +205,15 @@ export function AgentSurface({
       ? 'Conversation activity is unavailable. Reconnecting.'
       : (connectionError ?? connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
+  const uploadAttachment: UploadAttachment | undefined =
+    readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
+      ? undefined
+      : async (file, options) => {
+          const uploaded = await lifecycleClient.uploadAgentAttachment!(agentId, file, options);
+          if (uploaded.agentId !== agentId || !uploaded.path.startsWith('/home/attachments/'))
+            throw new Error('The upload could not be verified for this Agent. Retry the upload.');
+          return uploaded;
+        };
 
   return (
     <section className="agent-surface">
@@ -311,8 +322,6 @@ export function AgentSurface({
         </div>
       )}
 
-      <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
-
       {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
         <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
       ) : null}
@@ -331,12 +340,36 @@ export function AgentSurface({
           user={user}
           viewPosition={viewPosition}
           conversation={conversation}
-          optimisticMessages={optimistic.messages}
+          optimisticMessages={optimistic.messages.filter(
+            (message) =>
+              message.receipt === undefined ||
+              !('commandId' in message.receipt) ||
+              !controller.queuedInputs?.managedCommandIds.has(message.receipt.commandId),
+          )}
           arrivalsEnabled={!historyIncomplete && !accessUncertain}
           approvalBusy={approvalBusy}
           approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
         >
+          {controller.queuedInputs === undefined ? null : (
+            <QueuedMessages
+              items={controller.queuedInputs.items}
+              disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
+              onEdit={controller.queuedInputs.edit}
+              onRemove={controller.queuedInputs.remove}
+              onRecover={controller.queuedInputs.recover}
+              uploadAttachment={uploadAttachment}
+              user={user}
+            />
+          )}
+          {controller.queuedInputs?.error ? (
+            <p className="queued-messages__error" role="status">
+              {controller.queuedInputs.error}{' '}
+              <Button size="sm" onClick={controller.queuedInputs.refresh}>
+                Refresh queue
+              </Button>
+            </p>
+          ) : null}
           {controller.progressObservation !== undefined &&
           ['provisioning', 'installing'].includes(controller.progressObservation.sandbox.status) ? (
             <LifecycleProgress {...controller.progressObservation} />
@@ -346,7 +379,12 @@ export function AgentSurface({
       <div className="agent-surface__input">
         <ActiveThinking key={agentId} conversation={conversation} />
         <Composer
+          showUsage
+          usage={conversation.usage}
+          steeringMode={steeringMode}
+          onSteeringModeChange={state.v2 === undefined ? undefined : setSteeringMode}
           draft={draft}
+          availableCommands={readOnly ? undefined : conversation.availableCommands}
           key={`composer:${agentId}`}
           quickMessages={
             source.status === 'ready' && source.value.access !== 'shared'
@@ -360,29 +398,12 @@ export function AgentSurface({
           queueWhileStarting={state.v2 !== undefined}
           starting={starting}
           controlsUnavailable={controller.controlsUnavailable}
-          requestPending={controller.pendingMessage !== undefined}
-          acceptedMessage={controller.acceptedMessage}
-          uploadAttachment={
-            readOnly ||
-            verified === undefined ||
-            lifecycleClient?.uploadAgentAttachment === undefined
-              ? undefined
-              : async (file, options) => {
-                  const uploaded = await lifecycleClient.uploadAgentAttachment!(
-                    agentId,
-                    file,
-                    options,
-                  );
-                  if (
-                    uploaded.agentId !== agentId ||
-                    !uploaded.path.startsWith('/home/attachments/')
-                  )
-                    throw new Error(
-                      'The upload could not be verified for this Agent. Retry the upload.',
-                    );
-                  return uploaded;
-                }
+          requestPending={
+            controller.pendingMessage !== undefined || controller.pendingControl === true
           }
+          acceptedMessage={controller.acceptedMessage}
+          acceptedSteeringMessage={controller.acceptedSteeringMessage}
+          uploadAttachment={uploadAttachment}
           inputAvailability={
             readOnly
               ? {
@@ -407,7 +428,10 @@ export function AgentSurface({
           }
           onSend={(content, onAccepted) => {
             if (readOnly || verified === undefined) return;
-            const message = optimistic.begin(content);
+            const message = optimistic.begin(
+              content,
+              running ? (steeringMode === 'queue' ? 'queue' : 'steer') : undefined,
+            );
             return new Promise<void>((resolve) => {
               const settled = () => {
                 message.settled();
@@ -418,17 +442,19 @@ export function AgentSurface({
                 resolve();
               };
               const send = () => {
-                void controller
-                  .send(
-                    content,
-                    (receipt) => {
-                      if (message.accepted(receipt)) onAccepted();
-                      resolve();
-                    },
-                    message.observed,
-                    cancelled,
-                  )
-                  .then(settled, settled);
+                const submit =
+                  running && steeringMode === 'interrupt' && controller.steer !== undefined
+                    ? controller.steer
+                    : controller.send;
+                void submit(
+                  content,
+                  (receipt) => {
+                    if (message.accepted(receipt)) onAccepted();
+                    resolve();
+                  },
+                  message.observed,
+                  cancelled,
+                ).then(settled, settled);
               };
               if (
                 state.v2?.owner === (viewerId ?? verified.owner) &&
@@ -459,7 +485,6 @@ export function AgentSurface({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      <UsageFooter usage={conversation.usage} />
     </section>
   );
 }

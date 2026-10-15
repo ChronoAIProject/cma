@@ -33,7 +33,7 @@ it('fades the existing console center between routes within Agent Manager, only 
     </CmaClientProvider>
   );
   const { rerender } = render(draw({ kind: 'agent_manager' }));
-  await screen.findByRole('treeitem', { name: /Sandbox Machine - 1/ });
+  await screen.findByRole('treeitem', { name: /Agent one/ });
   const surface = screen.getByRole('main');
   const reads = navigationReads.mock.calls.length;
   expect(motion.records).toHaveLength(0);
@@ -48,8 +48,8 @@ it('fades the existing console center between routes within Agent Manager, only 
   expect(navigationReads).toHaveBeenCalledTimes(reads);
 });
 
-it('fades a retained Image Manager on re-entry while preserving its form and avoiding extra reads', async () => {
-  window.history.replaceState({}, '', '/image-manager');
+it('fades a retained Event Gateway on re-entry while preserving its form and avoiding extra reads', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
   const fetcher = vi.fn(
     async (url: string) =>
       new Response(
@@ -58,7 +58,7 @@ it('fades a retained Image Manager on re-entry while preserving its form and avo
             ? {
                 authenticated: true,
                 subject: 'owner',
-                permissions: ['cma-im:admin', 'cma-eg:admin'],
+                permissions: ['cma-eg:admin'],
                 expires_at: Math.floor(Date.now() / 1000) + 3600,
               }
             : { items: [], next_cursor: null },
@@ -67,24 +67,29 @@ it('fades a retained Image Manager on re-entry while preserving its form and avo
   );
   vi.stubGlobal('fetch', fetcher);
   render(
-    <AuthContextProvider provider={createMockAuthProvider()}>
-      <App />
+    <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
+      <CmaClientProvider client={agentClient()}>
+        <App />
+      </CmaClientProvider>
     </AuthContextProvider>,
   );
-  fireEvent.click(await screen.findByText('Create an image'));
-  const field = screen.getByLabelText('Image name');
-  fireEvent.change(field, { target: { value: 'Retained image draft' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  const field = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
+  const draft = '{"name":"Retained channel draft","sources":[]}';
+  fireEvent.change(field, { target: { value: draft } });
   const surface = field.closest('.service-shell__body');
-  const imageReads = () =>
-    fetcher.mock.calls.filter(([url]) => url.startsWith('/api/image-manager/'));
-  const reads = imageReads().length;
+  const gatewayReads = () =>
+    fetcher.mock.calls.filter(([url]) => url.startsWith('/api/event-gateway/'));
+  const reads = gatewayReads().length;
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(1);
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
-  await screen.findByRole('button', { name: 'New channel' });
+  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(field).not.toBeVisible();
-  fireEvent.click(screen.getByRole('link', { name: 'Image Manager' }));
-  expect(screen.getByLabelText('Image name')).toBe(field);
-  expect(field).toHaveValue('Retained image draft');
+  expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(field);
+  expect(field).toHaveValue(draft);
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(2);
-  expect(imageReads()).toHaveLength(reads);
+  expect(gatewayReads()).toHaveLength(reads);
+  expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/image-manager/'))).toBe(false);
 });

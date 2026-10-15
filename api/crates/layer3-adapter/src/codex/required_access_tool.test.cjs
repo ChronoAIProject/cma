@@ -15,7 +15,16 @@ const { requiredAccessTool, sourceSha256, before, after } = require("./required_
 function sources() {
   const installed = readFileSync(process.env.CMA_ACP_ACCESS_BASE_SOURCE ?? bridgePath, "utf8");
   const base = installed.includes(after) ? installed.replace(after, before) : installed;
-  assert.equal(createHash("sha256").update(base).digest("hex"), sourceSha256);
+  const digest = (source) => createHash("sha256").update(source).digest("hex");
+  if (digest(installed) === "b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9") {
+    // Exercise the final image composition while removing only this patch for
+    // the native before/after comparison. The session command patch is retained.
+    assert.equal(installed.split(after).length, 2);
+    assert.equal(digest(base), "87d08828c723db16ada3e7cd56a075373d7d01837af389bd5906c1ff7c3187c8");
+    assert.equal(base.replace(before, after), installed);
+    return { base, patched: installed };
+  }
+  assert.equal(digest(base), sourceSha256);
   return { base, patched: requiredAccessTool(base) };
 }
 

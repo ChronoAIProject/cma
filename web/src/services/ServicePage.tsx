@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
 import { serviceRequest, ServiceError, type Service, type ServiceSession } from './client';
 export function ServicePage({
   service,
   children,
+  renderStatus,
 }: {
   readonly service: Service;
-  readonly children: (session: ServiceSession, denied: () => void) => ReactNode;
+  readonly children: (session: ServiceSession, denied: () => void, notice?: ReactNode) => ReactNode;
+  readonly renderStatus?: (content: ReactNode) => ReactNode;
 }) {
   const [state, setState] = useState<{
     session?: ServiceSession;
@@ -58,54 +60,39 @@ export function ServicePage({
       window.removeEventListener('focus', focused);
     };
   }, [service, revision]);
-  return (
-    <main className="service-page">
-      <header className="service-page__header">
-        <div>
-          <h1>{name}</h1>
-          <p>
-            {service === 'image-manager'
-              ? 'Build, version and share your container images.'
-              : 'Manage the channels that deliver events to your agents.'}
-          </p>
-        </div>
-        {state.session ? (
-          service === 'event-gateway' ? (
-            <a className="service-link" href="/auth/logout">
-              Sign out of CMA
-            </a>
-          ) : (
-            <Button
-              onClick={() => {
-                void serviceRequest<void>(service, '/auth/logout', { method: 'POST' })
-                  .then(denied)
-                  .catch(() =>
-                    setState((current) =>
-                      current.anonymous
-                        ? current
-                        : { ...current, error: 'Sign-out could not be completed. Try again.' },
-                    ),
-                  );
-              }}
-            >
-              Sign out of {name}
-            </Button>
-          )
-        ) : null}
-      </header>
-      {state.error ? (
-        <section className="service-panel" role="alert">
-          <p>{state.error}</p>
-          <Button
-            onClick={() => {
-              setState((current) => ({ ...current, error: undefined }));
-              setRevision((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </section>
-      ) : null}
+  const notice = state.error ? (
+    <section className="service-panel" role="alert">
+      <p>{state.error}</p>
+      <Button
+        onClick={() => {
+          setState((current) => ({ ...current, error: undefined }));
+          setRevision((value) => value + 1);
+        }}
+      >
+        Try again
+      </Button>
+    </section>
+  ) : undefined;
+  if (state.session && !state.anonymous) {
+    const content = children(state.session, denied, notice);
+    return (
+      <Fragment
+        key={JSON.stringify([state.session.subject, [...state.session.permissions].sort()])}
+      >
+        {renderStatus ? (
+          content
+        ) : (
+          <main className="service-page">
+            {notice}
+            {content}
+          </main>
+        )}
+      </Fragment>
+    );
+  }
+  const status = (
+    <>
+      {notice}
       {state.anonymous ? (
         <section className="service-panel">
           <p>Sign in with NyxID to open {name}.</p>
@@ -120,13 +107,10 @@ export function ServicePage({
             Sign in with NyxID
           </a>
         </section>
-      ) : state.session ? (
-        <div key={JSON.stringify([state.session.subject, [...state.session.permissions].sort()])}>
-          {children(state.session, denied)}
-        </div>
       ) : state.error ? null : (
         <p role="status">Opening {name}…</p>
       )}
-    </main>
+    </>
   );
+  return renderStatus ? renderStatus(status) : <main className="service-page">{status}</main>;
 }

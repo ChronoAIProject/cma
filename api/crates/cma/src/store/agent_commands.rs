@@ -17,6 +17,7 @@ pub(super) mod audit;
 pub(super) mod binding;
 mod lane_records;
 mod queued_cancellation;
+mod queued_input;
 mod reconcile;
 mod records;
 pub(in crate::store) mod reserve;
@@ -49,6 +50,37 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn edit_queued_input(
+        &self,
+        request: layer2_core::sandbox::agent_io::QueuedInputReservation,
+    ) -> Result<layer2_core::sandbox::agent_io::QueuedInputOutcome, CommandLedgerError> {
+        queued_input::run(self, request).await
+    }
+    async fn list_queued_inputs(
+        &self,
+        agent_id: &layer2_core::AgentId,
+    ) -> Result<Vec<AdmittedAgentCommand>, CommandLedgerError> {
+        use futures_util::TryStreamExt;
+        let mut cursor = self.agent_commands.find(doc! { "agent_id": agent_id.as_str(), "status": { "$in": ["queued", "waiting_action"] } }).sort(doc! { "agent_order": 1 }).await.map_err(|_| CommandLedgerError::Unavailable)?;
+        let mut result = Vec::new();
+        while let Some(document) = cursor
+            .try_next()
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+        {
+            let record = records::read(&document)?;
+            if layer2_core::sandbox::agent_io::queued_cancellation_eligible(&record)
+                && layer2_core::sandbox::agent_io::queued_input_editable_actor(&record)
+            {
+                result.push(record);
+            }
+            if result.len() > layer2_core::sandbox::agent_io::MAX_COMMAND_QUEUE_CAPACITY as usize {
+                return Err(CommandLedgerError::Corrupt);
+            }
+        }
+        Ok(result)
+    }
+
     async fn cancel_queued_response(
         &self,
         request: layer2_core::sandbox::agent_io::QueuedCancellationReservation,
@@ -105,6 +137,37 @@ impl AgentCommandStore for MongoSandboxStore {
             .as_ref()
             .map(records::read)
             .transpose()
+    }
+
+    async fn get_operation_command(
+        &self,
+        agent_id: &layer2_core::AgentId,
+        operation_sequence: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        use futures_util::TryStreamExt;
+        let sequence =
+            i64::try_from(operation_sequence).map_err(|_| CommandLedgerError::Invalid)?;
+        let mut cursor = self
+            .agent_commands
+            .find(doc! {
+                "agent_id": agent_id.as_str(), "record.work.dispatch.operation_sequence": sequence,
+            })
+            .limit(2)
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        let first = cursor
+            .try_next()
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        if cursor
+            .try_next()
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+            .is_some()
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        first.as_ref().map(records::read).transpose()
     }
 
     async fn get_response_command(

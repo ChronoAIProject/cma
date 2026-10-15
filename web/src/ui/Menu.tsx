@@ -55,7 +55,16 @@ export interface MenuLabel {
   readonly text: string;
 }
 
-export type MenuEntry = MenuItem | MenuSeparator | MenuLabel;
+/** Compact alternatives within one menu, with independent radio semantics. */
+export interface MenuChoices {
+  readonly type: 'choices';
+  readonly id: string;
+  readonly text: string;
+  readonly selectedId: string;
+  readonly choices: readonly { readonly id: string; readonly label: string }[];
+}
+
+export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 
 function isChoosable(entry: MenuEntry): entry is MenuItem {
   return !('type' in entry);
@@ -169,7 +178,11 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    if (listRef.current) observer?.observe(listRef.current);
+    if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
+      observer?.disconnect();
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
@@ -255,6 +268,18 @@ export function Menu({
     };
 
     switch (event.key) {
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        const group = (document.activeElement as HTMLElement | null)?.closest('.menu__choices');
+        if (!group) return;
+        const choices = [...group.querySelectorAll<HTMLButtonElement>('button')];
+        const current = choices.indexOf(document.activeElement as HTMLButtonElement);
+        event.preventDefault();
+        choices[
+          (current + (event.key === 'ArrowRight' ? 1 : -1) + choices.length) % choices.length
+        ]?.focus();
+        return;
+      }
       case 'ArrowDown':
         move(here + 1);
         return;
@@ -347,6 +372,30 @@ function MenuRow({
     return (
       <div className="menu__label" role="presentation">
         {entry.text}
+      </div>
+    );
+  }
+  if ('type' in entry && entry.type === 'choices') {
+    return (
+      <div className="menu__choice-group" role="group" aria-label={entry.text}>
+        <div className="menu__label" aria-hidden="true">
+          {entry.text}
+        </div>
+        <div className="menu__choices">
+          {entry.choices.map((choice) => (
+            <button
+              key={choice.id}
+              type="button"
+              role="menuitemradio"
+              className="menu__item menu__choice"
+              data-id={choice.id}
+              aria-checked={entry.selectedId === choice.id}
+              onClick={() => onSelect(choice.id)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
