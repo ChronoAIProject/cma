@@ -81,9 +81,9 @@ mod reconciliation_tests;
 mod resource_access;
 mod sandbox_controls;
 mod targeted_controls;
-mod transactions;
 #[cfg(test)]
 mod targeted_controls_tests;
+mod transactions;
 mod workspace_lifecycle;
 
 #[async_trait]

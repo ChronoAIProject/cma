@@ -254,7 +254,9 @@ async fn mongo_competing_owner_saves_cannot_apply_stale_scope_after_the_winner()
 async fn mongo_owner_save_while_paused_records_consent_without_resuming_or_rotating() {
     let (client, name, store, original, before) = fixture().await;
     let mut paused = before.clone();
-    paused.begin_pause(layer2_core::now_rfc3339(), None).unwrap();
+    paused
+        .begin_pause(layer2_core::now_rfc3339(), None)
+        .unwrap();
     paused.lifecycle.operation = None;
     paused.status = SandboxStatus::Paused;
     paused.lifecycle.suspended_runtime = paused.runtime.take().map(Box::new);
