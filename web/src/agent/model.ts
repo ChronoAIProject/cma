@@ -1,4 +1,5 @@
 import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
+import type { SessionCommand } from './slashCommands';
 
 export interface ConversationMessage {
   readonly order?: number;
@@ -80,6 +81,7 @@ export interface ConversationState {
     readonly parts: readonly { readonly id: string; readonly text: string }[];
   };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
+  readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */
   readonly activeRunStartedAt?: string;

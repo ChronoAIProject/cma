@@ -18,7 +18,11 @@ export interface Channel {
     partition?: unknown;
     reply?: unknown;
   };
-  endpoints: { custom_event_url: string; nyxid_callback_url: string };
+  endpoints: {
+    custom_event_url: string;
+    nyxid_callback_url: string;
+    telegram_webhook_url?: string;
+  };
 }
 export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
   readonly channel_id?: string | null;
@@ -28,7 +32,9 @@ export function hasChannelAddress(channel: ChannelListItem): channel is Channel 
   return (
     typeof channel.channel_id === 'string' &&
     channel.channel_id.length > 0 &&
-    channel.endpoints != null
+    channel.endpoints != null &&
+    typeof channel.endpoints.custom_event_url === 'string' &&
+    typeof channel.endpoints.nyxid_callback_url === 'string'
   );
 }
 function policy(channel?: Channel): string {
@@ -57,7 +63,7 @@ export function ChannelEditor({
   denied,
 }: {
   readonly channel?: Channel;
-  readonly onDone: () => void;
+  readonly onDone: (channel?: Channel) => void;
   readonly denied: () => void;
 }) {
   const [pending, setPending] = useState<{ key: string; body: string; record: string }>();
@@ -67,7 +73,7 @@ export function ChannelEditor({
     setBusy(true);
     setError(undefined);
     try {
-      await serviceRequest(
+      const value = await serviceRequest<ChannelListItem>(
         'event-gateway',
         channel ? `/v1/channels/${segment(channel.channel_id)}` : '/v1/channels',
         {
@@ -77,7 +83,7 @@ export function ChannelEditor({
         },
       );
       setPending(undefined);
-      onDone();
+      onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
       if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
       if (e instanceof ServiceError && e.status === 400) setPending(undefined);

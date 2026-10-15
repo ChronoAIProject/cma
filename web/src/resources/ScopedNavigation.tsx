@@ -15,8 +15,12 @@ export function ScopedNavigation({
   choices,
   onNavigate,
   route,
+  view = 'sandbox',
+  statusFilter = 'all',
 }: {
   readonly client?: ResourceViewsClient;
+  readonly view?: 'agent' | 'sandbox';
+  readonly statusFilter?: string;
   readonly route?: AppRoute;
   readonly personal: ReactNode;
   readonly scope: string;
@@ -31,9 +35,26 @@ export function ScopedNavigation({
       {unavailable ? (
         <p>Organization choices are unavailable. Personal navigation remains available.</p>
       ) : null}
-      {shared === true ? (
+      {view === 'agent' && (shared || organization) ? (
+        <SharedAgentNavigation
+          key={`${scope}:${statusFilter}`}
+          client={client}
+          route={route}
+          organization={organization}
+          shared={shared === true}
+          statusFilter={statusFilter}
+          onNavigate={onNavigate}
+        />
+      ) : shared === true ? (
         <>
-          <SandboxTree key="shared" client={client} route={route} shared onNavigate={onNavigate} />
+          <SandboxTree
+            statusFilter={statusFilter}
+            key="shared"
+            client={client}
+            route={route}
+            shared
+            onNavigate={onNavigate}
+          />
           <SharedAgentNavigation client={client} route={route} onNavigate={onNavigate} />
         </>
       ) : organization === undefined ? (
@@ -48,6 +69,7 @@ export function ScopedNavigation({
             All authorized Agents
           </ResourceLink>
           <SandboxTree
+            statusFilter={statusFilter}
             key={organization}
             client={client}
             organization={organization}

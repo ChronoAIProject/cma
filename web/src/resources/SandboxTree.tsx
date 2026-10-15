@@ -15,6 +15,7 @@ interface Props {
   readonly client: ResourceViewsClient;
   readonly route?: AppRoute;
   readonly organization?: string;
+  readonly statusFilter?: string;
   readonly shared?: boolean;
   readonly onNavigate: (route: AppRoute) => void;
 }
@@ -29,6 +30,7 @@ function SandboxTreePage({
   shared,
   onNavigate,
   route = { kind: 'home' },
+  statusFilter = 'all',
 }: Props) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback(
@@ -109,6 +111,7 @@ function SandboxTreePage({
                       ? current.state.value.items.filter(
                           (sandbox) =>
                             sandbox.status !== 'retired' &&
+                            (statusFilter === 'all' || sandbox.status === statusFilter) &&
                             (sandbox.status === 'paused') === (label === 'Paused'),
                         )
                       : []

@@ -79,6 +79,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
   expect(screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Sandbox Machine - 1/ })).not.toBeInTheDocument();
@@ -132,6 +133,7 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   );
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
+  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
   const sandbox = screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
@@ -187,7 +189,7 @@ it('hides creation controls for visitors while retaining their trigger-created h
       />
     </CmaClientProvider>,
   );
-  expect(await screen.findByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
+  expect(await screen.findByRole('tree', { name: 'Personal Agents' })).toHaveTextContent(
     'Agent one',
   );
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
@@ -210,7 +212,7 @@ it('hides personal creation in organization scope without replacing the open con
         policy_revision: 1,
         revalidate_at: null,
       });
-    if (url.pathname === '/api/v1/sandboxes') {
+    if (url.pathname === '/api/v1/sandboxes' || url.pathname === '/api/v1/agents/provenance') {
       expect(url.searchParams.get('organization')).toBe('org_research');
       return Response.json({ items: [] });
     }
@@ -243,7 +245,7 @@ it('hides personal creation in organization scope without replacing the open con
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   await actor.type(composer, 'Retain my personal draft');
   expect(await screen.findByRole('button', { name: 'New agent' })).toBeInTheDocument();
-  await chooseOption(actor, 'Navigation scope', 'Research');
+  await chooseOption(actor, 'Navigation scope', 'Research (Organization)');
   await waitFor(() =>
     expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument(),
   );

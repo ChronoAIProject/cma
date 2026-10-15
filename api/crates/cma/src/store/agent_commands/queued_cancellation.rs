@@ -9,7 +9,7 @@ use crate::store::sandbox_mongo::{
 };
 
 mod apply;
-mod fences;
+pub(super) mod fences;
 
 pub(super) async fn run(
     store: &MongoSandboxStore,
