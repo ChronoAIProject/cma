@@ -2362,6 +2362,13 @@ without changing a different entry. Never delete or replace the entire queue to 
 one message. Keep uncertain requests recoverable using their original identity/body.
 Queue status comes from public authoritative reads; it survives reload and navigation.
 
+If an entry leaves the queue while its editor is open, keep the unsaved text and
+attachments in that editor as a retained draft. Explain that the original message
+can no longer be edited; offer Copy draft and Dismiss without implying it is still
+queued. Copy includes every confirmed attachment reference and explicitly identifies
+unfinished uploads. These local recovery actions remain available when sending is
+unavailable; network upload retries still respect current availability.
+
 Use existing presence transitions for row/editor entry and exit, existing fast easing
 for hover/focus, and no motion under reduced-motion preference. Queue rows wrap within
 the conversation width; actions remain reachable at phone widths and all text sizes.
@@ -2374,3 +2381,6 @@ At phone widths, Context and Total tokens may occupy two successive rows in the
 input column while retaining their respective left and right alignment. Numeric
 groups remain whole rather than wrapping digit by digit. The action column reserves
 80px on desktop and 96px for two touch targets; its mode menu stays centered beneath.
+
+- 2026-10-16 — Retain unsaved queued-message edits and attachments after dispatch or
+  cancellation, with explicit local copy/dismiss recovery and no stale queue actions.
