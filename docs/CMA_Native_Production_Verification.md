@@ -1,13 +1,13 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 20:48 SGT
+## Current production — 15 October, 21:03 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
 | Agent Manager | `d21ba8aadf8265dd82b814ad2114b85696c5e06f` | 41 | `sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1` |
-| Web | `d21ba8aadf8265dd82b814ad2114b85696c5e06f` | 118 | `sha256:eade12030a18a48264d309803da12c869d0dd1a2ff03f4848a1d5e3368b1b8c8` |
+| Web | `0785d32885529244f9a1b0f5004d45f03849c3ab` | 119 | `sha256:a6c4a04e1202879e515b5366705ee6b1f69d88783048f0e3c556402d1023c011` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
 
@@ -1119,3 +1119,41 @@ The title fields are persisted in strict records. A rollback must keep a reader
 compatible with these records; the earlier a03 API is not a safe reader after
 new title-feature writes. Image Manager remains undeployed. The subsequent
 animation and immediate-composer changes are not covered by this release.
+
+## Motion and immediate composer release — 15 October, 21:03 SGT
+
+Web `0785d328` is deployed as generation 119 with one Ready replica, zero
+restarts, and an exact image/source match. Public asset `index-1JCqqZEH.js`
+equals the running Pod at SHA-256
+`17ee858b1bff80a01a9509e20a693887b6605777a8306449b96fe10fe95573c6`.
+The image scan reports no fixable HIGH/CRITICAL findings. The first public read
+immediately after Kubernetes readiness returned 503 while the load-balancer
+backend converged; the following exact public-asset verification succeeded.
+
+The integrated frontend suite passed 210 files / 1,975 tests, followed by the
+interrupted-view regression. Lint, TypeScript, formatting, CSS collision,
+production build and computed styles passed; 144 custom properties resolve in
+both themes. Fourteen browser journeys cover queue/Stop, compact layout at three
+widths in both themes, actual clipboard image and file drop, durable replay,
+uncertain delivery/reload, identity and controls. Local real-browser motion
+checks verified intermediate opacity, rapid-route continuity, unchanged bounds,
+retained DOM/form values and scroll, once-only message arrivals, no streamed
+text animation restart, and dynamic reduced-motion cancellation.
+
+An actual production attachment upload and UI Send cleared text and attachment
+previews in **4.2 ms in the submit event**, with the first rendered frame at
+**4.8 ms**. The outgoing row used a real 200 ms opacity animation. Text entered
+after sending stayed visible while waiting and after the actual reply. Exactly
+one upload and one send occurred. A read-only reload independently confirmed one
+durable matching turn, its persistent `/home/attachments` path, the expected
+reply, and Agent Ready. These are individual browser samples, not percentile
+claims. The first harness could not reread an upload body evicted from the CDP
+cache; its failure record is retained, and a separate read-only completion proof
+resolved that observer limitation without repeating the write.
+
+A retained older runtime also resumed after the default-image update with the
+same native Sandbox/Claim, PVC/PV, conversation and unchanged history prefix.
+The Agent recalled its pre-rollout marker and color correctly. Its Pod changed
+through explicit pause/resume, while its pinned old runtime and complete home
+remained intact. Full backend resume in this sample took 23.273 seconds; this
+is separate from the foreground input goal.

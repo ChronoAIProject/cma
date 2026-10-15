@@ -5,7 +5,18 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-At **18:51 SGT on 15 October 2026**, production runs Agent Manager
+The current deployment is recorded in the linked verification document and
+immutable manifests. On 15 October at 21:03 SGT, Web `0785d328` (generation 119)
+is live with smooth route/message/menu transitions and immediate visible draft
+handoff. Agent Manager remains `d21ba8aa` (generation 41) while the new captured
+GitHub API instructions are being built. The default runtime is `d97121b5`;
+existing owner runtimes keep their pinned images and full-home volumes. The
+accepted repository workflow is authenticated `gh api` source download plus a
+local Git workspace, independently verified on a production testing Agent.
+Image Manager remains deferred.
+
+The following 18:51 checkpoint is historical. At **18:51 SGT on 15 October 2026**,
+production ran Agent Manager
 `edaeca82` (generation 38), Web `fa1e3f13` (generation 116), and Event Gateway
 `477bf801` (generation 7). All three exact image digests and Ready Pod ownership
 were verified. The default runtime is `ff9834c4`, digest

@@ -71,7 +71,11 @@ it.each(['history', 'working', 'command'] as const)(
     );
     const view = render(draw(true));
     await screen.findByLabelText('Model');
-    await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Reasoning effort' }), 'medium');
+    await chooseOptionValue(
+      userEvent.setup(),
+      screen.getByRole('button', { name: 'Reasoning effort' }),
+      'medium',
+    );
     expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
     expect(update).not.toHaveBeenCalled();
     view.rerender(draw(false));
