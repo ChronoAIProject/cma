@@ -4,10 +4,15 @@ use crate::sandbox::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmis
 #[path = "command_bootstrap_retry_results_tests.rs"]
 mod retry_results;
 
+#[path = "command_prepared_admission_tests.rs"]
+mod prepared;
+
 #[derive(Clone, Copy)]
 enum Progress {
     Parent,
     Agent,
+    PreparedReady,
+    ModelChange,
     Stop,
     Policy,
     EveryAttempt,
@@ -43,7 +48,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         }
         if call == 0 || matches!(self.progress, Progress::EveryAttempt) {
             match self.progress {
-                Progress::Agent | Progress::Stop => {
+                Progress::Agent | Progress::PreparedReady | Progress::Stop => {
                     let mut agent = self
                         .store
                         .get_agent(&AgentId("agent".into()))
@@ -55,8 +60,17 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                     if matches!(self.progress, Progress::Stop) {
                         agent.requested_stop_reason = Some(AgentStopReason::Owner);
                     }
+                    if matches!(self.progress, Progress::PreparedReady) {
+                        agent.status = AgentStatus::Ready;
+                        agent.ready_at = Some(NOW.into());
+                        agent.work.step = AgentWorkStep::PublishConnection;
+                        agent.conversation.conversation_id =
+                            agent.work.warm_conversation_id.clone();
+                        agent.conversation.runtime_generation = Some(1);
+                    }
                     self.store.save_agent(revision, agent).await.unwrap();
                 }
+                Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
                 Progress::Policy => {
                     share(&self.store, None).await;
                 }

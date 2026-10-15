@@ -9,6 +9,7 @@ interface PendingAction {
   readonly forceSubscription: boolean;
   readonly owner?: string;
   readonly request?: AbortController;
+  readonly onCancelled?: () => void;
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
@@ -21,6 +22,7 @@ export function useConnectionGate(enabled = true, scope?: object) {
   useLayoutEffect(
     () => () => {
       active.current?.request?.abort();
+      active.current?.onCancelled?.();
       active.current = undefined;
       setPending(undefined);
     },
@@ -36,6 +38,7 @@ export function useConnectionGate(enabled = true, scope?: object) {
   };
   const cancel = () => {
     active.current?.request?.abort();
+    active.current?.onCancelled?.();
     active.current = undefined;
     setPending(undefined);
   };
@@ -50,8 +53,12 @@ export function useConnectionGate(enabled = true, scope?: object) {
     owner: string,
     action: () => void,
     prepared?: () => ConnectionReport | undefined,
+    onCancelled?: () => void,
   ) => {
-    if (!enabled || active.current !== undefined) return;
+    if (!enabled || active.current !== undefined) {
+      onCancelled?.();
+      return;
+    }
     const value: PendingAction = {
       id: ++serial.current,
       target,
@@ -59,6 +66,7 @@ export function useConnectionGate(enabled = true, scope?: object) {
       owner,
       forceSubscription: false,
       request: new AbortController(),
+      onCancelled,
     };
     active.current = value;
     setError(undefined);

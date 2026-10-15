@@ -123,6 +123,7 @@ export function mergeTranscriptSnapshot(
       messages.delete(existing.id);
       messages.set(message.id, {
         ...message,
+        commandId: message.commandId ?? existing.commandId,
         status:
           current.cursor >= snapshot.cursor && existing.status === 'error'
             ? 'error'
