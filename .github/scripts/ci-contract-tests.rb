@@ -40,6 +40,8 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
+  ["ci", "backend", "Image normalization budgets"],
+  ["ci", "backend", "Tests"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
   ["ci", "backend", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
