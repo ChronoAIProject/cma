@@ -1,5 +1,63 @@
 # CMA native Sandbox production verification
 
+## Immediate message display and prepared admission — 15 October, 13:29 SGT
+
+The outgoing-message change is deployed in Web source `1d337c1a`, generation
+111, image `sha256:fcc0e077b3224a0901349432d55437c3ec0606ad7e6da69c629f03932a282a39`.
+Public asset `index-CHZZZnLT.js` matches the running Pod at SHA-256
+`3643e2f9f75f9146816461d28f269641887231fde8260b174913e41c1640c1ec`.
+Verification completed at **13:28:48 SGT**. A Send action stages its message
+before connection checks, identity checks or POST completion; caption status
+remains Sending until authorized acceptance. Drafts, exact request identity,
+explicit recovery and account isolation are retained. Exact command/run
+identity reconciles local presentation with durable user events, including
+replay before the final receipt authorization and intentional identical inputs.
+
+All **195 Web test files / 1,853 tests**, type checking, focused lint and
+formatting passed. Independent review approved the exact image source. The
+component tests deliberately hold network promises unresolved to prove local
+visibility does not await them; they do not measure browser paint latency.
+Definite connection cancellation shows Not sent. A dispatched typed 422 input
+refusal conservatively shows Awaiting confirmation alongside its actionable
+error and retained draft, although the transport clears that refused journal
+entry. Other ambiguous outcomes keep their existing exact-key recovery.
+
+Agent Manager source `c4272f83`, generation 33, image
+`sha256:310684228fbf206808cbb72c9b682e869b18c0d084e4ee88ccdba4938ccf1bdd`,
+was verified at **13:25:42 SGT**. It includes prepared lifecycle Agents in the
+existing bounded fresh-state retry for a definitive, uncommitted message
+admission conflict. Explicit revisions, session-bound operations, unknown
+outcomes, controls and unrelated Agents remain excluded. The regression failed
+on the preceding implementation; all **48 command-admission tests**, formatting
+and strict layer2-core Clippy passed. The four retained fixtures preserved
+identities, profiles, scopes and all **18 / 1 / 2 / 2** historical turns. An
+initial public 503 during rollout convergence is preserved; the same deployment
+passed a subsequent read-only verification without replaying the patch.
+
+Both images were built locally from immutable source archives, registry source
+labels and platform digests were verified, and scans for fixed HIGH/CRITICAL
+vulnerabilities passed. PR #1027 passed all 15 jobs and merged normally at
+`6251dd8e`; these later changes are being returned in a follow-up PR. CMA remains
+in its original cluster; Event Gateway and runtime image are retained; Image
+Manager remains deferred. No agent-sandbox controller change was made.
+
+**The complete goal is still not accepted.** The previous Web53/APIcef source
+series had four functional passes and four Send-eligibility results under five
+seconds (4.426 / 3.709 / 3.687 / 3.740 s), but only three complete durable
+acknowledgements under five seconds (5.034 / 4.857 / 4.934 / 4.737 s). These are
+source-flow measurements, not browser timings. Fresh source-flow verification
+for the deployed pair is pending. Browser click-to-Composer, message paint and
+external OAuth/popup verification remain unavailable through the current
+computer-use surfaces. The prior underlying resume measurement remains 26.353 s,
+with fast acceptance and original-volume identity preserved.
+
+Evidence: `/tmp/cma-web-rollout-1d337c1a/verified.json`,
+`/tmp/cma-api-rollout-c4272f83/read-only-recheck-01/verified.json`,
+`/tmp/cma-immediate-send-ui-validation-20261015.json`, and
+`/tmp/cma-immediate-send-ui-independent-review-20261015.json`.
+
+The following sections retain the dated observations of preceding candidates.
+
 ## Local production candidates — PR #1027
 
 Release preparation at **12:41 SGT** pins the locally built API source

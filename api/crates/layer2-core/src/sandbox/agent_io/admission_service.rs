@@ -15,7 +15,7 @@ use super::*;
 
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
-const BOOTSTRAP_ADMISSION_ATTEMPTS: usize = 3;
+const CREATION_ADMISSION_ATTEMPTS: usize = 3;
 
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
@@ -115,13 +115,14 @@ impl AgentCommandService {
         let capability = command_capability(&request.envelope.command);
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;
-        let retry_bootstrap = submission.expected_agent_revision.is_none()
+        let retry_creation = submission.expected_agent_revision.is_none()
             && request.binding.is_none()
             && matches!(request.envelope.command, AgentCommand::Message { .. })
             && lineage.agent.as_ref().is_some_and(|agent| {
                 lineage.workspace.as_ref().is_some_and(|workspace| {
                     agent
                         .bootstrap_lineage(&lineage.sandbox, workspace)
+                        .or_else(|| agent.prepared_creation_lineage(&lineage.sandbox, workspace))
                         .is_some()
                 })
             });
@@ -130,7 +131,7 @@ impl AgentCommandService {
             .map_or(tokio::time::Instant::now() + IO_BOUND, |deadline| {
                 deadline.min(tokio::time::Instant::now() + IO_BOUND)
             });
-        for attempt in 0..BOOTSTRAP_ADMISSION_ATTEMPTS {
+        for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
             let result = self
                 .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
                 .await;
@@ -139,8 +140,8 @@ impl AgentCommandService {
             self.fence(&authorized, &target, capability).await?;
             let result = result?;
             if matches!(result, Err(CommandLedgerError::Conflict))
-                && retry_bootstrap
-                && attempt + 1 < BOOTSTRAP_ADMISSION_ATTEMPTS
+                && retry_creation
+                && attempt + 1 < CREATION_ADMISSION_ATTEMPTS
             {
                 // A conflict is a noncommitted transaction. Startup workers can
                 // advance either aggregate during authority IO; reauthorize the
@@ -170,7 +171,7 @@ impl AgentCommandService {
                 );
                 fresh.validate()?;
                 tracing::info!(agent_id = %submission.agent_id, attempt = attempt + 2,
-                    reason = "bootstrap_revision_conflict", "Refreshing uncommitted command admission");
+                    reason = "creation_revision_conflict", "Refreshing uncommitted command admission");
                 authorized = fresh_authorized;
                 request = fresh;
                 continue;

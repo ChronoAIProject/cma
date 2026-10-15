@@ -686,6 +686,17 @@ smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
 
+An explicit Send or quick-message action immediately adds its text to the
+owner's message flow before connection or network checks finish. Preserve line
+breaks and use the existing caption label token at 12/18 for **Sending…**.
+Show **Sent** and clear the matching draft only after authorized acceptance;
+uncertain delivery shows **Awaiting confirmation**, and a cancelled connection
+check shows **Not sent**. These local rows never submit or retry an input.
+Reconcile with durable user messages by command or run identity, never text,
+so intentional identical messages remain separate. Account, Agent and access
+changes invalidate both local rows and late draft-clearing callbacks. Retained
+pending requests keep the existing explicit same-request recovery action.
+
 One active Thinking disclosure sits outside the conversation scrollport, on the
 same reading axis directly above the composer and its quick messages. Incoming
 text and manual history scrolling cannot move it out of view. Its 44px control
@@ -2130,3 +2141,4 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |
 | 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
 | 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |
+| 2026-10-15 | Display outgoing messages immediately in the existing owner message flow with caption delivery status. Keep drafts until authorized acceptance, reconcile by exact command/run identity, preserve same-request recovery, and prevent stale account or access callbacks from clearing drafts. |

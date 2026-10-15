@@ -1,4 +1,4 @@
-//! Durable lifecycle admission before the runtime exists. This authorizes no runtime effect.
+//! Lifecycle startup admission and snapshot retry eligibility. No runtime effect is authorized here.
 use super::{
     Agent, AgentOrigin, AgentStatus, AgentWorkStep, Sandbox, SandboxOrigin, SandboxStatus,
     Workspace, WorkspaceOrigin, WorkspaceStatus,
@@ -73,6 +73,49 @@ impl Agent {
     ) -> Option<&'a str> {
         self.bootstrap_operation(parent)
             .filter(|_| self.workspace_id == workspace.id && bootstrap_workspace(parent, workspace))
+    }
+
+    /// A retained prepared conversation can finish startup after its parent is
+    /// Active. This identifies only retry eligibility after an uncommitted
+    /// command conflict; every attempt must still reauthorize and reserve.
+    pub(in crate::sandbox) fn prepared_creation_lineage<'a>(
+        &'a self,
+        parent: &Sandbox,
+        workspace: &Workspace,
+    ) -> Option<&'a str> {
+        let AgentOrigin::Lifecycle { operation_id } = &self.origin else {
+            return None;
+        };
+        (matches!(&parent.origin, SandboxOrigin::Lifecycle { operation_id: original }
+            if original == operation_id)
+            && self.owner == parent.owner
+            && self.sandbox_id == parent.id
+            && self.workspace_id == workspace.id
+            && bootstrap_workspace(parent, workspace)
+            && workspace.status == WorkspaceStatus::Ready
+            && parent.status == SandboxStatus::Active
+            && parent.lifecycle.operation.is_none()
+            && parent.lifecycle.checkpoint_capture.is_none()
+            && parent.lifecycle.suspended_runtime.is_none()
+            && parent.retired_at.is_none()
+            && parent.failure.is_none()
+            && self.status == AgentStatus::Starting
+            && self.ready_at.is_none()
+            && self.requested_stop_reason.is_none()
+            && self.failure.is_none()
+            && self.stopped_at.is_none()
+            && self.deleted_at.is_none()
+            && self.conversation.active_turn.is_none()
+            && self.conversation.operation.is_none()
+            && self.work.warm_conversation_id.is_some()
+            && matches!(
+                self.work.step,
+                AgentWorkStep::AddWorktree
+                    | AgentWorkStep::MaterializeHome
+                    | AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+            ))
+        .then_some(operation_id)
     }
 
     /// Every runtime mutation records debt before dispatch. Absence of both debt

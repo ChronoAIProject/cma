@@ -4,6 +4,7 @@ import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry, type Entry } from './StreamEntry';
 import { isPendingTool } from './toolStatus';
+import type { OptimisticMessage } from './optimisticMessages';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -12,6 +13,7 @@ interface MessageStreamProps {
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   readonly children?: ReactNode;
   readonly emptyMessage?: string;
+  readonly optimisticMessages?: readonly OptimisticMessage[];
 }
 
 export function MessageStream({
@@ -21,6 +23,7 @@ export function MessageStream({
   onApproval,
   children,
   emptyMessage = 'Start the conversation.',
+  optimisticMessages,
 }: MessageStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -56,7 +59,7 @@ export function MessageStream({
       scroller.scrollTop = scroller.scrollHeight;
       previousTop.current = scroller.scrollTop;
     }
-  }, [conversation]);
+  }, [conversation, optimisticMessages]);
 
   const entries: Entry[] = [
     ...conversation.messages.map((item) => ({ kind: 'message' as const, item })),
@@ -75,7 +78,9 @@ export function MessageStream({
 
   return (
     <div className="message-stream" aria-live="polite">
-      {entries.length === 0 && conversation.activeRunId === undefined ? (
+      {entries.length === 0 &&
+      !optimisticMessages?.length &&
+      conversation.activeRunId === undefined ? (
         <p className="message-stream__empty">{emptyMessage}</p>
       ) : null}
       {entries.map((entry) => (
@@ -86,6 +91,21 @@ export function MessageStream({
           approvalReadOnly={approvalReadOnly}
           onApproval={onApproval}
         />
+      ))}
+      {optimisticMessages?.map((message) => (
+        <article className="message message--user" aria-label="You" key={`local:${message.id}`}>
+          <span className="message__role">You</span>
+          <p>{message.content}</p>
+          <span className="message__delivery" role="status">
+            {message.state === 'sending'
+              ? 'Sending…'
+              : message.state === 'accepted'
+                ? 'Sent'
+                : message.state === 'unconfirmed'
+                  ? 'Awaiting confirmation'
+                  : 'Not sent'}
+          </span>
+        </article>
       ))}
       {children}
       <div ref={endRef} />

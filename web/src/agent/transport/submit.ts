@@ -6,6 +6,8 @@ interface SubmissionOptions {
   readonly signal?: AbortSignal;
   readonly authorize?: () => Promise<void>;
   readonly onAccepted: (receipt: V2ResponseReceipt) => void;
+  /** Correlation only; identity and journal acceptance still follow separately. */
+  readonly onReceiptObserved?: (receipt: V2ResponseReceipt) => void;
 }
 
 /** Input transport only. Rich Agent replay independently owns rendered output. */
@@ -56,6 +58,7 @@ async function submit(
           signal: request.signal,
           async onReceipt(receipt) {
             receiptObserved = true;
+            options.onReceiptObserved?.(receipt);
             await options.authorize?.();
             options.signal?.throwIfAborted();
             journal.accepted(input.key, receipt);
