@@ -64,9 +64,6 @@ spec:
           volumeMounts:
             - name: media-jobs
               mountPath: /var/cmaeg/media
-            - name: cookie-key
-              mountPath: /var/run/cma-event-gateway-auth
-              readOnly: true
           env:
             - name: CMAEG_MONGODB_URI
               valueFrom:
@@ -75,14 +72,14 @@ spec:
                   key: CMAEG_MONGODB_URI
             - name: CMAEG_NYXID_CLIENT_ID
               valueFrom:
-                secretKeyRef:
-                  name: cma-event-gateway-auth
-                  key: CMAEG_NYXID_CLIENT_ID
+                configMapKeyRef:
+                  name: cma-agent-manager
+                  key: CHRONO_NYXID_CLIENT_ID
             - name: CMAEG_NYXID_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: cma-event-gateway-auth
-                  key: CMAEG_NYXID_CLIENT_SECRET
+                  name: cma-agent-manager
+                  key: CHRONO_NYXID_CLIENT_SECRET
             - name: CMAEG_MASTER_KEYS
               valueFrom:
                 secretKeyRef:
@@ -148,12 +145,6 @@ spec:
               exec:
                 command: ["/bin/sleep", "5"]
       volumes:
-        - name: cookie-key
-          secret:
-            secretName: cma-event-gateway-auth
-            items:
-              - key: cookie-key
-                path: cookie-key
         - name: media-jobs
           emptyDir:
             medium: Memory

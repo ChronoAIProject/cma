@@ -56,16 +56,10 @@ spec:
         - path:
             type: PathPrefix
             value: /api/event-gateway
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
       backendRefs:
         - group: ""
           kind: Service
-          name: cma-event-gateway
+          name: cma-agent-manager
           port: 80
           weight: 1
     - matches:
