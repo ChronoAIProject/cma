@@ -1,13 +1,13 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 21:18 SGT
+## Current production — 15 October, 21:44 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `ba86143134dbd3e5d351348a69f0cb53bce27edb` | 42 | `sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b` |
-| Web | `0785d32885529244f9a1b0f5004d45f03849c3ab` | 119 | `sha256:a6c4a04e1202879e515b5366705ee6b1f69d88783048f0e3c556402d1023c011` |
+| Agent Manager | `77ada2dc25c580a6fdc3ad8414b243ad3c2153ba` | 44 | `sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71` |
+| Web | `61dad4d50989e8275ac884b32ad4fe055852f146` | 120 | `sha256:ec569cf8da130385fd51fed630d226565f473d40ef05343f91e267d05ebd915c` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
 
@@ -1189,3 +1189,53 @@ This fences malformed ready claims and retires unclaimed prepared capacity.
 The normal creation path and underlying native warm pool remain enabled;
 existing owner Sandboxes retain their runtimes and volumes. Restore prepared
 target one only with the corrected API and verify fresh compatible capacity.
+
+## Smooth motion and retained views — 15 October, 21:38 SGT
+
+Web `61dad4d5` is deployed as generation 120 with one Ready replica and zero
+restarts. Public asset `index-whktBcG_.js` equals the serving Pod byte for byte
+at SHA-256 `b45443df2de787493c2313eaba2eb43e347b7e08bed6ccaf07f0ee160d7c9926`.
+The immutable source/index/platform checks and vulnerability scan passed.
+The integrated frontend suite passed 212 files / 1,991 tests, lint, types,
+formatting, CSS checks and production build.
+
+Fifteen final production browser checks passed. Reversed menus preserve their
+displayed opacity (0.632704 in the measured reversal), and rapid route changes
+continue at their current opacity. Portal returns preserve the exact input and
+scroll DOM, unsent draft, unpinned 48px reading position and geometry. Dialogs
+retain focus containment during entry and immediately release focus/scroll lock
+on inert exit. Composer expansion preserves its 64px input seat. Live
+reduced-motion changes cancel or skip animation. Settled narrow dark layout
+has no document horizontal overflow.
+
+Both Agent returns and the second Sandbox visit displayed retained content
+without repeated origin, opening or loading placeholders; measured content
+return was 8–11 ms. Access and lifecycle checks still gate commands while
+content is retained. These are individual browser observations, not latency
+percentiles. The first external collector inspected a completed CSS transition
+too late; its failure is preserved, and the corrected collector captures entry
+at insertion. No product error or server write occurred in these motion checks.
+
+## Prepared-home correction — 15 October, 21:44 SGT
+
+Agent Manager `77ada2dc` is deployed as generation 44. Its immutable image
+passed source/index/platform verification and vulnerability scanning; the
+serving Pod has one Ready replica and zero restarts, with authenticated public
+Agent and Sandbox reads passing. The corrected image and prepared target
+zero-to-one change were applied together under Deployment identity, resource
+version and prior-spec checks. The default runtime and full-home mode remain
+unchanged. Before rollout, 89 preparation/replay/migration tests and strict
+Clippy passed, including actual preparation followed by owned replay and
+MongoDB reconciliation that preserves claimed revision-one resources.
+
+The temporary target-zero fallback completed one normal creation in 33.931 s
+and rendered the exact 2,488-byte V1 instructions. That sample establishes
+functional fallback, not the five-second warm target. Fresh revision-two
+prepared capacity must be verified separately.
+
+Twenty post-rollout continuity checks passed across the new and retained
+runtime fixtures. Both had naturally paused before rollout; their pause events
+and empty Pod sets were captured in advance. They retain their exact native
+Sandbox/Claim identities and generations, full-home PVC/PV, pinned runtime
+images, native conversations, and complete event/transcript/lifecycle prefixes.
+Neither fixture unexpectedly restarted or rotated during the API deployment.

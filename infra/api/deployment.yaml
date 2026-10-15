@@ -19,15 +19,15 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-ba861431"
+        chrono.ai/goal-build: "goal-20261015-77ada2dc"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b"
+        cma.chronoai.dev/api-image-digest: "sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "ba86143134dbd3e5d351348a69f0cb53bce27edb"
-        cma.chronoai.dev/image-digest: "sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b"
-        cma.chronoai.dev/image-source: "ba86143134dbd3e5d351348a69f0cb53bce27edb"
-        cma.chronoai.dev/local-build: "goal-20261015-ba861431"
-        cma.chronoai.dev/observed-image-provenance-sha256: "e383c23a3e95476f80d11c06a5316d52c16529e64b4766cc240cc0d2ee34ced4"
+        cma.chronoai.dev/candidate: "77ada2dc25c580a6fdc3ad8414b243ad3c2153ba"
+        cma.chronoai.dev/image-digest: "sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71"
+        cma.chronoai.dev/image-source: "77ada2dc25c580a6fdc3ad8414b243ad3c2153ba"
+        cma.chronoai.dev/local-build: "goal-20261015-77ada2dc"
+        cma.chronoai.dev/observed-image-provenance-sha256: "b0ab7bb8c1d2f8d396dfbd8c1cdd77d0cb4c3a5daacf381515bab48f1196a91c"
         # Reload the environment-bound runtime pin when its ConfigMap changes.
         cma.chronoai.dev/runtime-image: "sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e"
       labels:
@@ -64,7 +64,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -80,7 +80,7 @@ spec:
             # Deployment layer while the shared ConfigMap keeps its safe
             # default of zero for environments that do not opt in.
             - name: CHRONO_NATIVE_PREPARED_TARGET
-              value: "0"
+              value: "1"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
