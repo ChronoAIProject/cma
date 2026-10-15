@@ -436,3 +436,11 @@ compaction can reduce context size while lifetime counts remain unchanged.
 Counts include cached input and advance only on provider reports; absent
 historical usage is never inferred from message length. Retained older runtimes
 continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agentAttachments.upload(agentId, file, { idempotencyKey, signal })` uploads one browser `File` or `Blob` to the owner's active Agent. Pass `name` when using a plain `Blob`. Any regular file type is accepted, including images; each file may contain up to 20 MiB, including empty files. The binary body retains its declared media type. Names are sanitized into an ASCII basename and each operation gets a distinct directory.
+
+The result contains `id`, `agentId`, `name`, `path`, `size`, `mediaType` and `sha256`. The verified `path` is under `/home/attachments/<agent-id>/<attachment-id>/`. Include that path in your subsequent Agent input when ready; uploading never sends a message or executes content. A lost response may be retried with exactly the same key, filename, media type and bytes. Reusing a key for different content returns a conflict. Aborting an uncertain request does not guarantee the file was not committed; preserve the key for recovery.
+
+Only current owner authority may upload. Shared conversation readers and delegated Agents cannot write files through this route. The runtime must prove a full persisted home and the attachment capability; older runtime images and inactive Agents return a typed refusal. Existing Sandboxes are not rotated by this feature. File storage lasts with the Sandbox's persisted home; the approved artifact API remains the separate publication and download interface.
