@@ -12,10 +12,14 @@ export type { V2AgentEventKind } from './kinds.js';
 export type { V2AgentCursor, V2AgentPageCursor } from './schema.js';
 
 export interface V2AgentSnapshotOptions extends OperationOptions {
+  /** Opt into authoritative per-message command correlation; older servers may omit it. */
+  readonly messageBindings?: boolean;
   readonly limit?: number;
   readonly pageCursor?: string;
 }
 export interface V2AgentEventsOptions extends OperationOptions {
+  /** Opt into authoritative per-message command correlation; older servers may omit it. */
+  readonly messageBindings?: boolean;
   /** The last completely applied durable Agent cursor; omit to start at the retained beginning. */
   readonly afterCursor?: string;
   /** Standard SSE resume header alternative; if both coordinates are supplied they must match. */
@@ -48,6 +52,7 @@ export class AgentEventsV2 {
         page_cursor: previous,
       }),
       options,
+      options.messageBindings ? { Prefer: 'cma-message-bindings' } : undefined,
     );
     return v2AgentEventPage(value, id, limit, previous);
   }
@@ -79,7 +84,10 @@ export class AgentEventsV2 {
       (response, signal) => agentFrames(response, signal, id, after),
       'Agent events v2',
       undefined,
-      headerCursor === undefined ? undefined : { 'Last-Event-ID': headerCursor },
+      {
+        ...(headerCursor === undefined ? {} : { 'Last-Event-ID': headerCursor }),
+        ...(options.messageBindings ? { Prefer: 'cma-message-bindings' } : {}),
+      },
     )) {
       try {
         await options.onEvent(frame);

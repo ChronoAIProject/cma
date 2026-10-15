@@ -9,7 +9,7 @@ use super::super::ApplyError;
 use crate::store::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::{agents::read_agent, sandboxes::read_sandbox};
 
-pub(super) async fn current(
+pub(in crate::store::agent_commands) async fn current(
     store: &MongoSandboxStore,
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
@@ -52,7 +52,7 @@ pub(super) async fn current(
     Ok((agent, parent))
 }
 
-pub(super) async fn resources(
+pub(in crate::store::agent_commands) async fn resources(
     store: &MongoSandboxStore,
     agent: &Agent,
     parent: &Sandbox,
@@ -82,7 +82,7 @@ pub(super) async fn resources(
     Ok(())
 }
 
-pub(super) async fn source(
+pub(in crate::store::agent_commands) async fn source(
     store: &MongoSandboxStore,
     response: &AdmittedAgentCommand,
     session: &mut ClientSession,
