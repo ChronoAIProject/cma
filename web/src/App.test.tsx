@@ -66,18 +66,14 @@ describe('the retained application shell', () => {
     );
     expect(await screen.findByRole('button', { name: 'Get Started' })).toBeEnabled();
     expect(screen.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
     const services = screen.getByRole('navigation', { name: 'CMA services' });
-    expect(within(services).getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
-    for (const name of ['Agent Manager', 'Image Manager', 'Event Gateway']) {
+    expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
+    for (const name of ['Agent Manager', 'Event Gateway']) {
       expect(within(services).getByRole('link', { name })).toHaveAttribute('href');
     }
-    await act(async () => {
-      fireEvent.click(within(services).getByRole('link', { name: 'Image Manager' }));
-    });
-    expect(within(services).getByRole('link', { name: 'Image Manager' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
+    expect(
+      within(services).getByRole('button', { name: 'Image Manager (coming soon)' }),
+    ).toBeDisabled();
   });
 });

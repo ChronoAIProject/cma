@@ -6,6 +6,7 @@ import type {
   SandboxResourceAvailability,
 } from './sandboxInput';
 import type { QueuedMessageControl } from './transport/queuedStatus';
+import type { QueuedInputsControl } from './transport/queuedInputsStatus';
 
 export type MessageAcceptance =
   { readonly commandId: string; readonly responseId: string } | { readonly runId: string };
@@ -21,8 +22,10 @@ export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
   readonly queuedMessage?: QueuedMessageControl;
+  readonly queuedInputs?: QueuedInputsControl;
   readonly pendingMessage?: string;
   readonly acceptedMessage?: string;
+  readonly acceptedSteeringMessage?: string;
   readonly pendingControl?: boolean;
   readonly controlNotice?: string;
   readonly controlsUnavailable?: boolean;
@@ -42,6 +45,7 @@ export interface AgentController {
     onRefused?: () => void,
   ) => Promise<void>;
   readonly interrupt: () => Promise<void>;
+  readonly steer?: AgentController['send'];
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;
   readonly delete: () => Promise<void>;

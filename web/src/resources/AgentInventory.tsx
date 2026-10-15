@@ -112,20 +112,20 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
   const selected = choices.find((choice) => choice.id === organization);
   const scopeLabel =
     shared === true
-      ? 'Shared with me'
+      ? 'Shared'
       : organization === undefined
         ? 'Personal'
-        : selected?.display_name?.trim() || 'Organization';
+        : `${selected?.display_name?.trim() || 'Organization'} (Organization)`;
   const scopes = [
     { value: '', label: 'Personal' },
-    { value: 'shared', label: 'Shared with me' },
+    { value: 'shared', label: 'Shared' },
     ...choices.map((choice, index) => ({
       value: scopeValue(choice.id),
-      label: choice.display_name?.trim() || `Organization ${String(index + 1)}`,
+      label: `${choice.display_name?.trim() || `Organization ${String(index + 1)}`} (Organization)`,
     })),
   ];
   if (organization !== undefined && selected === undefined)
-    scopes.push({ value: scopeValue(organization), label: 'Selected organization' });
+    scopes.push({ value: scopeValue(organization), label: 'Selected organization (Organization)' });
   const page = inventory.state.status === 'ready' ? inventory.state.value : undefined;
   const accessSummaries = useAccessSummaries(
     client,

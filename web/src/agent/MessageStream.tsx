@@ -142,7 +142,7 @@ export function MessageStream({
       ))}
       {optimisticMessages?.map((message) => (
         <article
-          className="message message--user"
+          className={`message message--user${message.queued ? ' message--queued' : ''}`}
           aria-label={identity.name}
           key={`local:${message.id}`}
           data-message-key={`local:${message.id}`}
@@ -155,7 +155,9 @@ export function MessageStream({
               {message.state === 'sending'
                 ? 'Sending…'
                 : message.state === 'accepted'
-                  ? 'Sent'
+                  ? message.queued
+                    ? 'Queued'
+                    : 'Sent'
                   : message.state === 'unconfirmed'
                     ? 'Awaiting confirmation'
                     : 'Not sent'}

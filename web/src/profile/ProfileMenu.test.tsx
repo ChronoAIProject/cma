@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ProfileMenu, initialsFor } from './ProfileMenu';
@@ -82,4 +82,52 @@ describe('account menu', () => {
 
 it('derives stable initials from the display name', () => {
   expect(initialsFor(user)).toBe('AL');
+});
+
+it('provides docs and explicit text sizes without the relocated Agent/trigger actions', async () => {
+  const actor = userEvent.setup();
+  const navigate = vi.fn();
+  render(
+    <ProfileMenu
+      user={{
+        ...user,
+        capabilities: ['use_own_sandboxes', 'publish_triggers', 'read_activity_log'],
+      }}
+      onNavigate={navigate}
+      onSignOut={vi.fn()}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  expect(screen.queryByRole('menuitem', { name: 'Agents' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
+  const menu = screen.getByRole('menu');
+  const docs = within(menu).getByRole('menuitem', { name: 'Docs' });
+  const ops = within(menu).getByRole('menuitem', { name: 'Operations' });
+  expect(docs.compareDocumentPosition(ops) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const sizes = screen.getByRole('group', { name: 'System text size' });
+  await actor.click(within(sizes).getByRole('menuitemradio', { name: 'Large' }));
+  expect(within(sizes).getByRole('menuitemradio', { name: 'Large' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  expect(document.documentElement.dataset.systemTextSize).toBe('large');
+  expect(localStorage.getItem('cma:system-text-size')).toBe('large');
+  await actor.click(docs);
+  expect(navigate).toHaveBeenCalledWith({ kind: 'docs' });
+});
+
+it('keeps text preferences in sync between retained portal account menus', async () => {
+  const actor = userEvent.setup();
+  const one = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  const two = render(
+    <ProfileMenu user={{ ...user, displayName: 'Second surface' }} onSignOut={vi.fn()} />,
+  );
+  await actor.click(within(one.container).getByRole('button'));
+  await actor.click(screen.getByRole('menuitemradio', { name: 'Small' }));
+  await actor.click(within(two.container).getByRole('button'));
+  expect(screen.getByRole('menuitemradio', { name: 'Small' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await actor.click(screen.getByRole('menuitemradio', { name: 'Medium' }));
 });

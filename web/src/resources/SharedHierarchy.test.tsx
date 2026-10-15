@@ -232,9 +232,11 @@ it.each([false, true])(
     await user.click(screen.getByRole('button', { name: 'Next Sandboxes' }));
     await screen.findByRole('link', { name: new RegExp(agent.title) });
     expect(
-      screen.getByRole('link', { name: shared ? 'All shared Agents' : 'All authorized Agents' }),
+      screen.getByRole('link', {
+        name: shared ? 'All authorized Agents' : 'All authorized Agents',
+      }),
     ).toHaveAttribute('href', shared ? '/shared/agents' : '/organizations/org_research/agents');
-    if (shared) expect(screen.getByRole('button', { name: 'Next shared Agents' })).toBeDisabled();
+    if (shared) expect(screen.getByRole('button', { name: 'Next Agents' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Previous Sandboxes' })).toBeEnabled();
   },
 );
@@ -291,7 +293,8 @@ it.each([false, true])(
     const user = userEvent.setup();
     const composer = await screen.findByRole('textbox', { name: 'Message' });
     await user.type(composer, 'Keep my personal draft');
-    await chooseOption(user, 'Navigation scope', shared ? 'Shared with me' : 'Research');
+    await user.click(screen.getByRole('button', { name: 'Sandbox' }));
+    await chooseOption(user, 'Navigation scope', shared ? 'Shared' : 'Research (Organization)');
     await screen.findByRole('link', { name: new RegExp(sandbox.name) });
     test.state.revoked = true;
     await user.click(
@@ -387,11 +390,11 @@ it('pages shared navigation without parent reads and clears it on revocation', a
       personal={<p>Personal tree</p>}
     />,
   );
-  await screen.findByText('No shared Agents on this page.');
+  await screen.findByText('No Agents match this scope and status on this page.');
   const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: 'Next shared Agents' }));
+  await user.click(screen.getByRole('button', { name: 'Next Agents' }));
   await screen.findByRole('link', { name: /Narrow shared Agent/ });
-  expect(screen.getByRole('link', { name: 'All shared Agents' })).toHaveAttribute(
+  expect(screen.getByRole('link', { name: 'All authorized Agents' })).toHaveAttribute(
     'href',
     '/shared/agents',
   );
@@ -402,7 +405,7 @@ it('pages shared navigation without parent reads and clears it on revocation', a
       ?.searchParams.get('cursor'),
   ).toBe('agt_scanned');
   revoked = true;
-  await user.click(screen.getByRole('button', { name: 'Refresh shared Agents' }));
+  await user.click(screen.getByRole('button', { name: 'Refresh Agents' }));
   expect(screen.queryByText('Narrow shared Agent')).not.toBeInTheDocument();
   await screen.findByText('Access removed');
 });
