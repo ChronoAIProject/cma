@@ -14,8 +14,12 @@ CLI transport code nor GitHub credentials are patched into it.
 The Linux image campaign also runs the installed CLI through the actual
 supervisor proxy against an offline fixture with networking disabled.
 
-When `CHRONO_SANDBOX_REACHES` includes exactly `api-github`, the runtime prepares
-a local Unix-socket proxy after software installation and credential admission.
+Every runtime configured with the managed platform proxy prepares a local
+GitHub Unix-socket transport after software installation and credential admission,
+including the default `chrono-llm-public` and `ornn-api` scope. The transport does
+not grant GitHub access: NyxID checks each request against the current agent key.
+An explicit hot scope grant or removal therefore changes access on the next
+request without changing the running Agent's environment or restarting it.
 The proxy forwards GitHub API paths to
 `CHRONO_PLATFORM_BASE_URL/api/v1/proxy/s/api-github`. The scoped NyxID credential
 comes from the existing in-memory credential holder and follows its custody
@@ -46,9 +50,11 @@ change pinned profiles, or rotate an active owner's runtime. NyxID account
 connection and Sandbox service authorization are distinct prerequisites.
 
 Local regression tests cover proxy routing, exact request preservation,
-credential renewal, leak refusal, stale socket recovery, active-socket protection
-and the genuine CLI's REST and GraphQL transport. Run the executable contract
-test explicitly with the pinned `gh` binary:
+credential renewal, hot grant and removal from the default scope, leak refusal,
+stale socket recovery, active-socket protection and the genuine CLI's REST and
+GraphQL transport. Grant and removal keep the same socket and Agent environment;
+the upstream authority refuses the initial and removed scopes. Run the executable
+contract test explicitly with the pinned `gh` binary:
 
 ```sh
 CMA_GH_CONTRACT_EXECUTABLE=/absolute/path/to/gh \

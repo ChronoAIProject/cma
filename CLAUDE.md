@@ -263,10 +263,14 @@ provider, model access, resources, software and environment do not change
 implicitly. The owner may add Workspaces and Agents with inline configuration
 within the recorded limits. Published profile changes never mutate existing instances.
 
-An explicit owner service-access command may append additional NyxID grants
-while the Sandbox is fully Paused. It preserves the original profile and creation
-scope, records the owner and time, and renews scoped credentials before revival.
-Profile publication never grants this additional instance access implicitly.
+An explicit owner service-access command may replace the exact NyxID scope on
+an Active Sandbox without restarting its runtime. The latest owner-authorized
+scope revision controls new credential issuance while the original profile and
+creation scope remain immutable. Credential delivery and old-key revocation
+complete before confirmed callback delivery to the original Agent; an active turn
+receives durable steering without waiting for that turn to finish. Owners may add or remove optional
+services; the platform baseline remains required. Already admitted paused access
+workflows remain recoverable. Profile publication never changes instance access.
 
 Retained Sandbox Profile availability remains a mutable inactivity policy,
 separate from immutable environments. Always keep alive prevents inactivity

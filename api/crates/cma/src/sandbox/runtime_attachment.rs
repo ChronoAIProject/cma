@@ -46,22 +46,34 @@ pub(crate) fn retained_runtime_request(
             .ok_or_else(|| {
                 AdapterError::Rejected("suspended runtime credential scope is absent".into())
             })?;
-        spec.reaches = sandbox
-            .credential
-            .reaches
-            .iter()
-            .chain(
-                sandbox
-                    .credential
-                    .service_grants
-                    .iter()
-                    .filter(|grant| grant.credential_generation_floor < current.generation)
-                    .flat_map(|grant| &grant.services),
-            )
-            .map(ToString::to_string)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        spec.reaches = if sandbox.credential.service_scope.is_some() {
+            // Hot credential revisions retain the startup environment separately.
+            // Credential custody now describes the current key, not the old Pod
+            // template, so a credential generation cannot reconstruct that template.
+            sandbox
+                .credential
+                .runtime_reaches(binding)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        } else {
+            sandbox
+                .credential
+                .reaches
+                .iter()
+                .chain(
+                    sandbox
+                        .credential
+                        .service_grants
+                        .iter()
+                        .filter(|grant| grant.credential_generation_floor < current.generation)
+                        .flat_map(|grant| &grant.services),
+                )
+                .map(ToString::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
     } else if sandbox.runtime.as_ref() != Some(binding) {
         return Err(AdapterError::Rejected(
             "retained runtime binding is not current or suspended".into(),

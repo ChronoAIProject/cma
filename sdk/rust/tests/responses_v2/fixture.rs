@@ -80,5 +80,6 @@ pub fn expected(path: &str, body: Option<Value>, bytes: Vec<u8>) -> Expected {
         ]),
         response: bytes,
         chunks: None,
+        raw_body: None,
     }
 }

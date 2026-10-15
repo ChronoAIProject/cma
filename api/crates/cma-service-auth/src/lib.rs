@@ -3,6 +3,7 @@
 pub mod browser;
 pub mod mongodb_authority;
 mod nyx;
+pub mod session;
 pub use nyx::{AuthError, NyxIdAuth, Principal};
 #[derive(Clone, Copy, Debug)]
 pub enum Service {

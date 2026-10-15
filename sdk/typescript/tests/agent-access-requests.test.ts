@@ -81,3 +81,54 @@ it('validates service bounds and command identity before transport', async () =>
   ).toThrow(ValidationError);
   expect(test.calls).toEqual([]);
 });
+it('retains failed predecessor identity on a fresh pending consent attempt', async () => {
+  const test = transport();
+  const failed = { ...pending, id: `aar_${'a'.repeat(64)}`, status: 'failed' };
+  const next = { ...pending, id: `aar_${'b'.repeat(64)}`, retry_of: failed.id };
+  test.answer({ items: [next, failed] });
+  expect(await test.client.agents.accessRequests('agent-one')).toEqual({ items: [next, failed] });
+  for (const retry_of of ['foreign', next.id]) {
+    test.answer({ items: [{ ...next, retry_of }] });
+    await expect(test.client.agents.accessRequests('agent-one')).rejects.toBeInstanceOf(
+      ProtocolError,
+    );
+  }
+});
+it('replaces exact shared scope with an observed-set guard and preserves replay identity', async () => {
+  const test = transport();
+  const body = {
+    services: ['chrono-llm-public', 'ornn-api'],
+    expected_services: ['chrono-llm-public', 'ornn-api', 'api-github'],
+  };
+  const result = { ...pending, services: body.services, status: 'applying' };
+  test.answer(result, 202);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect(
+      await test.client.agents.updateServiceAccess('agent-one', body, {
+        idempotencyKey: 'scope-one',
+      }),
+    ).toEqual(result);
+  }
+  expect(test.calls[0]?.url).toBe(
+    'https://cma.example.test/api/v1/agents/agent-one/service-access',
+  );
+  expect(test.calls[0]?.init.method).toBe('PUT');
+  expect(JSON.parse(String(test.calls[0]?.init.body))).toEqual(body);
+  expect(test.calls[1]?.init.body).toEqual(test.calls[0]?.init.body);
+  expect(new Headers(test.calls[1]?.init.headers).get('Idempotency-Key')).toBe('scope-one');
+  test.answer({ ...result, agent_id: 'other' }, 202);
+  await expect(
+    test.client.agents.updateServiceAccess('agent-one', body, { idempotencyKey: 'scope-one' }),
+  ).rejects.toBeInstanceOf(ProtocolError);
+});
+it('refuses invalid replacement selections before performing any network request', () => {
+  const test = transport();
+  for (const body of [
+    { services: [], expected_services: ['chrono-llm-public', 'ornn-api'] },
+    { services: ['chrono-llm-public', 'ornn-api'], expected_services: ['invalid/service'] },
+  ])
+    expect(() =>
+      test.client.agents.updateServiceAccess('agent-one', body, { idempotencyKey: 'scope' }),
+    ).toThrow(ValidationError);
+  expect(test.calls).toEqual([]);
+});

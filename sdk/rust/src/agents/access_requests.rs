@@ -40,6 +40,9 @@ pub struct AgentAccessRequest {
     pub services: Vec<String>,
     /// Explanation supplied by the originating Agent.
     pub reason: String,
+    /// Failed predecessor retained when this new consent attempt was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
     /// Connection recovery while an approved request is connecting or applying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentAccessConnection>,
@@ -59,6 +62,14 @@ pub struct ApproveAgentAccessRequest {
     /// Between 1 and 32 ASCII service identities, each at most 128 bytes.
     pub services: Vec<String>,
 }
+/// Owner-approved replacement of shared Sandbox service access.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateAgentServiceAccessRequest {
+    /// Exact desired services, including required baseline services.
+    pub services: Vec<String>,
+    /// Previously observed services; a stale selection is refused without changes.
+    pub expected_services: Vec<String>,
+}
 fn valid_services(services: &[String]) -> bool {
     !services.is_empty()
         && services.len() <= 32
@@ -73,6 +84,14 @@ fn valid_services(services: &[String]) -> bool {
 impl AgentAccessRequest {
     fn validate(&self, agent_id: &str, request_id: Option<&str>) -> Result<()> {
         if self.id.is_empty()
+            || self.retry_of.as_ref().is_some_and(|id| {
+                id == &self.id
+                    || id.len() != 68
+                    || !id.starts_with("aar_")
+                    || !id[4..]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
             || self.agent_id != agent_id
             || request_id.is_some_and(|id| id != self.id)
             || !valid_services(&self.services)
@@ -92,6 +111,31 @@ impl AgentAccessRequest {
     }
 }
 impl Agents<'_> {
+    /// Update shared access in place; preserve the exact body and key after an uncertain reply.
+    pub async fn update_service_access(
+        &self,
+        agent_id: &str,
+        body: &UpdateAgentServiceAccessRequest,
+        key: &IdempotencyKey,
+    ) -> Result<AgentAccessRequest> {
+        if !valid_services(&body.services) || !valid_services(&body.expected_services) {
+            return Err(Error::validation(
+                "expected 1 to 32 bounded service identities",
+            ));
+        }
+        let result: AgentAccessRequest = self
+            .client
+            .command(
+                Method::PUT,
+                &["agents", agent_id, "service-access"],
+                Some(body),
+                key,
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        result.validate(agent_id, None)?;
+        Ok(result)
+    }
     /// Read durable requests without granting access or resuming an Agent.
     pub async fn access_requests(&self, agent_id: &str) -> Result<AgentAccessRequestList> {
         let page: AgentAccessRequestList = self

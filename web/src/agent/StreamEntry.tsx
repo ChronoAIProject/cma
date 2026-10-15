@@ -17,6 +17,10 @@ import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
 import { ActivityBody } from './Thinking';
 import { isPendingTool } from './toolStatus';
+import { UserMessage } from './UserMessage';
+import { TurnUsage } from './TurnUsage';
+import type { AgentUsage } from '../api/types';
+import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -30,26 +34,43 @@ export function StreamEntry({
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
+  showUsage = false,
+  usage,
+  user,
+  unknownUserName,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  readonly showUsage?: boolean;
+  readonly usage?: AgentUsage['currentTurn'];
+  readonly user?: MessageUser;
+  readonly unknownUserName?: string;
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
+    const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
         className={`message message--${message.role}`}
-        aria-label={message.role === 'user' ? 'You' : 'Agent'}
+        aria-label={identity.name}
         data-streaming={message.status === 'streaming' ? '' : undefined}
       >
-        <span className="message__role">{message.role === 'user' ? 'You' : 'Agent'}</span>
-        {message.role === 'user' ? (
-          <p>{message.content}</p>
-        ) : (
-          <MessageContent content={message.content} streaming={message.status === 'streaming'} />
-        )}
+        <MessageAvatar identity={identity} />
+        <div className="message__body">
+          <span className="message__role">{identity.name}</span>
+          {message.role === 'user' ? (
+            <UserMessage content={message.content} />
+          ) : (
+            <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+          )}
+          {showUsage ? (
+            <div className="message__usage" aria-label="Turn token usage">
+              <TurnUsage usage={usage} animateInitial={false} />
+            </div>
+          ) : null}
+        </div>
       </article>
     );
   }
@@ -93,6 +114,12 @@ export function StreamEntry({
   }
   if (entry.kind === 'recovery') {
     const notice = entry.item;
+    if (notice.clearsOn !== undefined)
+      return (
+        <p className="message__delivery" role="status">
+          {notice.title}
+        </p>
+      );
     if (notice.id.startsWith('sign-in:') || notice.id === 'live-sign-in')
       return <SignInCard notice={notice} />;
     const url =

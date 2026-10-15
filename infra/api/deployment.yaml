@@ -19,14 +19,17 @@ spec:
   template:
     metadata:
       annotations:
-        # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:cad2058fad219bf8e6deb8b061a1d6331d28552990ee6bc8646f8cd5cf11d18b"
-        cma.chronoai.dev/candidate: "c4272f838f47ab5c48a3105c017f18d72c16aaec"
-        cma.chronoai.dev/api-image-digest: "sha256:310684228fbf206808cbb72c9b682e869b18c0d084e4ee88ccdba4938ccf1bdd"
+        chrono.ai/goal-build: "goal-20261015-a03cfc51"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/image-source: "c4272f838f47ab5c48a3105c017f18d72c16aaec"
+        cma.chronoai.dev/api-image-digest: "sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/local-build: "goal-20261015-c4272f83"
+        cma.chronoai.dev/candidate: "a03cfc51b5c735892ed06e37aeebd73643f54bca"
+        cma.chronoai.dev/image-digest: "sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132"
+        cma.chronoai.dev/image-source: "a03cfc51b5c735892ed06e37aeebd73643f54bca"
+        cma.chronoai.dev/local-build: "goal-20261015-a03cfc51"
+        cma.chronoai.dev/observed-image-provenance-sha256: "74da3d6c7ef6b786e4b8d928323dc41974023c2a6f0a583f93462b740717fc97"
+        # Reload the environment-bound runtime pin when its ConfigMap changes.
+        cma.chronoai.dev/runtime-image: "sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -61,7 +64,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:310684228fbf206808cbb72c9b682e869b18c0d084e4ee88ccdba4938ccf1bdd
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

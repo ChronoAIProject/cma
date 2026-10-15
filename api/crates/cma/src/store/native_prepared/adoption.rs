@@ -24,6 +24,7 @@ pub(in crate::store) async fn completed_installation_digest(
         || sandbox.credential.pending.is_some()
         || !sandbox.credential.revoke_debt.is_empty()
         || !sandbox.credential.service_grants.is_empty()
+        || sandbox.credential.service_scope.is_some()
         || sandbox
             .lifecycle
             .home

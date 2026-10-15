@@ -45,6 +45,29 @@ pub(super) fn fold_update(
         return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
     }
     match update {
+        ConversationUpdate::Metadata(metadata) => {
+            super::conversation_observation_fold::metadata(current, assembly, metadata, appended_at)
+        }
+        ConversationUpdate::Usage(usage) => {
+            super::conversation_observation_fold::usage(current, assembly, usage, appended_at)
+        }
+        ConversationUpdate::Said(SessionUpdate::SessionInfoUpdate(info)) => {
+            let description = serde_json::to_value(&info).ok().and_then(|value| {
+                value
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+            super::conversation_observation_fold::metadata(
+                current,
+                assembly,
+                layer3_adapter::ConversationMetadata {
+                    description,
+                    working_directory: None,
+                },
+                appended_at,
+            )
+        }
         ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk)) => {
             fold_message_chunk(current, assembly, chunk, prompt_evidence, appended_at)
         }
@@ -105,7 +128,10 @@ pub(super) fn fold_update(
                 appended_at,
                 &mut logs,
             )?;
-            if let Some(usage) = completed.usage {
+            if let Some(usage) = completed
+                .usage
+                .filter(|_| agent.conversation.observations.usage.is_none())
+            {
                 logs.push(AgentLogKind::Usage {
                     input_tokens: usage.input_tokens,
                     output_tokens: usage.output_tokens,
@@ -346,7 +372,7 @@ fn fold_semantic_update(
     )
 }
 
-fn changed(
+pub(super) fn changed(
     mut agent: Agent,
     logs: Vec<AgentLogKind>,
     assembly: AgentMessageAssembly,

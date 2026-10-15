@@ -1,5 +1,122 @@
 # CMA native Sandbox production verification
 
+## Current production — 15 October, 20:01 SGT
+
+The latest deployed images supersede the dated release below:
+
+| Component | Image source | Generation | Immutable image digest |
+|---|---|---|---|
+| Agent Manager | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 39 | `sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132` |
+| Web | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 117 | `sha256:369c448ed9c44037021546c2885c7f3b155e2a2457c14ab9e2e1379797af9904` |
+| Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
+| Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
+
+Production checks now cover live key replacement and revocation without a
+restart, actual private GitHub API access, pasted/dropped attachments, message
+identities and estimates during streamed output. Measured warm creation reached
+an enabled composer in 3.373 seconds. Key-change callbacks passed the five-second
+target, including an active turn. Actual controller pause/resume remains slower
+than five seconds; fresh external OAuth and native Git transport are separate
+coverage limits. Exact evidence and measurement boundaries are in the dated
+15 October sections at the end of this document.
+
+## Attachment, usage and message release — 15 October, 16:47 SGT
+
+The preceding production deployment was:
+
+| Component | Image source | Generation | Immutable image digest |
+|---|---|---|---|
+| Agent Manager | `264389425a1472d10d9215362b917274120c4f3e` | 36 | `sha256:e3f890a687980d641db113a742179e2899c0dda898f5950a8a5f28f3cebef4ee` |
+| Web | `a76ecc467c8a1fb57fceb61c810a945bfdf5c5f6` | 113 | `sha256:83fc18c4fcbd8fc8fa4edd61a4670fd295a32ef59a29529606e99678194d0946` |
+| Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
+| Default runtime | `af2f8231f74aa4c37d6f083269810a81a1c65ec4` | — | `sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d` |
+
+The three control-plane images use the existing
+`us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry` repository
+with names `cma-api`, `cma-web` and `cma-cmaeg`. The runtime is
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`.
+Exact registry source labels, index/platform digests and image scans passed;
+no fixable HIGH or CRITICAL findings were reported. Builds used immutable Git
+archives. Agent Manager first became healthy with runtime `84ca616c` retained;
+then its default was switched to `af2f8231` and the singleton restarted, before
+Web activation. Existing owner Sandboxes retain their recorded image.
+
+All three Deployments have one Ready replica, matching observed generations,
+expected image IDs and Pod→ReplicaSet→Deployment ownership. Public asset
+`index-D4q48F_C.js` matches the running Web Pod byte for byte at SHA-256
+`958ae3a30989744194089a43d05fd5dabbebac4cd2c390e1a8d79ebf44dcb51d`.
+The expected build identity and per-reply token UI are present. The 16 shared
+login regressions passed, including common subject, anonymous rejection,
+wrong/missing-Origin write rejection, bearer/cookie conflict, allowlisted proxy
+routes and absence of a second Event Gateway browser login. No channel was
+created by the deliberately rejected write probes.
+
+The Web preserves each turn's reported input/output on its final assistant
+reply, restores those values from durable usage events, and explicitly marks
+unavailable counts. Animation never exceeds reported values. Routine reconnects
+remain quiet for 2.5 seconds; short refresh notices clear only on their applicable
+validated events. Actual history gaps and authorization failures remain distinct.
+Ordinary Responses-v2 sends no longer perform the redundant connection catalog
+preflight; backend admission and account fencing remain authoritative. The final
+combined suite passed **202 files / 1,895 tests**, TypeScript, full lint/format
+and the CSS collision check. Local 390px/1440px token component layouts were
+inspected; they are not production browser timing evidence.
+
+At **16:50:50 SGT**, the exact default policy
+`367c27e1708efb063261bf2894fb554fd3f621b80ee821324163bac4d6050379`
+had one observed Ready replica in its CMA-created warm pool. A read-only check
+verified the exact pool/template UID relation, runtime image, full-`/home` mount,
+initializer, fresh volume claim template and `OnRootMismatch` policy. This
+capacity observation does not establish prepared-Agent readiness or creation
+latency. No manual remote pool mutation was required.
+
+The runtime attachment publication passed 13 native fixtures, its runtime
+contract, full-home replay and an actual Linux upload/replay/recreation probe.
+Agent Manager includes the attachment-aware status reader, attachment API,
+first-message publication/lease repair, pause quiescence and explicit failed
+scope-request retry. Approved scope access still waits for owner resume under
+the deployed paused-Sandbox workflow. A no-pause key update is separate follow-up
+work and must not be inferred from this deployment.
+
+Event Gateway was deployed in the preceding coherent `477bf801` batch and is
+retained here. Its Docker Desktop amd64 emulation gate failed on `close_range`;
+that standard emulated build did not pass. The exact original binaries and media
+fixtures then passed the native amd64 sandbox gate and nine media tests in a
+temporary nonprivileged, credential-free CMA Pod. Derived packaging checks the
+binary/fixture hashes against the native gate receipt
+`e584ee6731a0b7560dd7c55d09c18a84166175607226510a574553a05534b0b7`.
+The temporary Pod was removed. This exception does not claim the emulated gate
+succeeded or alter the sandbox controller.
+
+**Full goal acceptance remains pending.** The preceding API477/runtime84 sample
+passed functional execution, with interface eligibility at 2.656 s, durable input
+receipt at 3.236 s and live connection publication at 4.917 s; operation success
+and Agent Ready arrived at 5.406 s, so its complete performance result failed.
+The prior actual resume was approximately 21.7 s. These results belong to the
+preceding source pair; fresh exact-release lifecycle measurements are still
+required. Public HTTP/artifact verification does not establish browser paint
+latency or external OAuth/popup behavior. No available browser surface has
+provided those production measurements.
+
+After any `af2f8231` allocation, every Agent Manager reader must understand
+`agent_attachment_upload`; reverting the default cannot repair retained runtime
+status parsing. Do not restore `477bf801` or an earlier incompatible reader.
+Keep the attachment-aware `26438942` digest as the compatible floor alongside
+all earlier durable-event compatibility requirements. Preserve the original
+PVCs, histories and immutable runtime identities during any recovery.
+
+Evidence is retained locally in
+`/tmp/cma-ux-final-release-20261015/live-084714`,
+`/tmp/cma-ux-final-release-20261015/verification-084714`,
+`/tmp/cma-ux-final-release-20261015/{cma-agent-manager,cma-web}`,
+`/tmp/cma-ux-final-release-20261015/warm-pool-af2/ready-target1.json`,
+`/tmp/cma-runtime-publication-af2f8231`,
+`/tmp/cma-eg-native-gate-477bf801`, and
+`/tmp/cma-public-prepared-477bf801-runtime84-independent-02/report.json`.
+CMA remains in its original Tokyo cluster; Image Manager remains undeployed.
+No infra-owned agent-sandbox controller, RBAC or storage policy was changed.
+The following sections retain older observations and do not describe current pins.
+
 ## Immediate message display and prepared admission — 15 October, 13:29 SGT
 
 The outgoing-message change is deployed in Web source `1d337c1a`, generation
@@ -618,3 +735,363 @@ The earlier four-manifest synchronization and its YAML, configuration
 key/documentation, native contract and route ownership checks apply to the
 versions identified above. Operational instructions and infra ownership boundaries are in
 [CMA deployment readiness](CMA_Deployment_Readiness.md).
+
+## 2026-10-15 compact composer and production attachment check
+
+The Web deployment now pins source `c35883bf32e0ab09a2bf62a319c1651632de969c`,
+image digest `sha256:e83eb5b27ae48d237af84270f76baca02062f67d7f74052dd112352659ac411c`.
+Generation 114 reached one Ready replica; the public `/assets/index-VZuaImLd.js`
+matched the running Pod bytes (SHA-256
+`faf6d127e613568a916e7667376dfcae86019cf8bf86f699bb259bc0dcfca1ab`).
+Agent Manager, Event Gateway and the default runtime remained at their preceding
+verified sources. This Web release adds the compact, centered composer, upward
+long-draft expansion, and clipboard file-item fallback.
+
+A disposable owner Agent created through the real production browser reached an
+enabled input in 3.881 seconds after one Create click. This measures input
+eligibility, not completion of the first generated response. In the same browser,
+a PNG pasted through Chromium's native clipboard command and a local text file
+dragged into the composer both produced Ready previews. One Send submitted the
+text and the two server-confirmed attachment paths to that Agent. Without being
+given expected answers, Codex used the files and returned the correct image
+shapes/colors/counts and the text verification marker. Message text appeared in
+approximately 12 milliseconds; the durable response receipt arrived in 384
+milliseconds. These are single-sample observations, not percentile guarantees.
+
+The browser observed 75 numeric token-display updates in that turn, ending at
+43,942 input and 242 output tokens, and retained the completed-turn counts. The
+repeated "Live updates interrupted" warning did not appear. The pinned provider
+reports usage at response/tool boundaries; the numeric animation follows actual
+reports and does not estimate tokens while the provider has not supplied counts.
+
+Evidence is stored locally under `/tmp/cma-hot-production-browser-20261015` and
+`/tmp/cma-compact-composer-release-20261015`. Hot service-scope replacement,
+revocation and the five-second Codex callback are a separate pending release;
+this verification does not declare those targets achieved.
+
+## 2026-10-15 attachment persistence and lifecycle timing
+
+The same disposable Agent `agt_474fe2e794ec4e939f39fce3cf68ca50` was explicitly
+paused and resumed. Public pause acknowledgment took 312 ms and resume
+acknowledgment took 347 ms. The observed backend states took 9.205 seconds to
+reach paused and 25.819 seconds to return active. These measurements do not
+prove actual runtime pause/resume within five seconds. The original native
+Claim, Sandbox, PVC UID and PV were retained; the replacement Pod mounted the
+same writable whole `/home` volume.
+
+After resume, Codex read the disk and computed matching sizes and SHA-256 hashes
+for the pasted PNG, dropped text file and 20 MiB boundary file. The clipboard
+image was compared with its real upload receipt, since Chromium re-encodes PNG
+clipboard contents. Exact 20 MiB upload, identical idempotent replay, conflicting
+bytes rejection (409) and 20 MiB plus one byte rejection (413) also passed.
+Boundary upload took 8.045 seconds; this is upload time, separate from message
+send acknowledgment after an attachment is Ready.
+
+The post-resume browser harness initially typed multiline content as Enter key
+events and unintentionally submitted extra prompt fragments. Only the completed
+file-hash result is used as persistence evidence; those extra sends are excluded
+from latency measurements. The remaining fixture draft was cleared and the page
+reloaded without resubmission. A later duplicate turn encountered provider 402
+`insufficient_credits`. With the owner's subsequent authorization, an active
+10-credit, seven-day grant scoped to `chrono-llm-public` was issued through the
+owner's NyxID admin account to continue verification. No paid checkout occurred.
+
+Evidence: `/tmp/cma-hot-fixture-home-20261015`,
+`/tmp/cma-prod-attachment-boundaries-20261015/proof.json`,
+`/tmp/cma-hot-production-browser-20261015/resume-file-persistence-proof.json`,
+and `/tmp/cma-test-credit-grant-20261015`.
+
+## 2026-10-15 production hot key replacement
+
+Agent Manager source `8cad5bcd71134811bdaf057d080897c11a5fddfd` was deployed
+as digest `sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b`
+with one Ready replica (generation 37). New allocations use runtime source
+`ff9834c43ca3b4468c5755277af5ff7e4c543cdd`, digest
+`sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae`.
+The exact local Linux runtime image campaign passed all 34 checks, including
+the installed GitHub CLI's denial, live grant and removal on one runtime.
+The deployment automatically established its exact default pool with target 1
+and Ready 1; the older manual target-2 activation helper refused the different
+capacity without modifying the existing target.
+
+The retained `af2f8231` runtime fixture had automatically paused from inactivity
+before acceptance. One explicit preparatory resume retained its original home
+and completed in 21.437 seconds (public acknowledgment 235 ms). Both subsequent
+key-update cases held the same Pod UID, Claim, PVC/PV, image, restart count,
+runtime boot and conversation throughout; no lifecycle mutation was used to
+complete either scope update.
+
+| Actual production case | Approval to installed key and old-key revocation | Approval to confirmed original-session callback | Approval to durable Succeeded |
+| --- | --- | --- | --- |
+| Quiet Agent; callback is Message | 1.309 s | 1.752 s | 1.975 s |
+| Busy Agent; callback is Steer into the original active turn | 1.521 s | 1.856 s | 1.964 s |
+
+Timing starts before final approval HTTP dispatch and ends at local monotonic
+receipt from a prestarted, read-only database observer. It includes observer
+transport overhead. Success requires the new credential installed, no old-key
+revocation debt, exact approved scope and confirmed command delivery. The model
+also acknowledged once in the preserved conversation: 8.508 seconds for idle
+and 27.698 seconds for busy (which intentionally held a tool open). Model
+generation completion is separate from delivery of the callback.
+
+Both actual MCP requests used the already-connected mandatory baseline services.
+These two passes do not establish optional GitHub grant/removal or fresh external
+OAuth timing. Evidence: `/tmp/cma-hot-scope-live-8cad5bcd-active-20261015`,
+`/tmp/cma-hot-service-release-20261015`, and
+`/tmp/cma-runtime-ff9834c4-image-evidence.json`.
+
+## 2026-10-15 live GitHub grant, private read and revocation
+
+A new disposable Agent, `agt_a8006c4753ff4aab80dbee23c65f7761`, was created
+through the production browser on the new `ff9834c4` default runtime. One Create
+click reached an enabled composer in 3.373 seconds. This is warm input readiness,
+not first model response completion or a percentile guarantee.
+
+The actual installed `gh` performed three repository metadata reads through the
+managed NyxID `api-github` transport. The initial baseline scope was refused with
+a recognized NyxID service-scope HTTP 403. Codex then issued one real MCP access
+request. Owner approval installed the new key, revoked the old key and delivered
+the callback to the original conversation. The callback triggered a successful
+`gh api repos/ChronoAIProject/cma --jq .full_name` with exit code zero and the
+exact private repository name. An exact owner scope replacement then removed
+`api-github`; its automatic callback triggered another read, again refused by
+NyxID's service scope. There was no extra model prompt between these stages.
+
+| Production change | Installed key and old-key revocation | Actual callback delivered | Durable Succeeded |
+| --- | --- | --- | --- |
+| Add `api-github` | 2.096 s | 3.399 s | 3.509 s |
+| Remove `api-github` | 1.284 s | 1.844 s | 1.952 s |
+
+Both timings use the same conservative observer method described above. The
+same Pod, runtime boot, conversation, Claim, PVC/PV and API image remained in
+place. Final scope was restored to `chrono-llm-public` and `ornn-api`. Native
+tool records were correlated with public tool-call IDs; model statements alone
+were not used as command-result evidence. The test used the owner's existing
+GitHub OAuth connection, so it does not measure fresh external OAuth consent.
+This proves GitHub API transport; native Git clone/push is a separate capability.
+
+Evidence: `/tmp/cma-gh-hot-live-8cad5bcd-20261015-01/report.json` and
+`/tmp/cma-hot-github-production-browser-20261015/create-ui-timing.json`.
+
+## 2026-10-15 final chat identities, attachments and live token display
+
+Web source `fa1e3f13a2583723aadc9c1412b0f21177e58f06`, image digest
+`sha256:b65f7001b95edd3b9eaad46f30344f5be363199ab860b233f0409fca92f07ab6`,
+is deployed at generation 116 with one Ready replica. Public JavaScript bytes
+match the running Pod. Production messages show the owner's display name and
+avatar and the bundled Chrono Agent face and name; both image sources loaded.
+The empty composer measured 36 pixels high and remained enabled after the turn.
+
+On this exact Web release, native clipboard image paste and local file drag/drop
+produced two Ready previews. One Send delivered both attachment paths with the
+message; the response receipt arrived in 381 ms. Codex actually inspected the
+image and text and returned the correct shapes, colors, counts and file marker.
+The turn completed with 57,256 input and 243 output tokens.
+
+The recorded DOM timeline proves live estimates before authoritative usage:
+the first visible output estimate appeared at 6.745 seconds after Send, about
+72 ms after the indicator began estimating, then increased from 6 to 9 to 10.
+The first authoritative usage animation began at 9.119 seconds. Later streamed
+text increased the explicitly approximate newly-visible output estimate from
+1 to 45 while retaining the last reported counts. Final authoritative counts
+replaced that estimate. Estimates cover visible text/reasoning only and never
+alter accumulated authoritative session totals. No repeated live-interruption
+banner appeared in the 150 captured DOM samples.
+
+All 1,932 Web tests across 205 files, type checking, lint, formatting and build
+passed for this implementation. Static asset compression was checked against
+the actual built nginx image; the token worker's decompressed bytes matched its
+source asset. Evidence: `/tmp/cma-chat-final-browser-20261015`,
+`/tmp/cma-chat-release-20261015`,
+`/tmp/cma-chat-static-compression-proof-20261015.json`, and
+`/tmp/cma-final-chat-web-tests-20261015.log`.
+
+The public worker URL was subsequently fetched with gzip accepted. It returned
+HTTP 200, `Content-Encoding: gzip`, 1,024,738 transfer bytes and 2,037,290 decoded
+bytes; the decoded SHA-256 matched the verified worker asset. This checks actual
+production delivery as well as the earlier local nginx image proof.
+
+## 2026-10-15 final browser lifecycle and navigation check
+
+On Web `fa1e3f13` and Agent Manager `8cad5bcd`, the retained owned attachment
+fixture was paused and resumed once through the real production Sandbox page.
+Pause disabled its controls in 5 ms, exposed the accepted operation disclosure
+in 148 ms and showed Pausing in 623 ms. Resume returned HTTP 202 in 1.766 seconds
+and showed Resuming in 2.128 seconds. Underlying operation details were collapsed
+by default and could be expanded. Actual backend completion remained slower:
+7.858 seconds to Paused and 22.274 seconds to Active; UI Live appeared at
+21.883 seconds. These results establish prompt state feedback, not a working
+runtime resumed within five seconds.
+
+The original native Sandbox, Claim, PVC UID and PV survived. A replacement Pod
+mounted the same whole `/home`. One completed post-resume model tool invocation
+read and hashed the original image, text and 20 MiB boundary file; every byte
+count and SHA-256 matched the earlier evidence. All eight prior terminal turns
+and the native conversation were retained. An unsent draft and history survived
+pause/resume and an Agent → own Sandbox → same Agent route roundtrip in the
+same browser document, with one document-navigation entry.
+
+The pause listener initially matched the wrong HTTP URL, so pause receipt
+timing is not claimed; actual click, UI, backend and native observations remain
+available. The single-line hash prompt included a harmless leftover test-draft
+prefix because the harness's select-all shortcut did not select the input.
+There was one send and a real completed hash tool, with no mutation replay.
+The draft was cleared and the fixture retained Active/Ready for subsequent
+scope checks. Deletion was deliberately not submitted in this run.
+
+Evidence: `/tmp/cma-final-lifecycle-browser-20261015/summary.json`.
+
+## 2026-10-15 immediate deletion and completed background cleanup
+
+After its GitHub permission campaign completed, the separate owned Sandbox
+`sbx_c0e7f8b55f8b4ad6bb21453a4d0a9e7f` was naturally Paused. One actual UI
+confirmation submitted one DELETE on Agent Manager `8cad5bcd` and Web
+`fa1e3f13`. HTTP 202 arrived in 158 ms; the Sandbox disappeared from the normal
+resource tree and the confirmation dialog closed in 347 ms. The optional cleanup
+status was collapsed initially, expanded on request, and ultimately confirmed
+deletion.
+
+Exact original Claim, Sandbox and PVC UIDs and all owned Pods were absent within
+2.288 seconds of the pre-click intent. Public retirement completed in 64.978
+seconds after two retryable `stop_agents` dependency errors. Normal workers
+completed cleanup without another DELETE or manual resource changes. This proves
+immediate UI removal and eventual cleanup; it does not label the full public
+retirement as a sub-five-second operation. The retained attachment/callback
+fixture was not touched. Evidence:
+`/tmp/cma-final-delete-browser-20261015/summary.json`.
+
+## 2026-10-15 cross-Agent navigation and callback recovery deployment
+
+On Web `fa1e3f13` and Agent Manager `8cad5bcd`, one additional default Agent
+was created through the existing-Sandbox UI in the retained owned fixture.
+The single POST returned HTTP 202; Create to an editable composer took 4.447
+seconds. The automatic first turn completed in 24.135 seconds. A preparatory
+resume of the naturally paused Sandbox took 23.079 seconds and is explicitly
+outside this creation measurement. The new Agent used `gpt-6`, high reasoning,
+autonomous permissions and the two mandatory scopes.
+
+Normal sidebar links switched between the two Agents without reloading the
+document. Both histories and independent unsent drafts survived. A controlled
+recheck set non-bottom scroll positions using standard DOM scroll events and
+instant scrolling to exclude mouse-wheel inertia: the old Agent restored
+240 to 240 pixels and the new Agent restored 100 to 100 pixels. Switch readiness
+in that check was 0.690–0.714 seconds. Test drafts were cleared and the original
+Agent tab restored. Evidence:
+`/tmp/cma-cross-agent-browser-20261015/create-report.json` and
+`/tmp/cma-cross-agent-browser-20261015/switch-controlled-report.json`.
+
+Agent Manager source `edaeca82` was then deployed at 18:51 SGT as generation
+38. Its exact scanned image is the current pin at the top of this document.
+Pod `cma-agent-manager-57ff55cb4c-59dlc`, UID
+`a8d6fcfc-ebba-44fd-bff7-293422619052`, became Ready with zero restarts and the
+expected image ID. ReplicaSet/Deployment ownership, public retained Agent and
+Sandbox reads, the default runtime and full-home configuration all passed.
+The singleton Recreate rollout briefly returned HTTP 503 to a final browser
+read; that known rollout window is separate from the completed navigation
+measurement. Evidence:
+`/tmp/cma-hot-callback-recovery-release-20261015/cma-agent-manager`.
+
+This patch fixes an indefinite scope-update lock when an owner pause or runtime
+change invalidates a callback before admission. An authenticated transaction
+checks the existing command and fences the original lineage before ending an
+absent or definitely unwritten notification. An admitted or uncertain callback
+retains its exact target, key, receipt and recovery path. The worker stops when
+notification preparation changes the request phase. Eleven focused tests,
+34 authenticated MongoDB contracts, affected strict Clippy, formatting and
+secret scanning passed; five new regression cases include subsequent optional
+revocation and preservation of uncertain delivery. A public API timing race
+cannot deterministically exercise this transaction boundary, so the transactional
+regressions are the race proof, separate from the live callback checks.
+
+The final `edaeca82` image then passed one idle and one busy production MCP
+approval on the retained original Agent and runtime `78fdcb88`. Timings start
+at the approval HTTP request, use a monotonic clock and conservatively include
+observer transport latency:
+
+| Original Agent state | New key installed and old key revoked | Actual original-session callback | Request succeeded |
+|---|---|---|---|
+| Idle, Message callback | 1.720 s | 2.152 s | 2.370 s |
+| Working, Steer into original turn | 1.297 s | 1.804 s | 2.032 s |
+
+Both retained the exact runtime boot, conversation, Pod, Claim, PVC, PV and
+image; neither changed the native controller. Each delivered exactly one
+callback. Actual Codex acknowledgment subsequently appeared at 8.830 and 28.508
+seconds respectively; those model-response times are not callback-delivery
+times. The busy callback stayed in the original active turn. These are API
+approval measurements, not browser-click or fresh external OAuth timing.
+Evidence: `/tmp/cma-hot-scope-live-edaeca82-20261015-01`.
+
+## 2026-10-15 real compaction and small-viewport modal verification
+
+PR #1032 merged into `develop` as `4f9a70b6` after all 15 checks on its exact
+head `2cc5b8d0` passed. The merged tree matched that tested head. The follow-up
+Web image from `a03cfc51` was built locally from an immutable source archive,
+scanned without fixable HIGH/CRITICAL findings, deployed as generation 117 and
+verified against the served asset bytes. Its JavaScript asset is
+`index-nlO1I9Vk.js`, SHA-256
+`89cc886aab19883e5ac36d35ee82bd7201e30a063a6ca08676d5f331a0de1b0c`.
+
+The small-viewport correction makes the entire modal card scroll when either
+viewport dimension is at most 480 pixels. The repository input also permits
+shrinking within the card. Production browser checks at 1440×900, 800×600,
+390×844, 320×480, 320×240 and 900×240 passed centered positioning, at least 20%
+page-edge margins, nonzero body height and no horizontal overflow. The repository
+input, Close and Cancel were exercised at every size. Create was checked for
+actionability without submitting. The harness made zero API mutations and saw
+zero browser errors. This covers modal dialogs, not anchored menus, tooltips or
+the Agent details drawer. Evidence:
+`/tmp/cma-tiny-modal-prod-a03cfc51-20261015/summary.json` and the accompanying
+asset binding, geometry, screenshots and cleanup receipt.
+
+A fresh owned Agent `agt_721244ec64924a00839bb867c16121d9` on Agent Manager
+`edaeca82` and runtime `ff9834c4` remembered a unique marker and color, executed
+a real native `/compact`, and correctly recalled both in the next turn without
+being given the answer again. The transcript recorded the native Compact
+conversation operation and its completion. The conversation identity and all
+previous completed turns were retained.
+
+| Observation | Cumulative input | Cumulative output | Context used |
+|---|---|---|---|
+| Before compact | 42,146 | 112 | 14,165 |
+| After compact | 48,349 | 323 | 5,880 |
+| After recall | 62,666 | 340 | 14,334 |
+
+The context reduction therefore did not reset cumulative usage. These are
+provider-reported counters, separate from the explicitly approximate visible
+output animation. Evidence:
+`/tmp/cma-metadata-live-20261015/compaction-summary.json` and its before/after
+public snapshots.
+
+On the new production Web image, the same Agent showed Context and Total tokens
+without RAM/CPU/Network labels in the conversation; those three metrics appeared
+on its Sandbox details page. The read-only harness blocked two automatic
+connection-check POSTs and made no resource writes. An earlier separate check
+measured 125 scope rows at a fixed 64-pixel height with ellipsis and no wrapping;
+that Agent's empty skills list did not prove populated skill-row geometry.
+Evidence: `metrics-production-a03cfc51.json` and `row-and-metrics-proof.json`
+under the same fixture directory.
+
+## 2026-10-15 GitHub OAuth guidance deployment and retained conversation
+
+Agent Manager `a03cfc51` became Ready as generation 39 at 20:01 SGT, with
+Pod `cma-agent-manager-787f7f85f7-jjmgb`, UID
+`4d5e928c-c627-4b75-81f5-f517c704ec94`, zero restarts and the scanned image
+listed above. The new first-prompt and MCP guidance identifies the runtime's
+`api-github` OAuth service; granting the independent `api-github-pat` service
+does not configure this `gh` route. It explicitly distinguishes GitHub API
+access from currently unconfigured native Git clone/fetch/push authentication.
+Already admitted first prompts retain their original durable text.
+
+The owned compaction fixture had paused from inactivity before this rollout.
+Its explicit public revive completed in 22.029 seconds, before the deployment
+measurement. Fresh before/after observations then proved the same running
+runtime Pod UID, zero restarts, native Sandbox and Claim, original PVC/PV,
+conversation identity and four identical prior turns across the Agent Manager
+upgrade. No turn was active during this particular rollout. A subsequent
+public input was durably accepted in 340 ms and completed in the original
+conversation. This verifies idle runtime and conversation continuity; it is
+not a new browser-click or active-turn interruption measurement.
+
+Evidence: `/tmp/cma-final-audit-release-20261015/cma-agent-manager` and
+`/tmp/cma-metadata-live-20261015/rollout-identity-proof.json`, together with the
+single input intent, receipt and completed transcript in that fixture directory.

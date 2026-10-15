@@ -2,7 +2,7 @@ import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
-import type { AgentUsage, ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
+import type { ConfiguredSandboxCapacity, ProfileReference } from '../api/types';
 import type { SandboxResourceAvailability } from './sandboxInput';
 import './Resources.css';
 
@@ -31,7 +31,7 @@ export function formatBytes(value: number): string {
   return `${new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(value / 1024 ** unit)} ${units[unit]}`;
 }
 
-function BoundedReading({
+export function BoundedReading({
   label,
   value,
   limit,
@@ -82,7 +82,6 @@ function BoundedReading({
   );
 }
 
-const count = (value: number) => new Intl.NumberFormat('en').format(value);
 const cores = (value: number) =>
   `${new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(value / 1000)} cores`;
 
@@ -91,13 +90,11 @@ export function Resources({
   sandboxId,
   sandboxProfile,
   availability,
-  usage,
 }: {
   readonly agentId: string;
   readonly sandboxId: string;
   readonly sandboxProfile?: ProfileReference;
   readonly availability: SandboxResourceAvailability;
-  readonly usage?: AgentUsage;
 }) {
   const client = useCmaClient();
   const profileId = sandboxProfile?.id;
@@ -207,23 +204,7 @@ export function Resources({
   const memoryObserved = (reading?.memory_bytes_limit ?? 0) > 0;
   const cpuObserved = (reading?.cpu_millis_limit ?? 0) > 0;
   return (
-    <section className="agent-instruments" aria-label="Agent metrics">
-      <div className="agent-instruments__usage" aria-label="Agent usage">
-        <div className="resources__row">
-          <span className="resources__figure">
-            Tokens ·{' '}
-            {usage === undefined
-              ? 'not reported'
-              : `${count(usage.inputTokens)} input · ${count(usage.outputTokens)} output`}
-          </span>
-        </div>
-        <BoundedReading
-          label="Context"
-          value={usage?.contextUsed}
-          limit={usage?.contextWindow}
-          format={count}
-        />
-      </div>
+    <section className="sandbox-instruments" aria-label="Sandbox resources">
       <div className="resources" aria-label="Resources">
         <BoundedReading
           label="RAM"

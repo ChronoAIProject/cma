@@ -39,6 +39,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .install_skill(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
+        "PUT /api/v1/agents/{id}/service-access" => c.check(
+            client
+                .agents()
+                .update_service_access(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/access-requests" => {
             c.check(client.agents().access_requests(c.param("id")).await)
         }
@@ -150,6 +156,27 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             client
                 .agents()
                 .read_artifact(c.param("id"), c.param("artifact_id"))
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/attachments" => c.check(
+            client
+                .agents()
+                .upload_attachment(
+                    c.param("id"),
+                    c.query.get("name").map(String::as_str).unwrap_or(""),
+                    c.case
+                        .request
+                        .headers
+                        .get("content-type")
+                        .map(String::as_str)
+                        .unwrap_or("application/octet-stream"),
+                    c.case
+                        .request
+                        .expanded_raw_body()
+                        .unwrap_or_default()
+                        .into_bytes(),
+                    &c.key()?,
+                )
                 .await,
         ),
         "POST /api/v1/agents/{id}/artifacts" => c.check(

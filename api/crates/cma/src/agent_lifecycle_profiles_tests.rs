@@ -200,6 +200,12 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
     let prompt = validation::first_message(&request);
     assert!(prompt.contains("https://github.com/org/project"));
     assert!(prompt.contains("feature/setup"));
+    assert!(prompt.contains("gh CLI already routes GitHub API requests"));
+    assert!(prompt.contains("request api-github through agent_key_scope_revision"));
+    assert!(!prompt.contains("api-github-pat"));
+    assert!(prompt.contains("does not authenticate native git clone/fetch/push"));
+    assert!(prompt.contains("no Sandbox restart is needed"));
+    assert!(prompt.contains("Do not ask the user to paste a secret"));
     let repeated = validation::first_message(
         &serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap(),
     );

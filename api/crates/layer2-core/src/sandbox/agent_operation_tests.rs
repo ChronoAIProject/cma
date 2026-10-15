@@ -10,6 +10,7 @@ mod fixtures;
 mod ledger_tests;
 mod linear_input_tests;
 mod live_skill_tests;
+mod observation_tests;
 mod queued_message_tests;
 mod settings_tests;
 

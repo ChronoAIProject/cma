@@ -79,7 +79,7 @@ impl AgentAccessRequests for AgentAccessService {
             .await
             .map_err(|_| AgentAccessError::Unavailable)?
             .baseline_services;
-        Ok(self
+        let record = self
             .store
             .approve_agent_access(
                 &context.caller.subject,
@@ -90,8 +90,41 @@ impl AgentAccessRequests for AgentAccessService {
                 authorization,
                 key,
             )
-            .await?
-            .view())
+            .await?;
+        self.store.access_admitted.notify_one();
+        Ok(record.view())
+    }
+    async fn replace_services(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        agent: &AgentId,
+        services: Vec<String>,
+        expected_services: Vec<String>,
+        key: &str,
+    ) -> Result<AgentAccessRequest, AgentAccessError> {
+        let authorization =
+            retained_owner_authority(context, credential, self.authority.as_ref()).await?;
+        let baseline = self
+            .policy
+            .current_sandbox_policy()
+            .await
+            .map_err(|_| AgentAccessError::Unavailable)?
+            .baseline_services;
+        let record = self
+            .store
+            .replace_agent_service_access(
+                &context.caller.subject,
+                agent,
+                services.into_iter().map(ServiceId::new).collect(),
+                expected_services.into_iter().map(ServiceId::new).collect(),
+                &baseline,
+                authorization,
+                key,
+            )
+            .await?;
+        self.store.access_admitted.notify_one();
+        Ok(record.view())
     }
     async fn deny(
         &self,

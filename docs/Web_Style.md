@@ -199,6 +199,11 @@ themes; components still never read static tokens directly:
 | `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
 | `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
 
+Message-avatar fallback aliases are also appearance-independent:
+`--dsw-alias-avatar-bg` is `coal 950` (`#060606`), and
+`--dsw-alias-avatar-label` is `coal 50` (`#EDF2E2`). They retain a black circle
+with readable initials in either theme.
+
 - **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
   cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
 - **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
@@ -418,29 +423,22 @@ The grid transitions its tracks, except while dragging, where the transition wou
 
 ## 10. The sidebar
 
-The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark link to Home and close Agent details. The
-navigation scope Picker sits between the build badge and the separate
-New agent icon button, which has its own hit area. When the Picker is available,
-the brand shows its mark without the wordmark, the header gap is 4px, the badge
-truncates within 8ch and the collapse control is 32px wide. The Picker fills the
-remaining width with a 60px minimum, 12px type and 4px inline padding; long names
-truncate while its menu shows the full choice. Collapsing hides the Picker and
-preserves its selected scope.
-The badge uses existing layer-2 ground, secondary ink and border,
-11px code type, 2px/4px padding and 4px radius; without the Picker it truncates
-within 11ch and exposes
-the complete build identity on hover. The standalone tool is 32px wide and 36px
-high; mobile header controls retain at least 44px height. Collapsing keeps the
-mark, separate creation tool and panel control. The browser region alone scrolls
-and fills all available space between header and account, with no competing spacer.
+The global service bar owns the sole CMA logo and home link. Clicking it opens
+`/`, the same landing screen before and after sign-in; its signed-in Get Started
+control enters `/agent-manager`. The Agent Manager tab uses that path while
+existing Agent, Workspace and Sandbox links retain their canonical paths.
+The build/version appears immediately to the right of CMA as an 11px code
+subscript, 18px line height, capped to 11ch with its full identity on hover.
+The sidebar header contains only the scope Picker, New agent and collapse
+controls. Its browser region scrolls and fills the remaining height.
 
-The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
-not another navigable tree level. A Sandbox row shows name, status and pause
-notice; a Workspace row shows name and a repository/folder glyph; an Agent row
-shows title, state and last activity. Rows retain 32px minimum height and 8px
-radius, with consistent status/icon slots. Expansion state is scoped to the
-signed-in viewer and survives route changes.
+The tree is Sandbox -> Workspace -> Agent. Sandbox labels use
+`Sandbox Machine - <UUID>`; Workspace labels use the selected Agent's confirmed
+runtime working directory, with the recorded workspace path as fallback. Agent
+labels prefer the provider's session description, then the recorded title.
+Runtime metadata arrives through the public event stream, never a directory
+poll. Long labels truncate with ellipsis and expose full text on hover. Rows
+retain stable status/icon slots, and expansion belongs to the signed-in viewer.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
@@ -617,14 +615,21 @@ the width is measured with the position.
 
 ### 12.4 Dialogs, and confirming something irreversible
 
-One card: 440px at radius 16 on layer 2, behind the theme's `bg-mask-1` and a blur — dimming alone
-leaves the page behind legible enough to keep reading, which is the one thing a dialog exists to stop.
-It portals out of the page, because an ancestor that establishes a stacking context leaves sticky
-chrome floating above the mask and no z-index can reach past it. The page behind does not scroll while
-it is open.
+Every modal uses the shared Modal primitive: one centered card on layer 2,
+behind the theme's `bg-mask-1` and blur. Width is `min(700px, 60vw)` and maximum
+height is `60dvh` with a `60vh` fallback. All four card edges stay at least 20%
+inside the whole viewport, including on narrow screens. No call site overrides
+width, height or placement. Header and wrapping footer retain the shared style;
+long contents scroll inside the body. Radius remains 16px. The overlay portals
+to the document root and locks background scrolling. Anchored selection menus
+and tooltips retain their menu semantics and are not modal dialogs.
 
-The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
-base, not a minimum that can overflow a phone.
+At viewport widths or heights of 480px or less, the entire card scrolls instead
+of shrinking the body between the header and footer. Content keeps its natural
+height so every field, close control and footer action remains reachable. The
+same centered card bounds, padding, radius and 20% margins still apply.
+Shared input wrappers may shrink to their available width without forcing a
+narrow dialog to scroll horizontally.
 
 Closed dialogs release their focus trap and return focus immediately. Their inert,
 accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
@@ -633,7 +638,7 @@ while open; Escape closes a dismissible dialog. Reopening during the fade cancel
 the pending removal and restores one active dialog.
 
 A width chosen per call site is how two dialogs asking the same kind of question end up different
-sizes. The exceptions are named classes a reviewer can find, never a size prop.
+sizes. There are no per-dialog geometry exceptions or size props.
 
 **No dialog opens over a dialog.** A surface that must ask something while one is open asks in place of
 the row's own controls — which is also what a reversible destructive action does.
@@ -682,9 +687,23 @@ Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
 Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
 The owner's message is right-aligned on the existing accent wash, capped at the
-smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
+smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
+
+Every user or Agent message has a 32px circular avatar beside its reading column,
+separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
+name uses caption ink at 12/18, weight 600, with 4px before the content. The Agent
+name is always **Chrono Agent**, with a bundled, static front-face capture of the
+existing §23 3D character; message rows do not start WebGL scenes. Personal user
+messages use the current signed-in display name and avatar, falling back to the
+account handle and then **You**. Missing, unsafe or failed avatar images show
+centered uppercase initials at 12/18, weight 600, on the avatar fallback aliases.
+Only HTTPS avatar URLs and local absolute paths are rendered, without a referrer.
+Names wrap instead of widening the message column. Avatars are decorative beside
+the visible name. Durable, streaming and optimistic messages use the same layout
+and identity. Shared messages without author identity say **Participant**, never
+the viewer's name. Identity rendering does not alter message text or attribution.
 
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
@@ -829,7 +848,7 @@ active response stay visible while status observation and cancellation proceed.
 Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
 is running, using the existing circular composer buttons. Keep both controls
 centered on the same row beside the input, with a flexible input column and two
-40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+32px button columns (44px on mobile), separated by the existing 8px gap. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
 Keep the draft editable and retain it until admission is confirmed. An uncertain
@@ -844,8 +863,19 @@ local sign-in epoch changes clear the prior view before any new-account read is
 shown. A live gap discards uncommitted partial text and Thinking while preserving
 recorded messages, settled tools and the turn's original start time.
 
-The composer uses its existing capsule, send/stop icon seat, focus treatment, and
-bounded growth. Stop interrupts the current turn; it does not delete the Agent.
+The composer keeps a compact, fixed 38px desktop seat with 32px Send/Stop controls.
+The one-line input centers its 24px line vertically with 6px padding on either side.
+Below 30rem, the input and controls retain 44px targets within a 46px capsule seat.
+Long drafts expand upward while the capsule is hovered or focused, capped at the
+smaller of 336px and 40dvh. They collapse to one line otherwise, preserving the
+draft and selection. Expansion overlays history without moving the controls or
+conversation scrollport. Use the existing capsule background, focus treatment
+and shadow. Put Attach files on the same row and its paste/drop hint in the
+button title; thumbnail and upload status records remain visible above that row.
+Pasted screenshots use the clipboard's file items when its file list is empty;
+plain text paste retains normal editing behavior. A confirmed message includes
+both the text and the exact uploaded attachment paths for that Agent.
+Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
 
@@ -1017,20 +1047,50 @@ cancellation and keeps every control within phone and desktop viewports.
 
 ## 13a. Agent resources
 
-Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
-and network occupy a stable three-column row on the reading axis. CPU uses a
-human unit in the ordinary surface; technical details may show the wire unit.
-The Agent's existing Sandbox lifecycle observation also gates live resources:
-only a fresh Active observation with a reported runtime version starts polling.
-Do not add another Sandbox poll or infer this from message eligibility. A paused
-Sandbox may accept messages while no runtime exists to report live resources.
-Before observation, show checking; when paused, retain Tokens and Context and
-show RAM, CPU and Network as paused with the quiet status "Sandbox paused. Live
-resources resume when it is active." Missing or stale lifecycle data holds live
-reads with an explicit unavailable status. Inactive runtime states are not an
-unsupported-resources error and never become zero readings. Cancel in-flight
-reads and discard the old sampling identity when the runtime becomes unavailable;
-fresh activation or a changed runtime version starts a new CPU sample pair.
+Machine resources are public point reads scoped to the Agent's Sandbox and
+appear only in Sandbox details, never below the conversation. RAM, CPU and
+network share a three-column row. The already observed Sandbox lifecycle gates
+samples: only a fresh Active state with a runtime version and no operation or
+checkpoint permits reads. Paused and unavailable runtimes show written states,
+never zeroes. Cancel requests and reset the CPU sample pair when the runtime
+identity changes. Mounting a conversation does not start machine-resource polls.
+
+The conversation footer contains Context quota and cumulative Agent input/output
+tokens, including earlier turns and preserved across compaction. The Thinking
+row shows the current turn's input/output totals. Unreported input says unavailable.
+Before a token report arrives, live visible reply and reasoning text may show
+an explicitly labeled `≈ N visible output tokens` estimate using a local
+o200k_base tokenizer. Its explanation excludes hidden reasoning, tool calls and
+inputs, and states that actual model usage may differ. Load the tokenizer only
+for an active turn, in a background worker; update at most five times per second,
+reuse unchanged text chunks, and cap counted text at 65,536 UTF-16 code units with
+a visible partial label. Missing text, unavailable tokenization and missing provider counts have
+written states. Estimates are never added to session totals or retained as actual
+turn usage. An authoritative turn report replaces its estimate and records the
+visible text boundary it covers. Later model calls in the same turn display
+`+ ≈ N newly visible output tokens` beside the last reported counts, counting
+only new visible text past that boundary. Repeated identical reports do not
+advance the boundary; restored text does not count twice. Missing counts
+are never displayed as zero or inferred from elapsed time or context quota. Each reported
+increase animates towards that actual value over 600ms, never beyond it. Values
+use tabular numerals; reduced motion and hidden documents settle immediately.
+Accessible labels expose the actual count without announcing every animation
+frame. The cumulative footer uses the same observed-count animation. A new turn
+resets only its own counters.
+
+Each completed turn keeps its reported input/output counts below its final Agent
+reply, in the existing 12/18 caption style. Earlier intermediate replies do not
+repeat the same turn total. Full durable replay restores every available turn's
+counts; a turn without a report explicitly says input/output unavailable.
+
+Routine stream reconnection is quiet for 2.5 seconds; a continuing failure then
+shows the existing connection status. If live fragments need refreshing, show
+one neutral caption while recorded replies are restored. Fresh live observations
+clear a reasoning-only refresh, and a recorded reply or turn completion clears
+its reply refresh. A new turn clears the previous transient refresh. Confirmed
+durable history gaps and authentication/terminal errors retain their separate
+recovery messages.
+
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
 configured capacity. Its id and revision must match, and its digest must match
@@ -1920,6 +1980,28 @@ callbacks without this evidence remain read-only. Explicitly reviewed
 Triggers retain their review controls. This supersedes wording that limited
 the consent gesture to a second click on the CMA landing page.
 
+### Confirmed Agent creation and retained navigation
+
+New Agent preparation uses one 64px circle with a 3px stroke and a 1.2s linear
+rotation while pending. Reduced motion stops rotation. The percentage and
+current phase sit to its right with a 16px gap and 12px/18px detail copy.
+The four reported preparation stages contribute 20% each; 100% requires the
+successful operation plus its actual Agent identity. Elapsed time cannot raise
+the percentage. Full phase facts remain in an initially closed Setup details
+disclosure with 6px internal gaps.
+
+Agent key scope rows are 64px high. Skill rows are 112px, with 18px / 18px / 40px
+internal tracks and 6px gaps. Text is single-line ellipsis with full hover text;
+controls remain visible. All lists use existing typography, borders and tokens.
+
+Recently opened Agent conversations remain in a bounded memory-only cache for
+the current account and client. Switching back restores recorded content while
+current resource access is checked; actions remain unavailable during that
+check. Reopening resumes events at the saved cursor rather than downloading
+history from zero. Denied access clears the view, and account/client changes
+cannot reuse it. An ordinary stream handshake does not create a lost-update
+warning. Explicit lag and actually discarded live fragments remain visible.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -2142,3 +2224,17 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
 | 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |
 | 2026-10-15 | Display outgoing messages immediately in the existing owner message flow with caption delivery status. Keep drafts until authorized acceptance, reconcile by exact command/run identity, preserve same-request recovery, and prevent stale account or access callbacks from clearing drafts. |
+
+| 2026-10-15 | Unify dialogs at centered 60vw/60dvh bounds; replace creation steps with confirmed circular progress; move the sole brand/build to the global home link; use runtime directory and description labels; fix scope/skill row heights; retain Agent navigation history and cursor replay; move machine metrics to Sandbox details and show cumulative/current-turn tokens with bounded observed-count animation. |
+
+| 2026-10-15 | Accept pasted images and dropped or selected files in the message composer. Show fixed-height upload records, image thumbnails, bounded two-file concurrency, individual retry/removal, and compact sent-file records. Wait for persistent upload receipts before sending exact sandbox paths. Retain up to six viewer-scoped drafts and ready attachments across navigation; abort in-flight uploads on departure and keep explicit same-key retry. |
+
+| 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
+
+| 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |
+
+| 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
+
+| 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
+| 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
+| 2026-10-15 | Let the whole modal card scroll at viewport widths or heights of 480px or less. Preserve the shared centered geometry and 20% margins while keeping fields, Close and footer actions reachable instead of collapsing the body to zero height; let shared input wrappers shrink within the narrow content width. |

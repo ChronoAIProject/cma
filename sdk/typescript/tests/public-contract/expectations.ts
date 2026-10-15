@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['attachment-invalid-name', 'invalid_attachment'],
   ['agent-skills-install-invalid-id', 'invalid_agent_request'],
   ['agent-skills-install-invalid-version', 'invalid_agent_request'],
   ['agent-skills-install-unknown-field', 'invalid_json'],
@@ -138,7 +139,10 @@ export function expectation(
     );
     return 'raw-wire-only';
   }
-  if (fixture.request.rawBody !== undefined) {
+  if (
+    fixture.request.rawBody !== undefined &&
+    fixture.operation !== 'POST /api/v1/agents/{id}/attachments'
+  ) {
     if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
       assert.equal(
         body.code,

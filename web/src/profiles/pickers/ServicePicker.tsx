@@ -98,7 +98,11 @@ export function ServicePicker({
                     )
                   }
                 />
-                <span>
+                <span
+                  title={[entry.name, 'description' in entry ? entry.description : undefined]
+                    .filter(Boolean)
+                    .join(' — ')}
+                >
                   <ReferenceLink
                     kind="service"
                     id={entry.id}
