@@ -18,6 +18,8 @@ import { SignInCard } from './SignInCard';
 import { ActivityBody } from './Thinking';
 import { isPendingTool } from './toolStatus';
 import { UserMessage } from './UserMessage';
+import { TurnUsage } from './TurnUsage';
+import type { AgentUsage } from '../api/types';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -31,11 +33,15 @@ export function StreamEntry({
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
+  showUsage = false,
+  usage,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  readonly showUsage?: boolean;
+  readonly usage?: AgentUsage['currentTurn'];
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
@@ -51,6 +57,11 @@ export function StreamEntry({
         ) : (
           <MessageContent content={message.content} streaming={message.status === 'streaming'} />
         )}
+        {showUsage ? (
+          <div className="message__usage" aria-label="Turn token usage">
+            <TurnUsage usage={usage} animateInitial={false} />
+          </div>
+        ) : null}
       </article>
     );
   }
@@ -94,6 +105,12 @@ export function StreamEntry({
   }
   if (entry.kind === 'recovery') {
     const notice = entry.item;
+    if (notice.clearsOn !== undefined)
+      return (
+        <p className="message__delivery" role="status">
+          {notice.title}
+        </p>
+      );
     if (notice.id.startsWith('sign-in:') || notice.id === 'live-sign-in')
       return <SignInCard notice={notice} />;
     const url =

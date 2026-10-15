@@ -10,8 +10,21 @@ export function durableUsage(state: ConversationState, kind: Readonly<Record<str
   if (inputTokens === undefined || outputTokens === undefined || contextUsed === undefined) {
     return state;
   }
+  const turnSequence = number(kind.turn_sequence);
+  const currentTurn =
+    turnSequence === undefined
+      ? state.usage?.currentTurn
+      : {
+          turnSequence,
+          inputTokens: number(kind.turn_input_tokens) ?? 0,
+          outputTokens: number(kind.turn_output_tokens) ?? 0,
+        };
   return {
     ...state,
+    turnUsage:
+      currentTurn === undefined
+        ? state.turnUsage
+        : { ...state.turnUsage, [currentTurn.turnSequence]: currentTurn },
     usage: {
       agentId: state.usage?.agentId ?? '',
       throughSeq: state.cursor,
@@ -19,14 +32,7 @@ export function durableUsage(state: ConversationState, kind: Readonly<Record<str
       outputTokens,
       contextUsed,
       contextWindow: number(kind.context_window),
-      currentTurn:
-        number(kind.turn_sequence) === undefined
-          ? state.usage?.currentTurn
-          : {
-              turnSequence: number(kind.turn_sequence)!,
-              inputTokens: number(kind.turn_input_tokens) ?? 0,
-              outputTokens: number(kind.turn_output_tokens) ?? 0,
-            },
+      currentTurn,
     },
   };
 }
