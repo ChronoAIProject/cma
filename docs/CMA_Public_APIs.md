@@ -452,3 +452,40 @@ upstream request. Missing, expired, or mismatched Sandbox credential custody,
 invalid provider responses, and upstream failures return 503 without exposing
 credentials or the upstream response body. Public Chrono LLM scope is preferred;
 retained Sandboxes with the legacy Chrono LLM scope use their original service.
+
+
+### Queued input revisions
+
+`GET /api/v2/agents/{agent_id}/queued-inputs` requires current Agent operation
+authority and returns `cma.agent.queued_inputs`, the Agent ID and at most four entries
+ordered by original admission order. Optional `limit` is 1 through 4 (default 4);
+optional `after` is an exclusive positive admission-order cursor. `next_after` is
+the final returned order when more entries exist, otherwise null. Each entry includes
+the safe command status, `command_revision`, complete `text` and current `editable`
+observation. Four maximum 256 KiB texts remain below the SDK's unchanged 8 MiB HTTP
+limit even with worst-case JSON escaping. The SDKs follow pages with strict cursor,
+identity and 64-entry traversal bounds. Each page observes current state; later
+refreshes reconcile concurrent edits. No entries are silently truncated.
+
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` requires a
+retained `Idempotency-Key` and exactly `source_command_id`,
+`expected_command_revision` and `text`. Text obeys the existing nonempty 256 KiB
+input limit. The transaction retains the original admission envelope, command ID,
+response ID, metadata and queue position; it atomically invalidates any matching
+claim, records the replacement input and increments the source revision. A bound
+runtime dispatch is never editable, including ambiguous delivery. The independent
+terminal edit receipt allows exact recovery after a lost reply. Another key cannot
+reuse the old revision, and the same key cannot change target or text.
+
+The response is `cma.response.queued_input` with `edit`, current `response`, original
+`target`, applied `command_revision` and immutable replacement `text`.
+`queued_input_not_admitted` is a committed stale-intent refusal; clients may refresh
+and explicitly create a new edit. Existing queued cancellation removes an item.
+Queue changes before dispatch are ledger mutations, so visible clients refresh
+periodically as well as on local operations and focus.
+
+Pending edited command documents include a required revision marker that older
+strict readers reject. This prevents a rolled-back worker from silently executing
+original input. Drain or cancel edited pending inputs before rolling back to a
+release without queued input support. Forward recovery reads the retained revisions;
+active or completed dispatch records remain compatible after the marker is removed.

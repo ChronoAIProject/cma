@@ -110,6 +110,15 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "queued-cancellation-v2-query-submit",
         Classification::QueryShape,
     ),
+    ("queued-input-v2-missing-key", Classification::Local),
+    ("queued-input-v2-invalid-revision", Classification::Local),
+    ("queued-input-v2-empty-text", Classification::Local),
+    ("queued-input-v2-whitespace-text", Classification::Local),
+    ("queued-input-v2-null-text", Classification::TypedShape),
+    ("queued-input-v2-unknown-field", Classification::TypedShape),
+    ("queued-input-v2-invalid-json", Classification::RawJson),
+    ("queued-input-v2-query-list", Classification::QueryShape),
+    ("queued-input-v2-query-submit", Classification::QueryShape),
     ("agent-events-v2-snapshot-invalid", Classification::Local),
     ("agent-events-v2-events-invalid", Classification::Local),
     ("agent-events-v2-snapshot-query", Classification::QueryShape),
@@ -975,6 +984,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
             let allowed: &[&str] = match case.operation.as_str() {
                 "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
                 "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
+                "GET /api/v2/agents/{agent_id}/queued-inputs" => &["after", "limit"],
                 "GET /api/v1/bridge-connectors/capabilities"
                 | "GET /api/v1/bridge-creation-target" => &["organization"],
                 "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
@@ -1006,9 +1016,8 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls"
                 | "GET /api/v2/commands/{command_id}"
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
-                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation" => {
-                    &[]
-                }
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input" => &[],
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

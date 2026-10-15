@@ -9,6 +9,9 @@ pub(super) struct EventItem {
     #[schema(value_type = Option<serde_json::Value>)]
     pub kind: Option<AgentEventKind>,
     pub response_binding: Option<ResponseBinding>,
+    /// Present only for verified steering input when Prefer: cma-message-bindings is requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_command_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]

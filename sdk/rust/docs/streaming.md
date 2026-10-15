@@ -331,3 +331,49 @@ Strict parsing refuses unrecognized/private fields, nonconsecutive chronology,
 invalid source bindings, and inconsistent pages. Changed incarnation requires
 rebuilding history for the new resource; verified response binding is still an
 observation rather than control authority.
+
+
+### Edit pending input in place
+
+The public queue lists every editable human/API message in its original admission
+order, including messages submitted from another tab. The server admits at most
+64 pending commands. HTTP pages contain at most four entries and a nullable
+`next_after` admission-order cursor, keeping worst-case JSON escaping within the
+SDK's unchanged 8 MiB response limit. The SDK reader follows these pages and
+returns the full bounded list; it rejects repeated cursors, duplicate commands or
+more than 64 accumulated entries. Pages observe current state independently;
+concurrent edits to earlier pages appear on the next refresh. Refresh after admission,
+edit, cancellation, observed conversation changes, and returning to the page.
+The ledger does not emit conversation events before dispatch; clients displaying
+an active queue should also refresh periodically to observe other tabs.
+
+An edit preserves the source command, response and queue position. It replaces
+the complete text, including packed attachment text, only before runtime dispatch.
+Persist the route, exact source revision, text and a new idempotency key before
+sending. A lost reply must be recovered with identical bytes and the same key.
+`queued_input_not_admitted` proves the original revision is stale; refresh the
+queue before creating another intent. The edit receipt returns its immutable
+replacement text and resulting revision, alongside the source's current status.
+Removal continues to use queued cancellation with a fresh observation.
+
+```rust
+use cma_sdk::Client;
+
+async fn edit_first_queued_input(
+    client: &Client, agent_id: &str, retained_edit_key: &str,
+) -> cma_sdk::Result<()> {
+    let queue = client.responses_v2().list_queued_inputs(agent_id).await?;
+    if let Some(item) = queue.data.first().filter(|item| item.editable) {
+        let input = cma_sdk::responses_v2::QueuedInputRequest {
+            source_command_id: item.response.receipt.command_id.clone(),
+            expected_command_revision: item.command_revision,
+            text: "Updated message, including any attachment text".into(),
+        };
+        client.responses_v2().edit_queued_input(
+            agent_id, item.response.receipt.response_id.as_deref().unwrap(),
+            &input, retained_edit_key,
+        ).await?;
+    }
+    Ok(())
+}
+```

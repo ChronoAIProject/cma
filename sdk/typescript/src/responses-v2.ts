@@ -8,6 +8,8 @@ import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
 import * as controls from './responses-v2/controls.js';
 import * as queuedCancellation from './responses-v2/queued-cancellation.js';
+import * as queuedInput from './responses-v2/queued-input.js';
+import type { V2QueuedInputRequest } from './responses-v2/queued-input-types.js';
 import type { V2QueuedCancellationRequest } from './responses-v2/queued-cancellation-types.js';
 import type { V2ResponseControlRequest } from './responses-v2/controls-types.js';
 import type { CommandOptions } from './resources.js';
@@ -25,6 +27,7 @@ import {
 export type * from './responses-v2/types.js';
 export type * from './responses-v2/controls-types.js';
 export type * from './responses-v2/queued-cancellation-types.js';
+export type * from './responses-v2/queued-input-types.js';
 export { commandIsTerminal } from './responses-v2/controls-types.js';
 
 export interface V2ResponseStreamOptions extends OperationOptions {
@@ -75,6 +78,19 @@ export class ResponsesV2 {
     options: CommandOptions,
   ) {
     return queuedCancellation.cancelQueuedResponse(this.config, agentId, responseId, body, options);
+  }
+  /** Ordered authoritative input queue, bounded by the server admission limit of 64. */
+  listQueuedInputs(agentId: string, options: OperationOptions = {}) {
+    return queuedInput.listQueuedInputs(this.config, agentId, options);
+  }
+  /** Replace pending text in place. Retain the exact body/key until the outcome is known. */
+  editQueuedInput(
+    agentId: string,
+    responseId: string,
+    body: V2QueuedInputRequest,
+    options: CommandOptions,
+  ) {
+    return queuedInput.editQueuedInput(this.config, agentId, responseId, body, options);
   }
   readCapabilities(options: OperationOptions = {}) {
     return read(this.config, '/api/v2', v2Capabilities, options);

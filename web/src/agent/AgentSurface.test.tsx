@@ -39,18 +39,18 @@ it('shows authorized history while later pages load and preserves the editable d
     </CmaClientProvider>,
   );
   expect(await screen.findByText('The repository is ready.')).toBeInTheDocument();
-  expect(
-    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
-  ).toBeInTheDocument();
+  const loadingNotice = screen
+    .getByText('Loading conversation activity.')
+    .closest('[role="status"]');
+  expect(loadingNotice).toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   expect(draft).toBeEnabled();
   fireEvent.change(draft, { target: { value: 'Keep this draft' } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
-  expect(
-    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
-  ).toHaveAttribute('inert');
+  // Retain the node: a busy test worker can finish the exit before waitFor resolves.
+  expect(loadingNotice).toHaveAttribute('inert');
   await waitFor(() =>
     expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument(),
   );

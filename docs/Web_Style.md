@@ -2299,3 +2299,88 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Preserve recent owner Sandbox content and immutable Agent creation labels across route re-entry within a bounded account/client scope. Revalidate access and lifecycle state before controls become usable; discard denied, missing, shared and retired projections, reject late replies, and retain no privileged provenance facts. |
 
 - 2026-10-15 — Keep New agent admission copy in its starting state while the request is in flight; retain same-request recovery wording after an unresolved outcome, avoiding a recovery flash during healthy creation.
+
+
+## 25. Unified service navigation and system text (2026-10-16)
+
+The sidebar owns the single home brand link and build badge. Its first row holds a 20px mark,
+ChronoAI Managed Agent title, compact revision badge, and collapse control. The following row
+has three equal segments in this order: Agent Manager, Event Gateway, Image Manager. The active
+segment uses the existing selected navigation fill and a continuous sliding highlight; Image
+Manager remains visibly disabled and cannot open through a direct route. There is no global
+top service bar or duplicate current-service label. Account controls remain at the sidebar foot
+across services. Collapsed and mobile navigation retain a reachable brand, service switch and
+account control. Existing motion easing/duration and live reduced-motion preference apply.
+
+Agent Manager begins with labeled New agent and New agent trigger rows, then permission scope,
+Sandbox/Agent view, and status filters. Organization choices append `(Organization)`. Agent view
+starts at Personal and All statuses. Tree groups retain their existing machine/workspace/Agent
+structure. Ready Agents use neutral indicators; only actively Working Agents use a green light.
+Live Sandbox indicators remain green. Event Gateway lists channels in this same navigation area,
+with the selected channel's details and edit/delete/test actions in the main surface.
+
+The account menu includes Docs above admin-only Operations, Appearance, System text size, and
+Sign out. Docs contains Event Gateway Protocol, ported from the Gateway documentation. Agents
+and trigger creation no longer appear in the account menu. System text uses explicit Small,
+Medium and Large choices at 90%, 100% and 115% of the established ramp. Font sizes and fixed
+text line heights scale at their consuming element; spacing, icons and viewport geometry do
+not scale. The conversation message stream, including user/Agent messages, tools and Markdown,
+keeps its existing text sizes. Preferences apply before first paint, persist when storage is
+available, and stay consistent across retained service surfaces and browser tabs. Controls
+reflow or truncate within their rows and remain usable at 320px phone, 13/16-inch laptop and
+desktop widths for all three sizes.
+
+The composer opens a bounded, scrollable command drop-up when its draft starts with `/`. It
+uses the current session's native available-command inventory and installed skills, supports
+filtering, arrow keys, Enter/Tab selection and Escape, and retains focus in the composer.
+Commands retain their real runtime semantics. Presence and selection transitions use existing
+motion tokens, reverse without jumping and stop under reduced motion.
+
+- 2026-10-16 — Unify service navigation and account controls inside the sidebar, add labeled
+  creation and permission/view filters, expose native session commands in the composer, port
+  Gateway documentation, and add independent system-text sizing with responsive layouts.
+
+## 26. Composer steering and individual queued messages (2026-10-16)
+
+Context and cumulative Total tokens share the composer's input column, aligning to
+its left and right edges respectively. The adjacent Send/Stop group has a stable
+seat and a compact steering-mode menu directly below it. Its choices are Interrupt
+and Queue. Queue preserves ordered ordinary input; Interrupt delivers the new input
+as a targeted native steering command during an active turn. Outside an active turn,
+both modes send ordinary input. Stop remains a separate cancellation action. Use the
+shared Menu, existing 8px gaps, 32px controls (44px touch targets), caption typography,
+neutral surfaces and motion tokens. Preserve draft content on refusal or uncertainty.
+
+Queued messages appear in the main conversation in a neutral, bordered queue group,
+replacing the separate yellow queued-message notice. Each row has the user's identity,
+its content and attachment records, a queued label and independent edit/remove actions.
+Clicking the content or choosing Edit opens an inline editor with normal paste, drop,
+file-picker and per-file removal. Existing uploaded files retain their exact paths;
+new uploads must finish before Save. Save preserves the original queue position.
+Cancel editing preserves the admitted message. A dispatch race refuses the edit/removal
+without changing a different entry. Never delete or replace the entire queue to edit
+one message. Keep uncertain requests recoverable using their original identity/body.
+Queue status comes from public authoritative reads; it survives reload and navigation.
+
+If an entry leaves the queue while its editor is open, keep the unsaved text and
+attachments in that editor as a retained draft. Explain that the original message
+can no longer be edited; offer Copy draft and Dismiss without implying it is still
+queued. Copy includes every confirmed attachment reference and explicitly identifies
+unfinished uploads. These local recovery actions remain available when sending is
+unavailable; network upload retries still respect current availability.
+
+Use existing presence transitions for row/editor entry and exit, existing fast easing
+for hover/focus, and no motion under reduced-motion preference. Queue rows wrap within
+the conversation width; actions remain reachable at phone widths and all text sizes.
+
+- 2026-10-16 — Align usage to the input, add active-turn steering selection below the
+  composer controls, and replace the latest-message banner with an individually
+  editable/removable durable queue including attachment editing.
+
+At phone widths, Context and Total tokens may occupy two successive rows in the
+input column while retaining their respective left and right alignment. Numeric
+groups remain whole rather than wrapping digit by digit. The action column reserves
+80px on desktop and 96px for two touch targets; its mode menu stays centered beneath.
+
+- 2026-10-16 — Retain unsaved queued-message edits and attachments after dispatch or
+  cancellation, with explicit local copy/dismiss recovery and no stale queue actions.

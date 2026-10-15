@@ -6,7 +6,8 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
   { kind: 'agent_manager' },
   { kind: 'event_gateway' },
-  { kind: 'image_manager' },
+  { kind: 'docs' },
+  { kind: 'docs', view: 'event_gateway_protocol' },
   { kind: 'bots' },
   { kind: 'bot_new' },
   { kind: 'bot', botId: 'bot_123' },
@@ -93,5 +94,13 @@ describe('application routes', () => {
     });
     expect(window.location.pathname).toBe('/developer');
     expect(result.current.route).toEqual({ kind: 'developer' });
+  });
+});
+
+it('refuses direct Image Manager URLs while the portal is unavailable', () => {
+  expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+  expect(parseRoute('/image-manager/images')).toEqual({
+    kind: 'not_found',
+    pathname: '/image-manager/images',
   });
 });

@@ -8,7 +8,6 @@ import {
   IconBrowseOutline16,
   IconCodeOutline16,
   IconFollowsystemOutline16,
-  IconGoalOutline16,
   IconLightOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
@@ -21,6 +20,12 @@ import {
   type Appearance,
 } from '../theme/appearance';
 import './ProfileMenu.css';
+import {
+  SYSTEM_TEXT_SIZES,
+  setTextSize,
+  textSizeLabel,
+  useSystemTextSize,
+} from '../theme/textSize';
 
 interface ProfileMenuProps {
   readonly user: User;
@@ -31,9 +36,8 @@ interface ProfileMenuProps {
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
-  inventory: { kind: 'inventory' },
   bots: { kind: 'bots' },
-  triggers: { kind: 'triggers' },
+  docs: { kind: 'docs' },
   developer: { kind: 'developer' },
   operations: { kind: 'operations' },
 };
@@ -64,19 +68,15 @@ export function ProfileMenu({
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
-    ...(user.capabilities.includes('use_own_sandboxes')
-      ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
-      : []),
     ...(bots && !user.visitor
       ? [{ id: 'bots', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
       : []),
-    ...(!user.visitor && user.capabilities.includes('publish_triggers')
-      ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
-      : []),
     { type: 'separator', id: 'before-platform' },
     { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
+    { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),
@@ -86,11 +86,26 @@ export function ProfileMenu({
       icon: appearanceIcon(appearance),
       label: `Appearance: ${appearanceLabel(appearance)}`,
     },
+    {
+      type: 'choices',
+      id: 'system-text',
+      text: 'System text size',
+      selectedId: `text-${textSize}`,
+      choices: SYSTEM_TEXT_SIZES.map((size) => ({
+        id: `text-${size}`,
+        label: textSizeLabel(size),
+      })),
+    },
     { type: 'separator', id: 'before-sign-out' },
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
 
   const choose = (id: string) => {
+    const size = SYSTEM_TEXT_SIZES.find((value) => id === `text-${value}`);
+    if (size) {
+      setTextSize(size);
+      return;
+    }
     const route = MENU_ROUTES[id];
     if (route !== undefined) {
       setOpen(false);
@@ -131,6 +146,7 @@ export function ProfileMenu({
           aria-expanded={open}
           aria-label={`Account menu for ${user.displayName ?? user.handle}`}
           onClick={() => {
+            if (!open) setLocalAppearance(storedAppearance());
             setOpen((wasOpen) => !wasOpen);
           }}
         >

@@ -131,7 +131,7 @@ pub(crate) async fn fixture(bound: bool) -> Fixture {
     f
 }
 
-pub(super) async fn execute_next(f: &Fixture) -> AgentCommandId {
+pub(crate) async fn execute_next(f: &Fixture) -> AgentCommandId {
     let now = SystemTime::now();
     let claimed = f
         .store

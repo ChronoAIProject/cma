@@ -105,7 +105,8 @@ pub fn bind_command_dispatch(
         return Err(CommandLedgerError::Conflict);
     }
     let mut expected_metadata = Vec::new();
-    let (intent, text) = match &command.receipt.envelope.command {
+    let effective = command.effective_command()?;
+    let (intent, text) = match &effective {
         AgentCommand::Message {
             input,
             order,

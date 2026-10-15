@@ -12,10 +12,12 @@ export function readAgentJson(
   config: ResolvedConfig,
   path: string,
   options: OperationOptions,
+  headers?: HeadersInit,
 ): Promise<unknown> {
   return withDeadline(config, options, async (signal, requestId) => {
     const response = await requestResponse(config, path, {
       ...options,
+      headers,
       signal,
       requestId,
       expectedStatus: 200,

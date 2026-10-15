@@ -39,6 +39,8 @@ pub struct CommandReservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmittedAgentCommand {
+    #[serde(skip)]
+    pub queued_input: Option<super::QueuedInputRevision>,
     pub receipt: AdmissionReceipt,
     pub key_sha256: String,
     pub queue_deadline: String,
@@ -60,6 +62,9 @@ impl AdmittedAgentCommand {
             || !ordered_times(&self.receipt.admitted_at, &self.queue_deadline)
         {
             return Err(CommandLedgerError::Corrupt);
+        }
+        if let Some(revision) = &self.queued_input {
+            revision.validate(self)?;
         }
         super::work::validate_work(self)
     }
@@ -127,6 +132,19 @@ pub trait AgentCommandStore: Send + Sync {
         Err(CommandLedgerError::Unavailable)
     }
 
+    async fn edit_queued_input(
+        &self,
+        _request: super::QueuedInputReservation,
+    ) -> Result<super::QueuedInputOutcome, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+    async fn list_queued_inputs(
+        &self,
+        _agent_id: &crate::AgentId,
+    ) -> Result<Vec<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomic explicit-target admission; older store compositions fail closed.
     async fn reserve_targeted_control(
         &self,
@@ -190,6 +208,15 @@ pub trait AgentCommandStore: Send + Sync {
         id: &AgentCommandId,
     ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError>;
 
+    /// Persistence-only exact dispatch lookup. Duplicate operation bindings are corrupt.
+    async fn get_operation_command(
+        &self,
+        _agent_id: &crate::AgentId,
+        _operation_sequence: u64,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Resolve the response index only. The service authorizes the associated
     /// resource before exposing any command/response status or receipt.
     async fn get_response_command(
@@ -251,6 +278,7 @@ impl CommandReservation {
             return Err(CommandLedgerError::Corrupt);
         }
         Ok(AdmittedAgentCommand {
+            queued_input: None,
             receipt: AdmissionReceipt {
                 envelope: self.envelope.clone(),
                 response_id: self.response_id.clone(),

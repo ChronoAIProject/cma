@@ -16,7 +16,7 @@ import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
-import { useQueuedMessage } from './transport/queuedStatus';
+import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { presentAgent } from './presentation';
 import { mergeRuntimeMetadata } from './runtimeMetadata';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
@@ -59,7 +59,7 @@ export function useAgentController(
   );
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
-  const [, setRequestRevision] = useState(0);
+  const [requestRevision, setRequestRevision] = useState(0);
   const [state, setState, stateRef] = useRetainedAgentState(client, options.viewerId, agentId);
   const loaded = useRef<
     | { client: CmaWebClient; agentId?: string; revision: number; lineage?: AgentLoadLineage }
@@ -423,16 +423,18 @@ export function useAgentController(
       : undefined;
   const retained = v2?.pending();
   const controlNotice = useControlStatus(v2, onIdentityChange);
-  const queuedMessage = useQueuedMessage(
+  const queuedInputs = useQueuedInputs(
     v2,
-    !historyIncomplete,
-    pending !== undefined,
+    !historyIncomplete && !suspended,
+    activeTurn,
+    `${state.status === 'ready' ? state.conversation.cursor : 0}:${requestRevision}`,
     onIdentityChange,
   );
   return {
-    queuedMessage: v2 === undefined ? undefined : queuedMessage,
+    queuedInputs: v2 === undefined ? undefined : queuedInputs,
     pendingMessage: retained?.input,
     acceptedMessage: retained?.accepted,
+    acceptedSteeringMessage: retained?.acceptedSteering,
     pendingControl: retained?.control,
     controlNotice,
     controlsUnavailable:
@@ -462,6 +464,11 @@ export function useAgentController(
     },
     send: (content, onAccepted, onReceiptObserved, onRefused) =>
       run(content, onAccepted, onReceiptObserved, onRefused),
+    steer:
+      v2 === undefined
+        ? undefined
+        : (content, onAccepted, onReceiptObserved, onRefused) =>
+            run(content, onAccepted, onReceiptObserved, onRefused, true),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
     interrupt: () =>
       command('interrupt', (id, key, signal) =>

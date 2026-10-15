@@ -422,6 +422,7 @@ struct State {
     sandbox_control_keys: HashMap<(String, String), crate::ids::SandboxCommandId>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
     targeted_controls: HashMap<crate::ids::AgentCommandId, super::agent_io::TargetedControlBinding>,
+    queued_input_edits: HashMap<crate::ids::AgentCommandId, super::agent_io::QueuedInputBinding>,
     queued_cancellations:
         HashMap<crate::ids::AgentCommandId, super::agent_io::QueuedCancellationBinding>,
     command_authorization_audits:

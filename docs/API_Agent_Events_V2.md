@@ -128,6 +128,21 @@ legacy turns have a null binding. A common-command origin whose record cannot
 be verified fails the read; it does not become a legacy turn. A null binding
 does not authorize an Agent-wide control fallback.
 
+Clients can request `Prefer: cma-message-bindings` on snapshot and event-tail reads.
+With that preference, a verified steering user-message row may include
+`message_command_id`. The server binds the immediately preceding immutable
+steering dispatch fence to its unique command ledger record under current
+history authority, and verifies Agent, owner, incarnation and dispatch identity.
+The binding survives page boundaries and reconnects. It never derives identity
+from message text or the original response's command. Non-ledger legacy steering
+stays unbound. Only the first user input of an originally bound turn may use its
+`response_binding.command_id` as a legacy fallback.
+
+The preference is optional and unknown preferences are ignored by older servers.
+Without it the event shape remains unchanged, so strict older clients retain
+compatibility. `message_command_id` is omitted when unavailable and is valid only
+on a user message; it never authorizes a command or broadens resource access.
+
 ## Tail and live frames
 
 `GET /api/v2/agents/{agent_id}/events?after_cursor=...&follow=true` replays after

@@ -43,31 +43,33 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
   },
 );
 
-it('keeps legacy channel metadata visible and uses its existing console while modern rows retain actions', async () => {
-  const fetcher = vi.fn().mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        items: [
-          {
-            record_id: 'legacy-record',
-            version: 4,
-            provider: { slug: 'cma', level: 'L3' },
-            definition: { name: 'Existing channel', sources: [{}] },
-          },
-          {
-            record_id: 'new-record',
-            channel_id: 'new-id',
-            version: 1,
-            provider: { slug: 'cma', level: 'L3' },
-            definition: { name: 'New channel', sources: [] },
-            endpoints: {
-              custom_event_url: 'https://example.test/event',
-              nyxid_callback_url: 'https://example.test/callback',
-            },
-          },
-        ],
-      }),
-    ),
+it('puts channels in the sidebar and shows only the selected channel details', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
+    url === '/api/event-gateway/v1/channels'
+      ? new Response(
+          JSON.stringify({
+            items: [
+              {
+                record_id: 'legacy-record',
+                version: 4,
+                provider: { slug: 'cma', level: 'L3' },
+                definition: { name: 'Existing channel', sources: [{}] },
+              },
+              {
+                record_id: 'new-record',
+                channel_id: 'new-id',
+                version: 1,
+                provider: { slug: 'cma', level: 'L3' },
+                definition: { name: 'Modern channel', sources: [] },
+                endpoints: {
+                  custom_event_url: 'https://example.test/event',
+                  nyxid_callback_url: 'https://example.test/callback',
+                },
+              },
+            ],
+          }),
+        )
+      : new Response('{}', { status: 404 }),
   );
   vi.stubGlobal('fetch', fetcher);
   render(
@@ -81,20 +83,22 @@ it('keeps legacy channel metadata visible and uses its existing console while mo
       denied={vi.fn()}
     />,
   );
-  const legacy = (await screen.findByRole('heading', { name: 'Existing channel' })).closest('li')!;
-  expect(within(legacy).getByRole('link', { name: 'Manage existing channel' })).toHaveAttribute(
-    'href',
-    'https://bot-gateway.chrono-ai.fun/console/channels/legacy-record',
+  await screen.findByRole('heading', { name: 'Existing channel' });
+  expect(
+    await screen.findByRole('link', { name: 'Open existing channel console' }),
+  ).toHaveAttribute('href', 'https://bot-gateway.chrono-ai.fun/console/channels/legacy-record');
+  expect(screen.queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
+  const sidebar = screen.getByRole('region', { name: 'Channels' });
+  await userEvent.click(within(sidebar).getByRole('button', { name: /Modern channel/ }));
+  expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Modern channel' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Delete channel' })).toBeEnabled();
+  expect(within(sidebar).getByRole('button', { name: /Modern channel/ })).toHaveAttribute(
+    'aria-current',
+    'page',
   );
-  expect(within(legacy).queryByRole('button', { name: 'Delete channel' })).not.toBeInTheDocument();
-  expect(within(legacy).queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
-  expect(within(legacy).queryByText('Edit channel')).not.toBeInTheDocument();
-  await userEvent.click(within(legacy).getByText('Channel details'));
-  expect(within(legacy).getByText(/view its endpoints and manage it/)).toBeVisible();
-  const modern = screen.getByRole('heading', { name: 'New channel' }).closest('li')!;
-  expect(within(modern).getByRole('button', { name: 'Delete channel' })).toBeEnabled();
-  expect(within(modern).getByRole('button', { name: 'Send test event' })).toBeEnabled();
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it.each(['completed', 'timeout'] as const)(

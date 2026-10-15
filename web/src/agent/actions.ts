@@ -91,6 +91,7 @@ export function useAgentActions({
       onAccepted?: (receipt?: MessageAcceptance) => void,
       onReceiptObserved?: (receipt: MessageAcceptance) => void,
       onRefused?: () => void,
+      steer = false,
     ) => {
       if (
         currentContext.current !== context ||
@@ -128,6 +129,23 @@ export function useAgentActions({
               controller.signal,
             );
             keys.settle(scope);
+          } else if (steer && current.conversation.responseBinding !== undefined) {
+            const result = await submitV2Control(
+              session,
+              current.conversation.responseBinding,
+              { type: 'steer', text: approval },
+              runId(),
+              controller.signal,
+            );
+            if (!controller.signal.aborted && currentContext.current === context) {
+              const receipt = {
+                commandId: result.control.receipt.command_id,
+                responseId: result.target.response_id,
+              };
+              accepted = true;
+              onReceiptObserved?.(receipt);
+              onAccepted?.(receipt);
+            }
           } else
             await session.send(
               approval,
@@ -180,8 +198,9 @@ export function useAgentActions({
           !approving &&
           !accepted &&
           error instanceof ApiError &&
-          error.status === 422 &&
-          error.code === 'invalid_response_input'
+          ((error.status === 422 &&
+            ['invalid_response_input', 'invalid_control_request'].includes(error.code ?? '')) ||
+            (error.status === 409 && error.code === 'response_control_not_admitted'))
         )
           onRefused?.();
         if (!controller.signal.aborted && !onIdentityChange(error))
