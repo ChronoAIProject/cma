@@ -33,6 +33,8 @@ import { EventGateway } from './services/EventGateway';
 
 export function App() {
   const router = useAppRouter();
+  const { state: identity } = useAuth();
+  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
   const service =
     router.route.kind === 'image_manager'
       ? 'image-manager'
@@ -71,7 +73,7 @@ export function App() {
       ) : null}
       {visitedServices.map((visited) => (
         <div className="service-shell__body" key={visited} hidden={service !== visited}>
-          <ServicePage service={visited}>
+          <ServicePage key={`${visited}:${identityKey}`} service={visited}>
             {(session, denied) =>
               visited === 'image-manager' ? (
                 <ImageManager session={session} denied={denied} />

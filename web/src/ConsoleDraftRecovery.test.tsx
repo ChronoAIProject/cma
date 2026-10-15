@@ -18,7 +18,12 @@ function fixture() {
     baseUrl: 'https://fixture.invalid',
     fetch: async (input) => {
       const id = new URL(String(input)).pathname.match(/\/agents\/([^/]+)$/)?.[1] ?? 'agt_1';
-      return Response.json({ ...WIRE_AGENT, id });
+      return Response.json({
+        ...WIRE_AGENT,
+        id,
+        workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
+        sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
+      });
     },
   });
   const readAccessible = vi.spyOn(sdk.agents, 'readAccessible');
