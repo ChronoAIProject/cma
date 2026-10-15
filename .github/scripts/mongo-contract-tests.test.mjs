@@ -31,6 +31,8 @@ const requiredPrefixes = [
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
   'sandbox::agent_worker_tests::first_message_contention_tests::',
+  'sandbox::worker_tests::lifecycle_queue_contention_tests::',
+  'store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs',
   'sandbox::agent_worker::prepared_open_ready::',
 ];
 
