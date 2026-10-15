@@ -17,6 +17,7 @@ use crate::store::MongoSandboxStore;
 
 mod effects;
 mod notification;
+mod updating;
 mod waiting_quiet;
 
 pub(crate) struct AgentAccessWorker {
@@ -53,6 +54,11 @@ impl AgentAccessWorker {
                     changed = shutdown.changed() => {
                         if changed.is_err() || *shutdown.borrow() { break; }
                     }
+                    _ = self.store.access_admitted.notified() => {
+                        if self.tick().await.is_err() {
+                            tracing::warn!("Agent access admitted work will retry");
+                        }
+                    }
                     _ = interval.tick() => {
                         if *shutdown.borrow() { break; }
                         // Each iteration performs one bounded durable phase, so
@@ -67,57 +73,84 @@ impl AgentAccessWorker {
     }
 
     async fn tick(&self) -> Result<(), AgentAccessError> {
-        let Some(record) = self.store.claim_access_request(&self.holder).await? else {
+        let Some(mut record) = self.store.claim_access_request(&self.holder).await? else {
             return Ok(());
         };
-        let lease = record.lease.as_ref().ok_or(AgentAccessError::Conflict)?;
-        // Every effect has its own finite timeout; renew while waiting on IO.
-        // Lost leases stop this attempt without borrowing another claim.
-        let result = {
-            let work = tokio::time::timeout(Duration::from_secs(60), self.step(&record));
-            tokio::pin!(work);
-            let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
-            heartbeat.tick().await;
-            loop {
-                tokio::select! {
-                    result = &mut work => break result.unwrap_or(Err(AgentAccessError::Unavailable)),
-                    _ = heartbeat.tick() => {
-                        self.store.renew_access_lease(lease).await?;
+        let lease = record.lease.clone().ok_or(AgentAccessError::Conflict)?;
+        for _ in 0..12 {
+            // Every effect has its own finite timeout; renew while waiting on IO.
+            // Lost leases stop this attempt without borrowing another claim.
+            let result = {
+                let work = tokio::time::timeout(Duration::from_secs(60), self.step(&record));
+                tokio::pin!(work);
+                let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
+                heartbeat.tick().await;
+                loop {
+                    tokio::select! {
+                        result = &mut work => break result.unwrap_or(Err(AgentAccessError::Unavailable)),
+                        _ = heartbeat.tick() => {
+                            self.store.renew_access_lease(&lease).await?;
+                        }
                     }
                 }
-            }
-        };
-        match result {
-            Ok(()) | Err(AgentAccessError::Conflict | AgentAccessError::Unavailable) => {
-                // Phase changes preserve lease authority; final phases clear it.
-                match self
-                    .store
-                    .release_access_request(lease, Duration::from_secs(2))
-                    .await
+            };
+            if result.is_ok() {
+                let Some(current) = self.store.agent_access_request(&record.id).await? else {
+                    return Err(AgentAccessError::NotFound);
+                };
+                if current.phase.terminal() {
+                    return Ok(());
+                }
+                if current
+                    .lease
+                    .as_ref()
+                    .is_none_or(|value| value.token != lease.token)
                 {
-                    Ok(()) | Err(AgentAccessError::Conflict) => Ok(()),
-                    Err(error) => Err(error),
+                    return Err(AgentAccessError::Conflict);
+                }
+                if current.phase != record.phase || current.progress != record.progress {
+                    record = current;
+                    continue;
                 }
             }
-            Err(AgentAccessError::Forbidden) => {
-                self.store
-                    .fail_access_request(lease, "owner_authority_revoked")
-                    .await?;
-                Ok(())
-            }
-            Err(AgentAccessError::NotFound) => {
-                self.store
-                    .fail_access_request(lease, "agent_identity_changed")
-                    .await?;
-                Ok(())
-            }
-            Err(AgentAccessError::Invalid) => {
-                self.store
-                    .fail_access_request(lease, "access_update_cannot_continue")
-                    .await?;
-                Ok(())
+            match result {
+                Ok(()) | Err(AgentAccessError::Conflict | AgentAccessError::Unavailable) => {
+                    let delay = if matches!(record.phase, Phase::Updating | Phase::Notifying) {
+                        Duration::from_millis(100)
+                    } else {
+                        Duration::from_secs(2)
+                    };
+                    match self.store.release_access_request(&lease, delay).await {
+                        Ok(()) => {
+                            if delay < Duration::from_secs(1) {
+                                let wake = self.store.access_admitted.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(delay).await;
+                                    wake.notify_one();
+                                });
+                            }
+                            return Ok(());
+                        }
+                        Err(AgentAccessError::Conflict) => return Ok(()),
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) => {
+                    let code = match error {
+                        AgentAccessError::Forbidden => "owner_authority_revoked",
+                        AgentAccessError::NotFound => "agent_identity_changed",
+                        _ => "access_update_cannot_continue",
+                    };
+                    self.store.fail_access_request(&lease, code).await?;
+                    return Ok(());
+                }
             }
         }
+        self.store
+            .release_access_request(&lease, Duration::ZERO)
+            .await?;
+        self.store.access_admitted.notify_one();
+        Ok(())
     }
 
     async fn authority(
@@ -204,6 +237,7 @@ impl AgentAccessWorker {
                 )
                 .await?;
             }
+            Phase::Updating => self.updated(record, &agent, &sandbox).await?,
             Phase::Pausing => self.paused(record, &sandbox).await?,
             Phase::Granting => self.grant(record, &sandbox).await?,
             Phase::Reviving => self.revive(record, &sandbox).await?,
