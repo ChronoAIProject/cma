@@ -7,9 +7,9 @@ import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
-import { attachmentMessage, type UploadAttachment } from './attachments';
+import { attachmentMessage, transferredFiles, type UploadAttachment } from './attachments';
 import { useComposerAttachments } from './useComposerAttachments';
-import { ComposerAttachments } from './ComposerAttachments';
+import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachments';
 
 interface ComposerProps {
   readonly draft?: AgentDraft;
@@ -156,7 +156,7 @@ export function Composer({
     <div
       className="agent-composer"
       onPaste={(event) => {
-        const files = Array.from(event.clipboardData.files);
+        const files = transferredFiles(event.clipboardData);
         if (files.length === 0) return;
         event.preventDefault();
         if (!submitting && !requestPending) attachments.add(files);
@@ -167,7 +167,7 @@ export function Composer({
         event.dataTransfer.dropEffect = attachmentEnabled ? 'copy' : 'none';
       }}
       onDrop={(event) => {
-        const files = Array.from(event.dataTransfer.files);
+        const files = transferredFiles(event.dataTransfer);
         if (files.length === 0) return;
         event.preventDefault();
         if (!submitting && !requestPending) attachments.add(files);
@@ -215,49 +215,56 @@ export function Composer({
           Message
         </label>
         <div className="agent-composer__capsule">
-          <textarea
-            ref={inputRef}
-            id="agent-message"
-            rows={1}
-            value={content}
-            disabled={!usable}
-            aria-describedby={hasNotice ? noticeId : undefined}
-            placeholder={preparing ? 'Message Agent' : placeholder(status)}
-            onChange={(event) => {
-              setContent(event.target.value);
-            }}
-            onCompositionStart={() => {
-              composing.current = true;
-            }}
-            onCompositionEnd={() => {
-              composing.current = false;
-            }}
-            onBlur={() => {
-              composing.current = false;
-            }}
-            onKeyDown={(event) => {
-              // Safari can end composition before the confirming Enter and reports keyCode 229.
-              if (
-                composing.current ||
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229
-              )
-                return;
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-          />
-          {uploadAttachment === undefined &&
-          attachments.items.length === 0 &&
-          attachments.error === undefined ? null : (
+          <div className="agent-composer__editor">
             <ComposerAttachments
               {...attachments}
               enabled={attachmentEnabled && uploadAttachment !== undefined}
               locked={submitting || requestPending}
             />
-          )}
+            <div className="agent-composer__input-row">
+              <textarea
+                ref={inputRef}
+                id="agent-message"
+                rows={1}
+                value={content}
+                disabled={!usable}
+                aria-describedby={hasNotice ? noticeId : undefined}
+                placeholder={preparing ? 'Message Agent' : placeholder(status)}
+                onChange={(event) => {
+                  setContent(event.target.value);
+                }}
+                onCompositionStart={() => {
+                  composing.current = true;
+                }}
+                onCompositionEnd={() => {
+                  composing.current = false;
+                }}
+                onBlur={() => {
+                  composing.current = false;
+                }}
+                onKeyDown={(event) => {
+                  // Safari can end composition before the confirming Enter and reports keyCode 229.
+                  if (
+                    composing.current ||
+                    event.nativeEvent.isComposing ||
+                    event.nativeEvent.keyCode === 229
+                  )
+                    return;
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    submit();
+                  }
+                }}
+              />
+              {uploadAttachment === undefined ? null : (
+                <ComposerAttachmentPicker
+                  add={attachments.add}
+                  enabled={attachmentEnabled && uploadAttachment !== undefined}
+                  locked={submitting || requestPending}
+                />
+              )}
+            </div>
+          </div>
         </div>
         {!running || queueWhileRunning ? (
           <Button

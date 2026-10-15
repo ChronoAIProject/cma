@@ -90,6 +90,74 @@ it('drops files, retains failed uploads and retries the identical file with the 
   expect(send.mock.calls[0]![0]).toContain(receipt(file).path);
 });
 
+it('reads screenshot file items when the clipboard file list is empty', async () => {
+  const create = vi.fn(() => 'blob:screenshot');
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() }));
+  const file = new File(['screenshot bytes'], 'image.png', { type: 'image/png' });
+  const upload = vi.fn<UploadAttachment>().mockResolvedValue(receipt(file));
+  render(surface(upload));
+  const consumed = fireEvent.paste(screen.getByRole('textbox'), {
+    clipboardData: {
+      files: [],
+      items: [
+        { kind: 'string', getAsFile: () => null },
+        { kind: 'file', getAsFile: () => file },
+      ],
+    },
+  });
+  expect(consumed).toBe(false);
+  expect(screen.getByText('image.png')).toBeInTheDocument();
+  expect(await screen.findByText('Ready')).toBeInTheDocument();
+  expect(upload).toHaveBeenCalledExactlyOnceWith(file, expect.any(Object));
+  expect(create).toHaveBeenCalledWith(file);
+});
+
+it('uploads each transferred file once when both files and items expose it', async () => {
+  const file = new File(['contents'], 'notes.txt', { type: 'text/plain' });
+  const upload = vi.fn<UploadAttachment>().mockResolvedValue(receipt(file));
+  render(surface(upload));
+  fireEvent.paste(screen.getByRole('textbox'), {
+    clipboardData: {
+      files: [file],
+      items: [{ kind: 'file', getAsFile: () => file }],
+    },
+  });
+  await screen.findByText('Ready');
+  expect(upload).toHaveBeenCalledOnce();
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+});
+
+it('preserves ordinary text paste and explains when image uploading is unavailable', () => {
+  render(
+    <Composer
+      status="ready"
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />,
+  );
+  const field = screen.getByRole('textbox');
+  expect(
+    fireEvent.paste(field, {
+      clipboardData: { files: [], items: [{ kind: 'string', getAsFile: () => null }] },
+    }),
+  ).toBe(true);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  fireEvent.paste(field, {
+    clipboardData: {
+      files: [],
+      items: [
+        { kind: 'file', getAsFile: () => new File(['image'], 'image.png', { type: 'image/png' }) },
+      ],
+    },
+  });
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Attachments are available when this sandbox is ready.',
+  );
+});
+
 it('cancels a removed upload and ignores its late response', async () => {
   let finish!: (value: UploadedAttachment) => void;
   const upload = vi.fn<UploadAttachment>(

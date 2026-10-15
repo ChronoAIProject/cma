@@ -822,7 +822,7 @@ active response stay visible while status observation and cancellation proceed.
 Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
 is running, using the existing circular composer buttons. Keep both controls
 centered on the same row beside the input, with a flexible input column and two
-40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+32px button columns (44px on mobile), separated by the existing 8px gap. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
 Keep the draft editable and retain it until admission is confirmed. An uncertain
@@ -837,8 +837,19 @@ local sign-in epoch changes clear the prior view before any new-account read is
 shown. A live gap discards uncommitted partial text and Thinking while preserving
 recorded messages, settled tools and the turn's original start time.
 
-The composer uses its existing capsule, send/stop icon seat, focus treatment, and
-bounded growth. Stop interrupts the current turn; it does not delete the Agent.
+The composer keeps a compact, fixed 38px desktop seat with 32px Send/Stop controls.
+The one-line input centers its 24px line vertically with 6px padding on either side.
+Below 30rem, the input and controls retain 44px targets within a 46px capsule seat.
+Long drafts expand upward while the capsule is hovered or focused, capped at the
+smaller of 336px and 40dvh. They collapse to one line otherwise, preserving the
+draft and selection. Expansion overlays history without moving the controls or
+conversation scrollport. Use the existing capsule background, focus treatment
+and shadow. Put Attach files on the same row and its paste/drop hint in the
+button title; thumbnail and upload status records remain visible above that row.
+Pasted screenshots use the clipboard's file items when its file list is empty;
+plain text paste retains normal editing behavior. A confirmed message includes
+both the text and the exact uploaded attachment paths for that Agent.
+Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
 
@@ -2184,3 +2195,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
 
 | 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |
+
+| 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
