@@ -746,7 +746,9 @@ Send until complete history, current Sandbox state and required connections are
 verified; an early activity page alone does not authorize interaction.
 
 Once a retained creation operation names its actual Agent, its modal may prepare
-that exact Agent's transport while lineage is checked. Transfer the same v2
+that exact Agent's transport and owner-authorized connection check while lineage
+is checked. Transfer both once to the same Agent, owner and client after personal
+access is verified. Transfer the same v2
 selection once into navigation, keeping the loader's fresh account check and the
 existing persisted transport choice. Closing or changing the creation scope
 cancels preparation; account and local sign-in epoch changes invalidate it. A
@@ -756,8 +758,15 @@ After current personal access is verified for an exact Agent, check required
 connections while its conversation loads. Keep the result bound to that Agent,
 viewer, client and uninterrupted authorization generation. Refused or uncertain
 access discards the result and cancels pending checks. Send still waits for full
-history and current Sandbox eligibility, and each click freshly checks connections
-before submitting the captured draft. No extra preparation notice is introduced.
+history and current Sandbox eligibility. A v2 send may consume the creation's
+transferred ready connection report once, within one second of receiving it on a
+monotonic clock. Opening settings, a known grant/profile change, loss of focus or
+visibility, or a changed authorization scope discards this handoff. Ordinary,
+expired and subsequent sends freshly check connections before submitting the
+captured draft; missing connections keep the existing recovery dialog. Every send
+still freshly checks account identity and the server independently authorizes
+admission and execution, including required connections before dispatch. No extra
+preparation notice is introduced.
 
 A newly admitted Agent may open while its recorded state is **Starting**, after
 verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
@@ -2109,3 +2118,4 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Retry an explicit Responses v2 admission conflict up to three times while keeping the exact retained message and request key. Recheck account authority and the retained pending intent before each retry, honor navigation cancellation, and acknowledge only a durable receipt. A received receipt, uncertain network outcome, different refusal or exhausted retry budget retains the existing explicit recovery behavior. |
 
 | 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |
+| 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
