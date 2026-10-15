@@ -9,6 +9,7 @@ use layer2_core::sandbox::{AgentOperationService, DurableAgentUpdateRecorder, Fi
 use layer3_adapter::{ConversationInputSender, ConversationUpdate, RuntimeHandle};
 use std::sync::Arc;
 mod connection;
+mod publication_contention;
 mod runtime;
 
 struct Fixture {
@@ -21,12 +22,23 @@ struct Fixture {
     attachment: LiveAgentAttachment,
     evidence: RequestEvidence,
     _updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
+    sends: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Fixture {
     async fn new() -> Self {
-        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set");
-        let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+        Self::with_app(None).await
+    }
+    async fn with_app(app: Option<String>) -> Self {
+        let key = if app.is_some() {
+            "CHRONO_TEST_MONGODB_FAILPOINT_URI"
+        } else {
+            "CHRONO_TEST_MONGODB_URI"
+        };
+        let uri = std::env::var(key).expect("disposable replica set");
+        let mut options = mongodb::options::ClientOptions::parse(uri).await.unwrap();
+        options.app_name = app;
+        let client = mongodb::Client::with_options(options).unwrap();
         let name = format!("cma_open_ready_worker_{}", uuid::Uuid::new_v4().simple());
         let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
         let (agent, sandbox, workspace, worktree) =
@@ -53,6 +65,8 @@ impl Fixture {
             AgentWorkerConfig::new("open-worker", "test"),
         );
         let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        let sends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sent = sends.clone();
         let attachment = worker
             .dependencies
             .registry
@@ -62,7 +76,10 @@ impl Fixture {
                 1,
                 agent.work.lease.as_ref().unwrap().fence,
                 agent.capabilities.clone(),
-                ConversationInputSender::spawn(4, |_| async { Ok(()) }),
+                ConversationInputSender::spawn(4, move |_| {
+                    sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { Ok(()) }
+                }),
                 receiver,
                 worker.dependencies.updates.clone(),
             )
@@ -83,6 +100,7 @@ impl Fixture {
             attachment,
             evidence,
             _updates: sender,
+            sends,
         }
     }
     async fn publish(&self) -> Result<bool, SandboxStoreError> {
