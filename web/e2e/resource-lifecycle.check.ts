@@ -2,6 +2,80 @@ import { test, expect } from '@playwright/test';
 import type { Launch } from '../../sdk/typescript/src/index';
 import { LocalStartup, localTime, recorded } from './agent-startup-fixtures';
 
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 800, height: 600 },
+  { width: 390, height: 844 },
+  { width: 320, height: 480 },
+  { width: 320, height: 240 },
+  { width: 900, height: 240 },
+]) {
+  test(`LOCAL modal controls remain reachable at ${viewport.width}x${viewport.height}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.goto('/agent-manager');
+    await page.getByRole('button', { name: 'New agent', exact: true }).first().click();
+    await page.setViewportSize(viewport);
+    const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
+    const geometry = await dialog.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const body = element.querySelector<HTMLElement>('.modal__body')!;
+      return {
+        margins: [
+          box.left / innerWidth,
+          (innerWidth - box.right) / innerWidth,
+          box.top / innerHeight,
+          (innerHeight - box.bottom) / innerHeight,
+        ],
+        centerX: (box.left + box.right) / 2,
+        centerY: (box.top + box.bottom) / 2,
+        bodyHeight: body.clientHeight,
+        horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
+        overflow: [...element.querySelectorAll<HTMLElement>('*')]
+          .filter((child) => child.getBoundingClientRect().right > box.right + 1)
+          .map((child) => ({ name: child.className, width: child.clientWidth })),
+      };
+    });
+    expect(geometry.margins.every((margin) => margin >= 0.2 - 0.001)).toBe(true);
+    expect(geometry.centerX).toBeCloseTo(viewport.width / 2, 0);
+    expect(geometry.centerY).toBeCloseTo(viewport.height / 2, 0);
+    expect(geometry.bodyHeight).toBeGreaterThan(0);
+    expect(geometry.horizontalOverflow, JSON.stringify(geometry)).toBe(false);
+
+    const repository = dialog.getByLabel('GitHub repository (optional)');
+    await repository.fill('https://github.com/example/repository');
+    // Filling can focus a clipped input. A real click must also survive clipping and hit testing.
+    await repository.click();
+    await expect(repository).toHaveValue('https://github.com/example/repository');
+    await repository.fill('');
+    const create = dialog.getByRole('button', { name: 'Create agent', exact: true });
+    await create.click({ trial: true });
+    await page.screenshot({
+      path: info.outputPath(`modal-${viewport.width}x${viewport.height}-footer.png`),
+      animations: 'disabled',
+    });
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // Reopen to exercise the other footer action after scrolling through the body.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole('button', { name: 'New agent', exact: true }).first().click();
+    await page.setViewportSize(viewport);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    await info.attach('modal-geometry', {
+      body: JSON.stringify({ viewport, ...geometry }, null, 2),
+      contentType: 'application/json',
+    });
+  });
+}
+
 for (const width of [1440, 390]) {
   for (const surface of ['launch', 'sandbox'] as const) {
     test(`LOCAL live restore progress on ${surface} at ${width}px`, async ({
