@@ -43,7 +43,9 @@ impl AgentOperationService {
             .execute_command(
                 authority.caller(),
                 &command.receipt.envelope.agent_id,
-                command.receipt.envelope.command.clone(),
+                command
+                    .effective_command()
+                    .map_err(|_| AgentOperationError::Conflict)?,
             )
             .await
     }
@@ -91,7 +93,13 @@ impl AgentOperationService {
             runtimes: self.runtimes.clone(),
         };
         service
-            .execute_command(caller, &envelope.agent_id, envelope.command.clone())
+            .execute_command(
+                caller,
+                &envelope.agent_id,
+                command
+                    .effective_command()
+                    .map_err(|_| AgentOperationError::Conflict)?,
+            )
             .await
     }
 }

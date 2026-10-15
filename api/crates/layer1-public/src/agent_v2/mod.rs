@@ -10,6 +10,8 @@ mod eligibility;
 mod error;
 #[cfg(test)]
 pub(crate) mod fixtures;
+#[cfg(test)]
+mod message_binding_tests;
 mod parse;
 mod projection;
 mod shapes;
