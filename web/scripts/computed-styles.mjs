@@ -151,7 +151,9 @@ async function oneIndicator(page) {
 async function errorSurface(page, port) {
   const problems = [];
   await page.setViewport({ width: 1440, height: 900 });
-  await visit(page, port, 'domcontentloaded');
+  // The public home remains reachable without identity. Exercise a protected
+  // portal route so aborting its identity request renders the actual error.
+  await visit(page, port, 'domcontentloaded', '/agent-manager');
   await ready(page, '.app-error', { label: 'unreachable service surface' });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
