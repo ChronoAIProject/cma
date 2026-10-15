@@ -4,11 +4,60 @@
 }
 .agent-lifecycle-provisioning {
   display: grid;
-  gap: 14px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.agent-lifecycle-provisioning__circle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  color: var(--dsw-alias-brand-primary);
+}
+.agent-lifecycle-provisioning__circle svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-width: 3px;
+}
+.agent-lifecycle-provisioning__track {
+  stroke: var(--dsw-alias-border-l2);
+}
+.agent-lifecycle-provisioning__arc {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+.agent-lifecycle-provisioning[data-active] .agent-lifecycle-provisioning__arc {
+  animation: agent-setup-rotation 1.2s linear infinite;
+}
+.agent-lifecycle-provisioning__details {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-lifecycle-provisioning__details h3,
+.agent-lifecycle-provisioning__details p {
+  margin: 0;
+}
+.agent-lifecycle-provisioning__details p,
+.agent-lifecycle-provisioning__details small,
+.agent-lifecycle-provisioning__details summary {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.agent-lifecycle-provisioning__details summary {
+  cursor: pointer;
 }
 .agent-lifecycle-provisioning ol {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -16,19 +65,20 @@
 .agent-lifecycle-provisioning li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  gap: 6px;
+  padding-top: 6px;
+  font-size: 12px;
+  line-height: 18px;
 }
-.agent-lifecycle-provisioning li[data-state='Ready'] {
-  border-color: var(--dsw-alias-state-success-primary);
+@keyframes agent-setup-rotation {
+  to {
+    transform: rotate(270deg);
+  }
 }
-.agent-lifecycle-provisioning li[data-state='In progress'] {
-  border-color: var(--dsw-alias-brand-primary);
-}
-.agent-lifecycle-provisioning li[data-state='Needs attention'] {
-  border-color: var(--dsw-alias-state-error-primary);
+@media (prefers-reduced-motion: reduce) {
+  .agent-lifecycle-provisioning[data-active] .agent-lifecycle-provisioning__arc {
+    animation: none;
+  }
 }
 .agent-lifecycle-provisioning li span,
 .agent-lifecycle-provisioning li small,
