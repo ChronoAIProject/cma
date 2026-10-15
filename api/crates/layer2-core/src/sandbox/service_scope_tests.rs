@@ -38,6 +38,17 @@ fn exact_live_scope_removes_creation_and_added_services_without_changing_runtime
         )
         .unwrap();
     assert_eq!(scope.revision, 1);
+    assert_eq!(scope.runtime, before.runtime.clone().unwrap());
+    assert_eq!(
+        scope.runtime_services,
+        before.credential.effective_reaches()
+    );
+    assert_eq!(
+        value
+            .credential
+            .runtime_reaches(value.runtime.as_ref().unwrap()),
+        before.credential.effective_reaches()
+    );
     assert_eq!(
         value.credential.effective_reaches(),
         services(&["baseline", "calendar"])
@@ -90,10 +101,51 @@ fn repeated_exact_scope_still_reserves_a_new_delivery_and_can_regrant_removed_se
         .revise_live_service_access(&owner, &services(&["repository", "baseline"]), NOW.into())
         .unwrap();
     assert_eq!(third.services, services(&["baseline", "repository"]));
+    assert_eq!(third.runtime_services, first.runtime_services);
     assert_eq!(value.credential.effective_reaches(), third.services);
     assert!(value
         .grant_service_access(&owner, &services(&["implicit"]), NOW.into())
         .is_err());
+}
+
+#[test]
+fn startup_scope_follows_runtime_generation_and_survives_a_process_boot_rebind() {
+    let mut value = live();
+    value.runtime.as_mut().unwrap().provision_generation = Some(4);
+    let owner = value.owner.clone();
+    let original = value.runtime.clone().unwrap();
+    let first = value
+        .revise_live_service_access(&owner, &services(&["calendar"]), NOW.into())
+        .unwrap();
+    delivery_completed(&mut value);
+    let mut restarted_process = original.clone();
+    restarted_process.boot_id = Some("b".repeat(32));
+    assert_eq!(
+        value.credential.runtime_reaches(&restarted_process),
+        first.runtime_services
+    );
+    value.runtime = Some(restarted_process);
+    let second = value
+        .revise_live_service_access(&owner, &services(&["calendar", "mail"]), NOW.into())
+        .unwrap();
+    assert_eq!(second.runtime_services, first.runtime_services);
+    delivery_completed(&mut value);
+
+    // An explicit lifecycle resume renders the current exact scope in the new
+    // generation, even when the provider retains its original runtime handle.
+    let mut resumed = original.clone();
+    resumed.provision_generation = Some(5);
+    assert_eq!(
+        value.credential.runtime_reaches(&resumed),
+        services(&["calendar", "mail"])
+    );
+    value.runtime = Some(resumed.clone());
+    let third = value
+        .revise_live_service_access(&owner, &services(&["mail"]), NOW.into())
+        .unwrap();
+    assert_eq!(third.runtime, resumed);
+    assert_eq!(third.runtime_services, services(&["calendar", "mail"]));
+    assert_eq!(value.credential.effective_reaches(), services(&["mail"]));
 }
 
 #[test]
@@ -155,7 +207,7 @@ fn legacy_scope_deserialization_stays_additive_and_new_scope_survives_round_trip
     let round_trip: Sandbox = serde_json::from_value(wire).unwrap();
     round_trip.validate().unwrap();
     assert_eq!(round_trip, value);
-    for case in 0..5 {
+    for case in 0..9 {
         let mut invalid = value.clone();
         let scope = invalid.credential.service_scope.as_mut().unwrap();
         match case {
@@ -163,7 +215,11 @@ fn legacy_scope_deserialization_stays_additive_and_new_scope_survives_round_trip
             1 => scope.services.clear(),
             2 => scope.revision = 0,
             3 => scope.credential_generation_floor = 0,
-            _ => scope.credential_generation_floor = value.credential.key_generation + 1,
+            4 => scope.credential_generation_floor = value.credential.key_generation + 1,
+            5 => scope.runtime.runtime_id.clear(),
+            6 => scope.runtime.provision_generation = Some(0),
+            7 => scope.runtime_services = services(&["duplicate", "duplicate"]),
+            _ => scope.runtime.bound_at = "2026-09-07T00:00:00Z".into(),
         }
         assert!(invalid.validate().is_err());
     }

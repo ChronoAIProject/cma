@@ -95,6 +95,10 @@ pub struct SandboxServiceScopeRevision {
     pub authorized_at: String,
     /// Credentials at or below this reservation predate this exact scope.
     pub credential_generation_floor: u64,
+    /// Runtime whose original startup environment is retained during this revision.
+    pub runtime: super::RuntimeBinding,
+    /// Startup service names are immutable for an existing runtime even while its key rotates.
+    pub runtime_services: Vec<ServiceId>,
 }
 
 /// Non-secret evidence for one sandbox credential. For supplied credentials the
@@ -173,6 +177,19 @@ impl SandboxCredentialState {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+
+    /// Recover the environment originally rendered for this runtime generation.
+    /// A replaced process can change its boot identity without changing that environment.
+    pub fn runtime_reaches(&self, runtime: &super::RuntimeBinding) -> Vec<ServiceId> {
+        if let Some(scope) = self.service_scope.as_ref().filter(|scope| {
+            scope.runtime.runtime_id == runtime.runtime_id
+                && scope.runtime.runtime_version == runtime.runtime_version
+                && scope.runtime.provision_generation == runtime.provision_generation
+        }) {
+            return scope.runtime_services.clone();
+        }
+        self.effective_reaches()
     }
 
     pub fn validate(&self) -> bool {

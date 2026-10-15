@@ -157,3 +157,128 @@ async fn native_scope_grants_resume_exact_old_identity_with_new_scope_after_each
     );
     assert!(!calls.iter().any(|call| call == "delete-retained"));
 }
+
+async fn revise_hot(
+    fixture: &Fixture,
+    active: &Sandbox,
+    names: &[&str],
+    now: &mut SystemTime,
+) -> Sandbox {
+    let mut changed = active.clone();
+    let scope = changed
+        .revise_live_service_access(
+            &active.owner,
+            &names
+                .iter()
+                .map(|name| ServiceId::new(*name))
+                .collect::<Vec<_>>(),
+            rfc3339_at(*now),
+        )
+        .unwrap();
+    let floor = scope.credential_generation_floor;
+    fixture
+        .harness
+        .store
+        .commit(SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
+            expected_revision: active.revision,
+            sandbox: Box::new(changed),
+            event_at: rfc3339_at(*now),
+            event: SandboxEventKind::ServiceAccessRevised { scope },
+        })
+        .await
+        .unwrap();
+    for _ in 0..10 {
+        fixture.step(&active.id, *now, &runtime_image()).await;
+        let next = fixture.harness.stored(&active.id).await;
+        assert_eq!(next.runtime, active.runtime);
+        assert_eq!(next.lifecycle, active.lifecycle);
+        assert!(next.failure.is_none(), "{:?}", next.failure);
+        if next.status == SandboxStatus::Active
+            && next.credential.current.as_ref().unwrap().generation > floor
+            && next.credential.revoke_debt.is_empty()
+        {
+            return next;
+        }
+        *now += Duration::from_secs(1);
+    }
+    panic!("hot scope did not settle");
+}
+
+#[tokio::test]
+async fn hot_scope_keeps_original_native_request_until_explicit_resume_then_pins_new_request() {
+    let fixture = Fixture::new().await;
+    let created = fixture.harness.create().await;
+    let mut now = start_time(&created);
+    let original = fixture
+        .drive(
+            &created.id,
+            &mut now,
+            SandboxStatus::Active,
+            &runtime_image(),
+        )
+        .await;
+    let startup_request = fixture.backend.request().await;
+    let first = revise_hot(&fixture, &original, &["baseline", "api-github"], &mut now).await;
+    let second = revise_hot(&fixture, &first, &["baseline", "calendar"], &mut now).await;
+    assert_eq!(fixture.backend.request().await, startup_request);
+    let paused = fixture.pause(&second, &mut now).await;
+    let retained = crate::sandbox::runtime_attachment::retained_runtime_request(
+        &paused,
+        paused.lifecycle.suspended_runtime.as_deref().unwrap(),
+        "test",
+    )
+    .unwrap();
+    assert_eq!(
+        retained.spec.reaches.join(","),
+        startup_request.env["CHRONO_SANDBOX_REACHES"]
+    );
+    fixture
+        .harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+            paused.id.clone(),
+            paused.owner.clone(),
+            rfc3339_at(now),
+            SandboxReviveCause::ExplicitRequest,
+        ))
+        .await
+        .unwrap();
+    let resumed = fixture
+        .drive(
+            &created.id,
+            &mut now,
+            SandboxStatus::Active,
+            &runtime_image(),
+        )
+        .await;
+    assert_eq!(
+        resumed.runtime.as_ref().unwrap().runtime_id,
+        original.runtime.as_ref().unwrap().runtime_id
+    );
+    assert!(
+        resumed.runtime.as_ref().unwrap().provision_generation
+            > original.runtime.as_ref().unwrap().provision_generation
+    );
+    assert_eq!(resumed.lifecycle.home, original.lifecycle.home);
+    let resumed_request = fixture.backend.request().await;
+    assert_eq!(
+        resumed_request.env["CHRONO_SANDBOX_REACHES"],
+        "baseline,calendar"
+    );
+    let third = revise_hot(&fixture, &resumed, &["baseline"], &mut now).await;
+    assert_eq!(fixture.backend.request().await, resumed_request);
+    assert_eq!(
+        third.credential.effective_reaches(),
+        vec![ServiceId::new("baseline")]
+    );
+    assert_eq!(
+        third
+            .credential
+            .service_scope
+            .as_ref()
+            .unwrap()
+            .runtime_services,
+        vec![ServiceId::new("baseline"), ServiceId::new("calendar")]
+    );
+}

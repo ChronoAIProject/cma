@@ -15,6 +15,22 @@ impl Sandbox {
             || scope.authorized_by != self.owner
             || !valid_services(&scope.services)
             || !scope.services.windows(2).all(|pair| pair[0] < pair[1])
+            || !super::lifecycle_execution_support::valid_runtime_binding(
+                &scope.runtime,
+                &scope.runtime.bound_at,
+            )
+            || scope.runtime.provision_generation == Some(0)
+            || !scope
+                .runtime_services
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+            || scope.runtime_services.iter().any(|service| {
+                let value = service.as_str();
+                value.is_empty() || value.len() > 512 || value.chars().any(char::is_control)
+            })
+            || seconds_from_rfc3339(&scope.runtime.bound_at)
+                .zip(seconds_from_rfc3339(&scope.authorized_at))
+                .is_none_or(|(bound, authorized)| bound > authorized)
             || seconds_from_rfc3339(&scope.authorized_at)
                 .zip(seconds_from_rfc3339(&self.created_at))
                 .zip(seconds_from_rfc3339(&self.updated_at))
@@ -68,6 +84,7 @@ impl Sandbox {
         if services.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid());
         }
+        let runtime = self.runtime.as_ref().ok_or_else(invalid)?;
         let scope = SandboxServiceScopeRevision {
             revision: self
                 .credential
@@ -81,6 +98,8 @@ impl Sandbox {
             authorized_at: at.clone(),
             // Skip a generation any expired pre-revision worker may mint.
             credential_generation_floor: self.credential.next_generation().ok_or_else(invalid)?,
+            runtime: runtime.clone(),
+            runtime_services: self.credential.runtime_reaches(runtime),
         };
         let mut next = self.clone();
         next.credential.key_generation = scope.credential_generation_floor;
