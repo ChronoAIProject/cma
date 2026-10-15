@@ -5,6 +5,7 @@ import type { ConversationState } from './conversation';
 import { StreamEntry, type Entry } from './StreamEntry';
 import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
+import type { AgentViewPosition } from './viewPosition';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -14,6 +15,7 @@ interface MessageStreamProps {
   readonly children?: ReactNode;
   readonly emptyMessage?: string;
   readonly optimisticMessages?: readonly OptimisticMessage[];
+  readonly viewPosition?: AgentViewPosition;
 }
 
 export function MessageStream({
@@ -24,19 +26,25 @@ export function MessageStream({
   children,
   emptyMessage = 'Start the conversation.',
   optimisticMessages,
+  viewPosition,
 }: MessageStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
-  const previousTop = useRef(0);
+  const pinned = useRef(viewPosition?.pinned ?? true);
+  const previousTop = useRef(viewPosition?.top ?? 0);
 
   useLayoutEffect(() => {
     const scroller = endRef.current?.closest('.agent-surface__conversation');
     if (!(scroller instanceof HTMLElement)) return;
+    if (viewPosition !== undefined) scroller.scrollTop = viewPosition.top;
     const track = () => {
       const atEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 48;
       if (atEnd) pinned.current = true;
       else if (scroller.scrollTop < previousTop.current) pinned.current = false;
       previousTop.current = scroller.scrollTop;
+      if (viewPosition !== undefined) {
+        viewPosition.top = scroller.scrollTop;
+        viewPosition.pinned = pinned.current;
+      }
     };
     const follow = () => {
       if (!pinned.current) return;
@@ -48,10 +56,14 @@ export function MessageStream({
     observer?.observe(scroller);
     for (const child of scroller.children) observer?.observe(child);
     return () => {
+      if (viewPosition !== undefined) {
+        viewPosition.top = scroller.scrollTop;
+        viewPosition.pinned = pinned.current;
+      }
       scroller.removeEventListener('scroll', track);
       observer?.disconnect();
     };
-  }, []);
+  }, [viewPosition]);
 
   useLayoutEffect(() => {
     const scroller = endRef.current?.closest('.agent-surface__conversation');

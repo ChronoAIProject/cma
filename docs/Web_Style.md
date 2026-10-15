@@ -418,29 +418,22 @@ The grid transitions its tracks, except while dragging, where the transition wou
 
 ## 10. The sidebar
 
-The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark link to Home and close Agent details. The
-navigation scope Picker sits between the build badge and the separate
-New agent icon button, which has its own hit area. When the Picker is available,
-the brand shows its mark without the wordmark, the header gap is 4px, the badge
-truncates within 8ch and the collapse control is 32px wide. The Picker fills the
-remaining width with a 60px minimum, 12px type and 4px inline padding; long names
-truncate while its menu shows the full choice. Collapsing hides the Picker and
-preserves its selected scope.
-The badge uses existing layer-2 ground, secondary ink and border,
-11px code type, 2px/4px padding and 4px radius; without the Picker it truncates
-within 11ch and exposes
-the complete build identity on hover. The standalone tool is 32px wide and 36px
-high; mobile header controls retain at least 44px height. Collapsing keeps the
-mark, separate creation tool and panel control. The browser region alone scrolls
-and fills all available space between header and account, with no competing spacer.
+The global service bar owns the sole CMA logo and home link. Clicking it opens
+`/`, the same landing screen before and after sign-in; its signed-in Get Started
+control enters `/agent-manager`. The Agent Manager tab uses that path while
+existing Agent, Workspace and Sandbox links retain their canonical paths.
+The build/version appears immediately to the right of CMA as an 11px code
+subscript, 18px line height, capped to 11ch with its full identity on hover.
+The sidebar header contains only the scope Picker, New agent and collapse
+controls. Its browser region scrolls and fills the remaining height.
 
-The tree is Sandbox -> Workspace -> Agent. Worktrees are facts of the Agent,
-not another navigable tree level. A Sandbox row shows name, status and pause
-notice; a Workspace row shows name and a repository/folder glyph; an Agent row
-shows title, state and last activity. Rows retain 32px minimum height and 8px
-radius, with consistent status/icon slots. Expansion state is scoped to the
-signed-in viewer and survives route changes.
+The tree is Sandbox -> Workspace -> Agent. Sandbox labels use
+`Sandbox Machine - <UUID>`; Workspace labels use the selected Agent's confirmed
+runtime working directory, with the recorded workspace path as fallback. Agent
+labels prefer the provider's session description, then the recorded title.
+Runtime metadata arrives through the public event stream, never a directory
+poll. Long labels truncate with ellipsis and expose full text on hover. Rows
+retain stable status/icon slots, and expansion belongs to the signed-in viewer.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
@@ -617,14 +610,14 @@ the width is measured with the position.
 
 ### 12.4 Dialogs, and confirming something irreversible
 
-One card: 440px at radius 16 on layer 2, behind the theme's `bg-mask-1` and a blur — dimming alone
-leaves the page behind legible enough to keep reading, which is the one thing a dialog exists to stop.
-It portals out of the page, because an ancestor that establishes a stacking context leaves sticky
-chrome floating above the mask and no z-index can reach past it. The page behind does not scroll while
-it is open.
-
-The two named wide forms remain 700px and 1000px. Every size is capped to the viewport; 440px is the
-base, not a minimum that can overflow a phone.
+Every modal uses the shared Modal primitive: one centered card on layer 2,
+behind the theme's `bg-mask-1` and blur. Width is `min(700px, 60vw)` and maximum
+height is `60dvh` with a `60vh` fallback. All four card edges stay at least 20%
+inside the whole viewport, including on narrow screens. No call site overrides
+width, height or placement. Header and wrapping footer retain the shared style;
+long contents scroll inside the body. Radius remains 16px. The overlay portals
+to the document root and locks background scrolling. Anchored selection menus
+and tooltips retain their menu semantics and are not modal dialogs.
 
 Closed dialogs release their focus trap and return focus immediately. Their inert,
 accessibility-hidden exit frame may remain for the shared 200ms opacity fade,
@@ -633,7 +626,7 @@ while open; Escape closes a dismissible dialog. Reopening during the fade cancel
 the pending removal and restores one active dialog.
 
 A width chosen per call site is how two dialogs asking the same kind of question end up different
-sizes. The exceptions are named classes a reviewer can find, never a size prop.
+sizes. There are no per-dialog geometry exceptions or size props.
 
 **No dialog opens over a dialog.** A surface that must ask something while one is open asks in place of
 the row's own controls — which is also what a reversible destructive action does.
@@ -1017,20 +1010,23 @@ cancellation and keeps every control within phone and desktop viewports.
 
 ## 13a. Agent resources
 
-Resources are a public point read scoped to the Agent's Sandbox. Memory, CPU,
-and network occupy a stable three-column row on the reading axis. CPU uses a
-human unit in the ordinary surface; technical details may show the wire unit.
-The Agent's existing Sandbox lifecycle observation also gates live resources:
-only a fresh Active observation with a reported runtime version starts polling.
-Do not add another Sandbox poll or infer this from message eligibility. A paused
-Sandbox may accept messages while no runtime exists to report live resources.
-Before observation, show checking; when paused, retain Tokens and Context and
-show RAM, CPU and Network as paused with the quiet status "Sandbox paused. Live
-resources resume when it is active." Missing or stale lifecycle data holds live
-reads with an explicit unavailable status. Inactive runtime states are not an
-unsupported-resources error and never become zero readings. Cancel in-flight
-reads and discard the old sampling identity when the runtime becomes unavailable;
-fresh activation or a changed runtime version starts a new CPU sample pair.
+Machine resources are public point reads scoped to the Agent's Sandbox and
+appear only in Sandbox details, never below the conversation. RAM, CPU and
+network share a three-column row. The already observed Sandbox lifecycle gates
+samples: only a fresh Active state with a runtime version and no operation or
+checkpoint permits reads. Paused and unavailable runtimes show written states,
+never zeroes. Cancel requests and reset the CPU sample pair when the runtime
+identity changes. Mounting a conversation does not start machine-resource polls.
+
+The conversation footer contains Context quota and cumulative Agent input/output
+tokens, including earlier turns and preserved across compaction. The Thinking
+row shows the current turn's input/output totals. Unreported usage says waiting;
+it is never estimated from text, elapsed time or the context quota. Each reported
+increase animates towards that actual value over 600ms, never beyond it. Values
+use tabular numerals; reduced motion and hidden documents settle immediately.
+Accessible labels expose the actual count without announcing every animation
+frame. A new turn resets only its own counters.
+
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
 configured capacity. Its id and revision must match, and its digest must match
@@ -1920,6 +1916,28 @@ callbacks without this evidence remain read-only. Explicitly reviewed
 Triggers retain their review controls. This supersedes wording that limited
 the consent gesture to a second click on the CMA landing page.
 
+### Confirmed Agent creation and retained navigation
+
+New Agent preparation uses one 64px circle with a 3px stroke and a 1.2s linear
+rotation while pending. Reduced motion stops rotation. The percentage and
+current phase sit to its right with a 16px gap and 12px/18px detail copy.
+The four reported preparation stages contribute 20% each; 100% requires the
+successful operation plus its actual Agent identity. Elapsed time cannot raise
+the percentage. Full phase facts remain in an initially closed Setup details
+disclosure with 6px internal gaps.
+
+Agent key scope rows are 64px high. Skill rows are 112px, with 18px / 18px / 40px
+internal tracks and 6px gaps. Text is single-line ellipsis with full hover text;
+controls remain visible. All lists use existing typography, borders and tokens.
+
+Recently opened Agent conversations remain in a bounded memory-only cache for
+the current account and client. Switching back restores recorded content while
+current resource access is checked; actions remain unavailable during that
+check. Reopening resumes events at the saved cursor rather than downloading
+history from zero. Denied access clears the view, and account/client changes
+cannot reuse it. An ordinary stream handshake does not create a lost-update
+warning. Explicit lag and actually discarded live fragments remain visible.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -2142,3 +2160,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
 | 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |
 | 2026-10-15 | Display outgoing messages immediately in the existing owner message flow with caption delivery status. Keep drafts until authorized acceptance, reconcile by exact command/run identity, preserve same-request recovery, and prevent stale account or access callbacks from clearing drafts. |
+
+| 2026-10-15 | Unify dialogs at centered 60vw/60dvh bounds; replace creation steps with confirmed circular progress; move the sole brand/build to the global home link; use runtime directory and description labels; fix scope/skill row heights; retain Agent navigation history and cursor replay; move machine metrics to Sandbox details and show cumulative/current-turn tokens with bounded observed-count animation. |

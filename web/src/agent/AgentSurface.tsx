@@ -27,6 +27,7 @@ import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
+import type { AgentViewPosition } from './viewPosition';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -37,6 +38,7 @@ interface AgentSurfaceProps {
   readonly viewerId?: string;
   readonly agentId: string;
   readonly controller: AgentController;
+  readonly viewPosition?: AgentViewPosition;
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
@@ -72,6 +74,7 @@ export function AgentSurface({
   draft,
   agentId,
   controller,
+  viewPosition,
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
@@ -85,7 +88,9 @@ export function AgentSurface({
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
-    state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
+    state.status === 'ready'
+      ? `${state.detail.runtimeMetadata?.description || state.detail.title || 'Untitled agent'} · CMA`
+      : undefined;
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -176,7 +181,8 @@ export function AgentSurface({
 
   const { detail, conversation } = state;
   const status = detail.status;
-  const title = detail.title?.trim() || 'Untitled agent';
+  const title =
+    detail.runtimeMetadata?.description?.trim() || detail.title?.trim() || 'Untitled agent';
   const pausedNotice =
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice
@@ -223,7 +229,7 @@ export function AgentSurface({
               onNavigate={onNavigate}
             />
             <span aria-hidden="true">/</span>
-            <span>{detail.workspace.name}</span>
+            <span>{detail.runtimeMetadata?.workingDirectory || detail.workspace.path}</span>
             <span aria-hidden="true">/</span>
             <span>Agent</span>
           </>
@@ -319,6 +325,7 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          viewPosition={viewPosition}
           conversation={conversation}
           optimisticMessages={optimistic.messages}
           approvalBusy={approvalBusy}
