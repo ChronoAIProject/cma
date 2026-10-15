@@ -134,3 +134,24 @@ README presence, `git rev-parse --is-inside-work-tree=true`, and branch `develop
 The test did not run repository code or perform a native Git network operation.
 This verifies the source workflow on the current runtime; new persistent system
 instructions require a separate new-Agent check after their API deployment.
+
+
+A second new-Agent check at 21:54 SGT used the persistent V1 instructions
+without including API/archive steps in the user's task. The Agent requested
+`api-github` through its MCP tool, continued after the owner approval callback,
+resolved the default `develop` branch to
+`cf59a623daa2001721fe26ca60f5bdef7fa854db`, and downloaded source through
+`gh api`. Independent verification matched all 4,281 regular files and executable
+bits against the 4,706-member archive. The existing CMA Git worktree, branch
+and HEAD were preserved. Exact timings and artifact identity are recorded in
+[CMA native Sandbox production verification](CMA_Native_Production_Verification.md#natural-github-source-workflow--15-october-2154-sgt).
+
+New empty-Agent admissions capture a local-only readiness prompt: preserve files,
+report readiness, and wait for the user's actual task. They must not probe GitHub
+or request optional service access merely to declare readiness. An explicitly
+selected repository retains the existing GitHub workflow. The exact admitted
+setup message is persisted and replayed through both creation paths. Historical
+operations without the field retain the unchanged historical builder; persistent
+V1 guidance and prepared profile revision two remain unchanged. After new
+`setup_message` records are written, rollback requires a compatible reader for
+that optional field as well as all earlier durable schema additions.

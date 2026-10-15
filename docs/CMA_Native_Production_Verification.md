@@ -1,13 +1,13 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 21:44 SGT
+## Current production — 15 October, 22:15 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
 | Agent Manager | `77ada2dc25c580a6fdc3ad8414b243ad3c2153ba` | 44 | `sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71` |
-| Web | `61dad4d50989e8275ac884b32ad4fe055852f146` | 120 | `sha256:ec569cf8da130385fd51fed630d226565f473d40ef05343f91e267d05ebd915c` |
+| Web | `dfc4d128c499dff450c40ebd11af9f0d31474216` | 121 | `sha256:89007494cf582621ee1273de217b9fa093c0971777bb4751b2c9e7d745b85f22` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
 
@@ -1239,3 +1239,70 @@ and empty Pod sets were captured in advance. They retain their exact native
 Sandbox/Claim identities and generations, full-home PVC/PV, pinned runtime
 images, native conversations, and complete event/transcript/lifecycle prefixes.
 Neither fixture unexpectedly restarted or rotated during the API deployment.
+
+## Natural GitHub source workflow — 15 October, 21:54 SGT
+
+A fresh revision-two preparation was verified before claiming: exact pinned
+V1 instructions were already present in its Agent home. Creation reused the
+prepared Sandbox, Workspace, Worktree and Agent identities, and the owned
+Agent rendered the same 2,488-byte instructions after adoption. The public
+observer measured operation success at 6.057 s and Agent Ready at 6.415 s;
+setup completed at 27.378 s. This API sample does not pass the five-second
+threshold. UI queue eligibility is measured separately and does not wait for
+the automatic setup model turn.
+
+A natural repository request containing no API/archive steps caused the Agent
+to request `api-github` through its MCP tool. Owner approval updated the active
+conversation, after which the Agent resolved `develop` to commit
+`cf59a623daa2001721fe26ca60f5bdef7fa854db`, downloaded a 7,701,706-byte archive
+with authenticated `gh api`, validated it and prepared the local source.
+An independent read in the bound runtime Pod compared all 4,281 regular files
+and executable bits against the 4,706-member archive. Its SHA-256 is
+`73169caf2f7825e443b3ab4f98f67029f7911ab040fcbf23fae0b6409a424328`.
+Existing Git top-level, branch and HEAD were preserved. The result is a local
+source checkout; imported remote history and native Git transport are not
+claimed. The model task completed in 322 seconds including validation and
+file work. A first 180-second observer window expired; a read-only continuation
+confirmed completion without replaying the prompt.
+
+
+## Final Web animation and send verification — 15 October, 22:15 SGT
+
+Web `dfc4d128` is deployed as generation 121. Its source/index/platform checks
+and image scan passed, and public asset `index-aS-8WoEt.js` matches the serving
+Pod at SHA-256 `53f0a6e75265cd7f86553f2bac3835308c3c4ae1cb1288e264d808f51be178fa`.
+The sole change from the earlier motion-tested Web is pending-creation wording:
+healthy admission says “Starting your Agent…”; recovery guidance is reserved
+for an ended wait without a receipt. Eleven affected tests, lint, types and
+format checks passed. The shared animation implementation is unchanged.
+
+A real foreground Chrome sample exercised three menu/dialog/portal cycles
+without pausing or seeking animations. Across 636 frame intervals, median was
+16.7 ms, p95 16.8 ms, p99 33.3 ms and maximum 33.4 ms. Fifteen intervals exceeded
+25 ms, all during dialog transitions; none exceeded 50 ms, and the browser
+reported no long tasks or errors. This finite sample on a 1440×980 viewport
+is not a universal frame-rate guarantee. Functional interrupted-transition,
+retained-state, narrow-layout and dynamic reduced-motion checks are recorded in
+the earlier fifteen-check acceptance.
+
+A final real attachment upload and Send on this exact Web cleared the submitted
+text and ready attachment preview in **5.8 ms in the submit event**, with the
+first rendered frame at **6.8 ms**. Exactly one upload returned 201 and exactly
+one Responses-v2 send returned 200. A newer draft typed before the response was
+preserved through completion. Independent durable replay found exactly one
+completed matching turn and the expected `/home/attachments` manifest.
+Visible output estimates appeared during streaming; final actual counters
+advanced by 21,809 input and 18 output tokens. No persistent interrupted-update
+warning was observed. The inspector evicted the upload response body, but status,
+actual sent manifest and durable transcript independently proved acceptance.
+
+An earlier final-send collector clicked behind a pending access dialog and
+therefore sent no Agent message; its one unused upload and failed evidence are
+retained. The successful sample used a separate attributable upload. A preceding
+normal resume of the successful fixture was admitted in 241 ms and reached
+Active in 25.165 s, retaining the same Sandbox/Claim, PVC/PV, runtime image and
+conversation. This remains a full-backend resume limit, not a five-second pass.
+
+Evidence: `/tmp/cma-final-frames-dfc4-20261015/frames.json`,
+`/tmp/cma-composer-final-send-dfc4-77ada-20261015/summary.json`, and
+`/tmp/cma-final-clone-resume-20261015/summary.json`.
