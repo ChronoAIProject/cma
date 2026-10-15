@@ -93,15 +93,21 @@ export function SandboxActionStatus({
   }, [client, request.key, request.phase, resume, sandboxId]);
   // Hiding the notice only changes presentation; confirmed state is still
   // observed so the target's controls can unlock without a page reload.
-  if (request.hidden && request.phase !== 'failed') return null;
+  if (request.hidden && request.phase !== 'failed' && error === undefined) return null;
   const action = resume ? 'Resume' : 'Pause';
+  const progressLink =
+    onNavigate === undefined ? null : (
+      <Button onClick={() => onNavigate({ kind: 'sandbox', sandboxId })}>
+        View Sandbox progress
+      </Button>
+    );
   return (
     <section className="console__navigation-status" aria-label="Sandbox request">
       <p role="status">
         {request.phase === 'submitting'
           ? `Submitting ${action.toLowerCase()} request…`
           : request.phase === 'accepted'
-            ? `${action} request accepted. Waiting for the Sandbox to ${resume ? 'resume' : 'pause'}.`
+            ? `${action} request accepted.`
             : request.phase === 'complete'
               ? `Sandbox ${resume ? 'resumed' : 'paused'}.`
               : request.phase === 'uncertain'
@@ -109,16 +115,16 @@ export function SandboxActionStatus({
                 : 'Sandbox request needs attention.'}
       </p>
       {error === undefined ? null : <p role="alert">{error}</p>}
-      {onNavigate === undefined ? null : (
-        <Button onClick={() => onNavigate({ kind: 'sandbox', sandboxId })}>
-          View Sandbox progress
-        </Button>
+      {request.phase === 'accepted' ? (
+        <details>
+          <summary>Operation progress</summary>
+          <p>Waiting for the Sandbox to {resume ? 'resume' : 'pause'}.</p>
+          {progressLink}
+        </details>
+      ) : (
+        progressLink
       )}
-      {request.phase !== 'submitting' ? (
-        <Button onClick={onClose}>
-          {request.phase === 'accepted' ? 'Hide progress' : 'Dismiss status'}
-        </Button>
-      ) : null}
+      {request.phase !== 'submitting' ? <Button onClick={onClose}>Dismiss status</Button> : null}
     </section>
   );
 }
