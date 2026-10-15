@@ -25,6 +25,7 @@ const INVALID: VerificationError = VerificationError("lark_event_invalid");
 pub fn observe(
     payload: &CallbackPayload,
     bot_id: Option<&str>,
+    allow_bots: bool,
     media_enabled: bool,
 ) -> Result<Observation, VerificationError> {
     let Some(raw) = payload
@@ -47,13 +48,16 @@ pub fn observe(
         return Err(VerificationError("lark_identity_mismatch"));
     }
     identifier(message.get("message_id"))?.ok_or(INVALID)?;
-    match sender.get("sender_type").and_then(Value::as_str) {
-        Some("user") => {}
+    let actor = match sender.get("sender_type").and_then(Value::as_str) {
+        Some("user") => ActorKind::Human,
+        Some("app") if allow_bots => ActorKind::Bot,
         Some("app") => return Ok(Observation::Refused(Refusal::BotSender)),
         _ => return Ok(Observation::Refused(Refusal::UnknownSender)),
-    }
+    };
     // A human sender is always bound to the open_id NyxID reports for it.
-    if open_id.is_none() {
+    if open_id.is_none()
+        || (actor == ActorKind::Bot && !open_id.is_some_and(|id| id.starts_with("ou_")))
+    {
         return Err(VerificationError("lark_identity_mismatch"));
     }
     // A post resolves its mentions while it is flattened, but a malformed list
@@ -74,11 +78,14 @@ pub fn observe(
         _ => return Ok(Observation::Refused(Refusal::SystemEvent)),
     };
     let mentions = mentions?;
-    let mentioned = match bot_id {
-        Some(bot_id) => mentions
-            .iter()
-            .any(|mention| mention.pointer("/id/open_id").and_then(Value::as_str) == Some(bot_id)),
-        None => !mentions.is_empty(),
+    let mentioned = if bot_id.is_some() {
+        Some(crate::ingress::native_mentions::lark(message, bot_id).bot)
+    } else if actor == ActorKind::Human {
+        // Preserve legacy human-only sources. Bot opt-in validation requires
+        // a pinned open_id and can never use this compatibility path.
+        Some(!mentions.is_empty())
+    } else {
+        None
     };
     // The parent's author is not in the event, so a reply is not evidence either way.
     let replied_to_bot = match identifier(message.get("parent_id"))? {
@@ -90,9 +97,9 @@ pub fn observe(
         callback: None,
         conversation,
         thread_id: identifier(message.get("thread_id"))?.map(str::to_owned),
-        mentioned: Some(mentioned),
+        mentioned,
         replied_to_bot,
-        actor: ActorKind::Human,
+        actor,
         text: content.text,
         attachments: content.attachments,
         album_id: None,

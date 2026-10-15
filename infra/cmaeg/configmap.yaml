@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 data:
+  CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "false"
   CMAEG_MONGODB_DATABASE: "chrono-bot"
   CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
   CMAEG_LISTEN: "0.0.0.0:8090"

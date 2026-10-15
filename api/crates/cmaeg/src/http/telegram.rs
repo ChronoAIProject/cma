@@ -188,12 +188,17 @@ async fn admit_update(
         Ok(raw) => raw,
         Err(_) => return Err(reject(VerificationError("telegram_update_invalid"))),
     };
-    let observed =
-        match telegram::observe(raw, &bot_id, bot_username.as_deref(), state.media_enabled) {
-            Ok(Outcome::Admitted(observed)) => *observed,
-            Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
-            Err(error) => return Err(reject(error)),
-        };
+    let observed = match telegram::observe(
+        raw,
+        &bot_id,
+        bot_username.as_deref(),
+        state.media_enabled,
+        admission.native_bot_mentions(),
+    ) {
+        Ok(Outcome::Admitted(observed)) => *observed,
+        Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
+        Err(error) => return Err(reject(error)),
+    };
     if let Err(reason) = admit(
         admission,
         &AdmissionFacts {
@@ -201,7 +206,9 @@ async fn admit_update(
             chat_id: &observed.payload.conversation.platform_id,
             is_group: observed.facts.conversation
                 != cmaeg_core::activity::ConversationKind::Private,
-            is_bot_sender: false,
+            is_bot_sender: observed.facts.actor == cmaeg_core::activity::ActorKind::Bot,
+            receiving_bot_id: Some(&bot_id),
+            mentioned: observed.facts.mentioned,
             is_system: false,
             addressed: observed.facts.addressed(admission),
         },

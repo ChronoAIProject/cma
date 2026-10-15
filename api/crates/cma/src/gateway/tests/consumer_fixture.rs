@@ -72,6 +72,7 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            native_bot_mentions_writes_enabled: false,
             listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(),
             providers: cmaeg::providers::ProviderRegistry::parse(&json!([{
                 "slug":"cma_codex","base_url":server.base,"kind":"responses_http","max_inflight":8,

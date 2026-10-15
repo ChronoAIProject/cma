@@ -17,7 +17,10 @@ export const PlatformCapabilitySchema = object({
 });
 export type PlatformCapability = Output<typeof PlatformCapabilitySchema>;
 
-export const CapabilityViewSchema = object({ platforms: array(PlatformCapabilitySchema) });
+export const CapabilityViewSchema = object({
+  platforms: array(PlatformCapabilitySchema),
+  source_features: optional(array(text)),
+});
 export type CapabilityView = Output<typeof CapabilityViewSchema>;
 
 export const ConnectionViewSchema = object({

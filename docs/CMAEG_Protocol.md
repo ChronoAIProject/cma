@@ -848,7 +848,7 @@ differs is whether the gateway can corroborate the platform's own event.
 | Platform | Facts |
 | --- | --- |
 | Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages, media messages while the operator enables inbound media, and original private `managed_bot_created` receipts (see §7); `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`, read from `caption_entities` against the caption of a media message; reply evidence from the parent's `is_bot`. Media variants, captions, locators and the normalization of sender-declared facts are described under [Telegram media](#telegram-media); no attachment fact makes a callback answer 400. |
-| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media (as video) messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Rich-text posts are admitted too, flattened by the observer into the message text: the title, text, links, mentions rendered as names with the pinned bot's own mention removed, emotions, code blocks and rules; embedded images and videos are listed as attachments that are not retrievable, and a long post is truncated at 32 KiB with a marker. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
+| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is a bot and is refused as `bot_sender` unless the source explicitly opts in below; anything else is `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media (as video) messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Rich-text posts are admitted too, flattened by the observer into the message text: the title, text, links, mentions rendered as names with the pinned bot's own mention removed, emotions, code blocks and rules; embedded images and videos are listed as attachments that are not retrievable, and a long post is truncated at 32 KiB with a marker. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
 | Discord, Slack, WhatsApp | No raw-event verifier, so the source must set `trust_normalized:true` and the normalized envelope is trusted as-is. A definition stored without it (management refuses to create one) has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
 Opting into `trust_normalized` accepts that the gateway cannot refuse bot
@@ -2467,3 +2467,55 @@ original IDs used by existing integrations. Clients can show the record in
 the Console at `/console/channels/{record_id}`; operations that require a
 channel ID continue to require the original known ID. Create/get responses
 remain `ChannelResponse` with required `channel_id` and `endpoints`.
+
+
+## Native automated group mentions
+
+Scoped admission has an optional `bot_messages` field: `deny` (the default,
+omitted on serialization) or `native_mentions`. Existing sources keep refusing
+bots. The opt-in applies only to native Telegram and raw-verified Telegram,
+Lark and Feishu relay sources. `trust_normalized` sources cannot opt in. It
+requires a pinned receiving bot identity: Telegram's positive numeric `bot_id`
+and `bot_username`, or Lark/Feishu's `ou_...` open ID. App IDs, display names and
+user-ID namespaces cannot substitute for that identity.
+
+An opted-in automated message must come from a foreign bot, occur in a group,
+and positively mention that exact receiver in native metadata. Reply-only,
+`groups:all`, absent identity, broadcasts, callback buttons, managed provisioning,
+unknown actors and self messages never satisfy this condition. Existing sender,
+chat and group admission still applies. Accepted activities carry `actor.kind`
+`bot` and `kind.mentions_bot:true`; their wire shape and provider turn interface
+are otherwise unchanged. The consumer must explicitly support automated guests
+and enforce durable loop/execution bounds before opting in. This source policy
+grants no human identity, OAuth or protected tool authority and performs no
+cross-bot dispatch.
+
+Telegram entities use their own text or caption, UTF-16 scalar boundaries and
+exact username/native user ID, including `text_mention` and `/command@username`.
+The verifier bounds lists to 128 entities and target spans to 256 UTF-16 units,
+rejects malformed or overlapping target ranges, and ignores ranges inside
+code, links, email or quotations. Lark/Feishu match only `mentions[].id.open_id`,
+exclude `@_all`, and refuse ambiguous duplicate placeholder identities. Provider
+event delivery prerequisites remain required; the gateway cannot receive an
+update withheld by Telegram/Lark configuration.
+
+Rollout uses reader-before-writer deployment. Ship this reader to every replica
+and retained rollback target first. Upgrade the consuming application
+replicas to enforce automated guest execution and durable loop bounds before
+enabling its opt-in writer. Keep
+`CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED=false` (the manifest default) during that
+phase. Once all readers are ready, enabling the flag advertises
+`source_features:["native_bot_mentions_v1"]` on the authenticated
+`GET /v1/channel-capabilities` endpoint and permits new opt-in writes. Consumers
+must discover that capability before sending the field. An absent capability or
+old gateway preserves its existing human-only connection and policy shape.
+Unchanged opted-in definitions and removal remain writable with the flag off.
+The flag gates writes, not execution of retained definitions.
+
+Before rolling back to an image without this reader, disable opt-in writers,
+remove `bot_messages` opt-ins with the current reader (the existing extension
+audit clear operation also removes them), verify the audit is clear, and allow
+channel caches including their stale window to expire. Older images reject the
+new stored shape. NyxID periodically reconciles supported existing connections;
+no sender OAuth or manual reconnect is part of that migration. Basic bot mention
+admission does not depend on the separate thread-follow contract.

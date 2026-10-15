@@ -163,6 +163,13 @@ fn additional_bindings(definition: &ChannelDefinition) -> Vec<Binding> {
 /// The definition without routing and consumer keys, and without a
 /// `custom_key` that no custom source uses.
 fn legacy_shape(mut definition: ChannelDefinition) -> ChannelDefinition {
+    for source in &mut definition.sources {
+        if let Source::Telegram { admission, .. } | Source::NyxidRelay { admission, .. } = source {
+            if let cmaeg_core::channel::AdmissionPolicy::Scoped { bot_messages, .. } = admission {
+                *bot_messages = Default::default();
+            }
+        }
+    }
     definition.routing = None;
     definition.secrets.consumer_keys.clear();
     if !definition

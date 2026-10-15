@@ -226,7 +226,12 @@ async fn admit_callback(
             sender_id: &verified.payload.sender.platform_id,
             chat_id: &verified.payload.conversation.platform_id,
             is_group: facts.conversation != cmaeg_core::activity::ConversationKind::Private,
-            is_bot_sender: false,
+            is_bot_sender: facts.actor == cmaeg_core::activity::ActorKind::Bot,
+            receiving_bot_id: match source {
+                cmaeg_core::channel::Source::NyxidRelay { bot_id, .. } => bot_id.as_deref(),
+                _ => None,
+            },
+            mentioned: facts.mentioned,
             is_system: false,
             addressed: facts.addressed(admission),
         },

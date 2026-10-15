@@ -59,7 +59,10 @@ pub async fn create(
         record_id.clone(),
         binding_id.clone(),
         ConformanceLevel::L1,
-        WriteFlags::default(),
+        WriteFlags {
+            native_bot_mentions: state.native_bot_mentions_writes_enabled,
+            ..Default::default()
+        },
     )
     .map_err(ManagementError::Invalid)?;
     let pointer =
@@ -259,8 +262,15 @@ pub async fn update(
     }
     state.resolver.invalidate(channel_id.as_str());
     // The write gate runs inside the build, before the provider sees anything.
-    let mut definition = build_update(&request, &current.definition, WriteFlags::default())
-        .map_err(ManagementError::Invalid)?;
+    let mut definition = build_update(
+        &request,
+        &current.definition,
+        WriteFlags {
+            native_bot_mentions: state.native_bot_mentions_writes_enabled,
+            ..Default::default()
+        },
+    )
+    .map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;

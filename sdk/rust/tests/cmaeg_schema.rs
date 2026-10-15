@@ -51,6 +51,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Block,
         BlockRendering,
         BlockRenderingOutcome,
+        BotMessageAdmission,
         CallbackPayload,
         CallbackResponse,
         Capabilities,
@@ -414,4 +415,15 @@ fn legacy_channel_listing_omits_unknown_ids_and_endpoints() {
     assert!(decoded.items[0].channel_id.is_none());
     assert!(decoded.items[0].endpoints.is_none());
     assert_eq!(serde_json::to_value(decoded).unwrap(), example);
+}
+
+#[test]
+fn native_bot_extensions_preserve_legacy_omitted_defaults() {
+    let capabilities = json!({"platforms":[]});
+    let parsed: CapabilityView = serde_json::from_value(capabilities.clone()).unwrap();
+    assert!(parsed.source_features.is_empty());
+    assert_eq!(serde_json::to_value(parsed).unwrap(), capabilities);
+    let policy = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
+    let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
 }

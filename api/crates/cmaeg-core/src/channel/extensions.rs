@@ -8,6 +8,8 @@ use super::ChannelDefinition;
 /// what every deployed image reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Extensions {
+    /// Optional native automated-group admission, unreadable by older readers.
+    pub native_bot_mentions: bool,
     /// Multi-consumer routing.
     pub routing: bool,
     /// Source and partition shapes beyond today's rules.
@@ -21,6 +23,7 @@ impl Extensions {
     /// or its partition carries `custom_key`, which an older image cannot parse.
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
+            native_bot_mentions: def.sources.iter().any(super::Source::native_bot_mentions),
             routing: def.routing.is_some() || !def.secrets.consumer_keys.is_empty(),
             sources: def.validate_legacy_sources_and_partition().is_err()
                 || def.partition.custom_key.is_some(),
@@ -29,6 +32,6 @@ impl Extensions {
 
     /// Whether an image that predates every extension can read the definition.
     pub fn legacy_compatible(&self) -> bool {
-        !self.routing && !self.sources
+        !self.routing && !self.sources && !self.native_bot_mentions
     }
 }

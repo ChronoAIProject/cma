@@ -21,6 +21,9 @@ pub enum AdmissionPolicy {
     /// Wire variant `scoped`.
     #[serde(rename = "scoped")]
     Scoped {
+        /// Default deny; native mentions require pinned receiver identity and downstream loop bounds.
+        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
+        bot_messages: BotMessageAdmission,
         /// Wire field `chats`.
         chats: IdentityAdmission,
         /// Wire field `groups`.
@@ -411,4 +414,20 @@ pub struct TestChannelResponse {
     pub first_text: String,
     /// Wire field `level`.
     pub level: ConformanceLevel,
+}
+
+/// Admission of automated native group messages. No human execution authority is granted.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BotMessageAdmission {
+    /// Refuse bot-authored messages (the omitted-field default).
+    #[default]
+    Deny,
+    /// Admit only exactly addressed native group bots; consumers must bound execution loops.
+    NativeMentions,
+}
+impl BotMessageAdmission {
+    fn is_deny(&self) -> bool {
+        *self == Self::Deny
+    }
 }
