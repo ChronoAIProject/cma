@@ -34,8 +34,18 @@ it('shows unreported usage explicitly and immediately settles motion for reduced
     matches: true,
   }));
   const view = render(<TurnUsage />);
-  expect(screen.getByText('Turn tokens · waiting')).toBeInTheDocument();
+  expect(screen.getByText('Turn input unavailable · output unavailable')).toBeInTheDocument();
   view.rerender(<TurnUsage usage={{ inputTokens: 0, outputTokens: 1000 }} />);
   await act(() => vi.advanceTimersByTimeAsync(20));
   expect(screen.getByLabelText('Turn output tokens: 1,000')).toHaveTextContent('1,000 output');
+});
+
+it('settles hidden-document counts without requesting an animation frame', async () => {
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  const frame = vi.spyOn(window, 'requestAnimationFrame');
+  render(<TurnUsage usage={{ inputTokens: 100, outputTokens: 20 }} />);
+  await act(async () => Promise.resolve());
+  expect(frame).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Turn input tokens: 100')).toHaveTextContent('100 input');
+  expect(screen.getByLabelText('Turn output tokens: 20')).toHaveTextContent('20 output');
 });

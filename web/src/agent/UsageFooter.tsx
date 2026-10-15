@@ -1,5 +1,6 @@
 import type { AgentUsage } from '../api/types';
 import { BoundedReading } from './Resources';
+import { ObservedCount } from './ObservedCount';
 
 const count = (value: number) => new Intl.NumberFormat('en').format(value);
 
@@ -19,9 +20,19 @@ export function UsageFooter({ usage }: { readonly usage?: AgentUsage }) {
             title="Cumulative token usage for this Agent, including previous turns"
           >
             Total tokens ·{' '}
-            {usage === undefined
-              ? 'not reported'
-              : `${count(usage.inputTokens)} input · ${count(usage.outputTokens)} output`}
+            {usage === undefined ? (
+              'input unavailable · output unavailable'
+            ) : (
+              <>
+                <span aria-label={`Total input tokens: ${count(usage.inputTokens)}`}>
+                  <ObservedCount value={usage.inputTokens} animateInitial={false} /> input
+                </span>
+                {' · '}
+                <span aria-label={`Total output tokens: ${count(usage.outputTokens)}`}>
+                  <ObservedCount value={usage.outputTokens} animateInitial={false} /> output
+                </span>
+              </>
+            )}
           </span>
         </div>
       </div>
