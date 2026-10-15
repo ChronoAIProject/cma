@@ -34,7 +34,11 @@ interface Options {
   readonly reload: () => void;
   readonly errorMessage: (error: unknown) => string;
   readonly onIdentityChange: (error: unknown) => boolean;
-  readonly options: { readonly onHierarchyChange?: () => void; readonly onDeleted?: () => void };
+  readonly options: {
+    readonly viewerId?: string;
+    readonly onHierarchyChange?: () => void;
+    readonly onDeleted?: () => void;
+  };
 }
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
@@ -64,8 +68,14 @@ export function useAgentActions({
   options,
 }: Options) {
   const context = useMemo(
-    () => ({ agentId, client, historyIncomplete, allowed: inputAvailability.allowed }),
-    [agentId, client, historyIncomplete, inputAvailability.allowed],
+    () => ({
+      agentId,
+      client,
+      viewerId: options.viewerId,
+      historyIncomplete,
+      allowed: inputAvailability.allowed,
+    }),
+    [agentId, client, options.viewerId, historyIncomplete, inputAvailability.allowed],
   );
   const currentContext = useRef<typeof context | undefined>(undefined);
   useLayoutEffect(() => {
