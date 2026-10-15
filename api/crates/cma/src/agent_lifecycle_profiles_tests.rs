@@ -20,6 +20,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
     let request = serde_json::from_value(serde_json::json!({"name":"Test Agent"})).unwrap();
     let input = LifecycleInput {
         behavior: LifecycleBehavior::PromptRepository,
+        managed_agent_instructions: None,
         request,
         resolved_image: None,
         capacity: Some(SandboxCapacity::default()),
@@ -200,16 +201,32 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
     let prompt = validation::first_message(&request);
     assert!(prompt.contains("https://github.com/org/project"));
     assert!(prompt.contains("feature/setup"));
-    assert!(prompt.contains("gh CLI already routes GitHub API requests"));
+    assert!(prompt.contains("use gh api through CMA's api-github"));
+    assert!(prompt.contains("Honor the requested ref; when absent, read default_branch"));
+    assert!(prompt.contains("pin the returned commit SHA"));
+    assert!(prompt.contains("Download /repos/{owner}/{repo}/tarball/{sha} with gh api"));
+    assert!(prompt.contains("preserve existing files, local changes and .git metadata"));
     assert!(prompt.contains("request api-github through agent_key_scope_revision"));
     assert!(!prompt.contains("api-github-pat"));
-    assert!(prompt.contains("does not authenticate native git clone/fetch/push"));
+    assert!(prompt.contains("Use API source checkout instead of gh repo clone"));
     assert!(prompt.contains("no Sandbox restart is needed"));
     assert!(prompt.contains("Do not ask the user to paste a secret"));
     let repeated = validation::first_message(
         &serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap(),
     );
     assert_eq!(repeated, prompt);
+}
+
+#[test]
+fn empty_workspace_guidance_defers_api_repository_creation_until_requested() {
+    let request = serde_json::from_value(json!({"name":"Empty workspace"})).unwrap();
+    let prompt = validation::first_message(&request);
+    assert!(prompt.contains("Keep this workspace ready for the user's next task"));
+    assert!(prompt.contains("When the user asks to create a repository"));
+    assert!(prompt.contains("POST /user/repos or /orgs/{org}/repos"));
+    assert!(prompt.contains("do not create one during this readiness step"));
+    assert!(prompt.contains("updating refs without force"));
+    assert!(!prompt.contains("The user selected this GitHub repository"));
 }
 
 #[test]

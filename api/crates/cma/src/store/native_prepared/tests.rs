@@ -34,11 +34,7 @@ fn plan() -> NativePreparedPlan {
             setup_commands: vec![],
             agent_profiles: vec![],
         },
-        crate::agent_lifecycle::validation::agent_content_for(
-            &Default::default(),
-            crate::store::LifecycleBehavior::PromptRepository,
-        )
-        .unwrap(),
+        crate::agent_lifecycle::prepared_default_agent_profile().unwrap(),
         vec![],
         format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
         Default::default(),
@@ -169,7 +165,7 @@ fn native_prepared_normalizes_only_private_references() {
     let (sandbox, workspace) = actual_profiles(&plan);
     let agent = plan.warm.workspaces[0].agents[0].content.clone();
     assert!(plan.matches(&sandbox, &workspace, &agent, &[]));
-    for case in 0..8 {
+    for case in 0..9 {
         let (mut s, mut w, mut a) = (sandbox.clone(), workspace.clone(), agent.clone());
         let mut reaches = vec![];
         match case {
@@ -186,11 +182,37 @@ fn native_prepared_normalizes_only_private_references() {
             4 => a.model = Some("different".into()),
             5 => a.permission_level = PermissionLevel::Guarded,
             6 => s.content.workspace_profiles[0].revision += 1,
-            _ => reaches.push(ServiceId::new("extra")),
+            7 => reaches.push(ServiceId::new("extra")),
+            _ => a.system_prompt.clear(),
         }
         s.digest = content_digest(&s.content).unwrap();
         w.digest = content_digest(&w.content).unwrap();
         assert!(!plan.matches(&s, &w, &a, &reaches), "case {case}");
+    }
+}
+
+#[test]
+fn native_prepared_accepts_exact_managed_instructions_and_retains_legacy_profiles() {
+    let mut next = plan();
+    let mut legacy = next.clone();
+    let agent = &mut legacy.warm.workspaces[0].agents[0];
+    agent.content.system_prompt.clear();
+    agent.digest = content_digest(&agent.content).unwrap();
+    assert!(next.validate().is_ok());
+    assert!(legacy.validate().is_ok());
+    let (sandbox, workspace) = actual_profiles(&next);
+    assert!(next.matches(&sandbox, &workspace, &agent_content(&next), &[]));
+    assert!(!legacy.matches(&sandbox, &workspace, &agent_content(&next), &[]));
+    let agent = &mut next.warm.workspaces[0].agents[0];
+    agent
+        .content
+        .system_prompt
+        .push_str("\nUnreviewed instruction");
+    agent.digest = content_digest(&agent.content).unwrap();
+    assert!(next.validate().is_err());
+
+    fn agent_content(plan: &NativePreparedPlan) -> AgentProfileContent {
+        plan.warm.workspaces[0].agents[0].content.clone()
     }
 }
 
@@ -381,6 +403,9 @@ async fn admission(
             key,
             crate::store::LifecycleInput {
                 behavior: crate::store::LifecycleBehavior::PromptRepository,
+                managed_agent_instructions: Some(
+                    crate::agent_lifecycle::guidance::GITHUB_API_V1.into(),
+                ),
                 request: serde_json::from_value(serde_json::json!({"name":"Prepared test"}))
                     .unwrap(),
                 resolved_image: None,

@@ -121,3 +121,31 @@ fn prepared_open_ready_is_exact_and_requires_the_dedicated_validator() {
         );
     }
 }
+
+#[test]
+fn prepared_open_ready_preserves_recorded_instructions() {
+    let (mut current, tree, mut mutation) = ready();
+    current.profile.content.system_prompt = "Recorded environment instructions".into();
+    current.profile.digest = crate::profiles::content_digest(&current.profile.content).unwrap();
+    mutation.agent.profile = current.profile.clone();
+    assert!(validate_prepared_agent_open_ready(
+        &current,
+        &tree,
+        current.conversation.last_seq,
+        &mutation,
+    )
+    .is_ok());
+    mutation
+        .agent
+        .profile
+        .content
+        .system_prompt
+        .push_str(" changed");
+    assert!(validate_prepared_agent_open_ready(
+        &current,
+        &tree,
+        current.conversation.last_seq,
+        &mutation,
+    )
+    .is_err());
+}

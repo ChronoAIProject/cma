@@ -103,7 +103,7 @@ impl NativePreparedPlan {
             || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
             || workspace.profile.content.name != "workspace"
             || !agent.content.skills.is_empty()
-            || !agent.content.system_prompt.is_empty()
+            || !crate::agent_lifecycle::guidance::is_prepared_prompt(&agent.content.system_prompt)
             || agent.content.isolated_agent
             || sandbox
                 .runtime_image

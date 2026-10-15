@@ -16,6 +16,7 @@ pub(in crate::store) async fn verify(db: &Database) {
     .unwrap();
     let input = LifecycleInput {
         behavior: LifecycleBehavior::PromptRepository,
+        managed_agent_instructions: Some(crate::agent_lifecycle::guidance::GITHUB_API_V1.into()),
         actor: Some(layer2_core::resource_access::ResourceActor::Api {
             subject: owner.clone(),
             delegation_id: Some("original-grant".into()),
@@ -43,6 +44,7 @@ pub(in crate::store) async fn verify(db: &Database) {
     changed.capabilities.clear();
     changed.actor = None;
     changed.behavior = LifecycleBehavior::Legacy;
+    changed.managed_agent_instructions = Some("A later deployment's instructions".into());
     let CreateResult::Existing(replayed) =
         store.create(&owner, "exact-intent", changed).await.unwrap()
     else {
@@ -54,6 +56,10 @@ pub(in crate::store) async fn verify(db: &Database) {
     assert_eq!(replayed.input.capacity, input.capacity);
     assert_eq!(replayed.input.actor, input.actor);
     assert_eq!(replayed.input.behavior, input.behavior);
+    assert_eq!(
+        replayed.input.managed_agent_instructions,
+        input.managed_agent_instructions
+    );
     assert_eq!(
         store
             .replay(&owner, "exact-intent", &request)
