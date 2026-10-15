@@ -81,15 +81,15 @@ async fn mongo_hot_scope_is_atomic_restart_durable_and_replay_does_not_rotate_ag
         granted
     );
     assert_eq!(sandbox(&reopened, &record).await, after);
-    assert_eq!(
-        store
-            .agents
-            .find_one(doc! {"_id":record.requester.agent_id.as_str()})
-            .await
-            .unwrap()
-            .unwrap(),
-        agent
-    );
+    let after_agent = store.agents.find_one(doc! {"_id":record.requester.agent_id.as_str()}).await.unwrap().unwrap();
+    // The private concurrency guard advances to fence admission; Agent state,
+    // conversation and published revision remain unchanged.
+    assert!(after_agent.get_i64("resource_share_guard").unwrap() > agent.get_i64("resource_share_guard").unwrap());
+    let mut after_agent = after_agent;
+    let mut agent = agent;
+    after_agent.remove("resource_share_guard");
+    agent.remove("resource_share_guard");
+    assert_eq!(after_agent, agent);
     let events = reopened.sandbox_events(&before.id, 0, 100).await.unwrap();
     assert_eq!(events.len(), count + 1);
     assert!(matches!(
@@ -112,6 +112,8 @@ async fn mongo_hot_scope_refuses_expired_claim_paused_runtime_and_missing_event_
         Err(AgentAccessError::Conflict)
     );
     let mut paused = before.clone();
+    paused.begin_pause(layer2_core::now_rfc3339(), None).unwrap();
+    paused.lifecycle.operation = None;
     paused.status = SandboxStatus::Paused;
     paused.runtime = None;
     paused.work = SandboxWorkState::new(SandboxWorkStep::None, layer2_core::now_rfc3339());

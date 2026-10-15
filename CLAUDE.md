@@ -267,7 +267,8 @@ An explicit owner service-access command may replace the exact NyxID scope on
 an Active Sandbox without restarting its runtime. The latest owner-authorized
 scope revision controls new credential issuance while the original profile and
 creation scope remain immutable. Credential delivery and old-key revocation
-complete before the original Agent is notified. Owners may add or remove optional
+complete before confirmed callback delivery to the original Agent; an active turn
+receives durable steering without waiting for that turn to finish. Owners may add or remove optional
 services; the platform baseline remains required. Already admitted paused access
 workflows remain recoverable. Profile publication never changes instance access.
 

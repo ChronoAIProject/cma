@@ -33,7 +33,12 @@ impl MongoSandboxStore {
         transaction!(self, session, {
             let snapshot = crate::store::agent_provenance::read_snapshot(self, agent_id, session)
                 .await
-                .map_err(|_| AgentAccessError::NotFound)?;
+                .map_err(|error| match error {
+                    crate::store::resource_access::ReadError::Driver(_) => {
+                        AgentAccessError::Unavailable
+                    }
+                    _ => AgentAccessError::NotFound,
+                })?;
             let sandbox = &snapshot.resource.lineage.sandbox;
             let agent = snapshot
                 .resource
@@ -41,12 +46,16 @@ impl MongoSandboxStore {
                 .agent
                 .as_ref()
                 .ok_or(AgentAccessError::NotFound)?;
+            let creation = snapshot
+                .creation_provenance(agent_id)
+                .map_err(|_| AgentAccessError::NotFound)?;
             if &agent.owner != owner
                 || &sandbox.owner != owner
                 || !agent.status.is_live()
                 || agent.requested_stop_reason.is_some()
                 || sandbox.status == SandboxStatus::Retired
                 || !sandbox.credential.source.is_managed()
+                || !matches!(&creation.owner, layer2_core::resource_access::ResourceOwner::Person { subject } if subject == owner)
             {
                 return Err(AgentAccessError::NotFound.into());
             }
@@ -65,9 +74,7 @@ impl MongoSandboxStore {
                     .or(sandbox.lifecycle.suspended_runtime.as_deref())
                     .cloned()
                     .ok_or(AgentAccessError::Conflict)?,
-                creation: snapshot
-                    .creation_provenance(agent_id)
-                    .map_err(|_| AgentAccessError::NotFound)?,
+                creation,
             };
             let proposal = AgentAccessProposal {
                 request_key: format!("owner:{key_hash}"),
@@ -149,3 +156,7 @@ impl MongoSandboxStore {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "owner_scope_tests.rs"]
+mod tests;
