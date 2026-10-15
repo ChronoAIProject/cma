@@ -56,9 +56,12 @@ it('keeps input available during live credential delivery even when Pause is ine
 
 it('still holds input when an explicit pause overlaps credential delivery', async () => {
   const client = agentClient({
-    readSandbox: async () => transitioning('credential_rotating', {
-      purpose: 'pause', phase: 'pause_agents', startedAt: '2026-09-08T00:00:00Z',
-    }),
+    readSandbox: async () =>
+      transitioning('credential_rotating', {
+        purpose: 'pause',
+        phase: 'pause_agents',
+        startedAt: '2026-09-08T00:00:00Z',
+      }),
   });
   const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
   await act(async () => {});

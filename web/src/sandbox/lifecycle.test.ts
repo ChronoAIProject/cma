@@ -15,7 +15,9 @@ describe('public Sandbox lifecycle presentation', () => {
     expect(sandboxChildrenReadable(sandbox)).toBe(true);
     expect(sandboxChildStatus(sandbox, 'working')).toBe('working');
     expect(sandboxLifecycleLabel(sandbox)).toBe('Updating access');
-    expect(sandboxUnavailableNotice(sandbox)).toContain('Agents and conversations remain available');
+    expect(sandboxUnavailableNotice(sandbox)).toContain(
+      'Agents and conversations remain available',
+    );
   });
   it.each(['active', 'paused'] as const)(
     'does not infer %s eligibility when unreported',
