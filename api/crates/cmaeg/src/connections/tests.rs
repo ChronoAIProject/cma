@@ -1647,3 +1647,31 @@ async fn completion_cannot_cross_origin_binding_agent_key_partition_or_connectio
     }
     assert!(launcher.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn external_native_bot_capability_is_omitted_until_writes_enabled() {
+    let fixture = Fixture::new().await;
+    for enabled in [false, true] {
+        let mut service = fixture.service();
+        service.management.native_bot_mentions_writes_enabled = enabled;
+        let response = crate::http::connections::capabilities(
+            State(service),
+            Creator {
+                subject: "alice".into(),
+                token_hash: "capability-test".into(),
+                organization: false,
+            },
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        if enabled {
+            assert_eq!(value["source_features"], json!(["native_bot_mentions_v1"]));
+        } else {
+            assert!(value.get("source_features").is_none());
+        }
+    }
+}

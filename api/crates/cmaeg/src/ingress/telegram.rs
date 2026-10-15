@@ -36,6 +36,7 @@ pub fn observe(
     bot_id: &str,
     bot_username: Option<&str>,
     media_enabled: bool,
+    allow_bots: bool,
 ) -> Result<Outcome, VerificationError> {
     let invalid = || VerificationError("telegram_update_invalid");
     let update_id = raw["update_id"]
@@ -110,6 +111,8 @@ pub fn observe(
     match super::relay::telegram::observe(
         &payload,
         bot_username,
+        Some(bot_id),
+        allow_bots,
         MediaIngress::native(media_enabled),
     )? {
         Observation::Refused(reason) => Ok(Outcome::Refused(reason)),

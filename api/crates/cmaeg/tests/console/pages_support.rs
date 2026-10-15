@@ -95,6 +95,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
             bot_id: Some("ou_fixturebot".into()),
             trust_normalized: false,
             admission: AdmissionPolicy::Scoped {
+                bot_messages: Default::default(),
                 senders: IdentityAdmission::Allowlist(vec!["ou_sender_fixture_1".into()]),
                 chats: IdentityAdmission::Open,
                 groups: GroupAdmission::Mention,

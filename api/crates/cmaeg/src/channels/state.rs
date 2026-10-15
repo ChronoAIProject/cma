@@ -25,6 +25,9 @@ pub struct ManagementState {
     pub tools_nyxid_slug: String,
     pub cma_service_token: cmaeg_core::channel::Secret,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    /// Allows new native bot mention opt-ins once every reader and consumer
+    /// supports the policy. Does not disable execution of retained opt-ins.
+    pub native_bot_mentions_writes_enabled: bool,
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
@@ -87,6 +90,7 @@ impl ManagementState {
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
             telegram: None,
+            native_bot_mentions_writes_enabled: false,
             media_enabled: false,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),

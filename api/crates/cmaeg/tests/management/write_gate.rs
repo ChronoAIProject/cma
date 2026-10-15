@@ -53,10 +53,16 @@ pub(super) struct Gateway {
 
 impl Gateway {
     pub(super) async fn start() -> Self {
+        Self::start_with_bots(false).await
+    }
+
+    async fn start_with_bots(enabled: bool) -> Self {
         let provider = FakeProvider::start(FakeProviderConfig::default()).await;
         let cma = FakeCma::start(false).await;
         let nyxid = FakeNyxid::start().await;
-        let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+        let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+        state.native_bot_mentions_writes_enabled = enabled;
+        let (base, stop, task) = serve_app(state).await;
         Self {
             provider,
             cma,
@@ -273,4 +279,88 @@ async fn a_channel_without_sources_is_still_readable() {
     let read: Value = response.json().await.unwrap();
     assert_eq!(read["definition"]["sources"], json!([]));
     gateway.close().await;
+}
+
+#[tokio::test]
+async fn external_native_bot_mentions_writes_are_explicit_opt_in_and_removable() {
+    for enabled in [false, true] {
+        let gateway = Gateway::start_with_bots(enabled).await;
+        let mut body = create_body();
+        body["sources"][0]["bot_id"] = json!("77");
+        body["sources"][0]["bot_username"] = json!("receiver_bot");
+        body["sources"][0]["admission"] = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention","bot_messages":"native_mentions"});
+        let response = gateway.create(&body).await;
+        if !enabled {
+            refused(response, "/sources: native_bot_mentions_writes_disabled").await;
+            assert!(gateway.cma.records().is_empty());
+            assert!(gateway.provider.requests().is_empty());
+        } else {
+            assert_eq!(response.status(), 201);
+            let created: Value = response.json().await.unwrap();
+            let read: Value = gateway
+                .client
+                .get(format!(
+                    "{}/v1/channels/{}",
+                    gateway.base,
+                    created["channel_id"].as_str().unwrap()
+                ))
+                .bearer_auth("token-alice")
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(
+                read["definition"]["sources"][0]["admission"]["bot_messages"],
+                "native_mentions"
+            );
+            // A reader with new writes disabled can carry the source through
+            // unchanged and then remove the opt-in before an old-reader rollback.
+            let (base, stop, task) = serve_app(management_state(
+                &gateway.provider,
+                &gateway.cma,
+                &gateway.nyxid,
+                key_ring(1),
+            ))
+            .await;
+            body.as_object_mut().unwrap().remove("credentials");
+            body["expected_version"] = created["version"].clone();
+            let url = format!(
+                "{base}/v1/channels/{}",
+                created["channel_id"].as_str().unwrap()
+            );
+            let carried = gateway
+                .client
+                .put(&url)
+                .bearer_auth("token-alice")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(carried.status(), 200);
+            let carried: Value = carried.json().await.unwrap();
+            body["expected_version"] = carried["version"].clone();
+            body["sources"][0]["admission"]
+                .as_object_mut()
+                .unwrap()
+                .remove("bot_messages");
+            let removed = gateway
+                .client
+                .put(&url)
+                .bearer_auth("token-alice")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(removed.status(), 200);
+            let removed: Value = removed.json().await.unwrap();
+            assert!(removed["definition"]["sources"][0]["admission"]
+                .get("bot_messages")
+                .is_none());
+            stop.send(()).unwrap();
+            task.await.unwrap();
+        }
+        gateway.close().await;
+    }
 }

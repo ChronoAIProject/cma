@@ -4,6 +4,8 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 pub struct AdmissionFacts<'a> {
+    pub receiving_bot_id: Option<&'a str>,
+    pub mentioned: Option<bool>,
     pub sender_id: &'a str,
     pub chat_id: &'a str,
     pub is_group: bool,
@@ -35,7 +37,19 @@ pub enum Refusal {
 }
 pub fn admit(policy: &AdmissionPolicy, facts: &AdmissionFacts<'_>) -> Result<(), Refusal> {
     if facts.is_bot_sender {
-        return Err(Refusal::BotSender);
+        if !policy.native_bot_mentions()
+            || !facts.is_group
+            || facts
+                .receiving_bot_id
+                .is_none_or(|id| id == facts.sender_id)
+        {
+            return Err(Refusal::BotSender);
+        }
+        match facts.mentioned {
+            Some(true) => {}
+            Some(false) => return Err(Refusal::GroupNotAddressed),
+            None => return Err(Refusal::AddressingEvidenceUnavailable),
+        }
     }
     if facts.is_system {
         return Err(Refusal::SystemSender);
@@ -52,6 +66,7 @@ pub fn admit(policy: &AdmissionPolicy, facts: &AdmissionFacts<'_>) -> Result<(),
             senders,
             chats,
             groups,
+            ..
         } => {
             if !permits(senders, facts.sender_id) {
                 return Err(Refusal::SenderDenied);

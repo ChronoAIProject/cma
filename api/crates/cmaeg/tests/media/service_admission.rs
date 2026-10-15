@@ -230,6 +230,7 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        native_bot_mentions_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
         providers: Default::default(),
