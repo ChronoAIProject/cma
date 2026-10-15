@@ -102,6 +102,9 @@ impl Sender {
         if interactive && crate::interactions::has_controls(message) {
             return self.interactive_reply(ctx, event, message).await;
         }
+        if self.relay.complete_replies() {
+            return self.complete_reply(ctx, event, message, interactive).await;
+        }
         // The send's own view of the event's first-send flag, returned as its effect.
         let mut first_send_done = ctx.first_send_done;
         let mut capabilities = Capabilities::relay(*platform);
@@ -249,7 +252,7 @@ impl Sender {
         }
         (result, SendEffects { first_send_done })
     }
-    fn claim_token(&self, token: &str, expires: i64) -> bool {
+    pub(super) fn claim_token(&self, token: &str, expires: i64) -> bool {
         let digest = Sha256::digest(token.as_bytes()).into();
         let mut consumed = self.consumed.lock().unwrap();
         consumed.retain(|_, expiry| *expiry > now());
