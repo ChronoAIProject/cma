@@ -11,6 +11,7 @@ use cmaeg::{
     },
     interactions::Destination,
     net::exchange::{BodyError, HttpReply, TransportError},
+    DeliveryConfig,
 };
 use cmaeg_core::{channel::Platform, channel::Secret, seal::ReplyAddress};
 use reqwest::StatusCode;
@@ -243,4 +244,102 @@ async fn edits_post_to_the_update_endpoint_and_map_by_status() {
         }
     );
     assert!(fake.sent().is_empty());
+}
+
+#[test]
+fn original_delivery_config_supports_exhaustive_literals_and_destructuring() {
+    let config = DeliveryConfig {
+        reply_timeout: Duration::from_secs(5),
+        ack_text: "Working on it…".into(),
+        heartbeat: Duration::from_secs(60),
+        failure_text: "Sorry, I couldn’t finish that request. Please try again.".into(),
+    };
+    let DeliveryConfig {
+        reply_timeout,
+        ack_text,
+        heartbeat,
+        failure_text,
+    } = config;
+    let defaults = DeliveryConfig::default();
+    assert_eq!(reply_timeout, defaults.reply_timeout);
+    assert_eq!(ack_text, defaults.ack_text);
+    assert_eq!(heartbeat, defaults.heartbeat);
+    assert_eq!(failure_text, defaults.failure_text);
+}
+
+#[tokio::test(start_paused = true)]
+async fn low_level_sends_preserve_large_payloads_wire_shape_and_error_precedence() {
+    use cmaeg::delivery::relay_client::REQUEST_MAX_BYTES;
+    let mut address = address();
+    if let ReplyAddress::NyxidRelay { message_id, .. } = &mut address {
+        *message_id = "id\\\"中文".repeat(30);
+    }
+    let ReplyAddress::NyxidRelay { message_id, .. } = &address else {
+        unreachable!()
+    };
+    let markup = json!({"inline_keyboard":[],"note":"\\\""});
+    // A raw backslash occupies two bytes in the serialized JSON string.
+    let text = "\\".repeat(REQUEST_MAX_BYTES / 2 + 1);
+    let unsupported = ReplyAddress::Telegram {
+        bot_id: "bot-1".into(),
+        chat_id: "chat-1".into(),
+        message_id: "message-1".into(),
+        thread_id: None,
+    };
+    let invalid = Secret::new("a b");
+    let key = Secret::new("large-request-fixture");
+    for complete in [false, true] {
+        let fake = Arc::new(FakeHttp::relay());
+        let client = faked(&fake, Duration::from_secs(5)).with_complete_replies(complete);
+        assert_eq!(
+            client
+                .send(&unsupported, Credential::ChannelKey(&invalid), &text)
+                .await,
+            DeliveryOutcome::Unsupported
+        );
+        assert_eq!(
+            client
+                .send_rich(
+                    &address,
+                    Credential::ChannelKey(&invalid),
+                    &text,
+                    Some(&markup)
+                )
+                .await,
+            (
+                DeliveryOutcome::Rejected {
+                    reason: "no_credential".into()
+                },
+                None
+            )
+        );
+        assert!(fake.sent().is_empty());
+        let receipt = client
+            .send_rich(&address, Credential::ChannelKey(&key), &text, Some(&markup))
+            .await;
+        assert!(matches!(receipt.0, DeliveryOutcome::Confirmed { .. }));
+        assert!(receipt.1.is_some());
+        assert!(matches!(
+            client
+                .send(&address, Credential::ReplyToken(&key), &text)
+                .await,
+            DeliveryOutcome::Confirmed { .. }
+        ));
+        let sent = fake.sent();
+        assert_eq!(sent.len(), 2);
+        for (request, metadata) in sent
+            .iter()
+            .zip([json!({"reply_markup":markup}), serde_json::Value::Null])
+        {
+            assert!(request.body.len() > REQUEST_MAX_BYTES);
+            assert_eq!(
+                request.json(),
+                json!({"message_id":message_id,"reply":{"text":text,"metadata":metadata}})
+            );
+            assert_eq!(
+                request.header("authorization"),
+                Some("Bearer large-request-fixture")
+            );
+        }
+    }
 }

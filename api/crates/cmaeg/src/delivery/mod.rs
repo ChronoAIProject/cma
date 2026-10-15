@@ -1,4 +1,7 @@
 //! Neutral delivery intents; the transport engine owns external sends.
+mod complete;
+#[cfg(test)]
+mod complete_tests;
 pub mod custom;
 pub mod engine;
 mod event;
