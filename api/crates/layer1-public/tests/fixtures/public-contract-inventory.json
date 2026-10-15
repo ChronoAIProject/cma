@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 192,
+  "openapi_operations": 194,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2785,6 +2785,29 @@
         "invalid_idempotency_key",
         "invalid_json",
         "json_content_type_required"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/queued-inputs": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/public_contract_tests/queued_input_cases.rs# Real queued input handlers share the durable source fixture with queued_input/tests.rs and cover current authority, exact edit replay, and revision refusal.",
+      "required_problems": [
+        "authentication_required",
+        "invalid_queued_input_request",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/public_contract_tests/queued_input_cases.rs# Real queued input handlers share the durable source fixture with queued_input/tests.rs and cover current authority, exact edit replay, and revision refusal.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_input_request",
+        "queued_input_conflict",
+        "queued_input_not_admitted",
+        "response_not_found"
       ]
     }
   }

@@ -32,6 +32,7 @@ mod inventory_cases;
 mod lifecycle_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
+mod queued_input_cases;
 mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
@@ -173,6 +174,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = binding_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = queued_input_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
