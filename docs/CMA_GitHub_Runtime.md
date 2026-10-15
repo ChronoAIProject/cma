@@ -43,6 +43,47 @@ configuration files and the socket are owner-only, and a process lease prevents
 replacing an active socket. Restart may recover a stale socket but does not
 delete unrelated entries occupying its path.
 
+## Agent source setup
+
+New inline Agent Manager admissions capture versioned GitHub instructions in
+their durable lifecycle input. The worker composes those captured bytes with
+the user's instructions when creating the immutable Agent profile. The existing
+home renderer writes that profile to the native Agent's `AGENTS.md`, so a later
+request to clone a repository receives the same guidance after conversation
+compaction or reload. This covers new Sandboxes and new Agents in existing
+Sandboxes/Workspaces. It does not rewrite previously created Agent homes or
+historical profiles, and does not change separately authored Trigger/Bot profiles.
+
+The Agent uses `gh api` to resolve the requested ref, or the repository's
+`default_branch` when no ref was supplied, pins the commit, and downloads the
+API tarball. NyxID follows the archive redirect server-side; Git Trees/Blobs or
+Contents at the pinned commit are the fallback if the archive is unavailable.
+The Agent validates and stages the archive, preserves the current worktree and
+initializes a local Git repository only when the destination is not already in
+one. Repo creation and requested publication use GitHub APIs as well. The setup
+message requests this work; CMA does not execute a programmatic clone/download.
+The detailed API recipe and boundaries are in
+[`CMA_GitHub_API_Workflow.md`](CMA_GitHub_API_Workflow.md).
+
+This change requires an Agent Manager/API image rebuild only. It uses the
+existing `gh` transport, home-file delivery and native instructions mechanism;
+the runtime image, NyxID services, credentials and scopes do not change.
+Admission keeps the submitted request unchanged for idempotency. Older operations
+without captured instructions reconstruct their original profiles. New prepared
+capacity pins the exact same managed instructions as new default admissions;
+historical empty-instruction preparations remain readable and replayable. The
+normal desired-plan reconciliation replenishes unclaimed capacity with the new
+profile; owned Sandboxes retain their recorded profiles and runtime identities.
+Prepared replay hashes the recorded prompt rather than substituting empty text.
+
+Retain a compatible Agent Manager when rolling back after new admissions: an
+older binary ignores the captured-instructions field and rejects new prepared
+profiles with nonempty instructions. Reverting UI or the default runtime image
+does not require reverting this compatible reader. Local tests prove admission
+capture, immutable profile/home replay, current and historical preparation, and
+instruction delivery; production source-download acceptance remains a separate
+Agent exercise against an authorized repository.
+
 ## Scope And Acceptance
 
 Installing the runtime image does not grant a new service to existing Sandboxes,

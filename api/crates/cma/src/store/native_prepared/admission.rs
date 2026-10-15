@@ -53,7 +53,10 @@ pub(in crate::store) async fn claim_ready(
         return Ok(ClaimOutcome::Miss("miss_ineligible_request"));
     }
     let agent = crate::agent_lifecycle::validation::agent_content_for(
-        &operation.input.request.profile.clone().unwrap_or_default(),
+        &crate::agent_lifecycle::guidance::profile_with_instructions(
+            operation.input.request.profile.clone().unwrap_or_default(),
+            operation.input.managed_agent_instructions.as_deref(),
+        ),
         operation.input.behavior,
     )
     .map_err(|e| domain(SandboxStoreError::Corrupt(e.to_string())))?;

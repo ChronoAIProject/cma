@@ -46,6 +46,9 @@ pub(crate) struct LifecycleInput {
     /// Replaying an admitted operation must preserve its original profile and setup.
     #[serde(default)]
     pub behavior: LifecycleBehavior,
+    /// Exact managed instructions for new immutable profiles; absent in old operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_agent_instructions: Option<String>,
     pub request: AgentLifecycleCreateRequest,
     pub resolved_image: Option<String>,
     /// New admissions pin deployment capacity; legacy records used policy minima.

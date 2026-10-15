@@ -35,6 +35,8 @@ use crate::store::{
     CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
 };
 
+#[path = "agent_lifecycle_guidance.rs"]
+pub(crate) mod guidance;
 #[path = "agent_lifecycle_profiles.rs"]
 mod profiles;
 
@@ -62,8 +64,11 @@ use validation::{
 /// Use the same defaults for explicit inline creation and credential-free preparation.
 pub(crate) fn prepared_default_agent_profile(
 ) -> Result<layer2_core::profiles::AgentProfileContent, String> {
-    validation::agent_content(&layer1_public::rest::AgentLifecycleProfile::default())
-        .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
+    validation::agent_content(&guidance::profile_with_instructions(
+        layer1_public::rest::AgentLifecycleProfile::default(),
+        Some(guidance::GITHUB_API_V1),
+    ))
+    .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
 }
 
 pub(crate) struct InlineAgentLifecycle {
@@ -386,7 +391,10 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
-        agent_content(&profile)?;
+        agent_content(&guidance::profile_with_instructions(
+            profile.clone(),
+            Some(guidance::GITHUB_API_V1),
+        ))?;
         services(&profile.permissions)?;
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.
@@ -400,6 +408,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         };
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
+            managed_agent_instructions: Some(guidance::GITHUB_API_V1.into()),
             request,
             resolved_image,
             capacity: Some(self.capacity),
