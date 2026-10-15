@@ -25,6 +25,8 @@ mod agent;
 mod agent_recovery;
 #[path = "supervisor_agent_validation.rs"]
 mod agent_validation;
+#[path = "supervisor_attachment.rs"]
+mod attachment;
 #[path = "supervisor_checkpoint.rs"]
 mod checkpoint_lifecycle;
 #[path = "supervisor_guards.rs"]
@@ -267,6 +269,10 @@ impl Supervisor {
             self.authorize_preparation(&request).await?;
         }
         match request {
+            RequestFrame::UploadAgentAttachment(upload) => self
+                .upload_attachment(upload)
+                .await
+                .map(ResponseFrame::UploadAgentAttachment),
             RequestFrame::CacheSkillArchive(archive) => {
                 crate::skills::cache_archive(&self.config, &archive)?;
                 Ok(ResponseFrame::CacheSkillArchive {
@@ -485,3 +491,7 @@ mod tests;
 #[cfg(test)]
 #[path = "supervisor_tool_proxy_tests.rs"]
 mod tool_proxy_tests;
+
+#[cfg(test)]
+#[path = "supervisor_hot_rotation_tests.rs"]
+mod hot_rotation_tests;

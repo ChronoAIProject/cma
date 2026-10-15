@@ -51,6 +51,7 @@ mod fixture_store;
 use fixture_store::FixtureStore;
 mod connection_contention_tests;
 mod first_message_contention_tests;
+mod first_message_publication_tests;
 mod lifecycle_connection_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
@@ -318,6 +319,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("ornn-api")],
             key_generation: 3,
             delivered: true,
@@ -664,7 +666,8 @@ async fn startup_is_isolated_receipted_published_and_records_runtime_updates() {
 
 #[tokio::test]
 async fn worker_dispatches_a_configured_first_message_and_retires_lifecycle_work() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness
         .admit_with_first_message("first-message", Vec::new(), Some("Inspect the workspace"))
         .await;
@@ -689,7 +692,8 @@ async fn worker_dispatches_a_configured_first_message_and_retires_lifecycle_work
 
 #[tokio::test]
 async fn restart_reattaches_without_overwriting_first_message_work() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness
         .admit_with_first_message(
             "restart-first-message",
@@ -753,7 +757,8 @@ async fn restart_reattaches_without_overwriting_first_message_work() {
 
 #[tokio::test]
 async fn worker_completes_an_unconfigured_dispatch_step_without_runtime_input() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness.admit("unconfigured-dispatch", Vec::new()).await;
     let mut ready = harness.drive_ready(&agent.id).await;
     let expected = ready.revision;
@@ -772,7 +777,8 @@ async fn worker_completes_an_unconfigured_dispatch_step_without_runtime_input() 
 
 #[tokio::test]
 async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness
         .admit_with_first_message("retry-first", Vec::new(), Some("Run checks"))
         .await;
@@ -814,7 +820,8 @@ async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
 
 #[tokio::test]
 async fn worker_retires_ambiguous_first_message_work_into_explicit_recovery() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness
         .admit_with_first_message("ambiguous-first", Vec::new(), Some("Run migration"))
         .await;
@@ -841,7 +848,8 @@ async fn worker_retires_ambiguous_first_message_work_into_explicit_recovery() {
 
 #[tokio::test]
 async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
-    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness
         .admit_with_first_message("in-progress-first", Vec::new(), Some("Keep running"))
         .await;

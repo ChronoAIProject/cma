@@ -11,7 +11,7 @@ import { useAgentController } from './controller';
 
 afterEach(() => vi.useRealTimers());
 
-it('waits for the shared live Sandbox observation and never polls resources for a paused runtime', async () => {
+it('retains usage and drafts across lifecycle changes without polling machine resources from the conversation', async () => {
   vi.useFakeTimers();
   let sandbox: SandboxDetail = { ...sandboxFixture('paused'), runtimeVersion: undefined };
   let acceptInitial: (value: SandboxDetail) => void = () => {};
@@ -69,29 +69,18 @@ it('waits for the shared live Sandbox observation and never polls resources for 
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(readSandbox).toHaveBeenCalledTimes(3);
   expect(readAgentResources).not.toHaveBeenCalled();
-  expect(
-    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
-  ).toBeInTheDocument();
-  expect(screen.getByText('RAM · paused')).toBeInTheDocument();
-  expect(screen.getByText('CPU · paused')).toBeInTheDocument();
-  expect(screen.getByText('Network · paused')).toBeInTheDocument();
-  expect(screen.getByText('Tokens · 120 input · 60 output')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Agent usage' })).toHaveTextContent(
+    'Total tokens · 120 input · 60 output',
+  );
   expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Preserve this draft' } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   sandbox = sandboxFixture('active');
   await act(() => vi.advanceTimersByTimeAsync(5000));
-  expect(readAgentResources).toHaveBeenCalledOnce();
-  expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
-  expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
-  expect(
-    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
-  ).toHaveAttribute('inert');
-  await act(() => vi.advanceTimersByTimeAsync(200));
-  expect(
-    screen.queryByText('Sandbox paused. Live resources resume when it is active.'),
-  ).not.toBeInTheDocument();
+  expect(readAgentResources).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(draft).toHaveValue('Preserve this draft');
   expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
   expect(runAgent).not.toHaveBeenCalled();

@@ -34,7 +34,7 @@ const statuses: Readonly<Record<string, string>> = {
   paused: 'Paused',
   reviving: 'Resuming',
   rotating: 'Resuming',
-  credential_rotating: 'Resuming',
+  credential_rotating: 'Updating access',
   failed: 'Needs attention',
   retiring: 'Deleting',
   retired: 'Deleted',

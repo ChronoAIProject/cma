@@ -16,6 +16,7 @@ pub(super) struct Service {
 }
 fn receipt(status: AgentAccessStatus) -> AgentAccessRequest {
     AgentAccessRequest {
+        retry_of: None,
         id: "access-one".into(),
         agent_id: AgentId("agent-one".into()),
         status,
@@ -35,6 +36,19 @@ impl Service {
 }
 #[async_trait::async_trait]
 impl AgentAccessRequests for Service {
+    async fn replace_services(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        agent: &AgentId,
+        services: Vec<String>,
+        expected_services: Vec<String>,
+        key: &str,
+    ) -> Result<AgentAccessRequest, AgentAccessError> {
+        assert_eq!(credential, "request-credential");
+        self.calls.lock().unwrap().push(json!({"action":"replace","caller":context.caller.subject.as_str(),"agent":agent.0,"services":services,"expected_services":expected_services,"key":key}));
+        self.result(AgentAccessStatus::Connecting)
+    }
     async fn list(
         &self,
         caller: &Caller,
@@ -359,3 +373,7 @@ fn approved_connection_recovery_remains_available_until_the_request_is_terminal(
         assert!(value.get("connection").is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "agent_service_access_tests.rs"]
+mod scope_tests;

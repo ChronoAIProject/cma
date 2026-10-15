@@ -269,7 +269,7 @@ export async function probe(onStage = () => {}) {
   initializeEmptyVolume(onStage);
   initializeEmptyVolume(onStage, true);
   complete('empty-volume-initialization');
-  const credential = { t: 'credential', operation_id: 'ci-credential', value: secret, custody_generation: 1 };
+  let credential = { t: 'credential', operation_id: 'ci-credential', value: secret, custody_generation: 1 };
   assert.equal((await control(credential)).code, 'install_not_completed');
   complete('credential-before-install-refused');
 
@@ -295,7 +295,7 @@ export async function probe(onStage = () => {}) {
   complete('install-exact-replay');
   assert.deepEqual(await control(credential), { t: 'credential', operation_id: credential.operation_id, installed: true });
   complete('credential-after-install');
-  await githubProxyProbe(secret);
+  credential = await githubProxyProbe(credential, control);
   complete('github-api-proxy');
   const counter = () => readFileSync('/home/cma/ci-writer', 'utf8');
   await waitForWriterProgress(counter);

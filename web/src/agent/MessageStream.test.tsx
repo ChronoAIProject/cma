@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { conversationFromTranscript, foldLiveEvent } from './conversation';
 import { MessageStream } from './MessageStream';
+import { AgentViewPositions } from './viewPosition';
 
 function conversation() {
   const events = [
@@ -29,6 +30,35 @@ function conversation() {
     conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] }),
   );
 }
+
+it('restores the reader position for a revisited Agent instead of jumping to its newest message', () => {
+  const positions = new AgentViewPositions();
+  const viewPosition = positions.forAgent('one')!;
+  const draw = () => (
+    <div className="agent-surface__conversation" data-testid="scroller">
+      <MessageStream
+        conversation={conversation()}
+        onApproval={vi.fn()}
+        viewPosition={viewPosition}
+      />
+    </div>
+  );
+  const first = render(draw());
+  const scroller = screen.getByTestId('scroller');
+  Object.defineProperties(scroller, {
+    scrollHeight: { value: 2000 },
+    clientHeight: { value: 400 },
+  });
+  scroller.scrollTop = 1600;
+  fireEvent.scroll(scroller);
+  scroller.scrollTop = 300;
+  fireEvent.scroll(scroller);
+  first.unmount();
+  expect(positions.forAgent('two')).toEqual({ top: 0, pinned: true });
+  expect(positions.forAgent('one')).toBe(viewPosition);
+  render(draw());
+  expect(screen.getByTestId('scroller').scrollTop).toBe(300);
+});
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);

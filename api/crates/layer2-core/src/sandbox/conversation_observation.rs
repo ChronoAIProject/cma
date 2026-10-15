@@ -1,0 +1,46 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRuntimeMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentTurnUsage {
+    pub turn_sequence: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// A cumulative checkpoint survives runtime replacement and context compaction.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUsageCheckpoint {
+    pub conversation_id: String,
+    pub source_turn: String,
+    pub source_input: u64,
+    pub source_output: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub context_used: u64,
+    pub context_window: Option<u64>,
+    pub current_turn: Option<AgentTurnUsage>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentObservations {
+    pub metadata: AgentRuntimeMetadata,
+    pub usage: Option<AgentUsageCheckpoint>,
+}
+
+impl AgentObservations {
+    pub fn is_empty(&self) -> bool {
+        self.metadata == AgentRuntimeMetadata::default() && self.usage.is_none()
+    }
+}

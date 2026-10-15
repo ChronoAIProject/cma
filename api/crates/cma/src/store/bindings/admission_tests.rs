@@ -31,6 +31,7 @@ pub(super) fn sandbox(value: &ProviderBinding) -> Sandbox {
         credential: SandboxCredentialState {
             source: value.credential_source(),
             service_grants: vec![],
+            service_scope: None,
             reaches: content.nyxid_services,
             key_generation: 0,
             delivered: false,

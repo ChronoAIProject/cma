@@ -24,10 +24,16 @@ pub(crate) fn configuration(
     let granted = environment
         .get("CHRONO_SANDBOX_REACHES")
         .is_some_and(|reaches| reaches.split(',').any(|service| service == "api-github"));
-    if !granted {
-        return Ok(None);
-    }
-    let platform = platform.ok_or("GitHub service requires the platform credential proxy")?;
+    let Some(platform) = platform else {
+        return if granted {
+            Err("GitHub service requires the platform credential proxy".into())
+        } else {
+            Ok(None)
+        };
+    };
+    // Prepare transport for every managed platform runtime. NyxID authorizes
+    // each request with the current scoped key, so a live scope grant/removal
+    // takes effect without changing an existing Agent process's environment.
     let directory = state_root.join("gh");
     let socket = directory.join("api.sock");
     if socket.as_os_str().len() > 100 {

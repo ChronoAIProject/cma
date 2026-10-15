@@ -28,11 +28,7 @@ it('shows the three settings and fixed Agent key scopes without technical or lif
   expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
   expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
-  for (const scope of [
-    'chrono-llm-public Required',
-    'ornn-api Required',
-    'github Already granted',
-  ]) {
+  for (const scope of ['chrono-llm-public Required', 'ornn-api Required']) {
     const checkbox = panel.getByRole('checkbox', { name: scope });
     expect(checkbox).toBeChecked();
     expect(checkbox).toBeDisabled();

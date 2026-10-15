@@ -60,7 +60,7 @@ module GatewaySourceContract
       object("HTTPRoute", "cma-web", {
         "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
         "rules" => [
-          service_route("event-gateway", "cma-event-gateway", "/"),
+          { "matches" => [path("PathPrefix", "/api/event-gateway")], "backendRefs" => backend("cma-agent-manager") },
           service_route("image-manager", "cma-image-manager", "/"),
           service_route("agent-manager", "cma-agent-manager", "/api"),
           { "matches" => [path("PathPrefix", "/api"), path("PathPrefix", "/auth"), path("Exact", "/openapi.json"), path("Exact", "/.well-known/agent-card.json")], "backendRefs" => backend("cma-agent-manager") },

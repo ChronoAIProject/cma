@@ -279,6 +279,7 @@ fn sandbox(
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: Vec::new(),
             key_generation: 0,
             delivered: false,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
@@ -7,16 +7,17 @@ import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { currentAgentStatus, sameAgent } from './status';
-import { mergeTranscriptSnapshot } from './chronology';
 import { useSandboxInput } from './sandboxInput';
-import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
-import { useAgentState } from './state';
-import { foldV2Frame, foldV2Item } from './transport/projection';
+import { foldLiveEvent } from './conversation';
+import { useRetainedAgentState } from './retainedState';
+import { reopenAgent, refreshConversation } from './reopenAgent';
+import { foldV2Frame } from './transport/projection';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedMessage } from './transport/queuedStatus';
+import { presentAgent } from './presentation';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
   AgentCommand,
@@ -30,26 +31,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return error instanceof Error ? error.message : 'The Agent operation did not complete.';
-}
-
-function refreshConversation(
-  current: ConversationState,
-  next: Awaited<ReturnType<typeof loadAgent>>,
-): ConversationState {
-  if (next.v2Items !== undefined) {
-    if (current.agentIncarnation !== next.conversation.agentIncarnation)
-      throw new Error('Agent snapshot changed conversation identity.');
-    return next.v2Items.reduce(foldV2Item, current);
-  }
-  if (current.cursor > next.conversation.cursor) return current;
-  const folded = next.durableEvents.reduce(foldAgentEvent, current);
-  return {
-    ...mergeTranscriptSnapshot(folded, next.conversation, current.cursor),
-    usage:
-      (next.conversation.usage?.throughSeq ?? 0) >= (folded.usage?.throughSeq ?? 0)
-        ? next.conversation.usage
-        : folded.usage,
-  };
 }
 
 export function useAgentController(
@@ -78,9 +59,7 @@ export function useAgentController(
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [, setRequestRevision] = useState(0);
-  const [state, setState, stateRef] = useAgentState(
-    agentId === undefined ? { status: 'idle' } : { status: 'loading' },
-  );
+  const [state, setState, stateRef] = useRetainedAgentState(client, options.viewerId, agentId);
   const loaded = useRef<
     | { client: CmaWebClient; agentId?: string; revision: number; lineage?: AgentLoadLineage }
     | undefined
@@ -205,22 +184,34 @@ export function useAgentController(
         stateRef.current.status === 'ready'
       )
         return;
+      const retained = stateRef.current;
+      const reopen =
+        retained.status === 'ready' && !retained.historyLoading && !retained.historyUnavailable;
       loaded.current = { client, agentId, revision, lineage };
-      setState({ status: 'loading' });
-      void loadAgent(
-        client,
-        agentId,
-        controller.signal,
-        true,
-        (ready) => {
-          if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
-        },
-        lineage,
+      if (!reopen) setState({ status: 'loading' });
+      else liveCursor.current = retained.conversation.cursor;
+      void (
+        reopen
+          ? reopenAgent(client, retained, controller.signal, lineage)
+          : loadAgent(
+              client,
+              agentId,
+              controller.signal,
+              true,
+              (ready) => {
+                if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+              },
+              lineage,
+            )
       )
         .then((ready) => {
           if (controller.signal.aborted) return;
-          liveCursor.current = ready.conversation.cursor;
-          setState({ status: 'ready', ...ready });
+          setState((current) => {
+            const conversation =
+              reopen && current.status === 'ready' ? current.conversation : ready.conversation;
+            liveCursor.current = conversation.cursor;
+            return { status: 'ready', ...ready, conversation };
+          });
         })
         .catch((error: unknown) => {
           if (!controller.signal.aborted)
@@ -331,7 +322,10 @@ export function useAgentController(
     const replay =
       v2 === undefined
         ? client.replayAgent(agentId, {
-            after: liveCursor.current,
+            after:
+              stateRef.current.status === 'ready'
+                ? stateRef.current.conversation.cursor
+                : liveCursor.current,
             signal: controller.signal,
             onEvent: (event) => {
               if (!controller.signal.aborted) applyLive(event);
@@ -371,7 +365,7 @@ export function useAgentController(
     onIdentityChange,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
       const controller = actionAbortRef.current;
       controller?.abort();
@@ -380,7 +374,7 @@ export function useAgentController(
         actionKindRef.current = undefined;
       }
     };
-  }, [agentId, client, suspended]);
+  }, [agentId, client, options.viewerId, suspended]);
 
   const reload = useCallback(() => {
     setActionError(undefined);
@@ -436,15 +430,7 @@ export function useAgentController(
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined ? undefined : recoverPending,
-    state:
-      state.status === 'ready' &&
-      displayedStatus !== undefined &&
-      displayedStatus !== state.detail.status
-        ? {
-            ...state,
-            detail: { ...state.detail, status: displayedStatus },
-          }
-        : state,
+    state: presentAgent(state, displayedStatus),
     inputAvailability: suspended
       ? {
           allowed: false,

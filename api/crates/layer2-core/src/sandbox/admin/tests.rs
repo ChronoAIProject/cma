@@ -96,6 +96,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
         credential: super::super::SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -193,6 +194,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: super::super::ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some("conversation-a".into()),
             runtime_generation: Some(1),
