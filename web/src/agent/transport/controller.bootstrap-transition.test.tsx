@@ -50,7 +50,7 @@ it('retains bootstrap admission through runtime binding, snapshot refresh, tail 
   parent.mockResolvedValue(sandboxFixture());
   h.snapshot.mockImplementation(async () => json(page(prepared, 8)));
   h.listQueued.mockImplementation(async () =>
-    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [] }),
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
   );
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(view.result.current.state).toMatchObject({
