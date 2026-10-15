@@ -126,6 +126,34 @@ it('keeps one status read in flight and ignores success arriving after the dialo
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('retained-key');
 });
 
+it('does not add an idle interval after a slow successful status read', async () => {
+  const starts: number[] = [];
+  let inFlight = 0;
+  let maximumInFlight = 0;
+  const read = vi.fn(async () => {
+    starts.push(Date.now());
+    maximumInFlight = Math.max(maximumInFlight, ++inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    inFlight -= 1;
+    return starts.length === 1
+      ? pending
+      : { ...pending, status: 'succeeded' as const, agent_id: 'ready-agent' };
+  });
+  const { create, opened } = show(read);
+  await advance(349);
+  expect(read).toHaveBeenCalledOnce();
+  expect(opened).not.toHaveBeenCalled();
+  await advance(2);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(starts[1]! - starts[0]!).toBeLessThanOrEqual(351);
+  expect(maximumInFlight).toBe(1);
+  await advance(350);
+  expect(opened).toHaveBeenCalledExactlyOnceWith({ id: 'ready-agent', status: 'ready' });
+  await advance(5000);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(create).not.toHaveBeenCalled();
+});
+
 it('recovers transient status failures automatically and opens the original operation once', async () => {
   const read = vi
     .fn()
