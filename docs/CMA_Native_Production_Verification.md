@@ -2,7 +2,7 @@
 
 ## Local production candidates — PR #1027
 
-This is an interim observation at 09:10 SGT on 2026-10-15, not a declaration
+This is an interim observation at 09:35 SGT on 2026-10-15, not a declaration
 that the complete acceptance bar passed. Authorized local builds allow
 production testing while required GitHub checks continue. The PR remains
 unmerged. CMA stays in its original cluster, runtime workloads stay in the
@@ -10,15 +10,15 @@ separate agent-sandbox cluster, and Image Manager remains undeployed.
 
 | Deployed component | Source | Immutable registry digest |
 | --- | --- | --- |
-| Agent Manager, generation 29 | `9d5f3dcc1b4e6ec821c33fc4950828104a24523e` | `sha256:be653cac8c5cc52c3f01e31645af258a980007de69e2f47026ac90b0831f0dcf` |
-| Shared Web, generation 107 | `33f8a5e0389a7e4a77dea4ad678dfab700f11324` | `sha256:0935333d6311398b564f48876b32da7fbdf1a56bb4d88cb2fc404fbd1b5a314b` |
+| Agent Manager, generation 30 | `74842c4aabd467055e91882eb3e720c8cc9e042d` | `sha256:1650c4c85e438b20ce240ba1aa3da74462d737ee01367a2f4c3756f2870bda6f` |
+| Shared Web, generation 108 | `5c6baab14c805949c655df64c09d32946a991f5b` | `sha256:8251c7d2864eef96f0628ecdba8d4a0735a9be97b9773c25211241d08602c3bf` |
 
 Registry manifests, Linux/amd64 platform manifests and source labels were
 checked against immutable local build metadata. These checks do not constitute
 an independent signed source attestation. Fixed HIGH/CRITICAL vulnerability
-scans passed. Web asset `index-Bl9kHEA7.js` has the same SHA-256 in the running
+scans passed. Web asset `index-Bm6g-fS3.js` has the same SHA-256 in the running
 Pod and public response:
-`91fb5a9a158c1e1db2e3d52d8d32bbfcd78d552beb334eb35aa853670f4f1d9d`.
+`14de6b9dd70530eb1f8ece64ea80e16b15363f87969deb647b640cd093015b1a`.
 The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
 
 | Boundary and evidence | Result | Interpretation |
@@ -27,7 +27,7 @@ The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
 | Web33f/API9d source-ordered sample01: Send eligibility / durable acknowledgement | 7,548.177 / 9,141.613 ms | Functional pass, both five-second boundaries failed |
 | API9d pause acceptance / early resume input admission | 278.837 / 1,112.389 ms | Public acceptance passed; input was durable while Reviving |
 | API9d actual resume / completed marker response | 25,048.418 / 31,099.333 ms | Underlying recovery remains slower than five seconds |
-| API9d disposable source fixture deletion / native finality | 215.634 / 66,115.616 ms | Public deletion accepted quickly; native cleanup completed in background |
+| API748 disposable source fixture deletion / native finality | 205.279 / 65,836.100 ms | Public deletion accepted quickly; native cleanup completed in background |
 
 The source measurement runs actual production SDK, authentication, loader,
 connection-preparation and input-admission functions. It omits React effects,
@@ -58,21 +58,25 @@ contention repair or a fresh external OAuth journey.
 Stop is still under investigation: the observed cancel requests returned
 HTTP 409, and the original retained key was ultimately proven not admitted.
 The turn completed naturally. A production-shaped real Mongo test covers
-active-target admission and same-key recovery, and safe stage diagnostics
-are in the next API candidate. No successful live Stop is claimed here.
+active-target admission and same-key recovery, and deployed safe stage diagnostics showed that both inspection and admission
+encountered transient Mongo transaction conflicts. Admission exhausted all five
+attempts; no domain revision refusal was observed. The exact original key was
+then definitively resolved as not admitted after natural completion. A bounded
+backoff fix is in progress. No successful live Stop is claimed here.
 An ordinary second Agent in a prepared Sandbox exposed an MCP authority
-binding defect. The fix and real Mongo regression passed locally; its live
-optional-GitHub retest awaits the next API rollout. Exhausted owner Sandbox
-quota is now a terminal creation conflict in that candidate, rather than an
+binding defect. The fix and real Mongo regression passed and the fix is deployed in API748;
+its live optional-GitHub retest is pending a fresh successful parent. Exhausted
+owner Sandbox quota is now a terminal creation conflict in production, rather than an
 endless transient retry. Future samples must have quota headroom.
 
-Private evidence: `/tmp/cma-api-rollout-9d5f3dcc`,
-`/tmp/cma-web-rollout-33f8a5e0`,
+Private evidence: `/tmp/cma-api-rollout-74842c4a`,
+`/tmp/cma-web-rollout-5c6baab1`,
+`/tmp/cma-stop-response-diagnostic-nextapi-20261015-01`,
 `/tmp/cma-public-prepared-9d5f3dcc-pilot-02`,
 `/tmp/cma-source-flow-33f8a5e0-api9d5f3dcc-sample-01`,
 `/tmp/cma-resume-early-input-9d5f3dcc-complete-frozen-20261015-01`,
 `/tmp/cma-model-retest-9d5f3dcc-complete-frozen-20261015-01`, and
-`/tmp/cma-public-delete-9d5f3dcc-source-01`. These operator artifacts remain
+`/tmp/cma-public-delete-74842c4a-source33f-01`. These operator artifacts remain
 outside the repository. Existing failed reports are preserved unchanged.
 
 Every API reader and rollback image must include `c8ee3872` or an equivalent
