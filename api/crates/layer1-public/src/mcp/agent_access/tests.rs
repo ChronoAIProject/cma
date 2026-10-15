@@ -170,6 +170,13 @@ async fn pending_capability_discovers_tools_but_cannot_request_access() {
         listed["result"]["tools"][0]["inputSchema"]["required"],
         json!(["request_key", "services", "reason"])
     );
+    let service_guidance = listed["result"]["tools"][0]["inputSchema"]["properties"]["services"]
+        ["description"]
+        .as_str()
+        .unwrap();
+    assert!(service_guidance.contains("request api-github for that access"));
+    assert!(service_guidance.contains("granting api-github-pat does not configure this gh route"));
+    assert!(service_guidance.contains("does not authenticate native git clone/fetch/push"));
     let notified = app
         .clone()
         .oneshot(request(
@@ -215,6 +222,25 @@ async fn confirmed_call_passes_exact_identity_and_stable_proposal_to_admission()
     assert_eq!(proposals[0].0, requester());
     assert_eq!(proposals[0].1.request_key, "missing-github-1");
     assert_eq!(stub.setup.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn github_cli_guidance_does_not_rewrite_independent_service_requests() {
+    let stub = Stub::new(true);
+    let services = ["api-github-pat", "other-service"];
+    let mut arguments = proposal();
+    arguments["services"] = json!(services);
+    let response = body(
+        stub.router()
+            .oneshot(request(&stub, &call(arguments)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response["result"]["isError"], false);
+    let proposals = stub.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].1.services, services);
 }
 
 #[tokio::test]
