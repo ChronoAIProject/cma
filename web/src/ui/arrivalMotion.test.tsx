@@ -117,3 +117,18 @@ it('never animates a route change inside a hidden retained portal', () => {
   rerender(draw('two'));
   expect(motion.records).toHaveLength(0);
 });
+
+it('continues an interrupted route fade from its visible opacity and resets after a completed fade', () => {
+  const { rerender } = render(<View identity="one" />);
+  rerender(<View identity="two" />);
+  const surface = screen.getByRole('main');
+  // The browser owns this intermediate opacity; the animation observer does not render frames.
+  surface.style.opacity = '0.45';
+  rerender(<View identity="three" />);
+  expect(motion.records[1]?.frames).toEqual([{ opacity: 0.45 }, { opacity: 1 }]);
+  expect(motion.records[0]?.animation.cancel).toHaveBeenCalledOnce();
+  motion.records[1]?.animation.finish();
+  surface.style.opacity = '1';
+  rerender(<View identity="four" />);
+  expect(motion.records[2]?.frames).toEqual([{ opacity: 0 }, { opacity: 1 }]);
+});
