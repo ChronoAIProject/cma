@@ -1,6 +1,19 @@
 export const attachmentLimit = 10;
 export const attachmentSizeLimit = 20 * 1024 * 1024;
 
+/** Some screenshot clipboards expose file items without populating FileList. */
+export function transferredFiles(transfer: DataTransfer): readonly File[] {
+  const files = Array.from(transfer.files ?? []);
+  // The two collections usually describe the same files. Prefer FileList so
+  // one paste/drop never uploads both representations of each attachment.
+  if (files.length > 0) return files;
+  return Array.from(transfer.items ?? []).flatMap((item) => {
+    if (item.kind !== 'file') return [];
+    const file = item.getAsFile();
+    return file === null ? [] : [file];
+  });
+}
+
 export interface UploadedAttachment {
   readonly id: string;
   readonly agentId: string;

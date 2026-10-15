@@ -43,6 +43,8 @@ impl MongoSandboxStore {
             fence(self, &snapshot, session).await?;
             let now = layer2_core::now_rfc3339();
             let record = AgentAccessRecord {
+                scope_mode: Default::default(),
+                expected_scope_revision: None,
                 id: id.clone(),
                 requester: requester.clone(),
                 proposal: proposal.clone(),
@@ -66,7 +68,6 @@ impl MongoSandboxStore {
         })
     }
 
-    #[cfg(test)]
     pub(crate) async fn agent_access_request(
         &self,
         id: &str,

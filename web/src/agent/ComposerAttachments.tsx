@@ -21,7 +21,6 @@ export function ComposerAttachments({
   error,
   enabled,
   locked,
-  add,
   remove,
   retry,
 }: {
@@ -29,11 +28,10 @@ export function ComposerAttachments({
   readonly error?: string;
   readonly enabled: boolean;
   readonly locked: boolean;
-  readonly add: (files: readonly File[]) => void;
   readonly remove: (key: string) => void;
   readonly retry: (key: string) => void;
 }) {
-  const picker = useRef<HTMLInputElement>(null);
+  if (items.length === 0 && error === undefined) return null;
   return (
     <div className="composer-attachments">
       {items.length === 0 ? null : (
@@ -76,30 +74,43 @@ export function ComposerAttachments({
           {error}
         </p>
       )}
-      <div className="composer-attachments__toolbar">
-        <input
-          ref={picker}
-          type="file"
-          multiple
-          className="sr-only"
-          tabIndex={-1}
-          aria-label="Choose attachments"
-          disabled={!enabled || locked}
-          onChange={(event) => {
-            add(Array.from(event.target.files ?? []));
-            event.target.value = '';
-          }}
-        />
-        <Button
-          size="sm"
-          icon={<IconPaperclipOutline16 />}
-          disabled={!enabled || locked}
-          aria-label="Attach files"
-          title="Attach files (up to 20 MiB each)"
-          onClick={() => picker.current?.click()}
-        />
-        <small>Paste images or drop files · 20 MiB each</small>
-      </div>
+    </div>
+  );
+}
+
+export function ComposerAttachmentPicker({
+  enabled,
+  locked,
+  add,
+}: {
+  readonly enabled: boolean;
+  readonly locked: boolean;
+  readonly add: (files: readonly File[]) => void;
+}) {
+  const picker = useRef<HTMLInputElement>(null);
+  return (
+    <div className="composer-attachments__picker">
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Choose attachments"
+        disabled={!enabled || locked}
+        onChange={(event) => {
+          add(Array.from(event.target.files ?? []));
+          event.target.value = '';
+        }}
+      />
+      <Button
+        size="sm"
+        icon={<IconPaperclipOutline16 />}
+        disabled={!enabled || locked}
+        aria-label="Attach files"
+        title="Attach files, paste images or drop files (up to 20 MiB each)"
+        onClick={() => picker.current?.click()}
+      />
     </div>
   );
 }

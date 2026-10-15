@@ -187,6 +187,7 @@ function ConsoleContent({
   ) : route.kind === 'agent' ? (
     <AgentSurface
       key={route.agentId}
+      user={user}
       lifecycleClient={client}
       draft={draft}
       agentId={route.agentId}
@@ -322,6 +323,7 @@ function ConsoleContent({
         route.kind === 'agent' && personalAgentId !== undefined && !accessUncertain ? (
           <AgentDetails
             key={route.agentId}
+            owner={user.id}
             open={detailsOpen}
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}

@@ -24,7 +24,6 @@ it.each([
   'pausing',
   'reviving',
   'rotating',
-  'credential_rotating',
   'retiring',
   'retired',
   'failed',
@@ -40,6 +39,35 @@ it.each([
     expect(result.current.notice).toBeTruthy();
   },
 );
+
+it('keeps input available during live credential delivery even when Pause is ineligible', async () => {
+  const sandbox = transitioning('credential_rotating');
+  const client = agentClient({
+    readSandbox: async () => ({
+      ...sandbox,
+      lifecycle: { ...sandbox.lifecycle!, pause: { allowed: false, reason: 'work_in_progress' } },
+    }),
+  });
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(async () => {});
+  expect(result.current.inputAvailability).toEqual({ allowed: true });
+  expect(result.current.resourceAvailability).toEqual({ state: 'live', runtimeVersion: '1.2.3' });
+});
+
+it('still holds input when an explicit pause overlaps credential delivery', async () => {
+  const client = agentClient({
+    readSandbox: async () =>
+      transitioning('credential_rotating', {
+        purpose: 'pause',
+        phase: 'pause_agents',
+        startedAt: '2026-09-08T00:00:00Z',
+      }),
+  });
+  const { result } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability);
+  await act(async () => {});
+  expect(result.current.allowed).toBe(false);
+  expect(result.current.notice).toContain('Pausing');
+});
 
 it.each([
   ['pause', 'capture_and_publish_checkpoint', 'Pausing'],

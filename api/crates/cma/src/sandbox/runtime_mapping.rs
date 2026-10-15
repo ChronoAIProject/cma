@@ -67,7 +67,10 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
     let mut spec = environment_spec(
         &sandbox.id,
         &sandbox.profile,
-        &sandbox.credential.effective_reaches(),
+        &sandbox.runtime.as_ref().map_or_else(
+            || sandbox.credential.effective_reaches(),
+            |runtime| sandbox.credential.runtime_reaches(runtime),
+        ),
         deployment_id,
     );
     if let layer2_core::sandbox::SandboxCredentialSource::Binding { tool_endpoint, .. } =

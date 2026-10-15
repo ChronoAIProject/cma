@@ -45,7 +45,7 @@ it('keeps each completed turn count under its final reply through a full history
   const state = events.reduce(foldAgentEvent, empty());
   const view = render(<MessageStream conversation={state} onApproval={vi.fn()} />);
   const verify = () => {
-    const replies = screen.getAllByRole('article', { name: 'Agent' });
+    const replies = screen.getAllByRole('article', { name: 'Chrono Agent' });
     expect(within(replies[0]!).queryByLabelText('Turn token usage')).not.toBeInTheDocument();
     expect(within(replies[1]!).getByLabelText('Turn input tokens: 13,831')).toHaveTextContent(
       '13,831 input',

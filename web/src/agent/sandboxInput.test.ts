@@ -23,6 +23,8 @@ it.each([
   ['active', 'runtime-one', 'live'],
   ['active', undefined, 'inactive'],
   ['active', ' ', 'inactive'],
+  ['credential_rotating', 'runtime-one', 'live'],
+  ['credential_rotating', undefined, 'inactive'],
   ['paused', undefined, 'paused'],
   ['paused', 'runtime-one', 'paused'],
   ['reviving', 'runtime-one', 'inactive'],

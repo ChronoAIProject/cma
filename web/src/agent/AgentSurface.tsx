@@ -28,6 +28,7 @@ import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
+import type { MessageUser } from './MessageIdentity';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -36,6 +37,7 @@ interface AgentSurfaceProps {
   readonly accessAuthorized?: boolean;
   readonly draft?: AgentDraft;
   readonly viewerId?: string;
+  readonly user?: MessageUser;
   readonly agentId: string;
   readonly controller: AgentController;
   readonly viewPosition?: AgentViewPosition;
@@ -79,6 +81,7 @@ export function AgentSurface({
   onDetailsOpenChange,
   onNavigate,
   viewerId,
+  user,
   accessUncertain = false,
   accessAuthorized = false,
 }: AgentSurfaceProps) {
@@ -326,6 +329,7 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          user={user}
           viewPosition={viewPosition}
           conversation={conversation}
           optimisticMessages={optimistic.messages}

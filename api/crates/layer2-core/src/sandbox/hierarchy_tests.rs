@@ -53,6 +53,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,

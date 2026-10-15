@@ -1,5 +1,6 @@
 .composer-attachments {
   min-width: 0;
+  padding-top: 6px;
 }
 
 .composer-attachments__list {
@@ -55,17 +56,28 @@
   text-overflow: ellipsis;
 }
 
-.composer-attachments__info small,
-.composer-attachments__toolbar small {
+.composer-attachments__info small {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
-.composer-attachments__toolbar {
+.composer-attachments__picker {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px 4px;
+  flex: none;
+  height: 36px;
+  padding-right: 4px;
+}
+
+@media (max-width: 30rem) {
+  .composer-attachments__picker {
+    height: 44px;
+  }
+
+  .composer-attachments__picker .button {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .composer-attachments__error {

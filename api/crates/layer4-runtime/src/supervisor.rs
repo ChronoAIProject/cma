@@ -491,3 +491,7 @@ mod tests;
 #[cfg(test)]
 #[path = "supervisor_tool_proxy_tests.rs"]
 mod tool_proxy_tests;
+
+#[cfg(test)]
+#[path = "supervisor_hot_rotation_tests.rs"]
+mod hot_rotation_tests;

@@ -7,6 +7,7 @@ import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
 import { UserMessage } from './UserMessage';
+import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -17,6 +18,8 @@ interface MessageStreamProps {
   readonly emptyMessage?: string;
   readonly optimisticMessages?: readonly OptimisticMessage[];
   readonly viewPosition?: AgentViewPosition;
+  readonly user?: MessageUser;
+  readonly unknownUserName?: string;
 }
 
 export function MessageStream({
@@ -28,7 +31,10 @@ export function MessageStream({
   emptyMessage = 'Start the conversation.',
   optimisticMessages,
   viewPosition,
+  user,
+  unknownUserName,
 }: MessageStreamProps) {
+  const identity = messageIdentity('user', user, unknownUserName);
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(viewPosition?.pinned ?? true);
   const previousTop = useRef(viewPosition?.top ?? 0);
@@ -112,6 +118,8 @@ export function MessageStream({
           approvalBusy={approvalBusy}
           approvalReadOnly={approvalReadOnly}
           onApproval={onApproval}
+          user={user}
+          unknownUserName={unknownUserName}
           showUsage={
             entry.kind === 'message' &&
             entry.item.runId !== undefined &&
@@ -129,18 +137,25 @@ export function MessageStream({
         />
       ))}
       {optimisticMessages?.map((message) => (
-        <article className="message message--user" aria-label="You" key={`local:${message.id}`}>
-          <span className="message__role">You</span>
-          <UserMessage content={message.content} />
-          <span className="message__delivery" role="status">
-            {message.state === 'sending'
-              ? 'Sending…'
-              : message.state === 'accepted'
-                ? 'Sent'
-                : message.state === 'unconfirmed'
-                  ? 'Awaiting confirmation'
-                  : 'Not sent'}
-          </span>
+        <article
+          className="message message--user"
+          aria-label={identity.name}
+          key={`local:${message.id}`}
+        >
+          <MessageAvatar identity={identity} />
+          <div className="message__body">
+            <span className="message__role">{identity.name}</span>
+            <UserMessage content={message.content} />
+            <span className="message__delivery" role="status">
+              {message.state === 'sending'
+                ? 'Sending…'
+                : message.state === 'accepted'
+                  ? 'Sent'
+                  : message.state === 'unconfirmed'
+                    ? 'Awaiting confirmation'
+                    : 'Not sent'}
+            </span>
+          </div>
         </article>
       ))}
       {children}

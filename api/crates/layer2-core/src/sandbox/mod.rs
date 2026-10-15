@@ -93,6 +93,9 @@ mod service_access_service;
 mod service_access_tests;
 mod service_admission;
 mod service_creation;
+mod service_scope;
+#[cfg(test)]
+mod service_scope_tests;
 mod service_trust;
 mod status;
 pub mod store;
@@ -169,7 +172,7 @@ pub use conversation_recorder::{
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxSignInState,
+    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
