@@ -2,7 +2,7 @@
 //! carry-through and removal rules are decided from the two definitions alone.
 use super::{check, WriteFlags};
 use cmaeg_core::{
-    channel::{ChannelDefinition, Secret},
+    channel::{ChannelDefinition, Extensions, Secret},
     profile::EventWorkerProfile,
     ValidationError,
 };
@@ -288,4 +288,28 @@ fn both_extensions_carry_through_together() {
     let mut next = current.clone();
     next.name = "renamed".into();
     check(Some(&current), &next, WriteFlags::default()).unwrap();
+}
+
+#[test]
+fn native_bot_mentions_require_writes_flag_and_can_be_carried_or_removed() {
+    let base = legacy();
+    let mut value = serde_json::to_value(&base).unwrap();
+    value["sources"][0]["admission"] = serde_json::json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"all","bot_messages":"native_mentions"});
+    value["sources"][0]["bot_id"] = serde_json::json!("ou_receiver");
+    let opted: ChannelDefinition = serde_json::from_value(value).unwrap();
+    assert!(check(None, &opted, WriteFlags::default()).is_err());
+    check(
+        None,
+        &opted,
+        WriteFlags {
+            native_bot_mentions: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut renamed = opted.clone();
+    renamed.name = "renamed".into();
+    check(Some(&opted), &renamed, WriteFlags::default()).unwrap();
+    check(Some(&opted), &base, WriteFlags::default()).unwrap();
+    assert!(!Extensions::of(&opted).legacy_compatible());
 }

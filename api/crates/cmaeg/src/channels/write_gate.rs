@@ -25,6 +25,8 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 /// Flags that admit writes of new stored shapes. All false until the flags exist.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
+    /// Admits explicit native bot mention opt-ins after all readers support them.
+    pub native_bot_mentions: bool,
     /// Admits routing to several consumers; wired by #998.
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
@@ -50,6 +52,23 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    let bot_sources = |d: &ChannelDefinition| {
+        d.sources
+            .iter()
+            .filter(|s| s.native_bot_mentions())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let bots = bot_sources(next);
+    if !bots.is_empty()
+        && !flags.native_bot_mentions
+        && !current.is_some_and(|old| bot_sources(old) == bots)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_bot_mentions_writes_disabled",
+        ));
+    }
     let extensions = Extensions::of(next);
     if extensions.legacy_compatible() {
         return Ok(());

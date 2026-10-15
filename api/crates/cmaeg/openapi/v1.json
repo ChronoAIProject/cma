@@ -359,6 +359,10 @@
           },
           {
             "properties": {
+              "bot_messages": {
+                "$ref": "#/components/schemas/BotMessageAdmission",
+                "description": "Native exact bot mentions only. The caller must bound downstream\nautomated execution; the gateway grants no human execution identity."
+              },
               "chats": {
                 "$ref": "#/components/schemas/IdentityAdmission"
               },
@@ -1186,6 +1190,13 @@
           }
         ]
       },
+      "BotMessageAdmission": {
+        "enum": [
+          "deny",
+          "native_mentions"
+        ],
+        "type": "string"
+      },
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
@@ -1348,6 +1359,12 @@
           "platforms": {
             "items": {
               "$ref": "#/components/schemas/PlatformCapability"
+            },
+            "type": "array"
+          },
+          "source_features": {
+            "items": {
+              "type": "string"
             },
             "type": "array"
           }

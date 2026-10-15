@@ -70,6 +70,7 @@ pub fn observe(
         bot_username,
         bot_id,
         trust_normalized,
+        admission,
         ..
     } = source
     else {
@@ -79,11 +80,16 @@ pub fn observe(
         Platform::Telegram => telegram::observe(
             payload,
             bot_username.as_deref(),
+            bot_id.as_deref(),
+            admission.native_bot_mentions(),
             MediaIngress::relay(media_enabled),
         ),
-        Platform::Lark | Platform::Feishu => {
-            lark::observe(payload, bot_id.as_deref(), media_enabled)
-        }
+        Platform::Lark | Platform::Feishu => lark::observe(
+            payload,
+            bot_id.as_deref(),
+            admission.native_bot_mentions(),
+            media_enabled,
+        ),
         Platform::Discord | Platform::Slack | Platform::Whatsapp if *trust_normalized => {
             generic::observe(payload)
         }

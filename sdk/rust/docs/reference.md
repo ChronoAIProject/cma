@@ -140,6 +140,19 @@ Reserve and retain the request's `record_id` for durable retries. Listing return
 one page; follow `next_after` even when `items` is empty. Channel creation/update
 includes optional `connection_ref` and `connection_admission`. Native Telegram
 source, credential and webhook endpoint fields are available in the wire types.
+
+Native bot mentions are an explicit source opt-in. Read
+`CapabilityView.source_features` and require `native_bot_mentions_v1` before
+selecting `BotMessageAdmission::NativeMentions`; the receiving identity and
+consumer's guest permissions and loop limits must also be configured. Older
+responses deserialize this field as an empty list, and scoped admission without
+`bot_messages` still defaults to denial and serializes without that field.
+When upgrading Rust code that constructs these public types directly, add
+`bot_messages: Default::default()` to existing `AdmissionPolicy::Scoped` values
+and `source_features: Vec::new()` to existing `CapabilityView` values. These are
+Rust source construction changes; existing JSON requests and responses remain
+compatible.
+
 A channel read with several consumers carries the read-only
 `definition.routing` (`RoutingPolicy`), with each consumer's public key hash and
 never a key; it is `None` on every other channel, and no request type sets it.

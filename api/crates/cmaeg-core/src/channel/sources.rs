@@ -130,6 +130,43 @@ fn validate_source(
     secrets: &ChannelSecrets,
     pointer: &str,
 ) -> Result<(), ValidationError> {
+    if source.native_bot_mentions() {
+        let identity = match source {
+            Source::Telegram {
+                bot_id,
+                bot_username,
+                ..
+            } => !bot_id.is_empty() && bot_username.is_some(),
+            Source::NyxidRelay {
+                platform,
+                bot_id,
+                bot_username,
+                trust_normalized,
+                ..
+            } => {
+                !trust_normalized
+                    && match platform {
+                        Platform::Telegram => {
+                            bot_id.as_deref().is_some_and(|id| {
+                                id.parse::<i64>()
+                                    .is_ok_and(|n| n > 0 && n.to_string() == id)
+                            }) && bot_username.is_some()
+                        }
+                        Platform::Lark | Platform::Feishu => bot_id
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("ou_") && id.len() > 3),
+                        _ => false,
+                    }
+            }
+            _ => false,
+        };
+        if !identity {
+            return Err(ValidationError::new(
+                format!("{pointer}/admission/bot_messages"),
+                "native bot mentions require a raw verifier and pinned receiving identity",
+            ));
+        }
+    }
     match source {
         Source::Telegram {
             bot_id,

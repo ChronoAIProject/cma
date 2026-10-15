@@ -15,6 +15,8 @@ const MAX_TEXT_BYTES: usize = 32 * 1024;
 pub fn observe(
     payload: &CallbackPayload,
     bot_username: Option<&str>,
+    bot_id: Option<&str>,
+    allow_bots: bool,
     ingress: MediaIngress,
 ) -> Result<Observation, VerificationError> {
     let Some(raw) = payload
@@ -62,13 +64,22 @@ pub fn observe(
     if message.get("sender_chat").is_some() || *kind == "channel_post" {
         return Ok(Observation::Refused(Refusal::SystemSender));
     }
-    match sender
+    let actor = match sender
         .and_then(|sender| sender.get("is_bot"))
         .and_then(Value::as_bool)
     {
+        Some(true) if allow_bots => ActorKind::Bot,
         Some(true) => return Ok(Observation::Refused(Refusal::BotSender)),
         None => return Ok(Observation::Refused(Refusal::UnknownSender)),
-        Some(false) => {}
+        Some(false) => ActorKind::Human,
+    };
+    if actor == ActorKind::Bot
+        && !sender_id.as_deref().is_some_and(|id| {
+            id.parse::<i64>()
+                .is_ok_and(|n| n > 0 && n.to_string() == id)
+        })
+    {
+        return Ok(Observation::Refused(Refusal::UnknownSender));
     }
     if message.get("via_bot").is_some()
         || [
@@ -87,6 +98,9 @@ pub fn observe(
         Err(reason) => return Ok(Observation::Refused(reason)),
     };
     if message.get("managed_bot_created").is_some() {
+        if actor != ActorKind::Human {
+            return Ok(Observation::Refused(Refusal::BotSender));
+        }
         return super::telegram_managed::observe(payload, raw, message);
     }
     let text = message.get("text").and_then(Value::as_str);
@@ -138,18 +152,11 @@ pub fn observe(
         }
         _ => None,
     };
-    // A caption's mentions are in caption_entities, with offsets into the caption.
-    let mentioned = bot_username
-        .map(|username| match &media {
-            None => mention(message, "entities", text.unwrap_or_default(), username),
-            Some(media) => mention(
-                message,
-                "caption_entities",
-                media.caption.as_deref().unwrap_or_default(),
-                username,
-            ),
-        })
-        .transpose()?;
+    let native = crate::ingress::native_mentions::telegram(message, bot_id, bot_username);
+    if native.invalid {
+        return Err(VerificationError("telegram_entities"));
+    }
+    let mentioned = (bot_id.is_some() || bot_username.is_some()).then_some(native.bot);
     let replied_to_bot = match message.get("reply_to_message") {
         None => Some(false),
         Some(parent) => parent
@@ -167,7 +174,7 @@ pub fn observe(
         thread_id,
         mentioned,
         replied_to_bot,
-        actor: ActorKind::Human,
+        actor,
         text: None,
         attachments,
         album_id,
@@ -211,52 +218,6 @@ fn numeric(value: Option<&Value>) -> Result<String, VerificationError> {
         .and_then(Value::as_i64)
         .map(|id| id.to_string())
         .ok_or(VerificationError("telegram_numeric_id"))
-}
-/// Whether a `mention` entity in `entities_field` names the bot within `text`.
-fn mention(
-    message: &Value,
-    entities_field: &str,
-    text: &str,
-    username: &str,
-) -> Result<bool, VerificationError> {
-    let Some(entities) = message.get(entities_field) else {
-        return Ok(false);
-    };
-    let entities = entities
-        .as_array()
-        .ok_or(VerificationError("telegram_entities"))?;
-    // Telegram entity offsets are UTF-16 code units, not UTF-8 bytes or Unicode scalar counts.
-    let units: Vec<_> = text.encode_utf16().collect();
-    for entity in entities {
-        if entity.get("type").and_then(Value::as_str) != Some("mention") {
-            continue;
-        }
-        let offset = entity
-            .get("offset")
-            .and_then(Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or(VerificationError("telegram_entities"))?;
-        let length = entity
-            .get("length")
-            .and_then(Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or(VerificationError("telegram_entities"))?;
-        let end = offset
-            .checked_add(length)
-            .ok_or(VerificationError("telegram_entities"))?;
-        let slice = units
-            .get(offset..end)
-            .ok_or(VerificationError("telegram_entities"))?;
-        let value =
-            String::from_utf16(slice).map_err(|_| VerificationError("telegram_entities"))?;
-        if value
-            .strip_prefix('@')
-            .is_some_and(|value| value.eq_ignore_ascii_case(username))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn observe_callback(

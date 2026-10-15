@@ -34,11 +34,15 @@ export const IdentityAdmissionSchema = tagged(
 );
 export type IdentityAdmission = Output<typeof IdentityAdmissionSchema>;
 
+export const BotMessageAdmissionSchema = enumeration('deny', 'native_mentions');
+export type BotMessageAdmission = Output<typeof BotMessageAdmissionSchema>;
+
 export const AdmissionPolicySchema = tagged(
   {
     all: object({ type: enumeration('all') }),
     allowlist: object({ sender_ids: array(text), type: enumeration('allowlist') }),
     scoped: object({
+      bot_messages: optional(BotMessageAdmissionSchema),
       chats: IdentityAdmissionSchema,
       groups: GroupAdmissionSchema,
       senders: IdentityAdmissionSchema,
