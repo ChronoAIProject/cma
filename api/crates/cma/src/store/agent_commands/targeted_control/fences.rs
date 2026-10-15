@@ -6,6 +6,7 @@ use layer2_core::sandbox::{Agent, Sandbox};
 use mongodb::{bson::doc, ClientSession};
 
 use super::super::ApplyError;
+use super::trace_rejection;
 use crate::store::agents::read_agent;
 use crate::store::sandbox_mongo::{
     record_bson, signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -57,22 +58,25 @@ pub(super) async fn current(
 
 pub(super) async fn resources(
     store: &MongoSandboxStore,
+    request: &TargetedControlReservation,
     agent: &Agent,
     parent: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    for (collection, id, revision, created_at) in [
+    for (collection, id, revision, created_at, stage) in [
         (
             &store.agents,
             agent.id.as_str(),
             agent.revision,
             &agent.created_at,
+            "resources_agent",
         ),
         (
             &store.sandboxes,
             parent.id.as_str(),
             parent.revision,
             &parent.created_at,
+            "resources_parent",
         ),
     ] {
         let revision =
@@ -80,9 +84,14 @@ pub(super) async fn resources(
         let result = collection.update_one(
             doc! { "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": revision, "record.created_at": created_at },
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
-        ).session(&mut *session).await?;
+        ).session(&mut *session).await
+            .map_err(|error| trace_rejection(request, stage, error.into()))?;
         if result.matched_count != 1 {
-            return Err(CommandLedgerError::Conflict.into());
+            return Err(trace_rejection(
+                request,
+                stage,
+                CommandLedgerError::Conflict.into(),
+            ));
         }
     }
     Ok(())
