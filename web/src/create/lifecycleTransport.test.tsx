@@ -62,14 +62,35 @@ it('overlaps actual-Agent preparation with lineage checks and transfers the pend
     expect(onCreated).toHaveBeenCalledExactlyOnceWith({ id: 'agt_1', status: 'starting' }),
   );
   view.unmount();
-  const loading = loadAgent(client, 'agt_1', new AbortController().signal);
+  const entryIdentity = deferred<string | undefined>();
+  const finalIdentity = deferred<string | undefined>();
+  h.currentUser
+    .mockResolvedValueOnce('alice')
+    .mockReturnValueOnce(entryIdentity.promise)
+    .mockReturnValueOnce(finalIdentity.promise);
+  const published = vi.fn();
+  const loading = loadAgent(client, 'agt_1', new AbortController().signal).then((ready) => {
+    published();
+    return ready;
+  });
   flag.resolve(response);
+  await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(3));
+  expect(readAgent).toHaveBeenCalledOnce();
+  expect(h.snapshot).not.toHaveBeenCalled();
+  expect(published).not.toHaveBeenCalled();
+  entryIdentity.resolve('alice');
+  await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(4));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(h.snapshot).toHaveBeenCalledOnce();
+  expect(published).not.toHaveBeenCalled();
+  finalIdentity.resolve('alice');
   expect(await loading).toMatchObject({
     detail: { id: 'agt_1', status: 'starting' },
     v2: expect.anything(),
   });
   expect(h.eligibility).toHaveBeenCalledOnce();
-  expect(h.currentUser).toHaveBeenCalledTimes(5);
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  expect(published).toHaveBeenCalledOnce();
 });
 
 it.each([
