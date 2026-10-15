@@ -95,6 +95,10 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
         Some(workspace.id.as_str())
     );
     assert_eq!(claimed.input.actor.as_ref(), Some(&owner.actor));
+    assert_eq!(
+        claimed.input.setup_message,
+        Some(validation::setup_message(&request))
+    );
 
     // Runtime readiness is a separate worker boundary. The facade must remain
     // pending while the new Agent is Starting, then release the original Agent.
@@ -112,6 +116,14 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
         } => agent,
     };
     assert_eq!(starting.status, AgentStatus::Starting);
+    assert_eq!(
+        starting
+            .conversation
+            .first_message
+            .as_ref()
+            .map(|message| &message.text),
+        claimed.input.setup_message.as_ref()
+    );
     assert_eq!(starting.workspace_id, workspace.id);
     assert_eq!(starting.sandbox_id, original_parent.id);
     assert!(
