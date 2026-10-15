@@ -49,6 +49,9 @@ pub(crate) struct LifecycleInput {
     /// Exact managed instructions for new immutable profiles; absent in old operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_agent_instructions: Option<String>,
+    /// Exact setup message captured at admission; absent records retain the old builder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_message: Option<String>,
     pub request: AgentLifecycleCreateRequest,
     pub resolved_image: Option<String>,
     /// New admissions pin deployment capacity; legacy records used policy minima.

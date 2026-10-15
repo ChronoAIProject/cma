@@ -87,6 +87,7 @@ pub(crate) struct InlineAgentLifecycle {
 
 struct ProvisionInput {
     behavior: LifecycleBehavior,
+    first_message: Option<String>,
     request: AgentLifecycleCreateRequest,
     runtime_image: Option<String>,
     capacity: layer3_adapter::SandboxCapacity,
@@ -161,6 +162,7 @@ impl InlineAgentLifecycle {
         }
         let ProvisionInput {
             behavior,
+            first_message,
             request,
             runtime_image,
             capacity,
@@ -294,8 +296,7 @@ impl InlineAgentLifecycle {
                             agent_revision.revision,
                         ),
                         title: Some(request.name.clone()),
-                        first_message: (behavior == LifecycleBehavior::PromptRepository)
-                            .then(|| validation::first_message(&request)),
+                        first_message,
                         origin: AgentOrigin::Lifecycle {
                             operation_id: lease.id.clone(),
                         },
@@ -409,6 +410,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
             managed_agent_instructions: Some(guidance::GITHUB_API_V1.into()),
+            setup_message: Some(validation::setup_message(&request)),
             request,
             resolved_image,
             capacity: Some(self.capacity),

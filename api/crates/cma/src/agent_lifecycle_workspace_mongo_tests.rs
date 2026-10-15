@@ -10,6 +10,7 @@ use mongodb::bson::doc;
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
         behavior: record.input.behavior,
+        first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),
         runtime_image: None,
         capacity: layer3_adapter::SandboxCapacity::default(),

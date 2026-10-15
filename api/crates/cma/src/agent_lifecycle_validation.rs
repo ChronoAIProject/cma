@@ -205,6 +205,23 @@ pub(super) fn repository_location(
     })
 }
 
+pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
+    if request.repository.is_some() {
+        return first_message(request);
+    }
+    "You are running in a CMA workspace. Preserve existing files and changes. This is local workspace readiness only; no repository or external-service task has been requested. Do not probe GitHub or other optional services, or request access merely for readiness. Briefly report readiness and wait for the user's next task. For a later user task, request access only when that task requires it.".into()
+}
+
+pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
+    (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
+        input
+            .setup_message
+            .clone()
+            .unwrap_or_else(|| first_message(&input.request))
+    })
+}
+
+// Freeze these bytes for operations admitted before setup messages were captured.
 pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
     let mut message =
         "You are running in a CMA workspace. Preserve existing files and changes. ".to_string();
