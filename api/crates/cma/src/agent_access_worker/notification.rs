@@ -115,7 +115,12 @@ fn notification_ready(
         layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339())
             .is_some_and(|now| expiry > now)
     });
-    Ok(sandbox.status == SandboxStatus::Active
+    let same_hot_runtime = record.progress.hot_update.as_ref().is_none_or(|hot| {
+        sandbox.runtime.as_ref() == Some(&hot.runtime)
+            && sandbox.lifecycle.next_authority == hot.lifecycle_next_authority
+    });
+    Ok(same_hot_runtime
+        && sandbox.status == SandboxStatus::Active
         && effects::settled(sandbox)
         && sandbox.runtime.is_some()
         && sandbox.credential.delivered

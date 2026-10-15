@@ -13,10 +13,10 @@ pub(super) async fn schedule(
 ) -> Result<(), AgentAccessError> {
     let lease = record.lease.as_ref().ok_or(AgentAccessError::Conflict)?;
     // Approval remains valid while paused or in transition, but is not consent
-    // to undo an owner's pause. Only their resumed Active runtime is eligible
-    // for our separately recorded, quiet access-update pause.
+    // to undo an owner's pause. Their current Active runtime receives the new
+    // credential in place; an active Agent turn is not a reason to stop it.
     if sandbox.status == SandboxStatus::Active && connections_ready.await? {
-        store.schedule_access_request_pause(lease).await?;
+        store.grant_live_access_request_services(lease).await?;
     }
     Ok(())
 }

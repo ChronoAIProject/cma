@@ -37,6 +37,8 @@ fn ready() -> (AgentAccessRecord, Agent, Sandbox) {
     )
     .unwrap();
     let record = AgentAccessRecord {
+        scope_mode: Default::default(),
+        expected_scope_revision: None,
         id: "access-request-original".into(),
         requester: AgentAccessRequester {
             agent_id: agent.id.clone(),
