@@ -7,6 +7,9 @@ import type {
 } from './sandboxInput';
 import type { QueuedMessageControl } from './transport/queuedStatus';
 
+export type MessageAcceptance =
+  { readonly commandId: string; readonly responseId: string } | { readonly runId: string };
+
 export type AgentResourceState =
   | { readonly status: 'idle' }
   | { readonly status: 'loading' }
@@ -32,7 +35,11 @@ export interface AgentController {
   readonly actionError?: string;
   readonly reload: () => void;
   readonly clearActionError: () => void;
-  readonly send: (content: string, onAccepted?: () => void) => Promise<void>;
+  readonly send: (
+    content: string,
+    onAccepted?: (receipt?: MessageAcceptance) => void,
+    onReceiptObserved?: (receipt: MessageAcceptance) => void,
+  ) => Promise<void>;
   readonly interrupt: () => Promise<void>;
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;
