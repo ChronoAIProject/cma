@@ -7,7 +7,8 @@ import { queuedReceipt } from './queued.fixture';
 beforeEach(() => sessionStorage.clear());
 const problem = (code: string) =>
   json({ error: { type: 'invalid_request_error', code, message: code, param: null } }, 409);
-const emptyQueue = () => json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [] });
+const emptyQueue = () =>
+  json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null });
 
 function queuedHarness() {
   const h = harness();
