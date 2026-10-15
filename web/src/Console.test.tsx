@@ -43,11 +43,14 @@ it('acknowledges pause immediately and refreshes after admission without claimin
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
   const reads = readSandbox.mock.calls.length;
   await act(async () => accept());
-  expect(
-    screen.getByText('Pause request accepted. Waiting for the Sandbox to pause.'),
-  ).toBeInTheDocument();
+  expect(screen.getByText('Pause request accepted.')).toBeVisible();
+  expect(screen.getByText('Waiting for the Sandbox to pause.')).not.toBeVisible();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
   expect(screen.queryByText('Sandbox paused.')).not.toBeInTheDocument();
   expect(readSandbox.mock.calls.length).toBeGreaterThan(reads);
+  await actor.click(screen.getByText('Operation progress'));
+  expect(screen.getByText('Waiting for the Sandbox to pause.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'View Sandbox progress' })).toBeVisible();
   expect(pauseSandbox).toHaveBeenCalledTimes(1);
 });
 
@@ -79,8 +82,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole('dialog', { name: 'Sandbox deleted' })).not.toBeInTheDocument();
-  await actor.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await actor.click(screen.getByText('Deletion progress (1)'));
   await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();

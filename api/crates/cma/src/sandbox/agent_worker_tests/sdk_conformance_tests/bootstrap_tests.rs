@@ -10,6 +10,9 @@ use tower::ServiceExt;
 
 const OPERATION: &str = "worker-bootstrap";
 
+#[path = "bootstrap_parent_wake_tests.rs"]
+mod parent_wake_tests;
+
 struct BootstrapHarness {
     harness: Harness,
     ready_parent: Sandbox,
@@ -18,6 +21,10 @@ struct BootstrapHarness {
 
 impl BootstrapHarness {
     async fn new() -> Self {
+        Self::with_readiness(None).await
+    }
+
+    async fn with_readiness(readiness: Option<Arc<tokio::sync::Notify>>) -> Self {
         let original = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let mut ready_parent = original
             .store
@@ -71,6 +78,9 @@ impl BootstrapHarness {
         config.lease_duration = Duration::from_secs(3);
         config.retry_delay = Duration::from_secs(30);
         config.open_timeout = Duration::from_secs(2);
+        if let Some(readiness) = readiness {
+            config = config.with_parent_readiness(readiness);
+        }
         let worker = AgentWorker::new(
             AgentWorkerDependencies {
                 store: store.clone(),

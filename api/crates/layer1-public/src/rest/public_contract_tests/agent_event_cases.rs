@@ -75,6 +75,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         append(
             &f.store,
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: agent.conversation.last_seq + 1,
                 origin_key: Some("command:cmd_missing".into()),
             },

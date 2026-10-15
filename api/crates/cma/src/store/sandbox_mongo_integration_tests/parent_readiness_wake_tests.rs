@@ -12,6 +12,11 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
         let database = format!("cma_parent_wake_{}", uuid::Uuid::new_v4().simple());
         let store = MongoSandboxStore::open(&client, &database).await.unwrap();
         let wake = store.agent_admitted.clone();
+        let ready_a = store.agent_parent_ready.notified();
+        let ready_b = store.agent_parent_ready.notified();
+        tokio::pin!(ready_a, ready_b);
+        ready_a.as_mut().enable();
+        ready_b.as_mut().enable();
         let mut parent = sandbox("sbx_parent_ready");
         if !workspace_ready {
             parent.status = SandboxStatus::Installing;
@@ -69,6 +74,8 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
         }
         assert!(store.commit(invalid).await.is_err());
         assert!(wake.notified().now_or_never().is_none());
+        assert!(ready_a.as_mut().now_or_never().is_none());
+        assert!(ready_b.as_mut().now_or_never().is_none());
 
         let writer = store.clone();
         let input = transaction.clone();
@@ -78,15 +85,23 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
             .await
             .unwrap();
         let premature = wake.notified().now_or_never().is_some();
+        let premature_waiter =
+            ready_a.as_mut().now_or_never().is_some() || ready_b.as_mut().now_or_never().is_some();
         let before_parent = store.get_sandbox(&parent.id).await.unwrap().unwrap();
         let before_child = store.get_workspace(&child.id).await.unwrap().unwrap();
         gate.release();
         task.await.unwrap().unwrap();
         assert!(!premature, "readiness cannot wake before commit");
+        assert!(
+            !premature_waiter,
+            "leased waiters cannot wake before commit"
+        );
         assert_eq!(before_parent, parent);
         assert_eq!(before_child, child);
         assert!(wake.notified().now_or_never().is_some());
         assert!(wake.notified().now_or_never().is_none());
+        assert!(ready_a.as_mut().now_or_never().is_some());
+        assert!(ready_b.as_mut().now_or_never().is_some());
         if workspace_ready {
             assert_eq!(
                 store

@@ -1,5 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
@@ -123,4 +124,88 @@ it('keeps one status read in flight and ignores success arriving after the dialo
   expect(opened).not.toHaveBeenCalled();
   expect(create).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('retained-key');
+});
+
+it('does not add an idle interval after a slow successful status read', async () => {
+  const starts: number[] = [];
+  let inFlight = 0;
+  let maximumInFlight = 0;
+  const read = vi.fn(async () => {
+    starts.push(Date.now());
+    maximumInFlight = Math.max(maximumInFlight, ++inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    inFlight -= 1;
+    return starts.length === 1
+      ? pending
+      : { ...pending, status: 'succeeded' as const, agent_id: 'ready-agent' };
+  });
+  const { create, opened } = show(read);
+  await advance(349);
+  expect(read).toHaveBeenCalledOnce();
+  expect(opened).not.toHaveBeenCalled();
+  await advance(2);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(starts[1]! - starts[0]!).toBeLessThanOrEqual(351);
+  expect(maximumInFlight).toBe(1);
+  await advance(350);
+  expect(opened).toHaveBeenCalledExactlyOnceWith({ id: 'ready-agent', status: 'ready' });
+  await advance(5000);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('recovers transient status failures automatically and opens the original operation once', async () => {
+  const read = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError('Network unavailable'))
+    .mockRejectedValueOnce(new ApiError(503, 'Temporarily unavailable'))
+    .mockResolvedValueOnce(pending)
+    .mockResolvedValue({ ...pending, status: 'succeeded', agent_id: 'ready-agent' });
+  const { create, opened } = show(read);
+  await advance(499);
+  expect(read).toHaveBeenCalledOnce();
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('retained-key');
+  await advance(1);
+  expect(read).toHaveBeenCalledTimes(2);
+  await advance(999);
+  expect(read).toHaveBeenCalledTimes(2);
+  await advance(1);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(opened).not.toHaveBeenCalled();
+  await advance(250);
+  expect(opened).toHaveBeenCalledExactlyOnceWith({ id: 'ready-agent', status: 'ready' });
+  expect(read.mock.calls.every(([id]) => id === pending.id)).toBe(true);
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('caps transient retry delay at five seconds and stops pending retries on unmount', async () => {
+  const read = vi.fn().mockRejectedValue(new ApiError(429, 'Try later'));
+  const { unmount, create } = show(read);
+  await advance(12_500);
+  expect(read).toHaveBeenCalledTimes(6);
+  await advance(4_999);
+  expect(read).toHaveBeenCalledTimes(6);
+  await advance(1);
+  expect(read).toHaveBeenCalledTimes(7);
+  unmount();
+  await advance(30_000);
+  expect(read).toHaveBeenCalledTimes(7);
+  expect(create).not.toHaveBeenCalled();
+});
+
+it.each([
+  new ApiError(401, 'Sign in again'),
+  new ApiError(403, 'No longer authorized'),
+  new ApiError(404, 'Not accessible'),
+  new ProtocolError('Invalid operation identity'),
+])('holds recovery after $message without erasing the original command', async (error) => {
+  const read = vi.fn().mockResolvedValueOnce(pending).mockRejectedValue(error);
+  const { create, opened } = show(read);
+  await advance(250);
+  expect(screen.getByRole('alert')).toHaveTextContent(error.message);
+  await advance(30_000);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('retained-key');
+  expect(opened).not.toHaveBeenCalled();
+  expect(create).not.toHaveBeenCalled();
 });

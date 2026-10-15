@@ -43,7 +43,7 @@ pub enum CommandAdmissionError {
     Ledger(#[from] CommandLedgerError),
     #[error(transparent)]
     Input(#[from] AgentOperationError),
-    #[error("the requested model does not match the pinned Agent profile")]
+    #[error("the requested model does not match the current Agent settings")]
     ModelMismatch,
 }
 
@@ -290,7 +290,7 @@ impl AgentCommandService {
         if submission
             .requested_model
             .as_ref()
-            .is_some_and(|requested| agent.profile.content.model.as_ref() != Some(requested))
+            .is_some_and(|requested| agent.selected_model().as_ref() != Some(requested))
         {
             return Err(CommandAdmissionError::ModelMismatch);
         }

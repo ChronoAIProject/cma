@@ -39,6 +39,7 @@ pub(super) async fn fixture() -> Fixture {
         agents::seeded_agent("agt_shared_stream", AgentStatus::Ready, 9, None),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },

@@ -20,6 +20,8 @@ mod event_context;
 mod event_context_tests;
 #[cfg(test)]
 mod existing_binding_tests;
+#[cfg(test)]
+mod model_tests;
 mod output;
 #[cfg(test)]
 mod output_gap_tests;

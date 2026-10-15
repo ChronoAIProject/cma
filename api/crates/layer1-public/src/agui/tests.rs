@@ -36,6 +36,7 @@ async fn replay_uses_agent_thread_turn_sequence_and_only_final_frame_cursors() {
         agent,
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },

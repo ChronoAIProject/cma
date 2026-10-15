@@ -1,7 +1,7 @@
 import type { V2AgentEventItem } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
 import { conversationFromTranscript } from '../conversation';
-import { transientReadFailure, type ReadyAgent } from '../loadAgent';
+import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '../loadAgent';
 import type { ConversationState } from '../model';
 import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
@@ -13,13 +13,28 @@ export async function loadV2Agent(
   v2: AgentV2Session,
   allowIncomplete = false,
   onProgress?: (ready: ReadyAgent) => void,
+  lineage?: AgentLoadLineage,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorize(signal);
   const readHierarchy = async () => {
-    const detail = await client.readAgent(agentId, { signal });
+    const detailRead = (async () => client.readAgent(agentId, { signal }))();
+    const [detail, preparedWorkspace] = await Promise.all([
+      detailRead,
+      lineage?.agentId === agentId
+        ? (async () => client.readWorkspace(lineage.workspaceId, { signal }))()
+        : undefined,
+    ]);
     signal.throwIfAborted();
-    if (detail.id !== agentId) throw new Error('Agent projections changed identity.');
-    const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+    if (
+      detail.id !== agentId ||
+      (lineage !== undefined &&
+        (lineage.agentId !== agentId ||
+          lineage.workspaceId !== detail.workspace.id ||
+          lineage.sandboxId !== detail.sandbox.id))
+    )
+      throw new Error('Agent projections changed identity.');
+    const workspace =
+      preparedWorkspace ?? (await client.readWorkspace(detail.workspace.id, { signal }));
     signal.throwIfAborted();
     if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
       throw new Error('Agent projections changed identity.');
@@ -33,7 +48,11 @@ export async function loadV2Agent(
   };
   const readPage = async (pageCursor?: string) => {
     try {
-      await v2.authorize(signal);
+      // The entry check covers the first parallel batch. Later pages follow
+      // awaited reads and progress callbacks, so each needs fresh authority.
+      if (pageCursor !== undefined) await v2.authorize(signal);
+      signal.throwIfAborted();
+      v2.journal.read();
       return await v2.events.snapshot(agentId, { pageCursor, signal });
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;

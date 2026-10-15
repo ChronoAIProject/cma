@@ -37,8 +37,13 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | FirstMessageChanged { .. }
         | ConfigOptionsSet { .. }
         | AvailableCommandsSet { .. } => None,
-        TurnStarted { turn_sequence, .. } => Some(TurnStarted {
+        TurnStarted {
             turn_sequence,
+            model,
+            ..
+        } => Some(TurnStarted {
+            turn_sequence,
+            model,
             origin_key: None,
         }),
         ApprovalRequested {

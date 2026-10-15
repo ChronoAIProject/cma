@@ -26,7 +26,18 @@ impl InlineAgentLifecycle {
             let started = tokio::time::Instant::now();
             let mut sandbox_ready = false;
             let mut key_ready = false;
+            let fallback = tokio::sync::Notify::new();
+            let readiness = self
+                .native_prepared
+                .as_ref()
+                .map(|store| store.agent_parent_ready.as_ref())
+                .unwrap_or(&fallback);
             loop {
+                // Prepared Agents are admitted only after this exact parent wait.
+                // Register before authenticated reads; the hint supplies no state.
+                let changed = readiness.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
                 let sandbox = self
                     .sandbox
                     .read(caller, sandbox_id)
@@ -89,7 +100,10 @@ impl InlineAgentLifecycle {
                         return Ok(workspace.id);
                     }
                 }
-                tokio::time::sleep(worker::readiness_delay(started)).await;
+                tokio::select! {
+                    _ = &mut changed => {},
+                    _ = tokio::time::sleep(worker::readiness_delay(started)) => {},
+                }
             }
         })
         .await
