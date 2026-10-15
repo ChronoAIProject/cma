@@ -1,12 +1,12 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 22:15 SGT
+## Current production — 15 October, 22:31 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `77ada2dc25c580a6fdc3ad8414b243ad3c2153ba` | 44 | `sha256:c71d4b0a2255f117fd78afddffac8109567aaff3591bb7e7e2ad938cbb2edb71` |
+| Agent Manager | `b28d39c0b008a0d1342d66168a1e3a6b77383b7c` | 45 | `sha256:970961026f8442959874d09a6149588521a27be8433ac582943233fe8b0ed9a3` |
 | Web | `dfc4d128c499dff450c40ebd11af9f0d31474216` | 121 | `sha256:89007494cf582621ee1273de217b9fa093c0971777bb4751b2c9e7d745b85f22` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
@@ -14,7 +14,7 @@ The latest deployed images supersede the dated release below:
 Production checks now cover live key replacement and revocation without a
 restart, actual private GitHub API access, pasted/dropped attachments, message
 identities and estimates during streamed output. Measured warm creation reached
-an enabled composer in 3.373 seconds. Key-change callbacks passed the five-second
+an enabled, unobstructed Send in 4.260 seconds on the final release. Key-change callbacks passed the five-second
 target, including an active turn. Actual controller pause/resume remains slower
 than five seconds; fresh external OAuth remains a separate coverage limit.
 The accepted Git workflow downloads source through the authenticated GitHub API
@@ -1306,3 +1306,48 @@ conversation. This remains a full-backend resume limit, not a five-second pass.
 Evidence: `/tmp/cma-final-frames-dfc4-20261015/frames.json`,
 `/tmp/cma-composer-final-send-dfc4-77ada-20261015/summary.json`, and
 `/tmp/cma-final-clone-resume-20261015/summary.json`.
+
+
+## Quiet default setup and final creation — 15 October, 22:35 SGT
+
+Agent Manager `b28d39c0` is deployed as generation 45, with one Ready replica,
+zero restarts, and exact source/index/platform/image verification. Its immutable
+image scan passed, and authenticated public Agent/Sandbox reads passed at
+22:30:44 SGT. The default runtime, whole-home policy and prepared target one are
+retained. Strict manifest validation passed all 48 resources in 31 files with
+no errors or skips; kube-linter, HTTPRoute and native provider contracts passed.
+
+The preceding empty setup unnecessarily requested optional GitHub permission.
+New admissions now capture a local-only readiness prompt in durable storage;
+both new-Sandbox and existing-Workspace creation use its exact bytes. Selecting
+a repository retains the existing GitHub API/MCP setup. Historical absent-field
+replay uses the unchanged old builder, and persistent V1 instructions/prepared
+revision two remain unchanged. Fifty-five focused regressions passed, including
+actual MongoDB replay/restart, ownership, worker fencing, both creation paths
+and prepared reuse. Strict Clippy, format, file-size and secret checks passed.
+Once `setup_message` records exist, retain a compatible reader on rollback.
+
+On the exact final API/Web release, one actual browser Create click produced
+one POST accepted with 202 and consumed the exact previously observed Ready
+revision-two candidate. The textarea was editable at **4.031 s**; a full harmless
+draft and an enabled Send button that was also the actual pointer hit target
+were present at **4.260 s**. Healthy admission used “Starting your Agent…”
+without an unconfirmed/recovery flash. Setup completed approximately 10.65 s
+after the click, using the exact captured local-only prompt. There was exactly
+one setup turn, zero optional access-request records and no authorization modal.
+The five-second browser input criterion passes in this sample; setup/model
+completion is a separate measurement and does not pass that threshold.
+
+The retained GitHub/send fixture kept all three completed turns, native
+conversation, Sandbox/Claim and original PVC. Its normal inactivity pause began
+at 22:29:40 SGT, 905 seconds after its last durable event, and completed at
+22:29:51. The new API Pod was created at 22:29:52 and its container started at
+22:30:12, so the pause preceded the new API process. The native object was
+Suspended with no Pod, as expected. This verifies history and persistent
+identity continuity; it does not claim an active Pod remained running when the
+owner's configured inactivity policy had already paused it.
+
+Evidence: `/tmp/cma-title-release-b28d39c0/cma-agent-manager/live-verification.json`,
+`/tmp/cma-final-ui-default-b28-dfc4-20261015/create-report.json`,
+`/tmp/cma-final-ui-default-b28-dfc4-20261015/setup-access-requests.json`, and
+`/tmp/cma-final-clone-api-continuity-20261015/continuity-summary.json`.

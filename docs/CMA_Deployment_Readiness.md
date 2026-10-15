@@ -6,14 +6,24 @@ failures and receipt paths, see
 This document keeps operational instructions and dated infra diagnostics.
 
 The current deployment is recorded in the linked verification document and
-immutable manifests. On 15 October at 21:03 SGT, Web `0785d328` (generation 119)
-is live with smooth route/message/menu transitions and immediate visible draft
-handoff. Agent Manager `ba861431` (generation 42) was verified live at 21:18 SGT with
-the new captured GitHub API instructions. The default runtime is `d97121b5`;
-existing owner runtimes keep their pinned images and full-home volumes. The
-accepted repository workflow is authenticated `gh api` source download plus a
-local Git workspace, independently verified on a production testing Agent.
+immutable manifests. On 15 October at 22:31 SGT, Web `dfc4d128` (generation 121)
+and Agent Manager `b28d39c0` (generation 45) are verified live. Web provides
+continuous route/message/menu/dialog transitions, retained views and immediate
+visible draft handoff. New Agents receive persistent GitHub API source guidance;
+empty setup captures a local-only readiness message without requesting optional
+GitHub access. The default runtime is `d97121b5`; existing owner runtimes keep
+their pinned images and full-home volumes. Prepared target one uses revision two
+with the exact immutable instructions materialized before adoption. The accepted
+repository workflow is authenticated `gh api` source download plus a local Git
+workspace, independently verified on a new production testing Agent.
 Image Manager remains deferred.
+
+Rollback readers must retain the native-title fields, captured V1 guidance,
+prepared-home revision handling and optional `LifecycleInput.setup_message`,
+in addition to the earlier scope, callback and attachment schemas described
+below. New operations store their exact setup prompt; historical operations
+without it retain the unchanged historical builder. Reverting only the default
+runtime does not remove these durable API reader requirements.
 
 The following 18:51 checkpoint is historical. At **18:51 SGT on 15 October 2026**,
 production ran Agent Manager
