@@ -244,6 +244,7 @@ fn admission_label(admission: &AdmissionPolicy) -> String {
             senders,
             chats,
             groups,
+            ..
         } => format!(
             "senders {}; chats {}; groups {}",
             identity_label(senders),

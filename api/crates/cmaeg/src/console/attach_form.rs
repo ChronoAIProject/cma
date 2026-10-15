@@ -177,6 +177,7 @@ fn admission(fields: &Fields) -> Result<AdmissionPolicy, &'static str> {
             sender_ids: fields.list("sender_ids"),
         }),
         "scoped" => Ok(AdmissionPolicy::Scoped {
+            bot_messages: Default::default(),
             senders: identity(fields.text("senders"), fields.list("sender_ids"))?,
             chats: identity(fields.text("chats"), fields.list("chat_ids"))?,
             groups: match fields.text("groups") {

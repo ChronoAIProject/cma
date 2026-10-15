@@ -28,15 +28,20 @@ impl Drop for Native {
 }
 impl Native {
     pub async fn new(observer: Option<Arc<dyn PlatformReceiptObserver>>) -> Self {
-        Self::build(observer, false).await
+        Self::build(observer, false, false).await
     }
     /// A native channel served with `CMAEG_MEDIA_ENABLED=true`.
     pub async fn with_media() -> Self {
-        Self::build(None, true).await
+        Self::build(None, true, false).await
     }
-    async fn build(observer: Option<Arc<dyn PlatformReceiptObserver>>, media: bool) -> Self {
+    async fn build(
+        observer: Option<Arc<dyn PlatformReceiptObserver>>,
+        media: bool,
+        bots: bool,
+    ) -> Self {
         let fixture=Fixture::new(|value|{
             value["sources"]=json!([{"type":"telegram","bot_id":"77","bot_username":"fixture_bot","admission":{"type":"all"}}]);
+            if bots {value["sources"][0]["admission"]=json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"all","bot_messages":"native_mentions"});}
             value["secrets"]["telegram_bot_token"]="77:fixture".into();
             value["secrets"]["provider_credential"]="provider-fixture".into();
             value["secrets"]["telegram_webhook_secret"]="native-webhook-fixture".into();
@@ -301,4 +306,46 @@ async fn a_wrong_webhook_secret_is_counted_by_source_and_detail() {
     assert_eq!(app.send(&message(), "wrong-fixture").await.status(), 401);
     assert_eq!(count(), before + 1);
     assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn external_native_telegram_bot_mentions_use_the_same_strict_observer() {
+    use cmaeg_core::activity::ActorKind;
+    let app = Native::build(None, false, true).await;
+    let mut raw = message();
+    raw["message"]["chat"]["type"] = json!("supergroup");
+    raw["message"]["from"]["is_bot"] = json!(true);
+    raw["message"]["text"] = json!("😀 Receiver");
+    raw["message"]["entities"] =
+        json!([{"type":"text_mention","offset":3,"length":8,"user":{"id":77}}]);
+    app.accepted(&raw).await;
+    let activity = app.fixture.recorder.requests.lock().unwrap()[0]
+        .activity
+        .clone();
+    assert_eq!(activity.actor.kind, ActorKind::Bot);
+    assert!(matches!(
+        activity.kind,
+        ActivityKind::Message {
+            mentions_bot: true,
+            ..
+        }
+    ));
+    raw["update_id"] = json!(102);
+    raw["message"]["message_id"] = json!(6);
+    raw["message"]["entities"][0]["offset"] = json!(1);
+    // Malformed native evidence follows the authenticated verification-error
+    // contract; it must not launch another activity.
+    assert_eq!(app.send(&raw, "native-webhook-fixture").await.status(), 401);
+    raw["message"]["entities"] = json!([]);
+    let refusal: Value = app
+        .send(&raw, "native-webhook-fixture")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        refusal,
+        json!({"status":"refused","reason":"group_not_addressed"})
+    );
+    assert_eq!(app.fixture.recorder.requests.lock().unwrap().len(), 1);
 }

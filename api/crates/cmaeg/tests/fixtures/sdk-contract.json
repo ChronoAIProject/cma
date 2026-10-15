@@ -205,7 +205,19 @@
       "senders": {
         "type": "deny"
       },
-      "type": "scoped"
+      "type": "scoped",
+      "bot_messages": "native_mentions"
+    },
+    {
+      "type": "scoped",
+      "senders": {
+        "type": "open"
+      },
+      "chats": {
+        "type": "open"
+      },
+      "groups": "mention",
+      "bot_messages": "native_mentions"
     }
   ],
   "AgentProfileSnapshot": [
@@ -3926,7 +3938,16 @@
             "fixture"
           ]
         }
+      ],
+      "source_features": [
+        "native_bot_mentions_v1"
       ]
+    },
+    {
+      "source_features": [
+        "native_bot_mentions_v1"
+      ],
+      "platforms": []
     }
   ],
   "ConnectionPage": [
@@ -4711,5 +4732,9 @@
     "event_field",
     "interaction",
     "agent_event"
+  ],
+  "BotMessageAdmission": [
+    "deny",
+    "native_mentions"
   ]
 }
