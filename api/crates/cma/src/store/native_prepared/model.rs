@@ -38,7 +38,10 @@ impl NativePreparedPlan {
         }
         let agent = AgentProfileSnapshot {
             id: AgentProfileId("agp_native_prepared_default".into()),
-            revision: 1,
+            // Revision 2 materializes the pinned instructions during preparation.
+            // Reconcile unclaimed revision-1 homes instead of replaying different
+            // bytes under their existing home operation identity.
+            revision: 2,
             digest: digest(&agent)?,
             content: agent,
         };
@@ -103,7 +106,7 @@ impl NativePreparedPlan {
             || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
             || workspace.profile.content.name != "workspace"
             || !agent.content.skills.is_empty()
-            || !agent.content.system_prompt.is_empty()
+            || !crate::agent_lifecycle::guidance::is_prepared_prompt(&agent.content.system_prompt)
             || agent.content.isolated_agent
             || sandbox
                 .runtime_image

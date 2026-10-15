@@ -127,7 +127,12 @@ export const worktree = object({
 export type Worktree = Output<typeof worktree>;
 export const hierarchyAgentSummary = object({
   runtime_metadata: optional(
-    object({ working_directory: optional(text), description: optional(text) }),
+    object({
+      working_directory: optional(text),
+      description: optional(text),
+      description_source: optional(enumeration('provider_title', 'prompt_preview')),
+      description_is_setup_preview: optional(boolean),
+    }),
   ),
   id: text,
   worktree_id: text,

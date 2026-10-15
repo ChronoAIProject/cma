@@ -36,6 +36,10 @@ async fn create_snapshots_profile_and_atomically_materializes_initial_records() 
         .unwrap();
 
     assert_eq!(agent.status, AgentStatus::Starting);
+    assert_eq!(
+        agent.conversation.first_message.as_ref().unwrap().purpose,
+        Some(FirstMessagePurpose::Task)
+    );
     assert_eq!(agent.profile.id, reference.id);
     assert_eq!(agent.capabilities, agent_capabilities());
     assert_eq!(agent.conversation.last_seq, 1);

@@ -618,6 +618,23 @@ independent Worktree-create route. Creation acceptance is not readiness or
 first-message completion. Follow the Agent, Sandbox events and recorded
 first-message state. Counts are enforced transactionally at admission.
 
+Owned Agent detail optionally includes `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence` once dispatch is fenced. Missing
+purpose means legacy unknown; an Agent's creation origin does not establish its
+message purpose, including when a Trigger reuses an untouched lifecycle Agent.
+
+Owned Agent detail, lists and hierarchy expose optional `runtime_metadata` with
+`working_directory`, `description`, `description_source` (`provider_title` or
+`prompt_preview`), and `description_is_setup_preview`. Missing source is unknown.
+The setup flag is true only with exact provider-input evidence linked to the
+recorded automatic setup message. Ignore a preview as a display title only when
+its source is `prompt_preview` and this flag is true; then use the configured
+Agent title. Explicit native titles remain authoritative, including text equal
+to a setup preview. This is title provenance, not a semantic title generator.
+`runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
+Shared conversation reads retain their existing metadata redaction.
+
+
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
 and home. Workspace removal and Sandbox retirement are durable operations,

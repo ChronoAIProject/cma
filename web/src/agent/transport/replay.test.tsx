@@ -2,9 +2,64 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAgentController } from '../controller';
 import { at, binding, cursor, harness, item, json, page } from './controller.fixture';
+import { agentDisplayTitle } from '../presentation';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.useRealTimers());
+
+it('preserves setup and native title provenance through decoded v2 replay and reconnect', async () => {
+  const h = harness();
+  const setup = 'Retained setup prompt';
+  h.snapshot.mockResolvedValue(
+    json(
+      page(
+        [
+          item(1, {
+            type: 'runtime_metadata_changed',
+            metadata: {
+              description: setup,
+              description_source: 'prompt_preview',
+              description_is_setup_preview: true,
+            },
+          }),
+        ],
+        1,
+      ),
+    ),
+  );
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(h.streaming).toBe(true));
+  if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
+  expect(agentDisplayTitle(result.current.state.detail)).toBe('Agent one');
+  await act(async () =>
+    h.durable(2, {
+      type: 'runtime_metadata_changed',
+      metadata: { description: setup, description_source: 'provider_title' },
+    }),
+  );
+  await waitFor(() => {
+    if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
+    expect(agentDisplayTitle(result.current.state.detail)).toBe(setup);
+  });
+  await act(async () => {
+    h.gap('reconnected', null);
+    h.durable(3, {
+      type: 'runtime_metadata_changed',
+      metadata: {
+        description: 'Older fallback preview',
+        description_source: 'prompt_preview',
+        description_is_setup_preview: true,
+      },
+    });
+  });
+  expect(result.current.state).toMatchObject({
+    status: 'ready',
+    detail: { runtimeMetadata: { description: setup, descriptionSource: 'provider_title' } },
+    conversation: { cursor: 3 },
+  });
+  expect(h.post).not.toHaveBeenCalled();
+  unmount();
+});
 
 it('keeps a short reconnect quiet, reports a persistent outage, and clears it on a valid frame', async () => {
   const h = harness();

@@ -1,13 +1,55 @@
 import type * as Wire from '@chronoai/cma-sdk';
 import type {
   AgentDetail,
+  AgentRuntimeMetadata,
   AgentSummary,
+  FirstMessageState,
   SandboxDetail,
   SandboxSummary,
   WorkspaceDetail,
   WorkspaceSummary,
   Worktree,
 } from '../types';
+
+function runtimeMetadata(
+  value:
+    | {
+        working_directory?: string;
+        description?: string;
+        description_source?: AgentRuntimeMetadata['descriptionSource'];
+        description_is_setup_preview?: boolean;
+      }
+    | undefined,
+): AgentRuntimeMetadata | undefined {
+  return value === undefined
+    ? undefined
+    : {
+        workingDirectory: value.working_directory,
+        description: value.description,
+        descriptionSource: value.description_source,
+        descriptionIsSetupPreview: value.description_is_setup_preview,
+      };
+}
+
+function firstMessage(
+  value:
+    | (NonNullable<Wire.Agent['first_message']> & {
+        purpose?: FirstMessageState['purpose'];
+        turn_sequence?: number;
+      })
+    | undefined,
+): FirstMessageState | undefined {
+  return value === undefined
+    ? undefined
+    : {
+        state: value.state,
+        queuedAt: value.queued_at,
+        completedAt: value.completed_at,
+        failedAt: value.failed_at,
+        purpose: value.purpose,
+        turnSequence: value.turn_sequence,
+      };
+}
 
 export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
   return {
@@ -111,13 +153,7 @@ function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
     status: value.status,
     profile: value.profile,
     title: value.title,
-    runtimeMetadata:
-      value.runtime_metadata === undefined
-        ? undefined
-        : {
-            workingDirectory: value.runtime_metadata.working_directory,
-            description: value.runtime_metadata.description,
-          },
+    runtimeMetadata: runtimeMetadata(value.runtime_metadata),
     updatedAt: value.updated_at,
   };
 }
@@ -177,23 +213,9 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
     conformsTo: value.conforms_to,
     reach: value.reach,
     title: value.title,
-    runtimeMetadata:
-      value.runtime_metadata === undefined
-        ? undefined
-        : {
-            workingDirectory: value.runtime_metadata.working_directory,
-            description: value.runtime_metadata.description,
-          },
+    runtimeMetadata: runtimeMetadata(value.runtime_metadata),
     pausedNotice: value.paused_notice,
-    firstMessage:
-      value.first_message === undefined
-        ? undefined
-        : {
-            state: value.first_message.state,
-            queuedAt: value.first_message.queued_at,
-            completedAt: value.first_message.completed_at,
-            failedAt: value.first_message.failed_at,
-          },
+    firstMessage: firstMessage(value.first_message),
     failure: value.failure,
     stopReason: value.stop_reason,
     createdAt: value.created_at,

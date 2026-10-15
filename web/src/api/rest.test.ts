@@ -18,6 +18,47 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('keeps title provenance and recorded first-message identity in detail and hierarchy reads', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    const metadata = {
+      description: 'A retained automatic setup prompt',
+      description_source: 'prompt_preview',
+      description_is_setup_preview: true,
+      working_directory: '/home/cma/project',
+    };
+    const expected = {
+      description: metadata.description,
+      descriptionSource: 'prompt_preview',
+      descriptionIsSetupPreview: true,
+      workingDirectory: metadata.working_directory,
+    };
+    test.reply({
+      ...WIRE_AGENT,
+      runtime_metadata: metadata,
+      first_message: { ...WIRE_AGENT.first_message, purpose: 'setup', turn_sequence: 7 },
+    });
+    expect(await client.readAgent('agent-1')).toMatchObject({
+      runtimeMetadata: expected,
+      firstMessage: { purpose: 'setup', turnSequence: 7 },
+    });
+    test.reply({
+      ...WIRE_WORKSPACE_DETAIL,
+      agents: WIRE_WORKSPACE_DETAIL.agents.map((agent) => ({
+        ...agent,
+        runtime_metadata: metadata,
+      })),
+    });
+    expect((await client.readWorkspace('workspace-1')).agents[0]?.runtimeMetadata).toEqual(
+      expected,
+    );
+    test.reply(WIRE_AGENT);
+    const legacy = await client.readAgent('agent-1');
+    expect(legacy.runtimeMetadata).toBeUndefined();
+    expect(legacy.firstMessage?.purpose).toBeUndefined();
+    expect(legacy.firstMessage?.turnSequence).toBeUndefined();
+  });
+
   it('preserves exact public bootstrap lineage and unresolved worktree state without fabricating readiness', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);

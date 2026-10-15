@@ -99,7 +99,7 @@ pub(in crate::store) fn intent(
     let home = AgentHomeRequest::new(
         format!("agent:{}:home:create:v1", agent.id),
         crate::sandbox::runtime_options(agent, parent, tree),
-        String::new(),
+        agent.profile.content.system_prompt.clone(),
         vec![],
     );
     let mut next = agent.clone();

@@ -86,7 +86,10 @@ pub(super) async fn prepare_step(
         let home = AgentHomeRequest::new(
             format!("agent:{}:home:create:v1", agent.id),
             options.clone(),
-            String::new(),
+            record.plan.workspaces[0].agents[0]
+                .content
+                .system_prompt
+                .clone(),
             Vec::new(),
         );
         adapter.materialize_agent_home(handle, 1, &home).await?;

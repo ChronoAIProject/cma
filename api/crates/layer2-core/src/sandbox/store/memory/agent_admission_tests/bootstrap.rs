@@ -414,3 +414,39 @@ async fn bootstrap_workspace_claim_waits_without_mutation_until_installation_can
     assert_eq!(claimed.revision, original.revision + 1);
     assert!(claimed.failed.is_none());
 }
+
+#[tokio::test]
+async fn trigger_task_reusing_legacy_lifecycle_agent_keeps_task_purpose() {
+    use crate::sandbox::{FirstMessagePurpose, FirstMessageRecord};
+    let store = ready_store(2).await;
+    let mut initial = admission("lifecycle:legacy-operation");
+    initial.origin = AgentOrigin::Lifecycle {
+        operation_id: "legacy-operation".into(),
+    };
+    initial.creation_key = format!(
+        "lifecycle:{}",
+        crate::profiles::content_digest(&initial.origin).unwrap()
+    );
+    let mut agent = created(store.admit_agent(initial).await.unwrap()).agent;
+    let original_origin = agent.origin.clone();
+    let mut task = admission("trigger-task");
+    task.origin = AgentOrigin::Trigger {
+        trigger_id: "trigger".into(),
+        launch_id: "launch".into(),
+    };
+    task.first_message = Some(FirstMessageRecord::new("trigger-task", "Actual task", NOW).unwrap());
+    assert!(task.can_reuse(&agent, &workspace(), true));
+    assert!(task
+        .initialize_reused_agent(&mut agent, false)
+        .unwrap()
+        .is_some());
+    assert_eq!(agent.origin, original_origin);
+    assert_eq!(
+        agent.conversation.first_message.as_ref().unwrap().purpose,
+        Some(FirstMessagePurpose::Task)
+    );
+    assert_eq!(
+        agent.conversation.first_message.as_ref().unwrap().text,
+        "Actual task"
+    );
+}

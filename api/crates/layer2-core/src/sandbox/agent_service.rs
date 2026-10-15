@@ -224,7 +224,11 @@ impl AgentService {
         };
         let first_message = request
             .first_message
-            .map(|text| FirstMessageRecord::new(creation_key.clone(), text, now.clone()))
+            .map(|text| {
+                let mut record = FirstMessageRecord::new(creation_key.clone(), text, now.clone())?;
+                record.purpose = Some(attribution.first_message_purpose);
+                Ok::<_, super::SandboxModelError>(record)
+            })
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {

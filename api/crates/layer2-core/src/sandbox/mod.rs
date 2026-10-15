@@ -36,7 +36,8 @@ mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
 pub use conversation_observation::{
-    AgentObservations, AgentRuntimeMetadata, AgentTurnUsage, AgentUsageCheckpoint,
+    AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
+    AgentUsageCheckpoint,
 };
 mod conversation_fold_support;
 mod conversation_recorder;
@@ -185,7 +186,8 @@ pub use event::{
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
-    FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
+    FirstMessageDelivery, FirstMessageFailure, FirstMessagePurpose, FirstMessageRecord,
+    MAX_FIRST_MESSAGE_BYTES,
 };
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{

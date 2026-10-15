@@ -98,6 +98,7 @@ it('starts one check during an authorized load and keeps Send behind complete hi
     'Keep the draft',
     expect.any(Function),
     expect.any(Function),
+    expect.any(Function),
   );
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
 });

@@ -435,7 +435,14 @@ controls. Its browser region scrolls and fills the remaining height.
 The tree is Sandbox -> Workspace -> Agent. Sandbox labels use
 `Sandbox Machine - <UUID>`; Workspace labels use the selected Agent's confirmed
 runtime working directory, with the recorded workspace path as fallback. Agent
-labels prefer the provider's session description, then the recorded title.
+labels share one selector with the Agent header and browser document title.
+An explicit native provider title takes priority, even when it equals the
+automatic setup message. A prompt preview confirmed by public provenance to
+come from automatic setup is omitted; the configured Agent name is the
+fallback. Preserve descriptions whose legacy provenance is unknown. Do not
+guess setup from wording or choose a task by its position among user messages:
+service-access callbacks can also use that role. Display selection leaves the
+raw runtime description and conversation history intact.
 Runtime metadata arrives through the public event stream, never a directory
 poll. Long labels truncate with ellipsis and expose full text on hover. Rows
 retain stable status/icon slots, and expansion belongs to the signed-in viewer.
@@ -708,9 +715,16 @@ the viewer's name. Identity rendering does not alter message text or attribution
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
 breaks and use the existing caption label token at 12/18 for **Sending…**.
-Show **Sent** and clear the matching draft only after authorized acceptance;
-uncertain delivery shows **Awaiting confirmation**, and a cancelled connection
-check shows **Not sent**. These local rows never submit or retry an input.
+On valid Send, immediately hand the visible text and ready attachment records to
+that outgoing row and show an empty, editable composer. Retain the original draft
+snapshot until authorized acceptance; only then show **Sent** and discard that
+snapshot. A refusal or uncertain outcome restores untouched input and ready
+attachments without uploading again. New typing belongs to the next draft and
+must never be cleared or replaced by a late callback, even when its text is
+identical. Its earlier outgoing row still retains the submitted text and exact
+file references. Uncertain delivery shows **Awaiting confirmation**; a cancelled
+connection check or authoritative admission refusal shows **Not sent**. These
+local rows never submit or retry an input. Quick messages preserve the current draft.
 Reconcile with durable user messages by command or run identity, never text,
 so intentional identical messages remain separate. Account, Agent and access
 changes invalidate both local rows and late draft-clearing callbacks. Retained
@@ -766,7 +780,8 @@ selection through reloads and flag changes; existing AG-UI tabs keep their
 transport. Preserve an uncertain message or response action with its exact key,
 body and original target. Use the existing status band and compact Button for
 **Recover pending request**; recovery is explicit and never retargets an action.
-Keep the draft editable and clear only the draft matching a retained acceptance.
+Keep the draft editable; the immediate visual handoff retains its original
+snapshot until matching acceptance and restores untouched input on uncertainty.
 A refused intent may be corrected after an authoritative admission refusal.
 
 Responses v2 may load Agent/Workspace details, usage and the first activity page
@@ -822,7 +837,8 @@ An unresolved Worktree retains its empty commit and actual creation state;
 queued acceptance never claims runtime readiness. Keep the actual Starting label and recorded
 preparation visible. Responses v2 tabs offer the normal editable composer,
 **Message Agent** placeholder and **Send message** without an extra Starting or
-sending notification in the composer. Clear the matching draft only on durable admission; the creation first
+sending notification in the composer. Hand off its visible draft immediately and
+retain the snapshot until durable admission; the creation first
 message keeps its earlier queue position. Existing AG-UI tabs wait for readiness.
 Missing/stale parent state, access uncertainty, saving or lifecycle changes hold
 Starting input and its explicit uncertain-request recovery.
@@ -851,7 +867,8 @@ centered on the same row beside the input, with a flexible input column and two
 32px button columns (44px on mobile), separated by the existing 8px gap. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
-Keep the draft editable and retain it until admission is confirmed. An uncertain
+Keep the next draft editable while retaining the submitted snapshot until
+admission is confirmed. An uncertain
 earlier input holds another queue submission until explicit recovery. Existing
 AG-UI tabs retain their current composer behavior during protocol migration.
 
@@ -912,6 +929,10 @@ published Trigger revision; original creation provenance and first message stay
 unchanged. Retired Triggers expose provenance but no new quick-message actions.
 
 ### Preparation, pause, and recovery
+
+While the New agent request is in flight, show **Starting your Agent…**. Show
+same-request recovery wording only after the request has stopped waiting without
+a receipt; a healthy admission must not flash a recovery instruction.
 
 Preparation has stable step rows from Sandbox events and current instance facts:
 software installation, Workspace preparation, Worktree creation, Agent startup,
@@ -1248,6 +1269,20 @@ too.
 **Nothing moves on hover**, and nothing is animated on the agent's own words. A turn arriving may
 fade; the text inside it does not animate as it is read.
 
+### View and message continuity
+
+Route changes fade the existing center surface over the shared slow duration
+(300 ms). Returning to an already visited service fades its retained body with
+the same timing. These transitions never remount working state, reset drafts or
+scroll positions, request resource reloads, or postpone input. A newer route
+cancels an unfinished transition. New optimistic outgoing messages and genuinely
+live assistant replies fade once over the normal duration (200 ms); loaded
+history, durable reconciliation, and subsequent streaming tokens do not replay
+that arrival. Use opacity only so text remains sharp and layout stays stable.
+Reduced motion disables arrivals and cancels an animation immediately if the
+preference changes while it is running. Menu and modal exit frames release
+interaction immediately; presentation must never delay an action.
+
 ### What motion is for here
 
 Inside a working surface, motion reports a changed surface or ongoing work.
@@ -1281,7 +1316,10 @@ duration and shared easing curve. A dismissing notification retains its final
 content only until the exit finishes, becomes inert and accessibility-hidden
 immediately, and cannot dispatch another action. The semantic element and its
 layout remain unchanged during the fade. Reappearance cancels stale removal;
-reduced motion skips both animations and any visual exit retention. Loading
+reduced motion skips both transitions and any visual exit retention. Interrupted
+menu, dialog and notice transitions reverse from the currently displayed opacity
+without flashing back to a keyframe endpoint. A newly inserted surface starts
+transparent through the shared starting style. Loading
 skeletons, whole-page error states and conversation text retain their own existing
 presentation rather than acquiring a notification wrapper.
 
@@ -2002,6 +2040,16 @@ history from zero. Denied access clears the view, and account/client changes
 cannot reuse it. An ordinary stream handshake does not create a lost-update
 warning. Explicit lag and actually discarded live fragments remain visible.
 
+The same account/client scope retains up to six recently visited owner Sandbox
+snapshots and their loaded Workspace/Agent details. Re-entry paints this recorded
+content immediately while current access and lifecycle state are checked; all
+mutation controls, connection setup and live resource readings wait for those
+checks. Shared views never consume owner snapshots. Access denial, missing or
+retiring/retired resources clear their retained display data. Retain only the
+immutable Agent creation category for the owner header; privileged provenance
+and source actions still require fresh authorized reads. Memory retention adds
+no background polling and ends with the authenticated scope.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -2238,3 +2286,16 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
 | 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
 | 2026-10-15 | Let the whole modal card scroll at viewport widths or heights of 480px or less. Preserve the shared centered geometry and 20% margins while keeping fields, Close and footer actions reachable instead of collapsing the body to zero height; let shared input wrappers shrink within the narrow content width. |
+| 2026-10-15 | Share Agent display-title selection across header, browser title and sidebar. Keep explicit native titles, omit only previews positively identified as automatic setup, and fall back to the configured name. Preserve unknown legacy descriptions and title provenance through live updates, hierarchy refresh and replay without selecting a message by role or position. |
+
+- 2026-10-15 — Apply the existing shared opacity presence to dropdown menus as well as dialogs: closing releases keyboard/pointer actions and focus immediately while its inert frame fades; quick reopening cancels stale removal. Use the existing duration/easing for composer drop-up max-height and menu hover tint, with reduced motion removing both transitions. No palette, geometry, menu action, or message admission changes.
+| 2026-10-15 | Hand visible text and ready attachments to the outgoing message immediately on valid Send. Retain the original snapshot until authorized acceptance, restore untouched input on refusal or uncertainty, and preserve newly typed text and later attachments. Keep exact request recovery, navigation drafts, IME and separate queue/Stop behavior; authoritative v2 refusals show Not sent. |
+
+- 2026-10-15 — Add shared opacity arrivals for stable route surfaces and retained service re-entry (300 ms), and newly sent/live assistant messages (200 ms). Preserve drafts, focus, scroll, controller identity and history; streaming updates do not restart an arrival. Cancel stale transitions and honor live reduced-motion preference changes.
+
+- 2026-10-15 — Preserve displayed opacity when menu, dialog or notification presence reverses mid-transition. Use shared opacity transitions with starting styles for first appearance; retain immediate inert exits, focus behavior, drafts and reduced-motion removal.
+
+- 2026-10-15 — Reuse already resolved profile/service/skill labels synchronously when a view returns within the same authenticated reference provider. Keep existing link identities and error handling, and discard names immediately when the client/account changes so loading text does not flash in place of known names.
+| 2026-10-15 | Preserve recent owner Sandbox content and immutable Agent creation labels across route re-entry within a bounded account/client scope. Revalidate access and lifecycle state before controls become usable; discard denied, missing, shared and retired projections, reject late replies, and retain no privileged provenance facts. |
+
+- 2026-10-15 — Keep New agent admission copy in its starting state while the request is in flight; retain same-request recovery wording after an unresolved outcome, avoiding a recovery flash during healthy creation.

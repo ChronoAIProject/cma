@@ -38,6 +38,7 @@ fn runtime_metadata_persists_only_canonical_observations_and_deduplicates() {
     let observation = ConversationUpdate::Metadata(ConversationMetadata {
         working_directory: Some("/home/cma".into()),
         description: Some("Investigate checkout".into()),
+        ..Default::default()
     });
     assert!(matches!(
         apply(&mut agent, observation.clone()).as_slice(),
@@ -49,6 +50,7 @@ fn runtime_metadata_persists_only_canonical_observations_and_deduplicates() {
         ConversationUpdate::Metadata(ConversationMetadata {
             working_directory: Some("relative/not-canonical".into()),
             description: None,
+            ..Default::default()
         }),
     );
     assert_eq!(
@@ -148,4 +150,103 @@ fn first_historical_snapshot_does_not_attribute_entire_lifetime_to_current_turn(
     assert!(!logs
         .iter()
         .any(|log| matches!(log, AgentLogKind::Usage { .. })));
+}
+
+#[test]
+fn title_provenance_binds_setup_input_and_never_downgrades_explicit_titles() {
+    use layer3_adapter::{
+        ConversationDescriptionInput as Input, ConversationDescriptionSource as Source,
+    };
+    let mut agent = test_agent(AgentStatus::Working, None);
+    let mut message = FirstMessageRecord::new("lifecycle", "Setup exact\npayload", LATER).unwrap();
+    message.purpose = Some(FirstMessagePurpose::Setup);
+    message.turn_sequence = agent.conversation.active_turn;
+    let text = message.text.clone();
+    agent.conversation.first_message = Some(message);
+    let preview = |input| {
+        ConversationUpdate::Metadata(ConversationMetadata {
+            description: Some("Setup exact payload".into()),
+            description_source: Some(Source::PromptPreview),
+            description_input: input,
+            ..Default::default()
+        })
+    };
+    apply(&mut agent, preview(Some(Input::Current(text.clone()))));
+    assert!(
+        agent
+            .conversation
+            .observations
+            .metadata
+            .description_is_setup_preview
+    );
+    agent.conversation.active_turn = None;
+    apply(&mut agent, preview(None));
+    assert!(
+        agent
+            .conversation
+            .observations
+            .metadata
+            .description_is_setup_preview
+    );
+    apply(&mut agent, preview(Some(Input::First(text.clone()))));
+    assert!(
+        agent
+            .conversation
+            .observations
+            .metadata
+            .description_is_setup_preview
+    );
+    // The same payload on a later actual task is not the recorded setup turn.
+    agent.conversation.active_turn = Some(999);
+    apply(&mut agent, preview(Some(Input::Current(text.clone()))));
+    assert!(
+        !agent
+            .conversation
+            .observations
+            .metadata
+            .description_is_setup_preview
+    );
+    apply(
+        &mut agent,
+        ConversationUpdate::Metadata(ConversationMetadata {
+            description: Some("Setup exact payload".into()),
+            description_source: Some(Source::ProviderTitle),
+            ..Default::default()
+        }),
+    );
+    assert!(
+        !agent
+            .conversation
+            .observations
+            .metadata
+            .description_is_setup_preview
+    );
+    apply(&mut agent, preview(Some(Input::First(text))));
+    apply(
+        &mut agent,
+        ConversationUpdate::Metadata(ConversationMetadata {
+            description: Some("old replay".into()),
+            working_directory: Some("/home/cma/new".into()),
+            ..Default::default()
+        }),
+    );
+    let metadata = &agent.conversation.observations.metadata;
+    assert_eq!(metadata.description.as_deref(), Some("Setup exact payload"));
+    assert_eq!(metadata.description_source, Some(Source::ProviderTitle));
+    assert!(!metadata.description_is_setup_preview);
+    assert_eq!(metadata.working_directory.as_deref(), Some("/home/cma/new"));
+}
+
+#[test]
+fn missing_provenance_stays_unknown_and_payload_identity_is_unchanged() {
+    let message = FirstMessageRecord::new("legacy", "Exact payload", LATER).unwrap();
+    let mut persisted = serde_json::to_value(&message).unwrap();
+    persisted.as_object_mut().unwrap().remove("purpose");
+    let restored: FirstMessageRecord = serde_json::from_value(persisted).unwrap();
+    assert_eq!(restored.purpose, None);
+    assert_eq!(restored.payload_sha256, message.payload_sha256);
+    let metadata: AgentRuntimeMetadata =
+        serde_json::from_value(serde_json::json!({"description":"legacy title"})).unwrap();
+    assert_eq!(metadata.description_source, None);
+    assert!(!metadata.description_is_setup_preview);
 }

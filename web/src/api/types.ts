@@ -144,6 +144,9 @@ export interface Worktree {
 export interface AgentRuntimeMetadata {
   readonly workingDirectory?: string;
   readonly description?: string;
+  readonly descriptionSource?: 'provider_title' | 'prompt_preview';
+  /** Positive server proof that this preview came from automatic setup. */
+  readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
   readonly runtimeMetadata?: AgentRuntimeMetadata;
@@ -195,6 +198,8 @@ export interface FirstMessageState {
   readonly queuedAt: string;
   readonly completedAt?: string;
   readonly failedAt?: string;
+  readonly purpose?: 'setup' | 'task';
+  readonly turnSequence?: number;
 }
 
 export interface AgentDetail {

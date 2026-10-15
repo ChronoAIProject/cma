@@ -1,23 +1,24 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 20:01 SGT
+## Current production — 15 October, 22:31 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 39 | `sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132` |
-| Web | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 117 | `sha256:369c448ed9c44037021546c2885c7f3b155e2a2457c14ab9e2e1379797af9904` |
+| Agent Manager | `b28d39c0b008a0d1342d66168a1e3a6b77383b7c` | 45 | `sha256:970961026f8442959874d09a6149588521a27be8433ac582943233fe8b0ed9a3` |
+| Web | `dfc4d128c499dff450c40ebd11af9f0d31474216` | 121 | `sha256:89007494cf582621ee1273de217b9fa093c0971777bb4751b2c9e7d745b85f22` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
-| Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
+| Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
 
 Production checks now cover live key replacement and revocation without a
 restart, actual private GitHub API access, pasted/dropped attachments, message
 identities and estimates during streamed output. Measured warm creation reached
-an enabled composer in 3.373 seconds. Key-change callbacks passed the five-second
+an enabled, unobstructed Send in 4.260 seconds on the final release. Key-change callbacks passed the five-second
 target, including an active turn. Actual controller pause/resume remains slower
-than five seconds; fresh external OAuth and native Git transport are separate
-coverage limits. Exact evidence and measurement boundaries are in the dated
+than five seconds; fresh external OAuth remains a separate coverage limit.
+The accepted Git workflow downloads source through the authenticated GitHub API
+and initializes a local Git workspace; native Git transport is outside this workflow. Exact evidence and measurement boundaries are in the dated
 15 October sections at the end of this document.
 
 ## Attachment, usage and message release — 15 October, 16:47 SGT
@@ -1095,3 +1096,258 @@ not a new browser-click or active-turn interruption measurement.
 Evidence: `/tmp/cma-final-audit-release-20261015/cma-agent-manager` and
 `/tmp/cma-metadata-live-20261015/rollout-identity-proof.json`, together with the
 single input intent, receipt and completed transcript in that fixture directory.
+
+## Title metadata release — 15 October, 20:48 SGT
+
+The title API and Web rollout passed exact image/source identity and Ready
+checks. Public Web asset `index-XJqupw_j.js` equals the running Pod bytes at
+SHA-256 `699ea28656b017bf2d36a39cb8ea4efe5b166ab2ba42a45de7a3048eefa5113a`.
+The default runtime passed all 13 native fixtures, its runtime contract and
+full-home initialization/replay checks before activation. No existing runtime
+was rotated; API, Web and runtime scans report no fixable HIGH/CRITICAL findings.
+
+A disposable production Agent verified header, sidebar and browser title
+fallback when the native description is positively identified as automatic
+setup. Its native working directory remains projected and its draft/history
+survive Agent-to-Sandbox navigation and a full reload. This read-only title
+harness deliberately blocked connection probes, so its screenshots are not
+normal composer-usability or error-free-send evidence. The setup metadata and
+raw history remain unchanged. An older-runtime fixture retained its native
+Sandbox, Claim, Pod, PVC/PV and transcript across the first API rollout.
+
+The title fields are persisted in strict records. A rollback must keep a reader
+compatible with these records; the earlier a03 API is not a safe reader after
+new title-feature writes. Image Manager remains undeployed. The subsequent
+animation and immediate-composer changes are not covered by this release.
+
+## Motion and immediate composer release — 15 October, 21:03 SGT
+
+Web `0785d328` is deployed as generation 119 with one Ready replica, zero
+restarts, and an exact image/source match. Public asset `index-1JCqqZEH.js`
+equals the running Pod at SHA-256
+`17ee858b1bff80a01a9509e20a693887b6605777a8306449b96fe10fe95573c6`.
+The image scan reports no fixable HIGH/CRITICAL findings. The first public read
+immediately after Kubernetes readiness returned 503 while the load-balancer
+backend converged; the following exact public-asset verification succeeded.
+
+The integrated frontend suite passed 210 files / 1,975 tests, followed by the
+interrupted-view regression. Lint, TypeScript, formatting, CSS collision,
+production build and computed styles passed; 144 custom properties resolve in
+both themes. Fourteen browser journeys cover queue/Stop, compact layout at three
+widths in both themes, actual clipboard image and file drop, durable replay,
+uncertain delivery/reload, identity and controls. Local real-browser motion
+checks verified intermediate opacity, rapid-route continuity, unchanged bounds,
+retained DOM/form values and scroll, once-only message arrivals, no streamed
+text animation restart, and dynamic reduced-motion cancellation.
+
+An actual production attachment upload and UI Send cleared text and attachment
+previews in **4.2 ms in the submit event**, with the first rendered frame at
+**4.8 ms**. The outgoing row used a real 200 ms opacity animation. Text entered
+after sending stayed visible while waiting and after the actual reply. Exactly
+one upload and one send occurred. A read-only reload independently confirmed one
+durable matching turn, its persistent `/home/attachments` path, the expected
+reply, and Agent Ready. These are individual browser samples, not percentile
+claims. The first harness could not reread an upload body evicted from the CDP
+cache; its failure record is retained, and a separate read-only completion proof
+resolved that observer limitation without repeating the write.
+
+A retained older runtime also resumed after the default-image update with the
+same native Sandbox/Claim, PVC/PV, conversation and unchanged history prefix.
+The Agent recalled its pre-rollout marker and color correctly. Its Pod changed
+through explicit pause/resume, while its pinned old runtime and complete home
+remained intact. Full backend resume in this sample took 23.273 seconds; this
+is separate from the foreground input goal.
+
+## Persistent GitHub guidance API — 15 October, 21:18 SGT
+
+Agent Manager `ba861431` is deployed as generation 42 with its exact immutable
+image, source and Pod ownership verified. It has one Ready replica and zero
+restarts; authenticated public Agent and Sandbox reads pass. The image scan
+reports no fixable HIGH/CRITICAL findings. An immediate post-rollout public read
+returned 503 during backend convergence; the later exact verification passed.
+The default runtime, full-home mode, prepared target one and existing runtime
+images remain unchanged. New admissions capture versioned GitHub API guidance;
+new prepared profiles include the same bytes. Old operations replay their
+original profile/home payload. All 108 focused CMA contracts, two generic core
+publication contracts and strict Clippy passed before building. The current
+reader supports both old empty preparation and captured instructions; keep that
+reader compatibility for any API rollback.
+
+## Prepared-home instruction incident — 15 October, 21:24 SGT
+
+The first new V1-guidance warm claim was admitted in 174 ms but failed during
+Agent startup. Production verification found that the preparation materializer
+still wrote an empty instruction file while adoption correctly expected the
+new captured prompt. This is a failed creation sample, not accepted performance.
+The fixed source writes the pinned prompt during preparation and advances the
+internal prepared profile revision so incompatible unclaimed homes are retired
+through normal CMA reconciliation. Claimed or owned records remain readable.
+
+While the corrected image is built and its concrete preparation/adoption
+regression runs, the CMA Deployment temporarily sets prepared target zero.
+This fences malformed ready claims and retires unclaimed prepared capacity.
+The normal creation path and underlying native warm pool remain enabled;
+existing owner Sandboxes retain their runtimes and volumes. Restore prepared
+target one only with the corrected API and verify fresh compatible capacity.
+
+## Smooth motion and retained views — 15 October, 21:38 SGT
+
+Web `61dad4d5` is deployed as generation 120 with one Ready replica and zero
+restarts. Public asset `index-whktBcG_.js` equals the serving Pod byte for byte
+at SHA-256 `b45443df2de787493c2313eaba2eb43e347b7e08bed6ccaf07f0ee160d7c9926`.
+The immutable source/index/platform checks and vulnerability scan passed.
+The integrated frontend suite passed 212 files / 1,991 tests, lint, types,
+formatting, CSS checks and production build.
+
+Fifteen final production browser checks passed. Reversed menus preserve their
+displayed opacity (0.632704 in the measured reversal), and rapid route changes
+continue at their current opacity. Portal returns preserve the exact input and
+scroll DOM, unsent draft, unpinned 48px reading position and geometry. Dialogs
+retain focus containment during entry and immediately release focus/scroll lock
+on inert exit. Composer expansion preserves its 64px input seat. Live
+reduced-motion changes cancel or skip animation. Settled narrow dark layout
+has no document horizontal overflow.
+
+Both Agent returns and the second Sandbox visit displayed retained content
+without repeated origin, opening or loading placeholders; measured content
+return was 8–11 ms. Access and lifecycle checks still gate commands while
+content is retained. These are individual browser observations, not latency
+percentiles. The first external collector inspected a completed CSS transition
+too late; its failure is preserved, and the corrected collector captures entry
+at insertion. No product error or server write occurred in these motion checks.
+
+## Prepared-home correction — 15 October, 21:44 SGT
+
+Agent Manager `77ada2dc` is deployed as generation 44. Its immutable image
+passed source/index/platform verification and vulnerability scanning; the
+serving Pod has one Ready replica and zero restarts, with authenticated public
+Agent and Sandbox reads passing. The corrected image and prepared target
+zero-to-one change were applied together under Deployment identity, resource
+version and prior-spec checks. The default runtime and full-home mode remain
+unchanged. Before rollout, 89 preparation/replay/migration tests and strict
+Clippy passed, including actual preparation followed by owned replay and
+MongoDB reconciliation that preserves claimed revision-one resources.
+
+The temporary target-zero fallback completed one normal creation in 33.931 s
+and rendered the exact 2,488-byte V1 instructions. That sample establishes
+functional fallback, not the five-second warm target. Fresh revision-two
+prepared capacity must be verified separately.
+
+Twenty post-rollout continuity checks passed across the new and retained
+runtime fixtures. Both had naturally paused before rollout; their pause events
+and empty Pod sets were captured in advance. They retain their exact native
+Sandbox/Claim identities and generations, full-home PVC/PV, pinned runtime
+images, native conversations, and complete event/transcript/lifecycle prefixes.
+Neither fixture unexpectedly restarted or rotated during the API deployment.
+
+## Natural GitHub source workflow — 15 October, 21:54 SGT
+
+A fresh revision-two preparation was verified before claiming: exact pinned
+V1 instructions were already present in its Agent home. Creation reused the
+prepared Sandbox, Workspace, Worktree and Agent identities, and the owned
+Agent rendered the same 2,488-byte instructions after adoption. The public
+observer measured operation success at 6.057 s and Agent Ready at 6.415 s;
+setup completed at 27.378 s. This API sample does not pass the five-second
+threshold. UI queue eligibility is measured separately and does not wait for
+the automatic setup model turn.
+
+A natural repository request containing no API/archive steps caused the Agent
+to request `api-github` through its MCP tool. Owner approval updated the active
+conversation, after which the Agent resolved `develop` to commit
+`cf59a623daa2001721fe26ca60f5bdef7fa854db`, downloaded a 7,701,706-byte archive
+with authenticated `gh api`, validated it and prepared the local source.
+An independent read in the bound runtime Pod compared all 4,281 regular files
+and executable bits against the 4,706-member archive. Its SHA-256 is
+`73169caf2f7825e443b3ab4f98f67029f7911ab040fcbf23fae0b6409a424328`.
+Existing Git top-level, branch and HEAD were preserved. The result is a local
+source checkout; imported remote history and native Git transport are not
+claimed. The model task completed in 322 seconds including validation and
+file work. A first 180-second observer window expired; a read-only continuation
+confirmed completion without replaying the prompt.
+
+
+## Final Web animation and send verification — 15 October, 22:15 SGT
+
+Web `dfc4d128` is deployed as generation 121. Its source/index/platform checks
+and image scan passed, and public asset `index-aS-8WoEt.js` matches the serving
+Pod at SHA-256 `53f0a6e75265cd7f86553f2bac3835308c3c4ae1cb1288e264d808f51be178fa`.
+The sole change from the earlier motion-tested Web is pending-creation wording:
+healthy admission says “Starting your Agent…”; recovery guidance is reserved
+for an ended wait without a receipt. Eleven affected tests, lint, types and
+format checks passed. The shared animation implementation is unchanged.
+
+A real foreground Chrome sample exercised three menu/dialog/portal cycles
+without pausing or seeking animations. Across 636 frame intervals, median was
+16.7 ms, p95 16.8 ms, p99 33.3 ms and maximum 33.4 ms. Fifteen intervals exceeded
+25 ms, all during dialog transitions; none exceeded 50 ms, and the browser
+reported no long tasks or errors. This finite sample on a 1440×980 viewport
+is not a universal frame-rate guarantee. Functional interrupted-transition,
+retained-state, narrow-layout and dynamic reduced-motion checks are recorded in
+the earlier fifteen-check acceptance.
+
+A final real attachment upload and Send on this exact Web cleared the submitted
+text and ready attachment preview in **5.8 ms in the submit event**, with the
+first rendered frame at **6.8 ms**. Exactly one upload returned 201 and exactly
+one Responses-v2 send returned 200. A newer draft typed before the response was
+preserved through completion. Independent durable replay found exactly one
+completed matching turn and the expected `/home/attachments` manifest.
+Visible output estimates appeared during streaming; final actual counters
+advanced by 21,809 input and 18 output tokens. No persistent interrupted-update
+warning was observed. The inspector evicted the upload response body, but status,
+actual sent manifest and durable transcript independently proved acceptance.
+
+An earlier final-send collector clicked behind a pending access dialog and
+therefore sent no Agent message; its one unused upload and failed evidence are
+retained. The successful sample used a separate attributable upload. A preceding
+normal resume of the successful fixture was admitted in 241 ms and reached
+Active in 25.165 s, retaining the same Sandbox/Claim, PVC/PV, runtime image and
+conversation. This remains a full-backend resume limit, not a five-second pass.
+
+Evidence: `/tmp/cma-final-frames-dfc4-20261015/frames.json`,
+`/tmp/cma-composer-final-send-dfc4-77ada-20261015/summary.json`, and
+`/tmp/cma-final-clone-resume-20261015/summary.json`.
+
+
+## Quiet default setup and final creation — 15 October, 22:35 SGT
+
+Agent Manager `b28d39c0` is deployed as generation 45, with one Ready replica,
+zero restarts, and exact source/index/platform/image verification. Its immutable
+image scan passed, and authenticated public Agent/Sandbox reads passed at
+22:30:44 SGT. The default runtime, whole-home policy and prepared target one are
+retained. Strict manifest validation passed all 48 resources in 31 files with
+no errors or skips; kube-linter, HTTPRoute and native provider contracts passed.
+
+The preceding empty setup unnecessarily requested optional GitHub permission.
+New admissions now capture a local-only readiness prompt in durable storage;
+both new-Sandbox and existing-Workspace creation use its exact bytes. Selecting
+a repository retains the existing GitHub API/MCP setup. Historical absent-field
+replay uses the unchanged old builder, and persistent V1 instructions/prepared
+revision two remain unchanged. Fifty-five focused regressions passed, including
+actual MongoDB replay/restart, ownership, worker fencing, both creation paths
+and prepared reuse. Strict Clippy, format, file-size and secret checks passed.
+Once `setup_message` records exist, retain a compatible reader on rollback.
+
+On the exact final API/Web release, one actual browser Create click produced
+one POST accepted with 202 and consumed the exact previously observed Ready
+revision-two candidate. The textarea was editable at **4.031 s**; a full harmless
+draft and an enabled Send button that was also the actual pointer hit target
+were present at **4.260 s**. Healthy admission used “Starting your Agent…”
+without an unconfirmed/recovery flash. Setup completed approximately 10.65 s
+after the click, using the exact captured local-only prompt. There was exactly
+one setup turn, zero optional access-request records and no authorization modal.
+The five-second browser input criterion passes in this sample; setup/model
+completion is a separate measurement and does not pass that threshold.
+
+The retained GitHub/send fixture kept all three completed turns, native
+conversation, Sandbox/Claim and original PVC. Its normal inactivity pause began
+at 22:29:40 SGT, 905 seconds after its last durable event, and completed at
+22:29:51. The new API Pod was created at 22:29:52 and its container started at
+22:30:12, so the pause preceded the new API process. The native object was
+Suspended with no Pod, as expected. This verifies history and persistent
+identity continuity; it does not claim an active Pod remained running when the
+owner's configured inactivity policy had already paused it.
+
+Evidence: `/tmp/cma-title-release-b28d39c0/cma-agent-manager/live-verification.json`,
+`/tmp/cma-final-ui-default-b28-dfc4-20261015/create-report.json`,
+`/tmp/cma-final-ui-default-b28-dfc4-20261015/setup-access-requests.json`, and
+`/tmp/cma-final-clone-api-continuity-20261015/continuity-summary.json`.
