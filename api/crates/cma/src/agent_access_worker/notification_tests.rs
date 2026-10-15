@@ -171,6 +171,8 @@ fn hot_notification_requires_exact_scope_revision_and_complete_old_key_revocatio
         authorized_by: record.requester.owner.clone(),
         authorized_at: fixtures::NOW.into(),
         credential_generation_floor: floor,
+        runtime: sandbox.runtime.clone().unwrap(),
+        runtime_services: sandbox.credential.effective_reaches(),
     });
     assert!(notification_ready(&record, &agent, &sandbox).unwrap());
     for case in 0..7 {
