@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
@@ -26,6 +26,7 @@ import { LifecycleProgress } from './LifecycleProgress';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { SharingButton } from '../resources/SharingButton';
+import { useOwnerViews } from '../resources/retainedOwnerViews';
 
 type State =
   | { status: 'loading' }
@@ -41,6 +42,7 @@ export function SandboxPage({
   onAction,
   onNavigate,
   viewerId,
+  accessUncertain = false,
 }: {
   readonly client: CmaWebClient;
   readonly sandboxId: string;
@@ -50,13 +52,49 @@ export function SandboxPage({
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly viewerId?: string;
+  readonly accessUncertain?: boolean;
 }) {
-  const [state, setState] = useState<State>({ status: 'loading' });
+  const views = useOwnerViews();
   const [retry, setRetry] = useState(0);
-  const [pollError, setPollError] = useState(false);
+  const request = useMemo(
+    () => ({ client, sandboxId, revision, retry, views, viewerId }),
+    [client, sandboxId, revision, retry, views, viewerId],
+  );
+  const [stored, setStored] = useState<{
+    request: typeof request;
+    state: State;
+    pollError: boolean;
+  }>();
+  const retained =
+    views?.client === client && views.viewerId === viewerId
+      ? views.sandboxes.get(sandboxId)
+      : undefined;
+  const state: State =
+    stored?.request === request
+      ? stored.state
+      : retained === undefined
+        ? { status: 'loading' }
+        : { status: 'ready', ...retained };
+  const pollError = stored?.request === request && stored.pollError;
+  const revalidating = stored?.request !== request || accessUncertain;
+  const stale =
+    pollError ||
+    revalidating ||
+    (state.status === 'ready' &&
+      viewerId !== undefined &&
+      state.sandbox.owner !== undefined &&
+      state.sandbox.owner !== viewerId);
   const [advanced, setAdvanced] = useState(false);
   const [progressOpen, setProgressOpen] = useState(false);
-  const [connectionsReady, setConnectionsReady] = useState(false);
+  const [connectionScope, setConnectionScope] = useState<{
+    client: CmaWebClient;
+    sandboxId: string;
+    viewerId?: string;
+  }>();
+  const connectionsReady =
+    connectionScope?.client === client &&
+    connectionScope?.sandboxId === sandboxId &&
+    connectionScope?.viewerId === viewerId;
   const lifecycleReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
@@ -74,8 +112,15 @@ export function SandboxPage({
           if (abort.signal.aborted) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox projection referred to another resource.');
-          setState({ status: 'ready', sandbox, observedAt: new Date().toISOString() });
-          setPollError(false);
+          const value = { sandbox, observedAt: new Date().toISOString() };
+          if (
+            views?.client === client &&
+            sandbox.owner === views.viewerId &&
+            !['retiring', 'retired'].includes(sandbox.status)
+          )
+            views.sandboxes.put(sandboxId, value);
+          else views?.forgetSandbox(sandboxId);
+          setStored({ request, state: { status: 'ready', ...value }, pollError: false });
           timer = setTimeout(
             poll,
             sandbox.workspaces.some(
@@ -87,16 +132,28 @@ export function SandboxPage({
         })
         .catch((error: unknown) => {
           if (abort.signal.aborted) return;
-          setPollError(true);
-          const denied = error instanceof ApiError && [401, 403, 404].includes(error.status);
-          setState((current) =>
-            !denied && current.status === 'ready' && current.sandbox.id === sandboxId
-              ? current
-              : {
-                  status: 'error',
-                  message: error instanceof Error ? error.message : 'Sandbox unavailable.',
-                },
-          );
+          const denied = error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
+          if (denied) views?.forgetSandbox(sandboxId);
+          setStored((previous) => {
+            const current = previous?.request === request ? previous.state : undefined;
+            const cached =
+              views?.client === client && views.viewerId === viewerId
+                ? views.sandboxes.get(sandboxId)
+                : undefined;
+            return {
+              request,
+              pollError: true,
+              state:
+                !denied && current?.status === 'ready'
+                  ? current
+                  : !denied && cached !== undefined
+                    ? { status: 'ready', ...cached }
+                    : {
+                        status: 'error',
+                        message: error instanceof Error ? error.message : 'Sandbox unavailable.',
+                      },
+            };
+          });
           timer = setTimeout(poll, 5000);
         })
         .finally(() => {
@@ -110,7 +167,7 @@ export function SandboxPage({
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', poll);
     };
-  }, [client, sandboxId, revision, retry]);
+  }, [client, sandboxId, request, views, viewerId]);
   useEffect(() => {
     heading.current?.focus();
     document.title = `${documentTitle} · CMA`;
@@ -158,7 +215,7 @@ export function SandboxPage({
       client={client}
       sandbox={sandbox}
       observedAt={state.observedAt}
-      stale={pollError}
+      stale={stale}
     />
   );
   return (
@@ -171,7 +228,7 @@ export function SandboxPage({
           <p role="status">{sandboxLifecycleLabel(sandbox)}</p>
         </div>
         <div className="sandbox-page__actions">
-          {client.resourceViews === undefined ? null : (
+          {client.resourceViews === undefined || stale ? null : (
             <SharingButton
               client={client.resourceViews}
               target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
@@ -180,7 +237,7 @@ export function SandboxPage({
           {permissions.createAgent ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || pollError || needsConnections || !childrenAvailable}
+              disabled={busy || stale || needsConnections || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_agent', sandboxId })}
               aria-label="New agent in this Sandbox"
             >
@@ -190,7 +247,7 @@ export function SandboxPage({
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || pollError || needsConnections || !childrenAvailable}
+              disabled={busy || stale || needsConnections || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
             >
               New workspace
@@ -207,6 +264,7 @@ export function SandboxPage({
               }
               disabled={
                 busy ||
+                stale ||
                 !lifecycleAction.allowed ||
                 (needsConnections && lifecycleAction.kind === 'revive_sandbox')
               }
@@ -224,7 +282,7 @@ export function SandboxPage({
               icon={<IconTrashOutline16 />}
               disabled={
                 busy ||
-                pollError ||
+                stale ||
                 ['retiring', 'retired'].includes(sandbox.status) ||
                 sandbox.lifecycle?.checkpoint !== undefined ||
                 sandbox.lifecycle?.operation !== undefined
@@ -239,12 +297,12 @@ export function SandboxPage({
           </Button>
         </div>
       </header>
-      {needsConnections ? (
+      {needsConnections && !stale ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
           presentation="dialog"
           expectedOwner={viewerId}
-          onReady={() => setConnectionsReady(true)}
+          onReady={() => setConnectionScope({ client, sandboxId, viewerId })}
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
@@ -278,11 +336,13 @@ export function SandboxPage({
         </div>
       </dl>
       <SandboxOverview
-        stale={pollError}
+        key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
+        stale={stale}
         client={client}
         sandbox={sandbox}
         permissions={permissions}
-        busy={busy || pollError}
+        busy={busy || stale}
+        readEnabled={!accessUncertain}
         onAction={onAction}
         onNavigate={onNavigate}
       />

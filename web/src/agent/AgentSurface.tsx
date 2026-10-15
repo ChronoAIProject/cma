@@ -20,7 +20,7 @@ import { UsageFooter } from './UsageFooter';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
-import { useAgentProvenance } from './provenance';
+import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
@@ -96,6 +96,7 @@ export function AgentSurface({
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
+  const originLabel = useOwnerCreationLabel(provenance, sandboxOwner, state.status === 'ready');
   const readOnly =
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
@@ -237,7 +238,7 @@ export function AgentSurface({
           </>
         }
       >
-        <AgentSourceLabel source={source} provenance={provenance} />
+        <AgentSourceLabel source={source} provenance={provenance} originLabel={originLabel} />
         {!readOnly &&
         verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
