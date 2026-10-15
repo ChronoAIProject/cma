@@ -104,12 +104,10 @@ export function foldV2Frame(
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
   if (frame.type === 'cma.agent.live_gap') {
-    // Every following stream starts with a reconnect marker, including idle
-    // Agents. An idle reconnect alone does not establish lost live fragments.
+    // This is also the initial stream handshake after a complete snapshot.
+    // An active server turn alone is not evidence that this view lost anything.
     if (
       frame.data.reason === 'reconnected' &&
-      frame.data.turn_sequence === null &&
-      state.activeRunId === undefined &&
       !state.messages.some((message) => message.liveOnly) &&
       state.reasoning.length === 0
     )

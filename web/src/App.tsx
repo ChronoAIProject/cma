@@ -125,12 +125,16 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
       </main>
     );
   }
-  if (state.status === 'anonymous') {
+  if (state.status === 'anonymous' || router.route.kind === 'home') {
     return (
       <SignInLanding
         onSignIn={async () => {
+          if (state.status === 'authenticated') {
+            router.navigate({ kind: 'agent_manager' });
+            return;
+          }
           retainFatherDraftForSignIn();
-          await signIn(window.location.pathname);
+          await signIn(router.route.kind === 'home' ? '/agent-manager' : window.location.pathname);
         }}
       />
     );

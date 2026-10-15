@@ -289,9 +289,11 @@ function ConsoleContent({
         <LandingCharacter autoRotate />
       </div>
       <h1 id="empty-title">
-        {route.kind === 'home' ? 'Welcome to CMA' : route.kind.replaceAll('_', ' ')}
+        {route.kind === 'home' || route.kind === 'agent_manager'
+          ? 'Welcome to CMA'
+          : route.kind.replaceAll('_', ' ')}
       </h1>
-      {route.kind === 'home' && canCreateInScope ? (
+      {(route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope ? (
         <div className="console__empty-actions">
           <Button
             variant="primary"

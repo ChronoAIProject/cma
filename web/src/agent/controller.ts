@@ -10,7 +10,8 @@ import { currentAgentStatus, sameAgent } from './status';
 import { mergeTranscriptSnapshot } from './chronology';
 import { useSandboxInput } from './sandboxInput';
 import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
-import { useAgentState } from './state';
+import { useRetainedAgentState } from './retainedState';
+import { reopenAgent } from './reopenAgent';
 import { foldV2Frame, foldV2Item } from './transport/projection';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
@@ -78,9 +79,7 @@ export function useAgentController(
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [, setRequestRevision] = useState(0);
-  const [state, setState, stateRef] = useAgentState(
-    agentId === undefined ? { status: 'idle' } : { status: 'loading' },
-  );
+  const [state, setState, stateRef] = useRetainedAgentState(client, options.viewerId, agentId);
   const loaded = useRef<
     | { client: CmaWebClient; agentId?: string; revision: number; lineage?: AgentLoadLineage }
     | undefined
@@ -205,22 +204,34 @@ export function useAgentController(
         stateRef.current.status === 'ready'
       )
         return;
+      const retained = stateRef.current;
+      const reopen =
+        retained.status === 'ready' && !retained.historyLoading && !retained.historyUnavailable;
       loaded.current = { client, agentId, revision, lineage };
-      setState({ status: 'loading' });
-      void loadAgent(
-        client,
-        agentId,
-        controller.signal,
-        true,
-        (ready) => {
-          if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
-        },
-        lineage,
+      if (!reopen) setState({ status: 'loading' });
+      else liveCursor.current = retained.conversation.cursor;
+      void (
+        reopen
+          ? reopenAgent(client, retained, controller.signal, lineage)
+          : loadAgent(
+              client,
+              agentId,
+              controller.signal,
+              true,
+              (ready) => {
+                if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+              },
+              lineage,
+            )
       )
         .then((ready) => {
           if (controller.signal.aborted) return;
-          liveCursor.current = ready.conversation.cursor;
-          setState({ status: 'ready', ...ready });
+          setState((current) => {
+            const conversation =
+              reopen && current.status === 'ready' ? current.conversation : ready.conversation;
+            liveCursor.current = conversation.cursor;
+            return { status: 'ready', ...ready, conversation };
+          });
         })
         .catch((error: unknown) => {
           if (!controller.signal.aborted)
@@ -331,7 +342,10 @@ export function useAgentController(
     const replay =
       v2 === undefined
         ? client.replayAgent(agentId, {
-            after: liveCursor.current,
+            after:
+              stateRef.current.status === 'ready'
+                ? stateRef.current.conversation.cursor
+                : liveCursor.current,
             signal: controller.signal,
             onEvent: (event) => {
               if (!controller.signal.aborted) applyLive(event);

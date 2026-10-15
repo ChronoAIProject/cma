@@ -16,7 +16,7 @@ import './Agent.css';
 import { AgentHeader } from './AgentHeader';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
-import { Resources } from './Resources';
+import { UsageFooter } from './UsageFooter';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
@@ -405,14 +405,7 @@ export function AgentSurface({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      <Resources
-        key={agentId}
-        agentId={agentId}
-        sandboxId={detail.sandbox.id}
-        sandboxProfile={detail.sandbox.profile}
-        availability={controller.resourceAvailability}
-        usage={conversation.usage}
-      />
+      <UsageFooter usage={conversation.usage} />
     </section>
   );
 }
