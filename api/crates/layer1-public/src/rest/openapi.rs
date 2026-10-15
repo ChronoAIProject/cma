@@ -374,6 +374,8 @@ use super::trigger_openapi_shapes::*;
         AgentTranscriptMessageView,
         AgentTranscriptRoleView,
         AgentUsageView,
+        super::agent_observation_shapes::AgentRuntimeMetadataView,
+        super::agent_observation_shapes::AgentTurnUsageView,
         AgentResourcesView,
         ProfileReferenceView,
         CreateSandboxRequest,

@@ -1134,6 +1134,7 @@ pub(super) fn agent_resource(
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: was_ready.then(|| format!("conversation-{}", id.as_str())),
             runtime_generation: was_ready.then_some(1),

@@ -6,6 +6,7 @@ import type {
   AgentUsage,
 } from '../api/types';
 import { orderEntries } from './chronology';
+import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
 import type {
@@ -95,26 +96,6 @@ function upsert<T extends { readonly id: string }>(items: readonly T[], item: T)
 
 function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
   return { ...state, recovery: upsert(state.recovery, notice) };
-}
-
-function durableUsage(state: ConversationState, kind: Readonly<Record<string, unknown>>) {
-  const inputTokens = number(kind.input_tokens);
-  const outputTokens = number(kind.output_tokens);
-  const contextUsed = number(kind.context_used);
-  if (inputTokens === undefined || outputTokens === undefined || contextUsed === undefined) {
-    return state;
-  }
-  return {
-    ...state,
-    usage: {
-      agentId: state.usage?.agentId ?? '',
-      throughSeq: state.cursor,
-      inputTokens,
-      outputTokens,
-      contextUsed,
-      contextWindow: number(kind.context_window),
-    },
-  };
 }
 
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
@@ -211,7 +192,25 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       };
     }
     case 'usage':
+      return durableUsage(next, {
+        ...kind,
+        input_tokens: Math.max(next.usage?.inputTokens ?? 0, number(kind.input_tokens) ?? 0),
+        output_tokens: Math.max(next.usage?.outputTokens ?? 0, number(kind.output_tokens) ?? 0),
+      });
+    case 'usage_updated':
       return durableUsage(next, kind);
+    case 'runtime_metadata_changed': {
+      const metadata = object(kind.metadata);
+      return metadata === undefined
+        ? next
+        : {
+            ...next,
+            runtimeMetadata: {
+              workingDirectory: text(metadata.working_directory),
+              description: text(metadata.description),
+            },
+          };
+    }
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
@@ -325,6 +324,33 @@ function patchState(
     return approval === undefined
       ? state
       : { ...state, approvals: upsert(state.approvals, approval) };
+  }
+  if (path === '/runtimeMetadata') {
+    const metadata = object(item.value);
+    return metadata === undefined
+      ? state
+      : {
+          ...state,
+          runtimeMetadata: {
+            workingDirectory: text(metadata.workingDirectory),
+            description: text(metadata.description),
+          },
+        };
+  }
+  if (path === '/usage') {
+    const usage = object(item.value);
+    const turn = object(usage?.currentTurn);
+    return usage === undefined
+      ? state
+      : durableUsage(state, {
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          context_used: usage.contextUsed,
+          context_window: usage.contextWindow,
+          turn_sequence: turn?.turnSequence,
+          turn_input_tokens: turn?.inputTokens,
+          turn_output_tokens: turn?.outputTokens,
+        });
   }
   if (path.startsWith('/usage/')) {
     const field = path.slice('/usage/'.length);

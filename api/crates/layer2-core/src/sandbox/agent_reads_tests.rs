@@ -181,6 +181,7 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,
@@ -1205,6 +1206,7 @@ async fn usage_takes_generation_peaks_preserves_context_and_saturates() {
     assert_eq!(
         reading.usage,
         AgentUsage {
+            current_turn: None,
             input_tokens: u64::MAX,
             output_tokens: u64::MAX,
             context_used: 300,

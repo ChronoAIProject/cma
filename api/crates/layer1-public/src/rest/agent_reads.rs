@@ -315,6 +315,7 @@ fn public_usage(value: AgentUsageReading) -> AgentUsageView {
     AgentUsageView {
         agent_id: value.agent_id.to_string(),
         through_seq: value.through_seq,
+        current_turn: value.usage.current_turn.map(Into::into),
         input_tokens: value.usage.input_tokens,
         output_tokens: value.usage.output_tokens,
         context_used: value.usage.context_used,

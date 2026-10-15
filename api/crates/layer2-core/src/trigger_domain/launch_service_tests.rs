@@ -1948,6 +1948,7 @@ fn agent(profiles: &ResolvedTriggerProfiles, trigger_id: &TriggerId, status: Age
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some("conversation".into()),
             runtime_generation: Some(1),

@@ -191,6 +191,15 @@ async fn completed() -> (crate::AgentConversationState, layer2_core::sandbox::Ag
                 context_used: 17,
                 context_window: Some(200_000),
             },
+            AgentLogKind::UsageUpdated {
+                input_tokens: 999,
+                output_tokens: 500,
+                context_used: 17,
+                context_window: Some(200_000),
+                turn_sequence: Some(3),
+                turn_input_tokens: 10,
+                turn_output_tokens: 7,
+            },
             AgentLogKind::TurnCompleted { turn_sequence: 3 },
         ],
     )
