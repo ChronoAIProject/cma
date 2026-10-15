@@ -429,37 +429,57 @@
 
 .agent-composer__form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   gap: 8px;
   align-items: center;
 }
 
 .agent-composer__form--queue {
-  grid-template-columns: minmax(0, 1fr) 40px 40px;
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
 }
 
 .agent-composer__capsule {
+  position: relative;
+  min-width: 0;
+  height: 38px;
+}
+
+.agent-composer__editor {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
   min-width: 0;
-  padding: 10px 0 0;
   background: var(--dsw-specific-input-major);
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
-  border-radius: 22px;
+  border-radius: 19px;
   box-shadow: var(--dsw-shadow-lv2);
 }
 
-.agent-composer__capsule:focus-within {
+.agent-composer__editor:focus-within {
   border-color: var(--dsw-alias-state-business-primary);
 }
 
+.agent-composer__input-row {
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
 .agent-composer textarea {
+  display: block;
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
   width: 100%;
-  min-height: 24px;
-  max-height: 336px;
-  padding: 4px 12px 0 16px;
-  overflow-y: auto;
+  height: 36px;
+  min-height: 36px;
+  max-height: 36px;
+  padding: 6px 12px 6px 16px;
+  overflow-y: hidden;
   resize: none;
   color: var(--dsw-alias-label-primary);
   caret-color: var(--dsw-alias-state-business-primary);
@@ -468,6 +488,12 @@
   line-height: 24px;
   background: transparent;
   border: 0;
+}
+
+.agent-composer__editor:hover textarea,
+.agent-composer__editor:focus-within textarea {
+  max-height: min(336px, 40dvh);
+  overflow-y: auto;
 }
 
 .agent-composer textarea:focus-visible {
@@ -480,8 +506,8 @@
 
 .agent-composer .agent-composer__submit {
   align-self: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
 }
 
@@ -562,6 +588,7 @@
   .approval__actions .button {
     flex: 1;
     min-height: 44px;
+    max-height: 44px;
   }
 
   .agent-composer {
@@ -576,15 +603,21 @@
     grid-template-columns: minmax(0, 1fr) 44px 44px;
   }
 
-  .agent-composer .agent-composer__submit {
-    position: relative;
-    justify-self: center;
+  .agent-composer__capsule {
+    height: 46px;
   }
 
-  .agent-composer__submit::after {
-    position: absolute;
-    inset: -5px;
-    content: '';
+  .agent-composer textarea {
+    height: 44px;
+    min-height: 44px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .agent-composer .agent-composer__submit {
+    width: 44px;
+    height: 44px;
+    justify-self: center;
   }
 }
 .agent-channel-pending__message {
