@@ -1,5 +1,7 @@
 #[path = "delivery/boundaries.rs"]
 mod boundaries;
+#[path = "delivery/complete.rs"]
+mod complete;
 #[path = "delivery/consumer_refs.rs"]
 mod consumer_refs;
 #[path = "delivery/engine.rs"]
