@@ -80,9 +80,20 @@ pub(crate) struct AgentAccessHotUpdate {
     pub lifecycle_next_authority: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AgentAccessNotificationIntent {
+    pub attempt: u32,
+    pub agent_revision: u64,
+    pub target_turn: Option<u64>,
+    pub previous_commands: Vec<AgentCommandId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentAccessProgress {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_intent: Option<AgentAccessNotificationIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hot_update: Option<AgentAccessHotUpdate>,
     pub pause_operation_id: Option<String>,
@@ -94,7 +105,9 @@ pub(crate) struct AgentAccessProgress {
 }
 impl AgentAccessProgress {
     pub(super) fn extends(&self, previous: &Self) -> bool {
-        (previous.hot_update.is_none() || self.hot_update == previous.hot_update)
+        (previous.notification_intent.is_none()
+            || self.notification_intent == previous.notification_intent)
+            && (previous.hot_update.is_none() || self.hot_update == previous.hot_update)
             && (previous.pause_operation_id.is_none()
                 || self.pause_operation_id == previous.pause_operation_id)
             && (previous.grant_generation_floor.is_none()
@@ -228,6 +241,36 @@ impl AgentAccessRecord {
             ) && self.progress.delivered_runtime.is_none()
             || self.phase == AgentAccessPhase::Succeeded
                 && self.progress.notification_command_id.is_none()
+            || self
+                .progress
+                .notification_intent
+                .as_ref()
+                .is_some_and(|intent| {
+                    self.progress.hot_update.is_none()
+                        || !matches!(
+                            self.phase,
+                            AgentAccessPhase::Notifying
+                                | AgentAccessPhase::Succeeded
+                                | AgentAccessPhase::Failed
+                        )
+                        || intent.agent_revision == 0
+                        || intent.agent_revision > i64::MAX as u64
+                        || intent.attempt > 64
+                        || intent
+                            .target_turn
+                            .is_some_and(|turn| turn == 0 || turn > i64::MAX as u64)
+                        || intent.previous_commands.len() > intent.attempt as usize
+                        || intent.previous_commands.iter().any(|id| {
+                            id.as_str().is_empty()
+                                || Some(id) == self.progress.notification_command_id.as_ref()
+                        })
+                        || intent
+                            .previous_commands
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            != intent.previous_commands.len()
+                })
             || self.phase == AgentAccessPhase::Updating && self.progress.hot_update.is_none()
             || self.progress.hot_update.as_ref().is_some_and(|hot| {
                 !matches!(
