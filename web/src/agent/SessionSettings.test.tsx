@@ -35,7 +35,11 @@ it('loads actual settings and retains the same update body and key after an unce
   expect(model).toHaveTextContent('GPT-6');
   expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('High');
   expect(screen.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
-  await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Reasoning effort' }), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Lost response');
   expect(model).toBeDisabled();
@@ -62,7 +66,11 @@ it('does not offer an apply operation while a turn is active', async () => {
     </CmaClientProvider>,
   );
   await screen.findByLabelText('Model');
-  await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Reasoning effort' }), 'low');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'low',
+  );
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   expect(update).not.toHaveBeenCalled();
 });
@@ -236,7 +244,11 @@ it('keeps retained runtime models disabled while applying reasoning changes to t
   await userEvent.click(unsupported);
   expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('GPT-6');
   await userEvent.keyboard('{Escape}');
-  await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Reasoning effort' }), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   expect(screen.getByLabelText('Permission mode')).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Settings applied to this Agent.');
@@ -282,8 +294,16 @@ it('refreshes capability after a turn and preserves reasoning edits when a model
   );
   const { rerender } = render(view(false));
   await screen.findByLabelText('Model');
-  await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Model' }), 'gpt-6-astra');
-  await chooseOptionValue(userEvent.setup(), screen.getByRole('button', { name: 'Reasoning effort' }), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Model' }),
+    'gpt-6-astra',
+  );
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   rerender(view(true));
   await screen.findByText(/Model changes are unavailable for this Agent/);
   expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('gpt-6');
