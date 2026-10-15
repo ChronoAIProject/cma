@@ -51,6 +51,7 @@ mod fixture_store;
 use fixture_store::FixtureStore;
 mod connection_contention_tests;
 mod first_message_contention_tests;
+mod first_message_publication_tests;
 mod lifecycle_connection_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
