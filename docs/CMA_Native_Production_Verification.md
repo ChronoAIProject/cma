@@ -715,3 +715,36 @@ The earlier four-manifest synchronization and its YAML, configuration
 key/documentation, native contract and route ownership checks apply to the
 versions identified above. Operational instructions and infra ownership boundaries are in
 [CMA deployment readiness](CMA_Deployment_Readiness.md).
+
+## 2026-10-15 compact composer and production attachment check
+
+The Web deployment now pins source `c35883bf32e0ab09a2bf62a319c1651632de969c`,
+image digest `sha256:e83eb5b27ae48d237af84270f76baca02062f67d7f74052dd112352659ac411c`.
+Generation 114 reached one Ready replica; the public `/assets/index-VZuaImLd.js`
+matched the running Pod bytes (SHA-256
+`faf6d127e613568a916e7667376dfcae86019cf8bf86f699bb259bc0dcfca1ab`).
+Agent Manager, Event Gateway and the default runtime remained at their preceding
+verified sources. This Web release adds the compact, centered composer, upward
+long-draft expansion, and clipboard file-item fallback.
+
+A disposable owner Agent created through the real production browser reached an
+enabled input in 3.881 seconds after one Create click. This measures input
+eligibility, not completion of the first generated response. In the same browser,
+a PNG pasted through Chromium's native clipboard command and a local text file
+dragged into the composer both produced Ready previews. One Send submitted the
+text and the two server-confirmed attachment paths to that Agent. Without being
+given expected answers, Codex used the files and returned the correct image
+shapes/colors/counts and the text verification marker. Message text appeared in
+approximately 12 milliseconds; the durable response receipt arrived in 384
+milliseconds. These are single-sample observations, not percentile guarantees.
+
+The browser observed 75 numeric token-display updates in that turn, ending at
+43,942 input and 242 output tokens, and retained the completed-turn counts. The
+repeated "Live updates interrupted" warning did not appear. The pinned provider
+reports usage at response/tool boundaries; the numeric animation follows actual
+reports and does not estimate tokens while the provider has not supplied counts.
+
+Evidence is stored locally under `/tmp/cma-hot-production-browser-20261015` and
+`/tmp/cma-compact-composer-release-20261015`. Hot service-scope replacement,
+revocation and the five-second Codex callback are a separate pending release;
+this verification does not declare those targets achieved.
