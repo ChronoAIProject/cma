@@ -12,7 +12,7 @@ use crate::store::sandbox_mongo::{
 mod apply;
 mod fences;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Lookup,
     Reserve,
@@ -44,7 +44,7 @@ async fn execute(
     mode: Mode,
 ) -> Result<TargetedControlInspection, CommandLedgerError> {
     request.validate()?;
-    for _ in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..TRANSACTION_ATTEMPTS {
         request.command.require_current_authority()?;
         let mut session = store
             .client
@@ -63,6 +63,14 @@ async fn execute(
             Err(ApplyError::Driver(error)) => {
                 let _ = session.abort_transaction().await;
                 if is_transient(&error) || is_duplicate_key(&error) {
+                    tracing::warn!(
+                        agent_id = %request.command.envelope.agent_id,
+                        response_id = %request.target.response_id,
+                        ?mode, attempt,
+                        transient = is_transient(&error),
+                        duplicate_key = is_duplicate_key(&error),
+                        "response control transaction retry"
+                    );
                     tokio::task::yield_now().await;
                     continue;
                 }
@@ -83,5 +91,30 @@ async fn execute(
             }
         }
     }
+    tracing::warn!(
+        agent_id = %request.command.envelope.agent_id,
+        response_id = %request.target.response_id,
+        ?mode,
+        "response control transaction retries exhausted"
+    );
     Err(CommandLedgerError::Conflict)
+}
+
+fn trace_rejection(
+    request: &TargetedControlReservation,
+    stage: &'static str,
+    error: ApplyError,
+) -> ApplyError {
+    if let ApplyError::Domain(ref reason) = error {
+        tracing::warn!(
+            agent_id = %request.command.envelope.agent_id,
+            response_id = %request.target.response_id,
+            expected_agent_revision = request.command.expected_agent_revision,
+            observed_agent_revision = request.observed_agent_revision,
+            stage,
+            code = reason.code(),
+            "response control admission refused"
+        );
+    }
+    error
 }
