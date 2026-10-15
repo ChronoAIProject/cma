@@ -170,3 +170,29 @@
     transition: none;
   }
 }
+
+.menu__choice-group {
+  padding-bottom: 4px;
+}
+
+.menu__choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 6px;
+  padding: 3px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 8px;
+}
+
+.menu__choice {
+  justify-content: center;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.menu__choice[aria-checked='true'] {
+  color: var(--dsw-alias-brand-text);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}

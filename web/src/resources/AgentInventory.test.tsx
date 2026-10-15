@@ -177,9 +177,9 @@ it('uses the shared aggregate for filters and fresh exports and keeps organizati
   expect(calls[2]?.searchParams.get('shared')).toBe('true');
   expect(calls[2]?.searchParams.get('creation_origin')).toBe('manual');
   expect(calls.every((url) => !url.searchParams.has('organization'))).toBe(true);
-  await chooseOption(user, 'Resource scope', 'Named organization');
+  await chooseOption(user, 'Resource scope', 'Named organization (Organization)');
   expect(navigate).toHaveBeenLastCalledWith({ kind: 'inventory', organization: 'shared' });
   view.rerender(<AgentInventory client={client} organization="shared" onNavigate={navigate} />);
-  await chooseOption(user, 'Resource scope', 'Shared with me');
+  await chooseOption(user, 'Resource scope', 'Shared');
   expect(navigate).toHaveBeenLastCalledWith({ kind: 'inventory', shared: true });
 });

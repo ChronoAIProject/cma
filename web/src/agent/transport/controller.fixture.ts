@@ -37,6 +37,20 @@ export function accepted() {
     },
   });
 }
+export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
+  return {
+    object: 'cma.agent.queued_inputs',
+    agent_id: 'agt_1',
+    data: [
+      {
+        response: queuedObservation('resp_1', revision).response,
+        command_revision: revision,
+        text,
+        editable: true,
+      },
+    ],
+  };
+}
 export function harness() {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const post = vi.fn<(init?: RequestInit) => Promise<Response>>().mockResolvedValue(accepted());
@@ -45,6 +59,9 @@ export function harness() {
     .mockImplementation(async () => json(page([], 0)));
   const cancel = vi.fn();
   const currentUser = vi.fn(async () => 'alice' as string | undefined);
+  const listQueued = vi.fn(async () =>
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [] }),
+  );
   const observeQueued = vi.fn(async (responseId: string) =>
     json(queuedObservation(responseId, 7, false)),
   );
@@ -84,6 +101,7 @@ export function harness() {
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
     if (url === '/api/v2/ui/transport') return eligibility();
+    if (url === '/api/v2/agents/agt_1/queued-inputs') return listQueued();
     if (url === '/api/v2/commands/cmd_control') return command();
     const queued = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/queued-cancellation$/.exec(url);
     if (queued)
@@ -129,6 +147,7 @@ export function harness() {
     snapshot,
     cancel,
     currentUser,
+    listQueued,
     observeQueued,
     cancelQueued,
     observe,
@@ -154,10 +173,20 @@ export function harness() {
     get streaming() {
       return stream !== undefined;
     },
-    durable(sequence: number, kind: unknown, response_binding: unknown = null) {
+    durable(
+      sequence: number,
+      kind: unknown,
+      response_binding: unknown = null,
+      messageCommandId?: string,
+    ) {
       emit(
         'cma.agent.event',
-        { ...item(sequence, kind, response_binding), agent_id: 'agt_1', incarnation },
+        {
+          ...item(sequence, kind, response_binding),
+          agent_id: 'agt_1',
+          incarnation,
+          ...(messageCommandId ? { message_command_id: messageCommandId } : {}),
+        },
         cursor(sequence),
       );
     },

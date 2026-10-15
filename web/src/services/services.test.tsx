@@ -13,7 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('independent CMA service navigation', () => {
-  it.each(['refresh', 'logout'] as const)(
+  it.each(['refresh'] as const)(
     'preserves an in-flight and uncertain write across a failed %s',
     async (operation) => {
       const session = {
@@ -60,13 +60,8 @@ describe('independent CMA service navigation', () => {
       fireEvent.change(input, { target: { value: 'retained image' } });
       fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
       await waitFor(() => expect(writes).toHaveLength(1));
-      if (operation === 'refresh') fireEvent.focus(window);
-      else fireEvent.click(screen.getByRole('button', { name: 'Sign out of Image Manager' }));
-      await screen.findByText(
-        operation === 'refresh'
-          ? 'Session refresh interrupted'
-          : 'Sign-out could not be completed. Try again.',
-      );
+      fireEvent.focus(window);
+      await screen.findByText('Session refresh interrupted');
       expect(screen.getByLabelText('Image name')).toBe(input);
       expect(input).toHaveValue('retained image');
       expect(screen.getByRole('button', { name: 'Submitting…' })).toBeDisabled();
@@ -116,74 +111,38 @@ describe('independent CMA service navigation', () => {
     expect(screen.queryByRole('button', { name: 'Simulate denied write' })).toBeNull();
   });
 
-  it('retains the original uncertain write when switching service tabs', async () => {
+  it('keeps Image Manager unavailable through direct navigation without opening its service', async () => {
     window.history.replaceState({}, '', '/image-manager');
-    const writes: RequestInit[] = [];
-    const fetcher = vi.fn(async (url: string, init: RequestInit = {}) => {
-      if (init.method === 'POST') {
-        writes.push(init);
-        if (writes.length === 1) throw new TypeError('Network failure');
-        return new Response('{}', { status: 201 });
-      }
-      if (url.startsWith('/api/event-gateway/')) return new Response('{}', { status: 401 });
-      return new Response(
-        JSON.stringify(
-          url.endsWith('/auth/session')
-            ? {
-                authenticated: true,
-                subject: 'owner',
-                permissions: ['cma-im:admin'],
-                expires_at: Math.floor(Date.now() / 1000) + 3600,
-              }
-            : { items: [], next_cursor: null },
-        ),
-        { status: 200 },
-      );
-    });
+    const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
     render(
-      <AuthContextProvider provider={createMockAuthProvider()}>
+      <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
         <App />
       </AuthContextProvider>,
     );
-    fireEvent.click(await screen.findByText('Create an image'));
-    fireEvent.change(screen.getByLabelText('Image name'), { target: { value: 'retained-image' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create image' }));
-    await screen.findByRole('button', { name: 'Retry same request' });
-    fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
-    await screen.findByRole('link', { name: 'Sign in with NyxID' });
-    fireEvent.click(screen.getByRole('link', { name: 'Image Manager' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
-    await waitFor(() => expect(writes).toHaveLength(2));
-    expect(writes[1]?.body).toBe(writes[0]?.body);
-    expect(writes[1]?.headers).toEqual(writes[0]?.headers);
+    await screen.findByRole('button', { name: /account menu/i });
+    expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
+    expect(screen.queryByText('Create an image')).not.toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('uses stable URLs and leaves modified clicks to the browser', () => {
+  it('uses enabled service URLs, preserves modified clicks and exposes a disabled Image Manager', () => {
     const navigate = vi.fn();
-    render(<ServiceTabs route={{ kind: 'image_manager' }} onNavigate={navigate} />);
-    expect(screen.getByRole('link', { name: 'Image Manager' }).getAttribute('aria-current')).toBe(
+    render(<ServiceTabs route={{ kind: 'event_gateway' }} onNavigate={navigate} />);
+    expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
+      'aria-current',
       'page',
     );
-    fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
-    expect(navigate).toHaveBeenCalledWith({ kind: 'event_gateway' });
-    for (const kind of ['image_manager', 'event_gateway'] as const)
-      expect(parseRoute(routePath({ kind }))).toEqual({ kind });
-  });
-  it('shows one home brand with its adjacent build and preserves modified navigation', () => {
-    const navigate = vi.fn();
-    render(<ServiceTabs route={{ kind: 'image_manager' }} onNavigate={navigate} />);
-    const home = screen.getByRole('link', { name: 'CMA home' });
-    const build = screen.getByLabelText(/^Build /);
-    expect(home).toHaveAttribute('href', '/');
-    expect(home.nextElementSibling).toBe(build);
-    expect(build.tagName).toBe('SUB');
-    fireEvent.click(home, { ctrlKey: true });
+    expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
+    const agent = screen.getByRole('link', { name: 'Agent Manager' });
+    fireEvent.click(agent, { ctrlKey: true });
     expect(navigate).not.toHaveBeenCalled();
-    fireEvent.click(home);
-    expect(navigate).toHaveBeenCalledWith({ kind: 'home' });
-    fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
-    expect(navigate).toHaveBeenLastCalledWith({ kind: 'agent_manager' });
+    fireEvent.click(agent);
+    expect(navigate).toHaveBeenCalledWith({ kind: 'agent_manager' });
+    for (const kind of ['agent_manager', 'event_gateway'] as const)
+      expect(parseRoute(routePath({ kind }))).toEqual({ kind });
+    expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+    expect(screen.queryByRole('link', { name: 'CMA home' })).not.toBeInTheDocument();
   });
 
   it('a gateway authorization failure remains local to the gateway', async () => {
