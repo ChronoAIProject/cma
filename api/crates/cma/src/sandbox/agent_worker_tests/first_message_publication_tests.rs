@@ -34,7 +34,8 @@ async fn claimed_dispatch(harness: &Harness, prompt: Option<&str>) -> Agent {
 #[tokio::test]
 async fn completed_first_dispatch_retries_revision_contention_without_resending() {
     for prompt in [None, Some("Run once")] {
-        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        harness.now = SystemTime::now();
         let claimed = claimed_dispatch(&harness, prompt).await;
         let authority = AgentWorkAuthority::new(
             "agent-worker".into(),
@@ -99,7 +100,8 @@ async fn completed_first_dispatch_retries_revision_contention_without_resending(
 #[tokio::test]
 async fn completed_dispatch_refuses_replaced_authority_and_new_prompt() {
     for changed in ["holder", "fence", "step", "runtime", "stop", "prompt"] {
-        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        harness.now = SystemTime::now();
         let claimed = claimed_dispatch(&harness, None).await;
         let calls = AtomicUsize::new(0);
         let result = harness
@@ -154,7 +156,8 @@ async fn completed_dispatch_refuses_replaced_authority_and_new_prompt() {
 #[tokio::test(start_paused = true)]
 async fn completed_dispatch_bounds_contention_and_respects_lease_expiry() {
     for expire in [false, true] {
-        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        harness.now = SystemTime::now();
         let claimed = claimed_dispatch(&harness, None).await;
         let calls = AtomicUsize::new(0);
         let result = harness
