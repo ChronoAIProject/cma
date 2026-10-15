@@ -13,13 +13,19 @@ const { managedModelCatalog, sourceSha256, before, after, beforeSelection, after
 
 function sources() {
   const installed = readFileSync(process.env.CMA_ACP_MANAGED_BASE_SOURCE ?? bridgePath, "utf8");
+  if (installed.includes(after)) {
+    assert.equal(installed.split(after).length, 2, "Expected exactly one managed catalogue patch");
+    assert.equal(installed.split(afterSelection).length, 2, "Expected exactly one managed selection patch");
+  }
   const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
-  if (digest(installed) === "cfa73e9b6da1ab4b516ab54703d7891ebde8e290762f42456ec036c37b444ff0") {
+  if (digest(installed) === "bcbfa2156e69b630fb3777b275ff739efd6c030159348e9cbae79a56ffa663c5") {
     // The image includes the reviewed observation and access patches. Compare
     // that exact installed composition with only the model patch removed, so
     // the native regression also covers the final image's other behavior.
-    assert.equal(digest(base), "f9109958d192b161094f501ef8d9d2086a0f2b69acab6471e3ceb610dabc19a9");
+    // Title provenance changed the composition, not either model-patch site.
+    assert.equal(digest(base), "0f751c0500accfbd0bd5e8c11aac6f2d9e2ade3139b8c9fe355116e590879cf6");
+    assert.equal(base.replace(before, after).replace(beforeSelection, afterSelection), installed);
     return { base, patched: installed };
   }
   assert.equal(digest(base), sourceSha256);

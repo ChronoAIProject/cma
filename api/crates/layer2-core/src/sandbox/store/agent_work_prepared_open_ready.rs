@@ -19,7 +19,8 @@ pub struct PreparedAgentOpenContext {
 }
 
 /// This validates the mutation shape, not preparation ownership or live attachment.
-/// The caller retains a live staged attachment; the store proves preparation and fences parents.
+/// The caller retains a live staged attachment; the store proves the exact prepared
+/// profile, including its immutable instructions, and fences parents.
 pub fn validate_prepared_agent_open_ready(
     current: &Agent,
     tree: &Worktree,
@@ -49,7 +50,6 @@ pub fn validate_prepared_agent_open_ready(
             .is_none_or(|id| id.is_empty())
         || current.work.resolved_skills.as_deref() != Some(&[])
         || !current.profile.content.skills.is_empty()
-        || !current.profile.content.system_prompt.is_empty()
         || current.conversation.settings.is_some()
         || current.conversation.conversation_id.is_some()
         || current.conversation.runtime_generation.is_some()

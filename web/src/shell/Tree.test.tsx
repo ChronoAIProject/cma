@@ -62,6 +62,27 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it('uses saved setup provenance for unselected rows without loading their conversations', () => {
+    const items = navigationFixture().map((item) => ({
+      ...item,
+      workspaces: item.workspaces.map((workspace) => ({
+        ...workspace,
+        agents: workspace.agents.map((agent) => ({
+          ...agent,
+          title: 'Configured agent',
+          runtimeMetadata: {
+            description: 'Automatic setup preview',
+            descriptionSource: 'prompt_preview' as const,
+            descriptionIsSetupPreview: true,
+          },
+        })),
+      })),
+    }));
+    renderTree({ items, route: { kind: 'home' } });
+    expect(screen.getByRole('link', { name: /Configured agent/ })).toBeInTheDocument();
+    expect(screen.queryByText('Automatic setup preview')).not.toBeInTheDocument();
+  });
+
   it('uses the selected Agent runtime directory and description without guessing another Agent cwd', () => {
     const items = navigationFixture().map((item) => ({
       ...item,

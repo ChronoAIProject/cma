@@ -1,9 +1,27 @@
 //! Provider-neutral observations delivered through the ordered conversation journal.
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationDescriptionSource {
+    ProviderTitle,
+    PromptPreview,
+}
+
+/// Exact input evidence, consumed by the domain without persisting another transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversationDescriptionInput {
+    Current(String),
+    First(String),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConversationMetadata {
     pub working_directory: Option<String>,
     pub description: Option<String>,
+    pub description_source: Option<ConversationDescriptionSource>,
+    pub description_input: Option<ConversationDescriptionInput>,
 }
 
 /// Actual provider counters, never estimates based on content or context size.

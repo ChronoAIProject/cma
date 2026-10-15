@@ -47,7 +47,8 @@ export function useOptimisticMessages(
     const previous = retained();
     const previousKey = previous?.key;
     update((current) => [
-      ...current.filter((row) => row.state !== 'not_sent'),
+      // A different next draft must not discard a refused message's text/files.
+      ...current.filter((row) => row.state !== 'not_sent' || row.content !== content),
       ...(previous?.state === 'accepted' && !current.some((row) => row.key === previous.key)
         ? [
             {
@@ -82,7 +83,7 @@ export function useOptimisticMessages(
         const input = retained();
         update((current) =>
           current.map((row) =>
-            row.id !== id || row.state === 'accepted'
+            row.id !== id || row.state === 'accepted' || row.state === 'not_sent'
               ? row
               : input?.input === content && input.key !== previousKey
                 ? {

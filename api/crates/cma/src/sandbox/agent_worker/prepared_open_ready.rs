@@ -30,7 +30,9 @@ impl AgentWorker {
         if agent.work.warm_conversation_id.as_deref() != Some(identity.conversation_id.as_str())
             || agent.conversation.settings.is_some()
             || !agent.profile.content.skills.is_empty()
-            || !agent.profile.content.system_prompt.is_empty()
+            || !crate::agent_lifecycle::guidance::is_prepared_prompt(
+                &agent.profile.content.system_prompt,
+            )
             || agent.work.resolved_skills.as_deref() != Some(&[])
         {
             return Ok(false);

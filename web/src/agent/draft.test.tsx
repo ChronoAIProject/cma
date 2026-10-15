@@ -25,9 +25,10 @@ it.each([
     ) : null;
   }
   const view = render(<Surface visible />);
-  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
-    target: { value: content },
-  });
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Original message' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+  if (content !== 'Original message') fireEvent.change(field, { target: { value: content } });
   view.rerender(<Surface visible accepted="Original message" />);
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(expected);
   view.rerender(<Surface visible={false} accepted="Original message" />);

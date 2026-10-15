@@ -20,7 +20,7 @@ import { UsageFooter } from './UsageFooter';
 import { BrandLoading } from '../landing/LandingCharacter';
 import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
-import { useAgentProvenance } from './provenance';
+import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
@@ -29,6 +29,7 @@ import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
+import { agentDisplayTitle } from './presentation';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -91,12 +92,11 @@ export function AgentSurface({
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
-    state.status === 'ready'
-      ? `${state.detail.runtimeMetadata?.description || state.detail.title || 'Untitled agent'} · CMA`
-      : undefined;
+    state.status === 'ready' ? `${agentDisplayTitle(state.detail)} · CMA` : undefined;
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
+  const originLabel = useOwnerCreationLabel(provenance, sandboxOwner, state.status === 'ready');
   const readOnly =
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
@@ -184,8 +184,7 @@ export function AgentSurface({
 
   const { detail, conversation } = state;
   const status = detail.status;
-  const title =
-    detail.runtimeMetadata?.description?.trim() || detail.title?.trim() || 'Untitled agent';
+  const title = agentDisplayTitle(detail);
   const pausedNotice =
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice
@@ -239,7 +238,7 @@ export function AgentSurface({
           </>
         }
       >
-        <AgentSourceLabel source={source} provenance={provenance} />
+        <AgentSourceLabel source={source} provenance={provenance} originLabel={originLabel} />
         {!readOnly &&
         verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
@@ -333,6 +332,7 @@ export function AgentSurface({
           viewPosition={viewPosition}
           conversation={conversation}
           optimisticMessages={optimistic.messages}
+          arrivalsEnabled={!historyIncomplete && !accessUncertain}
           approvalBusy={approvalBusy}
           approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
@@ -405,36 +405,47 @@ export function AgentSurface({
             historyIncomplete ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={async (content, onAccepted) => {
+          onSend={(content, onAccepted) => {
             if (readOnly || verified === undefined) return;
             const message = optimistic.begin(content);
-            const send = () => {
-              void controller
-                .send(
-                  content,
-                  (receipt) => {
-                    if (message.accepted(receipt)) onAccepted();
-                  },
-                  message.observed,
-                )
-                .then(message.settled, message.settled);
-            };
-            if (
-              state.v2?.owner === (viewerId ?? verified.owner) &&
-              controller.resourceAvailability.state === 'live'
-            ) {
-              // The transport rechecks identity and the backend admits this durable
-              // command. Runtime permission requests use the Agent access dialog.
-              send();
-              return;
-            }
-            await connections.checkAndRun(
-              { type: 'agent', id: agentId },
-              viewerId ?? verified.owner,
-              send,
-              state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-              message.cancelled,
-            );
+            return new Promise<void>((resolve) => {
+              const settled = () => {
+                message.settled();
+                resolve();
+              };
+              const cancelled = () => {
+                message.cancelled();
+                resolve();
+              };
+              const send = () => {
+                void controller
+                  .send(
+                    content,
+                    (receipt) => {
+                      if (message.accepted(receipt)) onAccepted();
+                      resolve();
+                    },
+                    message.observed,
+                    cancelled,
+                  )
+                  .then(settled, settled);
+              };
+              if (
+                state.v2?.owner === (viewerId ?? verified.owner) &&
+                controller.resourceAvailability.state === 'live'
+              ) {
+                // Transport still rechecks identity before admission and acceptance.
+                send();
+              } else {
+                void connections.checkAndRun(
+                  { type: 'agent', id: agentId },
+                  viewerId ?? verified.owner,
+                  send,
+                  state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
+                  cancelled,
+                );
+              }
+            });
           }}
           onStop={controller.interrupt}
         />

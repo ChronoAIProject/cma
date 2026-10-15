@@ -61,6 +61,7 @@ for (const theme of ['light', 'dark']) {
           animations: 'disabled',
         });
       }
+      await expect(queue).toBeEnabled();
       await field.press('Enter');
       await expect(field).toHaveValue('');
       await expect(
@@ -302,15 +303,21 @@ test('LOCAL browser clipboard screenshot and dropped file preview, persist, and 
     ).toBe(true);
     await send.click();
     await expect.poll(() => fixture.writes.length).toBe(1);
-    await expect(field).toHaveValue('Read the screenshot and the notes together.');
-    await expect(page.getByRole('list', { name: 'Attachments' })).toBeVisible();
+    await expect(field).toHaveValue('');
+    await expect(page.getByRole('list', { name: 'Attachments' })).toHaveCount(0);
+    const outgoing = page.locator('.message--user').filter({ hasText: 'Sending…' });
+    await expect(outgoing).toContainText('Read the screenshot and the notes together.');
+    await expect(outgoing).toContainText('image.png');
+    await expect(outgoing).toContainText('notes.txt');
     expect(fixture.writes[0]!.path).toBe('/api/v2/agents/agt_contract/responses');
     const input = fixture.writes[0]!.body.input as string;
     expect(input).toContain('Read the screenshot and the notes together.');
     expect(input).toContain(`/home/attachments/agt_contract/att_${'a'.repeat(64)}/image.png`);
     expect(input).toContain(`/home/attachments/agt_contract/att_${'b'.repeat(64)}/notes.txt`);
+    await field.fill('Keep my newer draft while the previous files are accepted.');
     fixture.acceptInput();
-    await expect(field).toHaveValue('');
+    await expect(page.locator('.message__delivery')).toHaveText('Sent');
+    await expect(field).toHaveValue('Keep my newer draft while the previous files are accepted.');
     await expect(page.getByRole('list', { name: 'Attachments' })).toHaveCount(0);
     expect(fixture.boundary.writes).toEqual([]);
     expect(fixture.boundary.unexpected).toEqual([]);

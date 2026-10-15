@@ -91,7 +91,7 @@ pub(crate) async fn hierarchy(store: &MongoSandboxStore) -> (Agent, Sandbox, Wor
     let home = AgentHomeRequest::new(
         format!("agent:{}:home:create:v1", current.id),
         options.clone(),
-        String::new(),
+        current.profile.content.system_prompt.clone(),
         vec![],
     );
     let open = AgentOpenRequest::new(format!("agent:{}:open:v1", current.id), options, None);

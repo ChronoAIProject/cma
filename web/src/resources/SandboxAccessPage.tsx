@@ -1,5 +1,6 @@
 import { ResourceAccessDetails } from './ResourceAccessSummary';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useOwnerViews } from './retainedOwnerViews';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
 import { loadSandbox } from './loadHierarchy';
@@ -23,12 +24,18 @@ export function SandboxAccessPage({
   readonly client?: ResourceViewsClient;
   readonly commandScope?: object;
   readonly id: string;
-  readonly personal: ReactNode;
+  readonly personal: ReactNode | ((accessUncertain: boolean) => ReactNode);
   readonly onNavigate: (route: AppRoute) => void;
 }) {
+  const views = useOwnerViews();
+  const retained =
+    views !== undefined && views.client.resourceViews === client
+      ? views.sandboxes.get(id)
+      : undefined;
   const [knownPersonal, setKnownPersonal] = useState<{
     readonly client: ResourceViewsClient;
     readonly id: string;
+    readonly views: typeof views;
   }>();
   const read = useMemo(
     () =>
@@ -37,12 +44,22 @@ export function SandboxAccessPage({
         : async (signal: AbortSignal) => {
             const result = await loadSandbox(client, id, signal);
             signal.throwIfAborted();
-            setKnownPersonal(result.value.detail.access === 'shared' ? undefined : { client, id });
+            if (
+              result.value.detail.access === 'shared' ||
+              ['retiring', 'retired'].includes(result.value.detail.status)
+            )
+              views?.forgetSandbox(id);
+            setKnownPersonal(
+              result.value.detail.access === 'shared' ? undefined : { client, id, views },
+            );
             return result;
           },
-    [client, id],
+    [client, id, views],
   );
   const current = useAuthorizedRead(read);
+  useEffect(() => {
+    if (current.state.status === 'error') views?.forgetSandbox(id);
+  }, [current.state, views, id]);
   const shared =
     current.state.status === 'ready' && current.state.value.detail.access === 'shared'
       ? current.state.value
@@ -63,9 +80,13 @@ export function SandboxAccessPage({
     client === undefined ||
     (knownPersonal?.client === client &&
       knownPersonal?.id === id &&
-      current.state.status !== 'error')
+      knownPersonal?.views === views &&
+      current.state.status !== 'error') ||
+    (retained !== undefined && current.state.status === 'loading')
   )
-    return personal;
+    return typeof personal === 'function'
+      ? personal(client !== undefined && current.state.status !== 'ready')
+      : personal;
   if (current.state.status === 'loading')
     return (
       <section className="console__empty" role="status">

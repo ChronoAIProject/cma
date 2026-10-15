@@ -61,7 +61,10 @@ for (const theme of ['light', 'dark']) {
       await expect(page.locator('.thinking__reasoning')).toHaveText('Inspecting dependencies');
       await expect(page.locator('.thinking__activity')).toHaveCount(2);
       await expect(page.locator('.agent-event--tool')).toHaveCount(0);
-      await expect(message(page)).toHaveValue('Inspect the repository.');
+      await expect(message(page)).toHaveValue('');
+      await expect(page.locator('.message--user').filter({ hasText: 'Sending…' })).toContainText(
+        'Inspect the repository.',
+      );
       await expect(recover(page)).toBeDisabled();
       expect(fixture.streams.size).toBe(1);
       fixture.acceptInput();

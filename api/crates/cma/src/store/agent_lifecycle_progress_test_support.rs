@@ -94,6 +94,8 @@ impl Fixture {
         let owner = SubjectId::new("owner");
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
+            managed_agent_instructions: None,
+            setup_message: None,
             request: serde_json::from_value(serde_json::json!({"name":"Progress test"})).unwrap(),
             resolved_image: None,
             capacity: None,

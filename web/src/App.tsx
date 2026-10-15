@@ -30,6 +30,7 @@ import { ServiceTabs } from './services/ServiceTabs';
 import { ServicePage } from './services/ServicePage';
 import { ImageManager } from './services/ImageManager';
 import { EventGateway } from './services/EventGateway';
+import { ServiceBody } from './services/ServiceBody';
 
 export function App() {
   const router = useAppRouter();
@@ -62,17 +63,17 @@ export function App() {
     <div className="service-shell">
       <ServiceTabs route={router.route} onNavigate={router.navigate} />
       {home ? (
-        <div className="service-shell__body">
+        <ServiceBody>
           <HomeLanding router={router} />
-        </div>
+        </ServiceBody>
       ) : null}
       {agentVisible || visitedAgent ? (
-        <div className="service-shell__body" hidden={!agentVisible}>
+        <ServiceBody visible={agentVisible}>
           <AgentApp router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }} />
-        </div>
+        </ServiceBody>
       ) : null}
       {visitedServices.map((visited) => (
-        <div className="service-shell__body" key={visited} hidden={service !== visited}>
+        <ServiceBody key={visited} visible={service === visited}>
           <ServicePage key={`${visited}:${identityKey}`} service={visited}>
             {(session, denied) =>
               visited === 'image-manager' ? (
@@ -82,7 +83,7 @@ export function App() {
               )
             }
           </ServicePage>
-        </div>
+        </ServiceBody>
       ))}
     </div>
   );

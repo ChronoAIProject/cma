@@ -7,7 +7,12 @@ import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
-import { attachmentMessage, transferredFiles, type UploadAttachment } from './attachments';
+import {
+  attachmentMessage,
+  transferredFiles,
+  type DraftAttachment,
+  type UploadAttachment,
+} from './attachments';
 import { useComposerAttachments } from './useComposerAttachments';
 import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachments';
 
@@ -75,6 +80,11 @@ export function Composer({
   const setContent = draft?.setContent ?? setLocalContent;
   const previousAccepted = useRef(acceptedMessage);
   const [submitting, setSubmitting] = useState(false);
+  const [handoff, setHandoff] = useState<{ attachments: readonly DraftAttachment[] }>();
+  const editVersion = useRef(0);
+  const submitted = useRef<{ message: string; version: number; clearsDraft: boolean } | undefined>(
+    undefined,
+  );
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
   const composing = useRef(false);
@@ -87,16 +97,36 @@ export function Composer({
   const attachmentEnabled =
     (status === 'ready' || status === 'working') && !inputBlocked && !starting && !busy;
   const attachments = useComposerAttachments(draft, uploadAttachment, attachmentEnabled);
-  const messageContent = attachmentMessage(content, attachments.items);
+  // Retain the original draft while its outgoing row owns the presentation.
+  // A failed/uncertain request reveals it again unless the owner has edited.
+  const visibleContent = handoff === undefined ? content : '';
+  const visibleAttachments =
+    handoff === undefined
+      ? attachments.items
+      : attachments.items.filter(
+          (item) => !handoff.attachments.some(({ key }) => key === item.key),
+        );
+  const messageContent = attachmentMessage(visibleContent, visibleAttachments);
 
   useLayoutEffect(() => {
     if (acceptedMessage === previousAccepted.current) return;
     previousAccepted.current = acceptedMessage;
-    if (acceptedMessage !== undefined && messageContent === acceptedMessage) {
+    // A receipt from an earlier visit cannot own text newly typed on this visit.
+    if (submitted.current === undefined && editVersion.current !== 0) return;
+    if (
+      submitted.current !== undefined &&
+      submitted.current.message === acceptedMessage &&
+      (!submitted.current.clearsDraft || submitted.current.version !== editVersion.current)
+    )
+      return;
+    if (
+      acceptedMessage !== undefined &&
+      attachmentMessage(content, attachments.items) === acceptedMessage
+    ) {
       setContent('');
       attachments.accept(attachments.items);
     }
-  }, [acceptedMessage, messageContent, setContent, attachments]);
+  }, [acceptedMessage, content, setContent, attachments]);
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
@@ -105,7 +135,7 @@ export function Composer({
   useLayoutEffect(() => {
     const field = inputRef.current;
     if (field !== null) fit(field);
-  }, [content]);
+  }, [visibleContent]);
 
   useLayoutEffect(() => {
     const field = inputRef.current;
@@ -135,21 +165,33 @@ export function Composer({
       sending.current
     )
       return;
-    const draft = content;
+    const originalContent = content;
     const submittedAttachments = attachments.items;
+    const version = editVersion.current;
+    const pending = { attachments: submittedAttachments };
+    submitted.current = { message, version, clearsDraft: quickMessage === undefined };
     sending.current = true;
     setSubmitting(true);
-    void Promise.resolve(
-      onSend(message, () => {
-        if (quickMessage === undefined) {
-          setContent((current) => (current === draft ? '' : current));
-          attachments.accept(submittedAttachments);
-        }
-      }),
-    ).finally(() => {
+    if (quickMessage === undefined) setHandoff(pending);
+    const finish = () => {
+      setHandoff((current) => (current === pending ? undefined : current));
       sending.current = false;
       setSubmitting(false);
-    });
+    };
+    try {
+      const sendingRequest = onSend(message, () => {
+        if (quickMessage === undefined) {
+          if (editVersion.current === version)
+            setContent((current) => (current === originalContent ? '' : current));
+          attachments.accept(submittedAttachments);
+          setHandoff((current) => (current === pending ? undefined : current));
+        }
+      });
+      void Promise.resolve(sendingRequest).then(finish, finish);
+    } catch {
+      // The parent owns delivery errors; never lose a draft to a synchronous refusal.
+      finish();
+    }
   };
 
   return (
@@ -218,6 +260,7 @@ export function Composer({
           <div className="agent-composer__editor">
             <ComposerAttachments
               {...attachments}
+              items={visibleAttachments}
               enabled={attachmentEnabled && uploadAttachment !== undefined}
               locked={submitting || requestPending}
             />
@@ -226,11 +269,14 @@ export function Composer({
                 ref={inputRef}
                 id="agent-message"
                 rows={1}
-                value={content}
+                value={visibleContent}
                 disabled={!usable}
                 aria-describedby={hasNotice ? noticeId : undefined}
                 placeholder={preparing ? 'Message Agent' : placeholder(status)}
                 onChange={(event) => {
+                  editVersion.current += 1;
+                  if (handoff !== undefined) attachments.accept(handoff.attachments);
+                  setHandoff(undefined);
                   setContent(event.target.value);
                 }}
                 onCompositionStart={() => {

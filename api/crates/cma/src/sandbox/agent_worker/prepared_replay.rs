@@ -38,7 +38,9 @@ impl AgentWorker {
         // executes both requests: their distinct runtime fences are not receipts.
         if agent.work.resolved_skills.as_deref() != Some(&[])
             || !agent.profile.content.skills.is_empty()
-            || !agent.profile.content.system_prompt.is_empty()
+            || !crate::agent_lifecycle::guidance::is_prepared_prompt(
+                &agent.profile.content.system_prompt,
+            )
         {
             return Err(SandboxStoreError::Conflict);
         }
@@ -54,7 +56,7 @@ impl AgentWorker {
         let home = AgentHomeRequest::new(
             format!("agent:{}:home:create:v1", agent.id),
             runtime_options(&agent, &context.sandbox, &context.worktree),
-            String::new(),
+            agent.profile.content.system_prompt.clone(),
             Vec::new(),
         );
         let evidence = [
