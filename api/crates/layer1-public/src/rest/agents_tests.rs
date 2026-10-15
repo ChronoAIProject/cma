@@ -160,6 +160,7 @@ impl AgentHistoryExporter for TestHistoryExporter {
 #[test]
 fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
     let usage = serde_json::to_value(AgentUsageView {
+        current_turn: None,
         agent_id: "agt_shape".into(),
         through_seq: 0,
         input_tokens: 0,
@@ -365,6 +366,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("api-github")],
             key_generation: 0,
             delivered: false,
@@ -448,6 +450,7 @@ pub(crate) fn seeded_agent(
         capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),

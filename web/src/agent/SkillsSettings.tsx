@@ -163,10 +163,14 @@ export function SkillsSettings({
           <ul className="agent-skills__list" aria-label="Agent skill status" aria-live="polite">
             {saved.items.map((item) => (
               <li key={item.id}>
-                <strong>
+                <strong
+                  title={
+                    item.name ?? entries.find((entry) => entry.id === item.id)?.name ?? item.id
+                  }
+                >
                   {item.name ?? entries.find((entry) => entry.id === item.id)?.name ?? item.id}
                 </strong>
-                <span>
+                <span title={`${item.version} · ${item.status}`}>
                   {item.version} ·{' '}
                   {item.status === 'installed'
                     ? 'Installed'
@@ -174,7 +178,11 @@ export function SkillsSettings({
                       ? 'Installing…'
                       : 'Installation failed'}
                 </span>
-                {item.error ? <p role="alert">{item.error}</p> : null}
+                {item.error ? (
+                  <p role="alert" title={item.error}>
+                    {item.error}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -233,10 +241,16 @@ export function SkillsSettings({
           const available = entry.versions.filter(isSkillVersion);
           const existing = saved?.items.find((item) => item.id === entry.id);
           const version = existing?.version ?? versions[entry.id] ?? available[0] ?? '';
+          const description =
+            existing?.status === 'failed'
+              ? 'This installation failed. This Agent cannot retry or replace this skill.'
+              : available.length === 0
+                ? 'No published release is available.'
+                : entry.description;
           return (
             <li key={entry.id}>
-              <strong>{entry.name}</strong>
-              {entry.description ? <p>{entry.description}</p> : null}
+              <strong title={entry.name}>{entry.name}</strong>
+              <p title={description}>{description ?? '\u00a0'}</p>
               <div className="agent-skills__actions">
                 <Picker
                   label={`Version for ${entry.name}`}
@@ -272,10 +286,6 @@ export function SkillsSettings({
                         : 'Install'}
                 </Button>
               </div>
-              {existing?.status === 'failed' ? (
-                <p>This installation failed. This Agent cannot retry or replace this skill.</p>
-              ) : null}
-              {available.length === 0 ? <p>No published release is available.</p> : null}
             </li>
           );
         })}

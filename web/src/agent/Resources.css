@@ -14,6 +14,12 @@
   gap: 12px;
   margin-bottom: 8px;
 }
+.sandbox-instruments {
+  min-width: 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .resources {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

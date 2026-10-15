@@ -50,6 +50,7 @@ pub(super) fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -105,6 +106,7 @@ pub(super) fn agent(id: &str, conversation_id: &str, seq: u64) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(conversation_id.into()),
             runtime_generation: Some(4),

@@ -278,6 +278,7 @@ export function SandboxPage({
         </div>
       </dl>
       <SandboxOverview
+        stale={pollError}
         client={client}
         sandbox={sandbox}
         permissions={permissions}

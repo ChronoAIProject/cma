@@ -7,7 +7,7 @@ const words = {
   pausing: 'Pausing',
   paused: 'Paused',
   reviving: 'Resuming',
-  credential_rotating: 'Resuming',
+  credential_rotating: 'Updating access',
   rotating: 'Resuming',
   failed: 'Needs attention',
   retiring: 'Deleting',

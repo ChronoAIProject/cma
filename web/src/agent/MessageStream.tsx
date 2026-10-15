@@ -5,6 +5,9 @@ import type { ConversationState } from './conversation';
 import { StreamEntry, type Entry } from './StreamEntry';
 import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
+import type { AgentViewPosition } from './viewPosition';
+import { UserMessage } from './UserMessage';
+import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -14,6 +17,9 @@ interface MessageStreamProps {
   readonly children?: ReactNode;
   readonly emptyMessage?: string;
   readonly optimisticMessages?: readonly OptimisticMessage[];
+  readonly viewPosition?: AgentViewPosition;
+  readonly user?: MessageUser;
+  readonly unknownUserName?: string;
 }
 
 export function MessageStream({
@@ -24,19 +30,28 @@ export function MessageStream({
   children,
   emptyMessage = 'Start the conversation.',
   optimisticMessages,
+  viewPosition,
+  user,
+  unknownUserName,
 }: MessageStreamProps) {
+  const identity = messageIdentity('user', user, unknownUserName);
   const endRef = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
-  const previousTop = useRef(0);
+  const pinned = useRef(viewPosition?.pinned ?? true);
+  const previousTop = useRef(viewPosition?.top ?? 0);
 
   useLayoutEffect(() => {
     const scroller = endRef.current?.closest('.agent-surface__conversation');
     if (!(scroller instanceof HTMLElement)) return;
+    if (viewPosition !== undefined) scroller.scrollTop = viewPosition.top;
     const track = () => {
       const atEnd = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 48;
       if (atEnd) pinned.current = true;
       else if (scroller.scrollTop < previousTop.current) pinned.current = false;
       previousTop.current = scroller.scrollTop;
+      if (viewPosition !== undefined) {
+        viewPosition.top = scroller.scrollTop;
+        viewPosition.pinned = pinned.current;
+      }
     };
     const follow = () => {
       if (!pinned.current) return;
@@ -48,10 +63,14 @@ export function MessageStream({
     observer?.observe(scroller);
     for (const child of scroller.children) observer?.observe(child);
     return () => {
+      if (viewPosition !== undefined) {
+        viewPosition.top = scroller.scrollTop;
+        viewPosition.pinned = pinned.current;
+      }
       scroller.removeEventListener('scroll', track);
       observer?.disconnect();
     };
-  }, []);
+  }, [viewPosition]);
 
   useLayoutEffect(() => {
     const scroller = endRef.current?.closest('.agent-surface__conversation');
@@ -75,6 +94,15 @@ export function MessageStream({
     ...conversation.recovery.map((item) => ({ kind: 'recovery' as const, item })),
   ];
   entries.sort((left, right) => (left.item.order ?? 0) - (right.item.order ?? 0));
+  const finalReply = new Map<string, string>();
+  for (const entry of entries)
+    if (
+      entry.kind === 'message' &&
+      entry.item.role === 'assistant' &&
+      entry.item.runId !== undefined &&
+      !entry.item.liveOnly
+    )
+      finalReply.set(entry.item.runId, entry.item.id);
 
   return (
     <div className="message-stream" aria-live="polite">
@@ -90,21 +118,44 @@ export function MessageStream({
           approvalBusy={approvalBusy}
           approvalReadOnly={approvalReadOnly}
           onApproval={onApproval}
+          user={user}
+          unknownUserName={unknownUserName}
+          showUsage={
+            entry.kind === 'message' &&
+            entry.item.runId !== undefined &&
+            entry.item.runId !== conversation.activeRunId &&
+            finalReply.get(entry.item.runId) === entry.item.id
+          }
+          usage={
+            entry.kind === 'message' && entry.item.runId !== undefined
+              ? (conversation.turnUsage?.[entry.item.runId] ??
+                (String(conversation.usage?.currentTurn?.turnSequence) === entry.item.runId
+                  ? conversation.usage?.currentTurn
+                  : undefined))
+              : undefined
+          }
         />
       ))}
       {optimisticMessages?.map((message) => (
-        <article className="message message--user" aria-label="You" key={`local:${message.id}`}>
-          <span className="message__role">You</span>
-          <p>{message.content}</p>
-          <span className="message__delivery" role="status">
-            {message.state === 'sending'
-              ? 'Sending…'
-              : message.state === 'accepted'
-                ? 'Sent'
-                : message.state === 'unconfirmed'
-                  ? 'Awaiting confirmation'
-                  : 'Not sent'}
-          </span>
+        <article
+          className="message message--user"
+          aria-label={identity.name}
+          key={`local:${message.id}`}
+        >
+          <MessageAvatar identity={identity} />
+          <div className="message__body">
+            <span className="message__role">{identity.name}</span>
+            <UserMessage content={message.content} />
+            <span className="message__delivery" role="status">
+              {message.state === 'sending'
+                ? 'Sending…'
+                : message.state === 'accepted'
+                  ? 'Sent'
+                  : message.state === 'unconfirmed'
+                    ? 'Awaiting confirmation'
+                    : 'Not sent'}
+            </span>
+          </div>
         </article>
       ))}
       {children}

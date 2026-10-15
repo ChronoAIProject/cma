@@ -33,6 +33,8 @@ import { EventGateway } from './services/EventGateway';
 
 export function App() {
   const router = useAppRouter();
+  const { state: identity } = useAuth();
+  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
   const service =
     router.route.kind === 'image_manager'
       ? 'image-manager'
@@ -44,9 +46,13 @@ export function App() {
   >(service ? [service] : []);
   if (service && !visitedServices.includes(service))
     setVisitedServices([...visitedServices, service]);
-  const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(router.route);
-  const [visitedAgent, setVisitedAgent] = useState(service === undefined);
-  if (service === undefined && lastAgentRoute !== router.route) {
+  const home = router.route.kind === 'home';
+  const agentVisible = service === undefined && !home;
+  const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(
+    agentVisible ? router.route : { kind: 'agent_manager' },
+  );
+  const [visitedAgent, setVisitedAgent] = useState(agentVisible);
+  if (agentVisible && lastAgentRoute !== router.route) {
     setLastAgentRoute(router.route);
     setVisitedAgent(true);
   }
@@ -55,16 +61,19 @@ export function App() {
   return (
     <div className="service-shell">
       <ServiceTabs route={router.route} onNavigate={router.navigate} />
-      {service === undefined || visitedAgent ? (
-        <div className="service-shell__body" hidden={service !== undefined}>
-          <AgentApp
-            router={{ ...router, route: service === undefined ? router.route : lastAgentRoute }}
-          />
+      {home ? (
+        <div className="service-shell__body">
+          <HomeLanding router={router} />
+        </div>
+      ) : null}
+      {agentVisible || visitedAgent ? (
+        <div className="service-shell__body" hidden={!agentVisible}>
+          <AgentApp router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }} />
         </div>
       ) : null}
       {visitedServices.map((visited) => (
         <div className="service-shell__body" key={visited} hidden={service !== visited}>
-          <ServicePage service={visited}>
+          <ServicePage key={`${visited}:${identityKey}`} service={visited}>
             {(session, denied) =>
               visited === 'image-manager' ? (
                 <ImageManager session={session} denied={denied} />
@@ -76,6 +85,21 @@ export function App() {
         </div>
       ))}
     </div>
+  );
+}
+function HomeLanding({ router }: { readonly router: AppRouter }) {
+  const { state, signIn } = useAuth();
+  if (state.status === 'checking') return <BrandLoading />;
+  return (
+    <SignInLanding
+      onSignIn={async () => {
+        if (state.status === 'authenticated') router.navigate({ kind: 'agent_manager' });
+        else {
+          retainFatherDraftForSignIn();
+          await signIn('/agent-manager');
+        }
+      }}
+    />
   );
 }
 function AgentApp({ router }: { readonly router: AppRouter }) {
@@ -130,7 +154,7 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
       <SignInLanding
         onSignIn={async () => {
           retainFatherDraftForSignIn();
-          await signIn(window.location.pathname);
+          await signIn(router.route.kind === 'home' ? '/agent-manager' : window.location.pathname);
         }}
       />
     );

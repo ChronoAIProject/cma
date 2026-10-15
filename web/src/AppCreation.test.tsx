@@ -18,6 +18,7 @@ import {
 afterEach(() => window.history.replaceState({}, '', '/'));
 
 it('retires the profile-driven Sandbox creation entry from the Agent Manager home', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
       <CmaClientProvider client={agentClient()} creation={creationClient()}>
@@ -54,6 +55,7 @@ it('keeps Marketplace profile revisions read-only while creation moves to Agent 
 });
 
 it('does not offer Sandbox creation without its distinct capability', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider
       provider={createMockAuthProvider({

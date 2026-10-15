@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "attachment-success",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "att_f133ed8caf2d0da535c27bd4c2dbd1af7b9bc952fb3b7533a77f55a328ca1787",
+          "agent_id": "agt_shared_read",
+          "name": "owner.txt",
+          "path": "/home/attachments/agt_shared_read/att_f133ed8caf2d0da535c27bd4c2dbd1af7b9bc952fb3b7533a77f55a328ca1787/owner.txt",
+          "size_bytes": 11,
+          "media_type": "text/plain",
+          "sha256": "25556b9c157b7b465d5049b3981ee287bee105afa5a79ac1f42dc17ad4e93d98"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-foreign",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-anonymous",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-unsupported",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/attachment_runtime_upgrade_required",
+          "title": "attachment_runtime_upgrade_required",
+          "status": 409,
+          "detail": "This retained runtime does not support persistent attachment uploads. Use an Agent created with a supported runtime.",
+          "code": "attachment_runtime_upgrade_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-conflict",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/attachment_conflict",
+          "title": "attachment_conflict",
+          "status": 409,
+          "detail": "The upload key or Agent environment changed. Retry an uncertain upload using the original key and file.",
+          "code": "attachment_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-unavailable",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/attachment_unavailable",
+          "title": "attachment_unavailable",
+          "status": 503,
+          "detail": "Upload is temporarily unavailable. Retry with the original key and file.",
+          "code": "attachment_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-invalid-name",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=..%2Fsecret",
+        "headers": {
+          "content-type": "text/plain",
+          "idempotency-key": "attachment-contract-one"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_attachment",
+          "title": "invalid_attachment",
+          "status": 400,
+          "detail": "Attachment metadata or body is invalid.",
+          "code": "invalid_attachment"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "attachment-missing-key",
+      "operation": "POST /api/v1/agents/{id}/attachments",
+      "scenario": "attachment_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/attachments?name=owner.txt",
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "rawBody": "owner file\n"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

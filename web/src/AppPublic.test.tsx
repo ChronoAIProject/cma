@@ -154,12 +154,12 @@ it.each(
         </StrictMode>,
       );
       await screen.findByRole('heading', {
-        name: path === '/' ? 'Welcome to CMA' : PUBLIC_PREVIEW.title,
+        name: path === '/' ? 'ChronoAI Managed Agent' : PUBLIC_PREVIEW.title,
       });
       await waitFor(() =>
         expect(requests.slice(before)).toContainEqual(
           path === '/'
-            ? { method: 'GET', path: '/api/v1/sandboxes' }
+            ? { method: 'GET', path: '/auth/session' }
             : { method: 'POST', path: '/api/v1/triggers/public/public-example/entry-intent' },
         ),
       );
