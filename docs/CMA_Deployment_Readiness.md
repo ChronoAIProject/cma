@@ -5,24 +5,44 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-At **13:29 SGT**, the deployed pair is Agent Manager `c4272f83` (generation
-33) and Web `1d337c1a` (generation 111). The manifests pin their verified registry
-digests. Web now displays outgoing messages before network checks complete;
-authorized acceptance still owns draft clearing and Sent status. The prepared
-Agent admission race has a bounded exact-intent retry. Both local image builds,
-source/digest checks, vulnerability scans and production rollout verification
-passed; four retained conversations kept every historical turn. PR #1027 has
-merged with all 15 CI jobs passed. The later message-display/admission changes
-are a follow-up and do not yet have a completed merge record.
+At **16:47 SGT on 15 October 2026**, production runs Agent Manager
+`26438942` (generation 36), Web `a76ecc46` (generation 113), and Event Gateway
+`477bf801` (generation 7). All three exact image digests and Ready Pod ownership
+were verified. The default runtime is `af2f8231`, digest
+`sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d`.
+The manifests now pin this observed deployment. Image Manager remains deferred;
+CMA remains in Tokyo and the native runtime remains in its separate cluster.
 
-The new Web's 1,853 component/unit tests pass. Actual browser paint timing and
-the popup/OAuth journey remain unverified because no browser surface is
-available. New source-flow measurements are pending; previous source eligibility
-passed four of four under five seconds and durable acknowledgement passed three
-of four. Full-home/original-PVC persistence remains verified; underlying resume
-still takes about 26 seconds while public acceptance is fast. See the verification
-document for exact boundaries and preserved failures. The following checkpoints
-are historical and do not describe the current image pins.
+This release adds attachment upload, retained per-reply token counts, quieter
+transient reconnection, removal of the ordinary-message catalog preflight,
+first-message publication/lease recovery, pause quiescence and an explicit retry
+for a failed scope request. Event Gateway uses the Agent Manager browser login;
+all 16 authenticated/anonymous/origin-isolation checks passed. Public Web assets
+match the running Pod byte for byte. The final Web suite passed 202 files /
+1,895 tests, type checking, lint, formatting and the CSS collision check.
+
+Full-home runtime and native Linux attachment upload/replay/recreation proofs
+passed before activation. Existing Sandboxes retain their recorded runtime
+images and original volumes. New allocations use the new default policy; its
+CMA-created warm target has one observed Ready replica with the whole-`/home`
+mount and `OnRootMismatch` policy verified at 16:50:50 SGT. This does not by
+itself prove prepared-Agent readiness. Fresh end-to-end timing and lifecycle acceptance
+for this exact pair remain pending. Earlier actual resume took about 21.7 seconds
+and the preceding creation sample reached Agent Ready at 5.406 seconds, so the
+complete five-second goal is **not accepted**. Production browser paint timing
+and the external OAuth popup journey remain unmeasured because the available
+computer-use surfaces contain no browser.
+
+Scope revision in this deployed batch still uses the paused-Sandbox workflow:
+approved access waits for the owner to resume. Updating a running Sandbox key
+without a pause is a separate follow-up and is not delivered by these pins.
+After allocating the new runtime, do not roll Agent Manager back to `477bf801`
+or any reader that rejects the optional `agent_attachment_upload` capability.
+The attachment-aware `26438942` image is the current compatible rollback floor,
+in addition to the durable-format requirements documented below. Changing the
+default image alone does not repair existing incompatible readers.
+
+The following checkpoints are historical and do not describe the current pins.
 
 At 12:26 SGT, API `6571e110` remains deployed. Web `53bbe2f7` replaced
 `47b56be7` at 12:25:35 SGT with verified public assets. Live Stop, exact interruption

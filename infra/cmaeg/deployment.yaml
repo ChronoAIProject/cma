@@ -19,10 +19,14 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/candidate: "cabfe5c39240b8907e163fda314d029b0461fed5"
-        cma.chronoai.dev/image-source: "21f3401204becb767e462bf5fb4258d996dc923d"
-        cma.chronoai.dev/ci-run: "38496119196"
-        cma.chronoai.dev/provider-config-sha256: "341b06b8260510c975fd3a9feeaf7a5c2042e403ab802847fdbb76021d954d11"
+        chrono.ai/goal-build: "goal-20261015-477bf801"
+        cma.chronoai.dev/build-mode: "local-production-test"
+        cma.chronoai.dev/candidate: "477bf8015892f9fe2a71f416e90e3e5dcb12c24f"
+        cma.chronoai.dev/image-digest: "sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f"
+        cma.chronoai.dev/image-source: "477bf8015892f9fe2a71f416e90e3e5dcb12c24f"
+        cma.chronoai.dev/local-build: "goal-20261015-477bf801"
+        cma.chronoai.dev/observed-image-provenance-sha256: "f68f7e289cffe32d15ef86855675e6b8fc1dec876ecd0472edc244e99d4f757b"
+        cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
@@ -49,7 +53,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
