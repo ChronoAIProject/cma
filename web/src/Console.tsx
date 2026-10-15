@@ -15,6 +15,8 @@ import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
 import type { AppRoute } from './routing/routes';
+import { routePath } from './routing/routes';
+import { useViewArrival } from './ui/arrivalMotion';
 import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
 import { Tree, type TreePermissions } from './shell/Tree';
@@ -57,6 +59,7 @@ function ConsoleContent({
   onCreate,
   hierarchyRevision = 0,
 }: ConsoleProps) {
+  const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [positions] = useState(() => new AgentViewPositions());
@@ -442,7 +445,7 @@ function ConsoleContent({
         />
       )}
       center={
-        <main className="console__surface">
+        <main className="console__surface" ref={surfaceRef}>
           {actions.notice}
           <Presence>
             {actions.error === undefined ? null : (

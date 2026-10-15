@@ -56,6 +56,7 @@ export function StreamEntry({
         className={`message message--${message.role}`}
         aria-label={identity.name}
         data-streaming={message.status === 'streaming' ? '' : undefined}
+        data-message-key={`message:${message.id}`}
       >
         <MessageAvatar identity={identity} />
         <div className="message__body">
