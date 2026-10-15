@@ -19,7 +19,10 @@ impl Sandbox {
                 &scope.runtime,
                 &scope.runtime.bound_at,
             )
-            || scope.runtime.provision_generation == Some(0)
+            || scope
+                .runtime
+                .provision_generation
+                .is_none_or(|generation| generation == 0)
             || !scope
                 .runtime_services
                 .windows(2)
@@ -59,7 +62,11 @@ impl Sandbox {
             || !self.credential.source.is_managed()
             || !valid_services(services)
             || self.status != SandboxStatus::Active
-            || self.runtime.is_none()
+            || self.runtime.as_ref().is_none_or(|runtime| {
+                runtime
+                    .provision_generation
+                    .is_none_or(|generation| generation == 0)
+            })
             || !matches!(
                 self.work.step,
                 SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
