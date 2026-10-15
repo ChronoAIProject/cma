@@ -5,7 +5,17 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The latest completed production deployment is PR #1022, candidate `d9a6d440`,
+PR #1027 is being tested through authorized local production builds. As of
+09:02 SGT on 2026-10-15, Agent Manager source `9d5f3dcc` and Web source
+`33f8a5e0` are deployed in the existing CMA cluster. Their immutable image and
+running Pod identities were verified, along with the public Web asset hash.
+The five-second creation goal is not yet consistently met; source-ordered
+measurements are not browser measurements. Current candidate evidence and
+remaining acceptance gaps are recorded in the
+[PR #1027 verification](CMA_Native_Production_Verification.md#local-production-candidates--pr-1027).
+The compatible rollback floor below applies to these production records.
+
+The preceding merged production deployment is PR #1022, candidate `d9a6d440`,
 merged as `4dc1325f`, with all 15 CI jobs passed. Agent Manager/Web were Ready
 at 23:13:31 SGT on 2026-10-14. Warm creation reached the exact Agent surface
 in 10.179 seconds and enabled Send in 11.696 seconds, so the strict five-second
