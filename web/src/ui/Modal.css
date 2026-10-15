@@ -93,8 +93,8 @@
 }
 
 /*
- * The body is what scrolls, not the card. A card that scrolls takes its own
- * header and footer out of view with it.
+ * Keep the header and footer visible while the body scrolls where there is
+ * room. Small viewports use the whole-card fallback below.
  */
 .modal__body {
   display: flex;
@@ -115,4 +115,18 @@
   flex: none;
   flex-wrap: wrap;
   padding: 0 24px;
+}
+
+/* A short card must not spend its entire height on fixed header/footer chrome. */
+@media (max-width: 480px), (max-height: 480px) {
+  .modal__card {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .modal__content,
+  .modal__body {
+    flex: none;
+    overflow: visible;
+  }
 }
