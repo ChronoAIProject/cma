@@ -17,6 +17,9 @@ const services = (value: unknown) => {
 export const approveAgentAccessRequest = object({ services });
 /** Exact service selection approved by the authenticated Agent owner. */
 export type ApproveAgentAccessRequest = Output<typeof approveAgentAccessRequest>;
+export const updateAgentServiceAccessRequest = object({ services, expected_services: services });
+/** Replace shared Sandbox access only if the owner's observed selection still matches. */
+export type UpdateAgentServiceAccessRequest = Output<typeof updateAgentServiceAccessRequest>;
 const accessRequest = object({
   id: text,
   agent_id: text,
@@ -48,6 +51,19 @@ function projection(agentId: string, requestId?: string) {
   };
 }
 const path = (agentId: string) => `/api/v1/agents/${segment(agentId)}/access-requests`;
+export function updateAgentServiceAccess(
+  config: ResolvedConfig,
+  agentId: string,
+  body: UpdateAgentServiceAccessRequest,
+  options: CommandOptions,
+) {
+  return read(config, `/api/v1/agents/${segment(agentId)}/service-access`, projection(agentId), {
+    ...command(options),
+    method: 'PUT',
+    body: input(updateAgentServiceAccessRequest, body),
+    expectedStatus: 202,
+  });
+}
 export function listAgentAccessRequests(
   config: ResolvedConfig,
   agentId: string,
