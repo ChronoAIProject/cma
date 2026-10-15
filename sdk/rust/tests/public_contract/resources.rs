@@ -39,6 +39,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .install_skill(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
+        "PUT /api/v1/agents/{id}/service-access" => c.check(
+            client
+                .agents()
+                .update_service_access(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/access-requests" => {
             c.check(client.agents().access_requests(c.param("id")).await)
         }

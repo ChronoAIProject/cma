@@ -20,6 +20,7 @@ import { isPendingTool } from './toolStatus';
 import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
+import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -35,6 +36,8 @@ export function StreamEntry({
   onApproval,
   showUsage = false,
   usage,
+  user,
+  unknownUserName,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
@@ -42,26 +45,32 @@ export function StreamEntry({
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
+  readonly user?: MessageUser;
+  readonly unknownUserName?: string;
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
+    const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
         className={`message message--${message.role}`}
-        aria-label={message.role === 'user' ? 'You' : 'Agent'}
+        aria-label={identity.name}
         data-streaming={message.status === 'streaming' ? '' : undefined}
       >
-        <span className="message__role">{message.role === 'user' ? 'You' : 'Agent'}</span>
-        {message.role === 'user' ? (
-          <UserMessage content={message.content} />
-        ) : (
-          <MessageContent content={message.content} streaming={message.status === 'streaming'} />
-        )}
-        {showUsage ? (
-          <div className="message__usage" aria-label="Turn token usage">
-            <TurnUsage usage={usage} animateInitial={false} />
-          </div>
-        ) : null}
+        <MessageAvatar identity={identity} />
+        <div className="message__body">
+          <span className="message__role">{identity.name}</span>
+          {message.role === 'user' ? (
+            <UserMessage content={message.content} />
+          ) : (
+            <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+          )}
+          {showUsage ? (
+            <div className="message__usage" aria-label="Turn token usage">
+              <TurnUsage usage={usage} animateInitial={false} />
+            </div>
+          ) : null}
+        </div>
       </article>
     );
   }

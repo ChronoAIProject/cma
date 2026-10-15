@@ -23,6 +23,7 @@ pub(crate) enum ConnectionTarget {
     Workspace { id: WorkspaceId },
     Agent { id: AgentId },
     AgentAccessRequest { id: String },
+    AgentServiceAccess { id: AgentId, services: Vec<String> },
     Launch { id: LaunchId },
 }
 
@@ -95,6 +96,16 @@ impl ConnectionTargets for StoredConnectionTargets {
             return Err(ConnectionError::Forbidden);
         }
         match target {
+            ConnectionTarget::AgentServiceAccess { id, services } => {
+                scope::services(
+                    &self.stores.sandbox_model,
+                    self.policy.as_ref(),
+                    caller,
+                    id,
+                    services,
+                )
+                .await
+            }
             ConnectionTarget::AgentAccessRequest { id } => {
                 if !caller.authorization.allows(Capability::UseOwnSandboxes) {
                     return Err(ConnectionError::Forbidden);
@@ -198,3 +209,6 @@ impl ConnectionTargets for StoredConnectionTargets {
         }
     }
 }
+
+#[path = "targets_scope.rs"]
+mod scope;

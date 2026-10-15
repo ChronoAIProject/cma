@@ -37,6 +37,8 @@ fn ready() -> (AgentAccessRecord, Agent, Sandbox) {
     )
     .unwrap();
     let record = AgentAccessRecord {
+        scope_mode: Default::default(),
+        expected_scope_revision: None,
         id: "access-request-original".into(),
         requester: AgentAccessRequester {
             agent_id: agent.id.clone(),
@@ -143,4 +145,77 @@ fn notification_replay_body_is_independent_of_runtime_and_worker_takeover() {
     assert!(!expected.contains("secret-authority-id"));
     assert!(!expected.contains(&recovered.proposal.reason));
     assert!(expected.contains("original task in this conversation"));
+}
+
+#[test]
+fn hot_notification_requires_exact_scope_revision_and_complete_old_key_revocation() {
+    use crate::store::agent_access_requests::AgentAccessHotUpdate;
+    use layer2_core::sandbox::SandboxServiceScopeRevision;
+    let (mut record, agent, mut sandbox) = ready();
+    let floor = sandbox
+        .credential
+        .current
+        .as_ref()
+        .unwrap()
+        .generation
+        .saturating_sub(1);
+    record.progress.hot_update = Some(AgentAccessHotUpdate {
+        runtime: sandbox.runtime.clone().unwrap(),
+        lifecycle_next_authority: sandbox.lifecycle.next_authority,
+    });
+    record.progress.grant_generation_floor = Some(floor);
+    record.expected_scope_revision = Some(2);
+    sandbox.credential.service_scope = Some(SandboxServiceScopeRevision {
+        revision: 3,
+        services: record.approved_services().unwrap().to_vec(),
+        authorized_by: record.requester.owner.clone(),
+        authorized_at: fixtures::NOW.into(),
+        credential_generation_floor: floor,
+        runtime: sandbox.runtime.clone().unwrap(),
+        runtime_services: sandbox.credential.effective_reaches(),
+    });
+    assert!(notification_ready(&record, &agent, &sandbox).unwrap());
+    for case in 0..7 {
+        let mut changed = sandbox.clone();
+        match case {
+            0 => changed
+                .credential
+                .queue_revoke("old-provider-key".into(), fixtures::NOW.into()),
+            1 => changed.credential.service_scope.as_mut().unwrap().revision += 1,
+            2 => changed
+                .credential
+                .service_scope
+                .as_mut()
+                .unwrap()
+                .services
+                .push(ServiceId::new("unapproved")),
+            3 => {
+                changed
+                    .credential
+                    .service_scope
+                    .as_mut()
+                    .unwrap()
+                    .authorized_by = layer2_core::SubjectId::new("foreign-owner")
+            }
+            4 => {
+                changed
+                    .credential
+                    .service_scope
+                    .as_mut()
+                    .unwrap()
+                    .credential_generation_floor += 1
+            }
+            5 => changed.lifecycle.next_authority += 1,
+            _ => changed.runtime.as_mut().unwrap().boot_id = Some("d".repeat(32)),
+        }
+        assert!(
+            !notification_ready(&record, &agent, &changed).unwrap(),
+            "case {case}"
+        );
+    }
+    sandbox.credential.current.as_mut().unwrap().generation += 1;
+    assert!(
+        notification_ready(&record, &agent, &sandbox).unwrap(),
+        "ordinary later credential rotation retains the exact approved scope"
+    );
 }

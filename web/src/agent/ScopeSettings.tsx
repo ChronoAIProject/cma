@@ -1,46 +1,153 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentDetail } from '../api/types';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { ScopePicker } from './ScopePicker';
 import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
+import { accessRequests, AgentAccessError, type AgentAccessRequest } from './accessRequests';
+import { useScopeConnections } from './scopeConnections';
+import { loadScopeUpdate, saveScopeUpdate, type ScopeUpdateIntent } from './scopeUpdateStorage';
 
-export function ScopeSettings({ detail }: { readonly detail: AgentDetail }) {
+const scopes = (value: readonly string[]) =>
+  [...new Set([...REQUIRED_AGENT_SCOPES, ...value])].sort();
+const same = (left: readonly string[], right: readonly string[]) =>
+  JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+
+export function ScopeSettings({
+  detail,
+  owner,
+  active = true,
+}: {
+  readonly detail: AgentDetail;
+  readonly owner?: string;
+  readonly active?: boolean;
+}) {
   const client = useCmaClient();
-  const [granted, setGranted] = useState([...new Set([...REQUIRED_AGENT_SCOPES, ...detail.reach])]);
-  const [selected, setSelected] = useState<readonly string[]>(granted);
+  const [saved, setSaved] = useState(() => loadScopeUpdate(owner, detail.id));
+  const intent = saved.intent;
+  const [granted, setGranted] = useState(() => scopes(detail.reach));
+  const [selected, setSelected] = useState<readonly string[]>(intent?.services ?? granted);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const [confirmed, setConfirmed] = useState(false);
-  const [intent, setIntent] = useState<{ key: string; services: readonly string[] } | undefined>(
-    undefined,
-  );
-  const paused = detail.sandbox.status === 'paused';
+  const [result, setResult] = useState<AgentAccessRequest>();
+  const [conflict, setConflict] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const inFlight = useRef<AbortController | undefined>(undefined);
+  const changed = !same(selected, granted);
+  const connections = useScopeConnections(detail.id, owner, selected, active && changed && !intent);
+  useEffect(() => () => inFlight.current?.abort(), []);
+
+  const remember = (value?: ScopeUpdateIntent) => {
+    if (!owner) throw new Error('Your account could not be verified. Open the Agent again.');
+    saveScopeUpdate(owner, detail.id, value);
+    setSaved(value ? { intent: value } : {});
+  };
+  const observe = (request: AgentAccessRequest) => {
+    setResult(request);
+    if (request.status === 'succeeded') {
+      remember();
+      setGranted([...request.services].sort());
+      setSelected([...request.services].sort());
+    }
+  };
+  const observeRef = useRef(observe);
+  useEffect(() => {
+    observeRef.current = observe;
+  });
+  useEffect(() => {
+    if (!active || !intent?.requestId || result?.status === 'failed') return;
+    const controller = new AbortController();
+    const started = performance.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const requests = await accessRequests.list(detail.id, controller.signal);
+        if (controller.signal.aborted) return;
+        const request = requests.find(({ id }) => id === intent.requestId);
+        if (request) {
+          observeRef.current(request);
+          if (['succeeded', 'failed', 'denied'].includes(request.status)) return;
+        }
+        setError(undefined);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        setError(cause instanceof Error ? cause.message : 'The update could not be checked.');
+      }
+      timer = setTimeout(() => void poll(), performance.now() - started < 5000 ? 500 : 2000);
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [active, detail.id, intent?.requestId, result?.status]);
+
   const save = async () => {
-    if (pending || !paused || !client.grantSandboxServiceAccess) return;
+    if (inFlight.current || !owner || saved.error || (!intent && !connections.ready)) return;
     const retained = intent ?? {
       key: crypto.randomUUID(),
-      services: selected.filter((service) => !granted.includes(service)),
+      services: selected,
+      expectedServices: granted,
     };
-    if (!retained.services.length) return;
-    setIntent(retained);
+    if (retained.requestId) return;
+    try {
+      remember(retained);
+    } catch {
+      setError(
+        'The scope update could not be saved. Restore browser session storage before retrying.',
+      );
+      return;
+    }
+    const controller = new AbortController();
+    inFlight.current = controller;
     setPending(true);
     setError(undefined);
     try {
-      await client.grantSandboxServiceAccess(detail.sandbox.id, retained.services, {
-        idempotencyKey: retained.key,
-      });
-      setGranted((current) => [...new Set([...current, ...retained.services])]);
-      setIntent(undefined);
-      setConfirmed(true);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'The service grant could not be confirmed. Retry the same request.',
+      const request = await accessRequests.replace(
+        detail.id,
+        retained.services,
+        retained.expectedServices,
+        retained.key,
+        controller.signal,
       );
+      if (controller.signal.aborted) return;
+      remember({ ...retained, requestId: request.id });
+      observe(request);
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setConflict(cause instanceof AgentAccessError && cause.status === 409);
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : 'The update could not be confirmed. Retry the same request.',
+        );
+      }
     } finally {
-      setPending(false);
+      inFlight.current = undefined;
+      if (!controller.signal.aborted) setPending(false);
+    }
+  };
+  const reload = async () => {
+    if (inFlight.current) return;
+    const controller = new AbortController();
+    inFlight.current = controller;
+    setPending(true);
+    try {
+      const current = await client.readAgent(detail.id, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      remember();
+      setGranted(scopes(current.reach));
+      setSelected(scopes(current.reach));
+      setResult(undefined);
+      setConflict(false);
+      setError(undefined);
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setError(cause instanceof Error ? cause.message : 'Current access could not be checked.');
+    } finally {
+      inFlight.current = undefined;
+      if (!controller.signal.aborted) setPending(false);
     }
   };
   return (
@@ -49,29 +156,78 @@ export function ScopeSettings({ detail }: { readonly detail: AgentDetail }) {
         value={selected}
         onChange={(value) => {
           setSelected(value);
-          setConfirmed(false);
+          setResult(undefined);
         }}
-        fixed={granted}
-        disabled={pending || intent !== undefined || !client.grantSandboxServiceAccess}
+        replace
+        disabled={pending || !!intent || !!saved.error || !owner}
       />
-      {!paused ? (
-        <p>
-          Pause this Sandbox before adding services. The updated key takes effect when the Sandbox
-          resumes.
-        </p>
+      <p>
+        Save updates the shared key for every Agent in this Sandbox without restarting their
+        sessions.
+      </p>
+      {detail.sandbox.status === 'paused' ? (
+        <p>The Sandbox is paused. Saved access will be applied when you resume it.</p>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-      {confirmed ? (
-        <p role="status">Services granted. Resume the Sandbox to apply them to its Agent keys.</p>
+      {connections.checking ? <p role="status">Checking service connections…</p> : null}
+      {connections.error ? (
+        <>
+          <p role="alert">{connections.error}</p>
+          <Button onClick={connections.retry}>Retry connection check</Button>
+        </>
       ) : null}
-      {client.grantSandboxServiceAccess ? (
-        <Button
-          disabled={pending || !paused || !selected.some((service) => !granted.includes(service))}
-          onClick={() => void save()}
-        >
-          {pending ? 'Saving scope…' : intent ? 'Retry scope grant' : 'Add services'}
-        </Button>
+      {connections.needsConnection ? (
+        <Button onClick={() => setConnecting(true)}>Connect services before saving</Button>
       ) : null}
+      {intent?.requestId && result?.connection ? (
+        <Button onClick={() => setConnecting(true)}>Review service connections</Button>
+      ) : null}
+      {connecting ? (
+        <ConnectionWizard
+          target={result?.connection?.target ?? connections.target}
+          expectedOwner={owner}
+          presentation="dialog"
+          onCancel={() => setConnecting(false)}
+          onReady={(report) => {
+            connections.connected(report);
+            setConnecting(false);
+          }}
+        />
+      ) : null}
+      {saved.error || error ? <p role="alert">{saved.error ?? error}</p> : null}
+      {result?.status === 'failed' || conflict ? (
+        <>
+          <p role="alert">
+            {result?.error ??
+              'Access could not be updated. Reload current access before trying again.'}
+          </p>
+          <Button disabled={pending} onClick={() => void reload()}>
+            Reload current scope
+          </Button>
+        </>
+      ) : null}
+      {result?.status === 'succeeded' ? (
+        <p role="status">Agent key updated. Your Agent has been notified.</p>
+      ) : null}
+      {intent?.requestId && result?.status !== 'failed' ? (
+        <p role="status">Updating the key and notifying your Agent…</p>
+      ) : null}
+      <Button
+        disabled={
+          pending ||
+          !owner ||
+          !!saved.error ||
+          !!intent?.requestId ||
+          conflict ||
+          (!intent && (!changed || !connections.ready))
+        }
+        onClick={() => void save()}
+      >
+        {pending
+          ? 'Saving scope…'
+          : intent && !intent.requestId
+            ? 'Retry scope update'
+            : 'Save scope'}
+      </Button>
     </div>
   );
 }

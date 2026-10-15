@@ -37,7 +37,7 @@ async fn observe_waiting(
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn approved_access_waits_for_owner_resume_then_records_its_own_quiet_pause() {
+async fn approved_access_waits_for_owner_resume_then_updates_the_live_runtime() {
     let (client, database, store, approved) = approved_fixture().await;
     let active = store
         .get_sandbox(&approved.requester.sandbox_id)
@@ -75,7 +75,7 @@ async fn approved_access_waits_for_owner_resume_then_records_its_own_quiet_pause
     assert!(approved.progress.notification_command_id.is_none());
 
     // Model the lifecycle worker's completed owner-initiated resume. The access
-    // worker sees Active again and must use its normal atomic quietness gate.
+    // worker sees Active again and atomically schedules hot credential delivery.
     let mut resumed = active.clone();
     resumed.revision = paused.revision + 1;
     resumed.lifecycle.next_authority = paused.lifecycle.next_authority + 1;
@@ -92,23 +92,20 @@ async fn approved_access_waits_for_owner_resume_then_records_its_own_quiet_pause
         .unwrap()
         .unwrap();
     let parent = restarted.get_sandbox(&resumed.id).await.unwrap().unwrap();
-    assert_eq!(scheduled.phase, Phase::Pausing);
+    assert_eq!(scheduled.phase, Phase::Updating);
     assert_eq!(scheduled.decision, approved.decision);
     assert_eq!(scheduled.requester, approved.requester);
     assert_eq!(scheduled.lease, approved.lease);
-    assert_eq!(parent.status, SandboxStatus::Pausing);
+    assert_eq!(parent.status, SandboxStatus::Active);
+    assert_eq!(parent.runtime, resumed.runtime);
+    assert_eq!(parent.lifecycle, resumed.lifecycle);
+    assert!(parent.lifecycle.operation.is_none());
+    assert!(scheduled.progress.pause_operation_id.is_none());
+    let hot = scheduled.progress.hot_update.as_ref().unwrap();
+    assert_eq!(Some(&hot.runtime), resumed.runtime.as_ref());
     assert_eq!(
-        scheduled.progress.pause_operation_id.as_deref(),
-        Some(
-            parent
-                .lifecycle
-                .operation
-                .as_ref()
-                .unwrap()
-                .authority()
-                .operation_id
-                .as_str()
-        )
+        hot.lifecycle_next_authority,
+        resumed.lifecycle.next_authority
     );
     assert!(scheduled.progress.revive_operation_id.is_none());
     assert!(scheduled.progress.notification_command_id.is_none());

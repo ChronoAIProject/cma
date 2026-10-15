@@ -160,6 +160,16 @@ const sandboxEvents = {
       credential_generation_floor: 2,
     },
   },
+  service_access_revised: {
+    type: 'service_access_revised',
+    scope: {
+      revision: 2,
+      services: ['chrono-llm-public', 'ornn-api'],
+      authorized_by: 'owner-1',
+      authorized_at: '2026-10-15T00:00:00Z',
+      credential_generation_floor: 4,
+    },
+  },
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },
   revived: { type: 'revived' },
   rotated: { type: 'rotated', runtime_version: 'runtime-2' },

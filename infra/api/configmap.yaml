@@ -116,7 +116,7 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae"
   # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
   # admission. The target is persisted by Agent Manager and reconciled through
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
