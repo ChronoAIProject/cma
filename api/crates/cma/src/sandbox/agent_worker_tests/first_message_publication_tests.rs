@@ -53,7 +53,7 @@ async fn completed_first_dispatch_retries_revision_contention_without_resending(
                 let attempt = calls.fetch_add(1, Ordering::SeqCst);
                 let harness = &harness;
                 async move {
-                    if attempt == 0 {
+                    if attempt < 3 {
                         let mut concurrent = candidate.clone();
                         concurrent.title = Some("Owner title during first turn".into());
                         concurrent.revision += 1;
@@ -71,7 +71,7 @@ async fn completed_first_dispatch_retries_revision_contention_without_resending(
             })
             .await
             .unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
         let completed = harness.stored(&claimed.id).await;
         assert_eq!(completed.work.step, AgentWorkStep::None);
         assert!(completed.work.lease.is_none());
@@ -181,4 +181,40 @@ async fn completed_dispatch_bounds_contention_and_respects_lease_expiry() {
         assert_eq!(calls.load(Ordering::SeqCst), if expire { 1 } else { 8 });
         assert_eq!(harness.stored(&claimed.id).await.work, claimed.work);
     }
+}
+
+#[tokio::test]
+async fn completed_dispatch_cannot_retire_a_different_prompt_attempt() {
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
+    let claimed = claimed_dispatch(&harness, Some("Run once")).await;
+    let authority = AgentWorkAuthority::new(
+        "agent-worker".into(),
+        claimed.work.lease.as_ref().unwrap().fence,
+    )
+    .unwrap();
+    let outcome = AgentOperationService::new(harness.store.clone(), harness.registry.clone())
+        .dispatch_queued_first_message(&claimed.id, authority)
+        .await
+        .unwrap();
+    let mut current = harness.stored(&claimed.id).await;
+    let revision = current.revision;
+    current.conversation.first_message.as_mut().unwrap().attempt += 1;
+    current.revision += 1;
+    harness
+        .store
+        .save_agent(revision, current.clone())
+        .await
+        .unwrap();
+    let calls = AtomicUsize::new(0);
+    let result = harness
+        .worker
+        .retry_dispatch_publication(&claimed, &outcome, harness.now, |_, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Ok(()) }
+        })
+        .await;
+    assert_eq!(result, Err(SandboxStoreError::Conflict));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(harness.stored(&claimed.id).await, current);
 }
