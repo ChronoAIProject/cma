@@ -19,15 +19,15 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-d21ba8aa"
+        chrono.ai/goal-build: "goal-20261015-ba861431"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1"
+        cma.chronoai.dev/api-image-digest: "sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "d21ba8aadf8265dd82b814ad2114b85696c5e06f"
-        cma.chronoai.dev/image-digest: "sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1"
-        cma.chronoai.dev/image-source: "d21ba8aadf8265dd82b814ad2114b85696c5e06f"
-        cma.chronoai.dev/local-build: "goal-20261015-d21ba8aa"
-        cma.chronoai.dev/observed-image-provenance-sha256: "c19bd2af88b604044003e7fcdb1a23a65c22877695d335b5a86d8573cd42afd3"
+        cma.chronoai.dev/candidate: "ba86143134dbd3e5d351348a69f0cb53bce27edb"
+        cma.chronoai.dev/image-digest: "sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b"
+        cma.chronoai.dev/image-source: "ba86143134dbd3e5d351348a69f0cb53bce27edb"
+        cma.chronoai.dev/local-build: "goal-20261015-ba861431"
+        cma.chronoai.dev/observed-image-provenance-sha256: "e383c23a3e95476f80d11c06a5316d52c16529e64b4766cc240cc0d2ee34ced4"
         # Reload the environment-bound runtime pin when its ConfigMap changes.
         cma.chronoai.dev/runtime-image: "sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e"
       labels:
@@ -64,7 +64,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a723c5d1608af4781a8ede9fd490a1ac4141cb7365c7195a6d2845dfbf97dc8b
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
