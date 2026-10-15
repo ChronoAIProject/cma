@@ -13,8 +13,9 @@ The final image must demonstrate operation receipts, credential generations,
 per-Agent configuration and exact conversation resumption. Retained OpenSandbox
 runtimes must still support releasing writer holds left by earlier deployments.
 CMA no longer captures or restores whole-home archives. Changing
-`CHRONO_SANDBOX_IMAGE` requires an immutable digest and triggers recorded rotation;
-a new tag or label is not evidence.
+`CHRONO_SANDBOX_IMAGE` requires an immutable digest and selects the image for new
+allocations; existing Sandboxes retain their pinned image across pause, resume
+and control-plane upgrades. A new tag or label is not runtime evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
