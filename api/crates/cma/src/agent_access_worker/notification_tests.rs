@@ -47,6 +47,7 @@ fn ready() -> (AgentAccessRecord, Agent, Sandbox) {
             creation,
         },
         proposal: AgentAccessProposal {
+            retry_of: None,
             request_key: "original-key".into(),
             services: vec!["github".into()],
             reason: "Read repository".into(),

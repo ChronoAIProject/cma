@@ -16,6 +16,7 @@ pub(super) struct Service {
 }
 fn receipt(status: AgentAccessStatus) -> AgentAccessRequest {
     AgentAccessRequest {
+        retry_of: None,
         id: "access-one".into(),
         agent_id: AgentId("agent-one".into()),
         status,

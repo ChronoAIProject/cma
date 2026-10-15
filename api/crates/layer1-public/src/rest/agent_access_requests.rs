@@ -51,6 +51,8 @@ pub(crate) struct AgentAccessRequestView {
     pub services: Vec<String>,
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentAccessConnection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -79,6 +81,7 @@ impl From<AgentAccessRequest> for AgentAccessRequestView {
             },
             services: value.services,
             reason: value.reason,
+            retry_of: value.retry_of,
             connection,
             error: value.error,
         }
