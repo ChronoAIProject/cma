@@ -905,3 +905,38 @@ source asset. Evidence: `/tmp/cma-chat-final-browser-20261015`,
 `/tmp/cma-chat-release-20261015`,
 `/tmp/cma-chat-static-compression-proof-20261015.json`, and
 `/tmp/cma-final-chat-web-tests-20261015.log`.
+
+The public worker URL was subsequently fetched with gzip accepted. It returned
+HTTP 200, `Content-Encoding: gzip`, 1,024,738 transfer bytes and 2,037,290 decoded
+bytes; the decoded SHA-256 matched the verified worker asset. This checks actual
+production delivery as well as the earlier local nginx image proof.
+
+## 2026-10-15 final browser lifecycle and navigation check
+
+On Web `fa1e3f13` and Agent Manager `8cad5bcd`, the retained owned attachment
+fixture was paused and resumed once through the real production Sandbox page.
+Pause disabled its controls in 5 ms, exposed the accepted operation disclosure
+in 148 ms and showed Pausing in 623 ms. Resume returned HTTP 202 in 1.766 seconds
+and showed Resuming in 2.128 seconds. Underlying operation details were collapsed
+by default and could be expanded. Actual backend completion remained slower:
+7.858 seconds to Paused and 22.274 seconds to Active; UI Live appeared at
+21.883 seconds. These results establish prompt state feedback, not a working
+runtime resumed within five seconds.
+
+The original native Sandbox, Claim, PVC UID and PV survived. A replacement Pod
+mounted the same whole `/home`. One completed post-resume model tool invocation
+read and hashed the original image, text and 20 MiB boundary file; every byte
+count and SHA-256 matched the earlier evidence. All eight prior terminal turns
+and the native conversation were retained. An unsent draft and history survived
+pause/resume and an Agent → own Sandbox → same Agent route roundtrip in the
+same browser document, with one document-navigation entry.
+
+The pause listener initially matched the wrong HTTP URL, so pause receipt
+timing is not claimed; actual click, UI, backend and native observations remain
+available. The single-line hash prompt included a harmless leftover test-draft
+prefix because the harness's select-all shortcut did not select the input.
+There was one send and a real completed hash tool, with no mutation replay.
+The draft was cleared and the fixture retained Active/Ready for subsequent
+scope checks. Deletion was deliberately not submitted in this run.
+
+Evidence: `/tmp/cma-final-lifecycle-browser-20261015/summary.json`.
