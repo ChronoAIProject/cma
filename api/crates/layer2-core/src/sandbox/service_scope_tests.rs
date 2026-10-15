@@ -112,6 +112,7 @@ fn repeated_exact_scope_still_reserves_a_new_delivery_and_can_regrant_removed_se
 fn startup_scope_follows_runtime_generation_and_survives_a_process_boot_rebind() {
     let mut value = live();
     value.runtime.as_mut().unwrap().provision_generation = Some(4);
+    value.lifecycle.runtime_generation_high_water = 4;
     let owner = value.owner.clone();
     let original = value.runtime.clone().unwrap();
     let first = value
@@ -124,7 +125,6 @@ fn startup_scope_follows_runtime_generation_and_survives_a_process_boot_rebind()
         value.credential.runtime_reaches(&restarted_process),
         first.runtime_services
     );
-    value.runtime = Some(restarted_process);
     let second = value
         .revise_live_service_access(&owner, &services(&["calendar", "mail"]), NOW.into())
         .unwrap();
@@ -140,6 +140,7 @@ fn startup_scope_follows_runtime_generation_and_survives_a_process_boot_rebind()
         services(&["calendar", "mail"])
     );
     value.runtime = Some(resumed.clone());
+    value.lifecycle.runtime_generation_high_water = 5;
     let third = value
         .revise_live_service_access(&owner, &services(&["mail"]), NOW.into())
         .unwrap();
