@@ -1,12 +1,12 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 18:02 SGT
+## Current production — 15 October, 18:51 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `8cad5bcd71134811bdaf057d080897c11a5fddfd` | 37 | `sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b` |
+| Agent Manager | `edaeca82962d0c5704089740aed09a4c6140bdee` | 38 | `sha256:cb39ccf585c48b28a9bcae81ea563d0763078c17f7df2ad27a6744efa9b11fda` |
 | Web | `fa1e3f13a2583723aadc9c1412b0f21177e58f06` | 116 | `sha256:b65f7001b95edd3b9eaad46f30344f5be363199ab860b233f0409fca92f07ab6` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
@@ -940,3 +940,83 @@ The draft was cleared and the fixture retained Active/Ready for subsequent
 scope checks. Deletion was deliberately not submitted in this run.
 
 Evidence: `/tmp/cma-final-lifecycle-browser-20261015/summary.json`.
+
+## 2026-10-15 immediate deletion and completed background cleanup
+
+After its GitHub permission campaign completed, the separate owned Sandbox
+`sbx_c0e7f8b55f8b4ad6bb21453a4d0a9e7f` was naturally Paused. One actual UI
+confirmation submitted one DELETE on Agent Manager `8cad5bcd` and Web
+`fa1e3f13`. HTTP 202 arrived in 158 ms; the Sandbox disappeared from the normal
+resource tree and the confirmation dialog closed in 347 ms. The optional cleanup
+status was collapsed initially, expanded on request, and ultimately confirmed
+deletion.
+
+Exact original Claim, Sandbox and PVC UIDs and all owned Pods were absent within
+2.288 seconds of the pre-click intent. Public retirement completed in 64.978
+seconds after two retryable `stop_agents` dependency errors. Normal workers
+completed cleanup without another DELETE or manual resource changes. This proves
+immediate UI removal and eventual cleanup; it does not label the full public
+retirement as a sub-five-second operation. The retained attachment/callback
+fixture was not touched. Evidence:
+`/tmp/cma-final-delete-browser-20261015/summary.json`.
+
+## 2026-10-15 cross-Agent navigation and callback recovery deployment
+
+On Web `fa1e3f13` and Agent Manager `8cad5bcd`, one additional default Agent
+was created through the existing-Sandbox UI in the retained owned fixture.
+The single POST returned HTTP 202; Create to an editable composer took 4.447
+seconds. The automatic first turn completed in 24.135 seconds. A preparatory
+resume of the naturally paused Sandbox took 23.079 seconds and is explicitly
+outside this creation measurement. The new Agent used `gpt-6`, high reasoning,
+autonomous permissions and the two mandatory scopes.
+
+Normal sidebar links switched between the two Agents without reloading the
+document. Both histories and independent unsent drafts survived. A controlled
+recheck set non-bottom scroll positions using standard DOM scroll events and
+instant scrolling to exclude mouse-wheel inertia: the old Agent restored
+240 to 240 pixels and the new Agent restored 100 to 100 pixels. Switch readiness
+in that check was 0.690–0.714 seconds. Test drafts were cleared and the original
+Agent tab restored. Evidence:
+`/tmp/cma-cross-agent-browser-20261015/create-report.json` and
+`/tmp/cma-cross-agent-browser-20261015/switch-controlled-report.json`.
+
+Agent Manager source `edaeca82` was then deployed at 18:51 SGT as generation
+38. Its exact scanned image is the current pin at the top of this document.
+Pod `cma-agent-manager-57ff55cb4c-59dlc`, UID
+`a8d6fcfc-ebba-44fd-bff7-293422619052`, became Ready with zero restarts and the
+expected image ID. ReplicaSet/Deployment ownership, public retained Agent and
+Sandbox reads, the default runtime and full-home configuration all passed.
+The singleton Recreate rollout briefly returned HTTP 503 to a final browser
+read; that known rollout window is separate from the completed navigation
+measurement. Evidence:
+`/tmp/cma-hot-callback-recovery-release-20261015/cma-agent-manager`.
+
+This patch fixes an indefinite scope-update lock when an owner pause or runtime
+change invalidates a callback before admission. An authenticated transaction
+checks the existing command and fences the original lineage before ending an
+absent or definitely unwritten notification. An admitted or uncertain callback
+retains its exact target, key, receipt and recovery path. The worker stops when
+notification preparation changes the request phase. Eleven focused tests,
+34 authenticated MongoDB contracts, affected strict Clippy, formatting and
+secret scanning passed; five new regression cases include subsequent optional
+revocation and preservation of uncertain delivery. A public API timing race
+cannot deterministically exercise this transaction boundary, so the transactional
+regressions are the race proof, separate from the live callback checks.
+
+The final `edaeca82` image then passed one idle and one busy production MCP
+approval on the retained original Agent and runtime `78fdcb88`. Timings start
+at the approval HTTP request, use a monotonic clock and conservatively include
+observer transport latency:
+
+| Original Agent state | New key installed and old key revoked | Actual original-session callback | Request succeeded |
+|---|---|---|---|
+| Idle, Message callback | 1.720 s | 2.152 s | 2.370 s |
+| Working, Steer into original turn | 1.297 s | 1.804 s | 2.032 s |
+
+Both retained the exact runtime boot, conversation, Pod, Claim, PVC, PV and
+image; neither changed the native controller. Each delivered exactly one
+callback. Actual Codex acknowledgment subsequently appeared at 8.830 and 28.508
+seconds respectively; those model-response times are not callback-delivery
+times. The busy callback stayed in the original active turn. These are API
+approval measurements, not browser-click or fresh external OAuth timing.
+Evidence: `/tmp/cma-hot-scope-live-edaeca82-20261015-01`.

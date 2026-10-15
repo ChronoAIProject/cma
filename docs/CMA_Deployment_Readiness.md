@@ -5,8 +5,8 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-At **18:02 SGT on 15 October 2026**, production runs Agent Manager
-`8cad5bcd` (generation 37), Web `fa1e3f13` (generation 116), and Event Gateway
+At **18:51 SGT on 15 October 2026**, production runs Agent Manager
+`edaeca82` (generation 38), Web `fa1e3f13` (generation 116), and Event Gateway
 `477bf801` (generation 7). All three exact image digests and Ready Pod ownership
 were verified. The default runtime is `ff9834c4`, digest
 `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae`.
@@ -22,6 +22,15 @@ Event Gateway browser login remain active. Public Web assets match the running
 Pod bytes. The combined Web suite passed 205 files / 1,932 tests, type checking,
 lint, formatting and build.
 
+The final Agent Manager patch releases an obsolete scope request when an owner
+pause or runtime change invalidates a callback that was never written. A fenced
+transaction proves the absence or pre-write failure before ending that request;
+already admitted or uncertain callbacks retain their exact command and recovery.
+This prevents a failed notification from indefinitely blocking a later grant or
+revocation. Eleven focused tests and 34 authenticated MongoDB contracts passed,
+including later revocation and uncertain-delivery regressions. The exact published
+image passed vulnerability scanning and production readiness checks.
+
 Full-home runtime and native Linux attachment upload/replay/recreation proofs
 passed before activation. Existing Sandboxes retain their recorded runtime
 images and original volumes. New allocations use the new default policy; its
@@ -34,8 +43,10 @@ still took about 9 seconds / 21–26 seconds despite prompt admission, so the
 complete five-second lifecycle goal is **not accepted**. Fresh external OAuth
 consent remains unmeasured.
 
-Production hot key updates passed both quiet and busy-Agent callbacks in under
-two seconds. Actual optional GitHub grant/private repository read/removal also
+Production hot key updates on final Agent Manager `edaeca82` passed quiet and
+busy-Agent callbacks in 2.152 and 1.804 seconds respectively, with key delivery
+and old-key revocation completed first. Actual optional GitHub grant/private
+repository read/removal on the preceding `8cad5bcd` also
 passed, with callbacks at 3.399 and 1.844 seconds and the original Pod, boot,
 conversation and PVC/PV retained. The owner's existing GitHub OAuth connection
 was used. Native Git clone/push is separate from this verified GitHub API path.
