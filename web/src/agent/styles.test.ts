@@ -41,7 +41,7 @@ describe('conversation geometry with readable labels', () => {
     expect(capsule.getPropertyValue('position')).toBe('relative');
     const editor = declaration(rules, '.agent-composer__editor');
     expect(editor.getPropertyValue('position')).toBe('absolute');
-    expect(editor.getPropertyValue('bottom')).toBe('0');
+    expect(editor.getPropertyValue('bottom')).toBe('0px');
     expect(editor.getPropertyValue('background')).toBe('var(--dsw-specific-input-major)');
     const field = declaration(rules, '.agent-composer textarea');
     expect(field.getPropertyValue('max-height')).toBe('36px');
