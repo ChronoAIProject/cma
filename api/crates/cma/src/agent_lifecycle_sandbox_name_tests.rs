@@ -1,4 +1,4 @@
-use super::{create_sandbox, sandbox_name, validate_request};
+use super::{create_sandbox, sandbox_error, sandbox_name, validate_request};
 use crate::agent_lifecycle::*;
 use layer2_core::profiles::InMemoryProfileStore;
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxEventStore, SandboxStore};
@@ -61,6 +61,47 @@ fn owner() -> Caller {
         SubjectId::new("owner"),
         Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]),
     )
+}
+
+#[tokio::test]
+async fn full_sandbox_quota_is_a_terminal_lifecycle_conflict_without_another_admission() {
+    let profile_store = Arc::new(InMemoryProfileStore::default());
+    let profiles = profiles(profile_store.clone());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let caller = owner();
+    let service = SandboxService::new(
+        store.clone(),
+        profile_store,
+        SandboxPolicy {
+            max_sandboxes_per_owner: 1,
+            ..SandboxPolicy::default()
+        },
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+    );
+    let first = admission(&profiles, &caller, "First", "quota-first").await;
+    let original = service.create_for_lifecycle(&caller, first).await.unwrap();
+    let second = admission(&profiles, &caller, "Second", "quota-second").await;
+    let error = create_sandbox(&service, &caller, second.profile, "Second", "quota-second")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+    );
+    // Only Unavailable is automatically retried by the lifecycle worker.
+    assert!(matches!(
+        sandbox_error(error),
+        AgentLifecycleProvisioningError::Conflict(message)
+            if message == "sandbox limit reached: 1 of 1"
+    ));
+    assert_eq!(
+        store
+            .list_sandboxes(&caller.subject, &Default::default())
+            .await
+            .unwrap()
+            .items,
+        vec![original]
+    );
 }
 
 #[tokio::test]
