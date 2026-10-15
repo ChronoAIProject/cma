@@ -179,3 +179,96 @@ async fn invalid_access_decisions_fail_before_network_effects() {
     assert_eq!(server.request_count(), 0);
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn failed_predecessor_identity_survives_a_fresh_pending_consent_attempt() {
+    let server = WireServer::new().await;
+    let prior = format!("aar_{}", "a".repeat(64));
+    let current = format!("aar_{}", "b".repeat(64));
+    let mut next = receipt("pending");
+    next["id"] = current.clone().into();
+    next["retry_of"] = prior.clone().into();
+    server.expect(wire::json(
+        "GET",
+        "/api/v1/agents/agent-one/access-requests",
+        None,
+        200,
+        json!({"items":[next.clone()]}),
+        true,
+    ));
+    let result = server
+        .client
+        .agents()
+        .access_requests("agent-one")
+        .await
+        .unwrap();
+    assert_eq!(result.items[0].retry_of.as_deref(), Some(prior.as_str()));
+    assert_eq!(serde_json::to_value(&result.items[0]).unwrap(), next);
+    for invalid in ["foreign".to_owned(), current] {
+        next["retry_of"] = invalid.into();
+        server.expect(wire::json(
+            "GET",
+            "/api/v1/agents/agent-one/access-requests",
+            None,
+            200,
+            json!({"items":[next.clone()]}),
+            true,
+        ));
+        assert!(matches!(
+            server.client.agents().access_requests("agent-one").await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn scope_replacement_keeps_exact_selection_guard_and_idempotency_on_replay() {
+    let server = WireServer::new().await;
+    let body = UpdateAgentServiceAccessRequest {
+        services: vec!["chrono-llm-public".into(), "ornn-api".into()],
+        expected_services: vec![
+            "chrono-llm-public".into(),
+            "ornn-api".into(),
+            "api-github".into(),
+        ],
+    };
+    let key = IdempotencyKey::new("scope-replacement").unwrap();
+    for _ in 0..2 {
+        let mut response = receipt("applying");
+        response["services"] = json!(body.services);
+        let mut expected = wire::json(
+            "PUT",
+            "/api/v1/agents/agent-one/service-access",
+            Some(serde_json::to_value(&body).unwrap()),
+            202,
+            response.clone(),
+            true,
+        );
+        expected
+            .headers
+            .insert("idempotency-key".into(), "scope-replacement".into());
+        server.expect(expected);
+        let result = server
+            .client
+            .agents()
+            .update_service_access("agent-one", &body, &key)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(result).unwrap(), response);
+    }
+    let invalid = UpdateAgentServiceAccessRequest {
+        expected_services: vec![],
+        ..body
+    };
+    assert!(matches!(
+        server
+            .client
+            .agents()
+            .update_service_access("agent-one", &invalid, &key)
+            .await
+            .unwrap_err(),
+        Error::Validation { .. }
+    ));
+    server.assert_drained();
+}

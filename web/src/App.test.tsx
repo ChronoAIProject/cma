@@ -31,6 +31,7 @@ describe('the retained application shell', () => {
   });
 
   it('shows the authenticated empty state and account control', async () => {
+    window.history.replaceState(null, '', '/agent-manager');
     render(
       <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
         <App />
@@ -38,6 +39,23 @@ describe('the retained application shell', () => {
     );
     expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /account menu/i })).toBeInTheDocument();
+  });
+
+  it('keeps the home landing available after sign-in and enters Agent Manager without another login', async () => {
+    const provider = createMockAuthProvider({ initiallyAuthenticated: true });
+    const signIn = vi.spyOn(provider, 'signIn');
+    render(
+      <AuthContextProvider provider={provider}>
+        <App />
+      </AuthContextProvider>,
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
+    expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/agent-manager');
+    expect(signIn).not.toHaveBeenCalled();
   });
 
   it('offers sign in to an anonymous visitor', async () => {

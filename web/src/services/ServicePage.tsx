@@ -70,21 +70,27 @@ export function ServicePage({
           </p>
         </div>
         {state.session ? (
-          <Button
-            onClick={() => {
-              void serviceRequest<void>(service, '/auth/logout', { method: 'POST' })
-                .then(denied)
-                .catch(() =>
-                  setState((current) =>
-                    current.anonymous
-                      ? current
-                      : { ...current, error: 'Sign-out could not be completed. Try again.' },
-                  ),
-                );
-            }}
-          >
-            Sign out of {name}
-          </Button>
+          service === 'event-gateway' ? (
+            <a className="service-link" href="/auth/logout">
+              Sign out of CMA
+            </a>
+          ) : (
+            <Button
+              onClick={() => {
+                void serviceRequest<void>(service, '/auth/logout', { method: 'POST' })
+                  .then(denied)
+                  .catch(() =>
+                    setState((current) =>
+                      current.anonymous
+                        ? current
+                        : { ...current, error: 'Sign-out could not be completed. Try again.' },
+                    ),
+                  );
+              }}
+            >
+              Sign out of {name}
+            </Button>
+          )
         ) : null}
       </header>
       {state.error ? (
@@ -103,7 +109,14 @@ export function ServicePage({
       {state.anonymous ? (
         <section className="service-panel">
           <p>Sign in with NyxID to open {name}.</p>
-          <a className="service-link" href={`/api/${service}/auth/login`}>
+          <a
+            className="service-link"
+            href={
+              service === 'event-gateway'
+                ? '/auth/login?return_to=%2Fevent-gateway'
+                : `/api/${service}/auth/login`
+            }
+          >
             Sign in with NyxID
           </a>
         </section>

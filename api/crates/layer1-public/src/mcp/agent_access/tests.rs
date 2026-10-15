@@ -19,6 +19,7 @@ struct Stub {
     calls: AtomicUsize,
     proposals: Mutex<Vec<(AgentAccessRequester, AgentAccessProposal)>>,
     failure: Mutex<Option<AgentAccessError>>,
+    returned: Mutex<Option<AgentAccessRequest>>,
 }
 impl Stub {
     fn new(confirmed: bool) -> Arc<Self> {
@@ -32,6 +33,7 @@ impl Stub {
             calls: AtomicUsize::new(0),
             proposals: Mutex::new(vec![]),
             failure: Mutex::new(None),
+            returned: Mutex::new(None),
         })
     }
     fn router(self: &Arc<Self>) -> Router {
@@ -71,7 +73,11 @@ impl AgentAccessToolAdmission for Stub {
             .lock()
             .unwrap()
             .push((identity.clone(), proposal.clone()));
+        if let Some(value) = self.returned.lock().unwrap().clone() {
+            return Ok(value);
+        }
         Ok(AgentAccessRequest {
+            retry_of: proposal.retry_of,
             id: "access-request-one".into(),
             agent_id: identity.agent_id,
             status: AgentAccessStatus::Pending,
@@ -164,6 +170,13 @@ async fn pending_capability_discovers_tools_but_cannot_request_access() {
         listed["result"]["tools"][0]["inputSchema"]["required"],
         json!(["request_key", "services", "reason"])
     );
+    let service_guidance = listed["result"]["tools"][0]["inputSchema"]["properties"]["services"]
+        ["description"]
+        .as_str()
+        .unwrap();
+    assert!(service_guidance.contains("request api-github for that access"));
+    assert!(service_guidance.contains("granting api-github-pat does not configure this gh route"));
+    assert!(service_guidance.contains("does not authenticate native git clone/fetch/push"));
     let notified = app
         .clone()
         .oneshot(request(
@@ -209,6 +222,25 @@ async fn confirmed_call_passes_exact_identity_and_stable_proposal_to_admission()
     assert_eq!(proposals[0].0, requester());
     assert_eq!(proposals[0].1.request_key, "missing-github-1");
     assert_eq!(stub.setup.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn github_cli_guidance_does_not_rewrite_independent_service_requests() {
+    let stub = Stub::new(true);
+    let services = ["api-github-pat", "other-service"];
+    let mut arguments = proposal();
+    arguments["services"] = json!(services);
+    let response = body(
+        stub.router()
+            .oneshot(request(&stub, &call(arguments)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response["result"]["isError"], false);
+    let proposals = stub.proposals.lock().unwrap();
+    assert_eq!(proposals.len(), 1);
+    assert_eq!(proposals[0].1.services, services);
 }
 
 #[tokio::test]
@@ -414,4 +446,106 @@ async fn repeated_requests_are_rate_limited_without_growing_authority() {
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(response.headers()[header::RETRY_AFTER], "60");
     assert!(stub.proposals.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn failed_attempt_returns_explicit_fresh_retry_without_claiming_owner_consent() {
+    let stub = Stub::new(true);
+    let failed_id = format!("aar_{}", "a".repeat(64));
+    *stub.returned.lock().unwrap() = Some(AgentAccessRequest {
+        id: failed_id.clone(),
+        agent_id: requester().agent_id,
+        status: AgentAccessStatus::Failed,
+        services: vec!["api-github".into()],
+        reason: "Read owner repository".into(),
+        retry_of: None,
+        error: Some("access_update_cannot_continue".into()),
+    });
+    let response = body(
+        stub.router()
+            .oneshot(request(&stub, &call(proposal())))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let value = &response["result"]["structuredContent"];
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(value["request_id"], failed_id);
+    assert_eq!(value["status"], "failed");
+    assert_eq!(value["error"], "access_update_cannot_continue");
+    assert_eq!(value["requires_owner_approval"], true);
+    let mut next: AgentAccessProposal =
+        serde_json::from_value(value["next_request"].clone()).unwrap();
+    next.validate().unwrap();
+    assert_eq!(next.retry_of, None);
+    assert_eq!(value["next_request"].as_object().unwrap().len(), 3);
+    assert_eq!(value["next_request_retry_of"], failed_id);
+    assert_ne!(next.request_key, proposal()["request_key"]);
+    assert_eq!(next.services, ["api-github"]);
+    assert_eq!(next.reason, "Read owner repository");
+    let again = body(
+        stub.router()
+            .oneshot(request(&stub, &call(proposal())))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(again["result"], response["result"]);
+    *stub.returned.lock().unwrap() = None;
+    next.retry_of = Some(failed_id.clone());
+    let response = body(
+        stub.router()
+            .oneshot(request(&stub, &call(serde_json::to_value(&next).unwrap())))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response["result"]["structuredContent"]["status"], "pending");
+    assert_eq!(
+        response["result"]["structuredContent"]["retry_of"],
+        failed_id
+    );
+    assert!(response["result"]["structuredContent"]
+        .get("next_request")
+        .is_none());
+    assert_eq!(stub.proposals.lock().unwrap().last().unwrap().1, next);
+}
+
+#[test]
+fn legacy_proposals_keep_their_digest_and_terminal_denial_has_no_retry_instruction() {
+    let legacy = proposal();
+    let parsed: AgentAccessProposal = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(parsed.retry_of, None);
+    assert_eq!(serde_json::to_value(parsed).unwrap(), legacy);
+    let mut denied = AgentAccessRequest {
+        id: format!("aar_{}", "b".repeat(64)),
+        agent_id: requester().agent_id,
+        status: AgentAccessStatus::Denied,
+        services: vec!["api-github".into()],
+        reason: "Read owner repository".into(),
+        retry_of: None,
+        error: None,
+    };
+    for status in [
+        AgentAccessStatus::Denied,
+        AgentAccessStatus::Pending,
+        AgentAccessStatus::Applying,
+        AgentAccessStatus::Succeeded,
+    ] {
+        denied.status = status;
+        let response = super::reply::admitted(denied.clone());
+        assert!(response["structuredContent"].get("next_request").is_none());
+    }
+    for invalid in [
+        "aar_short".into(),
+        format!("aar_{}", "A".repeat(64)),
+        "foreign".into(),
+    ] {
+        let mut changed = proposal();
+        changed["retry_of"] = invalid.into();
+        assert!(serde_json::from_value::<AgentAccessProposal>(changed)
+            .unwrap()
+            .validate()
+            .is_err());
+    }
 }

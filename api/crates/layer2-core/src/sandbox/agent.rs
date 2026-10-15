@@ -13,6 +13,8 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationState {
+    #[serde(default, skip_serializing_if = "super::AgentObservations::is_empty")]
+    pub observations: super::AgentObservations,
     /// Durable owner overrides; published profiles and open receipt identities stay immutable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<super::AgentSettings>,
@@ -138,6 +140,7 @@ impl Agent {
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
             || self.conversation.settings.is_some()
+            || !self.conversation.observations.is_empty()
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0

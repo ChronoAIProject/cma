@@ -3,10 +3,35 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/agents/{id}/attachments': async ({
+    client,
+    param,
+    body,
+    query,
+    command,
+    fixture,
+  }) => {
+    const value = await client.agentAttachments.upload(
+      param('id'),
+      new Blob([body], { type: fixture.request.headers['content-type'] }),
+      { ...command, name: query.get('name') ?? '' },
+    );
+    return {
+      id: value.id,
+      agent_id: value.agentId,
+      name: value.name,
+      path: value.path,
+      size_bytes: value.size,
+      media_type: value.mediaType,
+      sha256: value.sha256,
+    };
+  },
   'GET /api/v1/agents/{id}/models': ({ client, param }) => client.agents.models(param('id')),
   'GET /api/v1/agents/{id}/skills': ({ client, param }) => client.agents.skills(param('id')),
   'POST /api/v1/agents/{id}/skills': ({ client, param, body, command }) =>
     client.agents.installSkill(param('id'), body, command),
+  'PUT /api/v1/agents/{id}/service-access': ({ client, param, body, command }) =>
+    client.agents.updateServiceAccess(param('id'), body, command),
   'GET /api/v1/agents/{id}/access-requests': ({ client, param }) =>
     client.agents.accessRequests(param('id')),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/approve': ({

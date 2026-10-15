@@ -1,6 +1,7 @@
 import type { ConversationState } from './model';
 import { Thinking } from './Thinking';
 import { isPendingTool } from './toolStatus';
+import { visibleTurnText } from './tokenEstimate';
 
 /** This dock is outside the history scrollport so it remains visible while reading. */
 export function ActiveThinking({ conversation }: { readonly conversation: ConversationState }) {
@@ -11,6 +12,17 @@ export function ActiveThinking({ conversation }: { readonly conversation: Conver
       <Thinking
         key={runId}
         startedAt={conversation.activeRunStartedAt}
+        visibleText={visibleTurnText(conversation)}
+        visibleAnchor={
+          String(conversation.visibleUsageAnchor?.turnSequence) === runId
+            ? conversation.visibleUsageAnchor?.parts
+            : undefined
+        }
+        usage={
+          String(conversation.usage?.currentTurn?.turnSequence) === runId
+            ? conversation.usage?.currentTurn
+            : undefined
+        }
         text={conversation.reasoning
           .filter((item) => item.runId === runId)
           .map((item) => item.content)

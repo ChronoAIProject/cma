@@ -65,6 +65,8 @@ body {
 }
 
 body {
+  --dsw-alias-avatar-bg: var(--dsw-static-coal-950);
+  --dsw-alias-avatar-label: var(--dsw-static-coal-50);
   --dsw-alias-preview-light-bg: var(--dsw-static-paper-0);
   --dsw-alias-preview-light-label: var(--dsw-static-ink-950);
   --dsw-alias-preview-dark-bg: var(--dsw-static-coal-900);

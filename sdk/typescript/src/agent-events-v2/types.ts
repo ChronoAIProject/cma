@@ -73,7 +73,12 @@ export function validateItem(
     item.sequence !== sequence
   )
     throw new ProtocolError('Agent event identity or chronology disagrees with its cursor');
-  if (item.kind && 'turn_sequence' in item.kind && item.kind.turn_sequence > item.sequence)
+  if (
+    item.kind &&
+    'turn_sequence' in item.kind &&
+    item.kind.turn_sequence !== null &&
+    item.kind.turn_sequence > item.sequence
+  )
     throw new ProtocolError('Agent event refers to a future turn');
   if (item.kind?.type === 'turn_started' && item.kind.turn_sequence !== item.sequence)
     throw new ProtocolError('Agent turn start does not identify its own log row');

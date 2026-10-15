@@ -53,6 +53,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -149,6 +150,7 @@ fn agent(parent: &Workspace, worktree: &Worktree, id: &str) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,

@@ -273,6 +273,7 @@ async fn completed_step_with_first_prompt(
     next: AgentWorkStep,
 ) {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    harness.now = SystemTime::now();
     let agent = harness.admit("startup-race", vec![]).await;
     for _ in 0..prior_steps {
         harness.run(&agent.id, harness.now).await;

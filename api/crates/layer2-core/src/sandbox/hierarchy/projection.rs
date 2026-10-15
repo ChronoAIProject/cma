@@ -21,6 +21,8 @@ impl From<&Worktree> for WorktreeHierarchySummary {
 impl From<&Agent> for AgentHierarchySummary {
     fn from(value: &Agent) -> Self {
         Self {
+            runtime_metadata: (!value.conversation.observations.is_empty())
+                .then(|| value.conversation.observations.metadata.clone()),
             id: value.id.clone(),
             worktree_id: value.worktree_id.clone(),
             workspace_id: value.workspace_id.clone(),

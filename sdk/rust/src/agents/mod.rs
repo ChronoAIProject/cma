@@ -10,6 +10,8 @@ use reqwest::{Method, StatusCode};
 mod access_requests;
 pub use access_requests::*;
 mod artifacts;
+mod attachments;
+pub use attachments::*;
 mod channel_usage;
 mod events;
 mod lifecycle;

@@ -946,6 +946,29 @@ Available choices come from the owner's existing profile-authoring skills
 catalog. See [Agent skills](CMA_Agent_Skills_Runtime.md) for installation and
 recovery semantics.
 
+`POST /api/v1/agents/{id}/attachments?name=<filename>` uploads raw file bytes
+into the owned Agent's persistent environment. It requires an `Idempotency-Key`;
+`Content-Type` supplies the file's media type and defaults to
+`application/octet-stream`. Send one file per request, at most 20 MiB, without
+`Content-Encoding`. The API validates the actual received length and sanitizes
+the name to a single non-hidden filename. The response is
+`201 AgentAttachmentView` with `id`, `agent_id`, `name`, `path`, `size_bytes`,
+`media_type` and `sha256`. Uploading does not submit a conversation message;
+the client may reference the returned path in a later explicit message.
+
+Uploads require current owner authority, an active Sandbox and a retained
+runtime that advertises persistent attachment support. Sharing and delegated
+conversation rights do not authorize file writes. Agent ancestry, runtime and
+home identity are rechecked across the upload. Invalid metadata or incomplete
+bytes return `invalid_attachment` (400); oversized files return
+`attachment_too_large` (413). Unavailable environments, unsupported retained
+runtimes and changed upload identity return a typed 409. Upload capacity returns
+`attachment_capacity` (429), a body that does not complete within 45 seconds
+returns `attachment_timeout` (408), and transient runtime failures return
+`attachment_unavailable` (503). Retry uncertain uploads with the original key,
+metadata and bytes. Responses use `Cache-Control: private, no-store` and
+`X-Content-Type-Options: nosniff`.
+
 `GET /api/v1/agents/{id}/access-requests` returns `{ items }` for the Agent owner.
 Each item retains its exact request and Agent IDs, `services`, `reason`, durable
 `status`, and optional safe `error`. Owner approval uses
@@ -969,6 +992,35 @@ access. Poll the list after a connection return. `pending`,
 and non-cacheable. Typed refusals use `agent_access_invalid` (400),
 `agent_access_forbidden` (403), `agent_access_not_found` (404),
 `agent_access_conflict` (409), and `agent_access_unavailable` (503).
+
+`PUT /api/v1/agents/{id}/service-access` accepts
+`{ "services": ["chrono-llm-public", "ornn-api"], "expected_services": ["chrono-llm-public", "ornn-api", "api-github"] }`
+with an `Idempotency-Key` and returns HTTP 202 `AgentAccessRequestView`.
+The owner Save is consent to replace the complete service set shared by all
+Agents in that Sandbox. Optional services may be removed; the current platform
+baseline is mandatory. Both sets are bounded to 1–32 distinct service identifiers.
+`expected_services` must equal the currently effective set. A stale set or reuse
+of the same key with a different selection returns 409. Exact retries recover the
+original durable request even after its scope change has applied. A new owner
+Save starts `connecting`, without a separate pending approval.
+
+Before final Save or Approve, the browser connection flow can check
+`{ "type": "agent_service_access", "id": "agent-id", "services": ["selected-service-id"] }`.
+This owner-bound target resolves the selected scope and any model-access
+prerequisites without granting access or recording consent. Complete required
+connections before submitting final consent; the worker revalidates connections
+and retained owner authority before changing scope.
+
+New scope updates rotate the managed key in the existing live runtime. They do
+not pause or restart the Sandbox, replace its Pod, or replace Agent conversations.
+A paused Sandbox waits for an explicit owner resume. The scope revision,
+runtime identity and credential generation floor are durable; a concurrent
+lifecycle or later scope change cannot retarget an old update. Runtime delivery
+and old-key revocation must both complete before the callback. A busy Agent
+receives durable steering in its original active turn; a quiet Agent receives a
+normal message in its original conversation. `succeeded` requires confirmed
+callback delivery, independent of the time needed to finish the model response.
+Historical already-paused workflows retain their original recovery path.
 
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
@@ -1217,6 +1269,8 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
+| `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
 | `GET /api/v1/agents/{id}/access-requests` | - | - | 200 AgentAccessRequestList |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | ApproveAgentAccessRequest; key | - | 200 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |

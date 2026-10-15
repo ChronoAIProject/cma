@@ -194,6 +194,18 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Publish an exact owner upload within the retained home, never an arbitrary path.
+    async fn upload_agent_attachment(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentAttachmentRequest,
+        _content: Vec<u8>,
+    ) -> Result<crate::AgentAttachmentReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "agent attachments are unavailable on this runtime".into(),
+        ))
+    }
+
     /// Run sandbox-wide installation before any credential is delivered.
     async fn run_install(
         &self,

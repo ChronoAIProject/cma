@@ -34,6 +34,7 @@ pub(crate) fn sandbox(suffix: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -42,7 +43,9 @@ pub(crate) fn sandbox(suffix: &str) -> Sandbox {
                 provider_key_id: "provider-key".into(),
                 provider_state_version: 1,
                 issued_at: NOW.into(),
-                expires_at: "2026-10-05T00:00:00Z".into(),
+                expires_at: layer2_core::rfc3339_at(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+                ),
                 grant_fingerprint: "a".repeat(64),
             }),
             pending: None,

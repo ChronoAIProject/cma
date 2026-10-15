@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 190,
+  "openapi_operations": 192,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2756,6 +2756,35 @@
         "sandbox_checkpoint_in_progress",
         "sandbox_credential_setup_required",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/attachments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_attachments.rs# Bounded raw binary uploads preserve exact owner, Agent lineage, runtime capability and persisted file receipt.",
+      "required_problems": [
+        "resource_not_found",
+        "not_authenticated",
+        "attachment_runtime_upgrade_required",
+        "attachment_conflict",
+        "attachment_unavailable",
+        "invalid_attachment",
+        "missing_idempotency_key"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/service-access": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests/scope.rs# Owner Save projects exact desired scope and compare-and-set expectation through Core.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
       ]
     }
   }

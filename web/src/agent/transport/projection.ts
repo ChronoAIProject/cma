@@ -71,22 +71,63 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       `history-gap:${item.sequence}`,
       'Some conversation updates were lost before they could be recorded.',
     );
+  else if (item.kind?.type === 'turn_started')
+    next = { ...next, recovery: next.recovery.filter((notice) => notice.clearsOn === undefined) };
+  else if (
+    (item.kind?.type === 'message' && item.kind.role === 'assistant') ||
+    item.kind?.type === 'turn_completed' ||
+    item.kind?.type === 'turn_cancelled'
+  )
+    next = clearLiveRecovery(next, state.activeRunId, true);
   return { ...next, agentCursor: item.cursor };
 }
 
-function gap(state: ConversationState, id: string, detail: string): ConversationState {
+function clearLiveRecovery(
+  state: ConversationState,
+  runId: string | undefined,
+  recorded: boolean,
+): ConversationState {
+  return {
+    ...state,
+    recovery: state.recovery.filter(
+      (notice) =>
+        notice.clearsOn === undefined ||
+        (notice.runId !== undefined && notice.runId !== runId) ||
+        (!recorded && notice.clearsOn === 'recorded-turn'),
+    ),
+  };
+}
+
+function gap(
+  state: ConversationState,
+  id: string,
+  detail: string,
+  live = false,
+): ConversationState {
   return {
     ...state,
     messages: state.messages.filter((message) => !message.liveOnly),
     reasoning: [],
     recovery: [
-      ...state.recovery.filter((notice) => notice.id !== id),
+      ...state.recovery.filter(
+        (notice) =>
+          notice.id !== id &&
+          (!live || notice.clearsOn === undefined || notice.runId !== state.activeRunId),
+      ),
       {
         id,
         runId: state.activeRunId,
         afterSequence: state.cursor,
-        title: 'Live updates interrupted',
+        title: live ? 'Refreshing live updates…' : 'Incomplete conversation history',
         detail,
+        clearsOn: live
+          ? state.messages.some((message) => message.liveOnly) ||
+            state.recovery.some(
+              (notice) => notice.clearsOn === 'recorded-turn' && notice.runId === state.activeRunId,
+            )
+            ? 'recorded-turn'
+            : 'live-update'
+          : undefined,
       },
     ],
   };
@@ -104,12 +145,10 @@ export function foldV2Frame(
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
   if (frame.type === 'cma.agent.live_gap') {
-    // Every following stream starts with a reconnect marker, including idle
-    // Agents. An idle reconnect alone does not establish lost live fragments.
+    // This is also the initial stream handshake after a complete snapshot.
+    // An active server turn alone is not evidence that this view lost anything.
     if (
       frame.data.reason === 'reconnected' &&
-      frame.data.turn_sequence === null &&
-      state.activeRunId === undefined &&
       !state.messages.some((message) => message.liveOnly) &&
       state.reasoning.length === 0
     )
@@ -117,7 +156,8 @@ export function foldV2Frame(
     return gap(
       state,
       `live-gap:${state.cursor}`,
-      'Live updates were interrupted. Recorded messages and tool activity are retained; missed Thinking is unavailable.',
+      'Recorded messages and tool activity are retained. The latest reply is being restored.',
+      true,
     );
   }
   const event = frame.data;
@@ -134,7 +174,7 @@ export function foldV2Frame(
   )
     return state;
   return foldLiveEvent(
-    state,
+    clearLiveRecovery(state, state.activeRunId, false),
     {
       type: event.kind === 'text_delta' ? 'TEXT_MESSAGE_CONTENT' : 'REASONING_MESSAGE_CONTENT',
       threadId: agent,

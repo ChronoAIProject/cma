@@ -53,6 +53,23 @@ impl<'a> Request<'a> {
         Ok(request)
     }
 
+    pub(crate) fn binary(
+        segments: &'a [&'a str],
+        content: Vec<u8>,
+        media_type: &str,
+        key: &'a IdempotencyKey,
+    ) -> Result<Self> {
+        let mut request =
+            Self::command::<()>(Method::POST, segments, None, key, StatusCode::CREATED)?;
+        request.body = Some(content);
+        request.headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_str(media_type)
+                .map_err(|_| Error::validation("invalid attachment media type"))?,
+        );
+        Ok(request)
+    }
+
     pub(crate) fn with_command_key(mut self, key: Option<&str>) -> Result<Self> {
         if let Some(key) = key {
             if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {

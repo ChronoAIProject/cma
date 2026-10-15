@@ -83,6 +83,7 @@ fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -164,6 +165,7 @@ fn agent() -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,
@@ -682,3 +684,6 @@ fn agent_limits_count_only_live_agents_in_the_selected_workspace() {
         Ok(())
     );
 }
+
+#[path = "agent_attachments_tests.rs"]
+mod attachments;

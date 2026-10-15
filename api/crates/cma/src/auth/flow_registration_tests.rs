@@ -105,6 +105,9 @@ async fn registration_wraps_and_persists_the_complete_authorize_attempt() {
 fn return_targets_are_only_canonical_cma_workflows() {
     for valid in [
         "/",
+        "/agent-manager",
+        "/event-gateway",
+        "/image-manager",
         "/t/pub_123",
         "/t/pub_123/plc_456",
         "/triggers/manage",

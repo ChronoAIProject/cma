@@ -13,7 +13,9 @@ import {
   listAgentAccessRequests,
   approveAgentAccess,
   denyAgentAccess,
+  updateAgentServiceAccess,
   type ApproveAgentAccessRequest,
+  type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
@@ -122,6 +124,10 @@ export class Agents {
   /** Read durable owner-visible service requests without granting access. */
   accessRequests(id: string, options: OperationOptions = {}) {
     return listAgentAccessRequests(this.config, id, options);
+  }
+  /** Replace exact shared service access without restarting the running Sandbox. */
+  updateServiceAccess(id: string, body: UpdateAgentServiceAccessRequest, options: CommandOptions) {
+    return updateAgentServiceAccess(this.config, id, body, options);
   }
   /** Approve an exact selection; retry uncertain replies with the original body and key. */
   approveAccessRequest(

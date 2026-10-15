@@ -144,7 +144,7 @@ fn access_authority_refuses_changed_lineage_provenance_and_open_fence() {
     assert!(validation::request(&original, &open, 1).is_ok());
     assert!(validation::request(&original, &open, 0).is_err());
     assert!(validation::scope(&original, &RuntimeHandle("foreign".into())).is_err());
-    for case in 0..10 {
+    for case in 0..11 {
         let mut changed = original.clone();
         match case {
             0 => changed.resource.lineage.agent.as_mut().unwrap().owner = SubjectId::new("foreign"),
@@ -173,7 +173,18 @@ fn access_authority_refuses_changed_lineage_provenance_and_open_fence() {
                 changed.resource.lineage.sandbox.credential.pending =
                     changed.resource.lineage.sandbox.credential.current.clone()
             }
-            _ => changed.resource.lineage.agent.as_mut().unwrap().deleted_at = Some(NOW.into()),
+            9 => changed.resource.lineage.agent.as_mut().unwrap().deleted_at = Some(NOW.into()),
+            _ => {
+                changed
+                    .resource
+                    .lineage
+                    .sandbox
+                    .credential
+                    .current
+                    .as_mut()
+                    .unwrap()
+                    .expires_at = "2000-01-01T00:00:00Z".into();
+            }
         }
         assert!(
             validation::scope(&changed, &runtime).is_err(),
@@ -277,6 +288,70 @@ pub(in crate::store) async fn publish(store: &MongoSandboxStore, id: &AgentId) {
     agent.conversation.runtime_generation = Some(1);
     agent.revision += 1;
     store.save_agent(agent.revision - 1, agent).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_agent_access_discovery_does_not_contend_with_agent_publication() {
+    let (client, database, store, state) = persisted().await;
+    let source =
+        MongoAgentAccessToolSource::new(store.clone(), "https://control.example.test", &key(9))
+            .unwrap();
+    let runtime = RuntimeHandle("access-runtime".into());
+    let scope = validation::scope(&state, &runtime).ok().unwrap();
+    let bearer = source.capability(&scope).ok().unwrap();
+    let binding = source
+        .resolve(&runtime, &request(&state), 1)
+        .await
+        .unwrap()
+        .unwrap();
+    source
+        .confirm_open(&binding, "original-native")
+        .await
+        .unwrap();
+    publish(&store, &scope.creation.agent_id).await;
+
+    // Hold the same Agent write conflict that first-turn publication and
+    // streaming cause. Read-only MCP discovery must still finish; a tool call
+    // must continue to refuse an unconfirmed mutation fence.
+    let mut publishing = client.start_session().await.unwrap();
+    start_transaction(&mut publishing).await.unwrap();
+    store
+        .agents
+        .update_one(
+            doc! {"_id": scope.creation.agent_id.as_str()},
+            doc! {"$inc": {"resource_share_guard": 1_i64}},
+        )
+        .session(&mut publishing)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            source.authenticate_setup(&bearer),
+        )
+        .await
+        .expect("discovery must not wait on the Agent writer")
+        .unwrap();
+    }
+    assert!(source.authenticate(&bearer).await.is_err());
+    publishing.abort_transaction().await.unwrap();
+    assert_eq!(
+        source.authenticate(&bearer).await.unwrap().conversation,
+        "original-native"
+    );
+
+    // A subsequent snapshot still rejects a revoked owner/runtime lineage.
+    let mut agent = store
+        .get_agent(&scope.creation.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    agent.requested_stop_reason = Some(AgentStopReason::Owner);
+    agent.revision += 1;
+    store.save_agent(agent.revision - 1, agent).await.unwrap();
+    assert!(source.authenticate_setup(&bearer).await.is_err());
+    client.database(&database).drop().await.unwrap();
 }
 
 #[tokio::test]

@@ -69,6 +69,16 @@ impl MongoSandboxStore {
             let revision = record.revision;
             record.revision += 1;
             record.phase = AgentAccessPhase::Connecting;
+            record.expected_scope_revision = Some(
+                snapshot
+                    .resource
+                    .lineage
+                    .sandbox
+                    .credential
+                    .service_scope
+                    .as_ref()
+                    .map_or(0, |scope| scope.revision),
+            );
             record.updated_at = layer2_core::now_rfc3339();
             record.approved_at = Some(record.updated_at.clone());
             record.decision = Some(AgentAccessDecision::Approved {

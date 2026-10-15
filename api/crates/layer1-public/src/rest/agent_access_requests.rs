@@ -5,7 +5,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use layer2_core::{
@@ -51,6 +51,8 @@ pub(crate) struct AgentAccessRequestView {
     pub services: Vec<String>,
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentAccessConnection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -79,6 +81,7 @@ impl From<AgentAccessRequest> for AgentAccessRequestView {
             },
             services: value.services,
             reason: value.reason,
+            retry_of: value.retry_of,
             connection,
             error: value.error,
         }
@@ -98,9 +101,12 @@ pub(crate) struct ApproveAgentAccessRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DenyAgentAccessRequest {}
 
+pub(super) mod scope;
+
 /// Optional composition surface; the injected core service owns authority and receipts.
 pub fn agent_access_requests_router(service: Arc<dyn AgentAccessRequests>) -> Router {
     Router::new()
+        .route("/api/v1/agents/{id}/service-access", put(scope::replace))
         .route("/api/v1/agents/{id}/access-requests", get(list))
         .route(
             "/api/v1/agents/{id}/access-requests/{request_id}/approve",
