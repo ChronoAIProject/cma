@@ -3,6 +3,7 @@ use super::*;
 fn request() -> WorkspaceRemovalRequest {
     WorkspaceRemovalRequest {
         runtime: RuntimeStatus {
+            agent_attachment_upload: false,
             agent_skill_install: false,
             agent_model_catalog: false,
             sandbox_id: "sandbox".into(),

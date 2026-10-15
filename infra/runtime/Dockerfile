@@ -373,6 +373,10 @@ const fallback = [
 fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
 NODE
 
+# Owner attachment uploads are admitted only when the supervisor proves the
+# complete /home mount. Files and immutable upload receipts live beneath
+# /home/attachments; retained runtimes advertise this capability explicitly.
+
 # Optional CHRONO_TOOL_PROXY_URL selects one external HTTP tool endpoint.
 # When absent no tool proxy binds. When present it listens only at 127.0.0.1:9093,
 # accepts POST /, and uses the current in-memory Sandbox credential on each call.

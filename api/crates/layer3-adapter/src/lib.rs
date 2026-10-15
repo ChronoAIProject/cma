@@ -6,6 +6,7 @@
 
 mod adapter;
 mod agent;
+mod agent_attachment;
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
@@ -113,4 +114,9 @@ pub use workspace::{
 pub use workspace_removal::{
     same_runtime_writer, WorkspaceRemovalObservation, WorkspaceRemovalOutcome,
     WorkspaceRemovalRequest, WorkspaceRemovalSupport, WORKSPACE_REMOVAL_PROTOCOL,
+};
+
+pub use agent_attachment::{
+    AgentAttachmentReceipt, AgentAttachmentRequest, AgentAttachmentUpload,
+    AGENT_ATTACHMENT_DIRECTORY, MAX_AGENT_ATTACHMENT_BYTES,
 };
