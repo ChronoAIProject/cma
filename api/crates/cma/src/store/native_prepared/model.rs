@@ -38,7 +38,10 @@ impl NativePreparedPlan {
         }
         let agent = AgentProfileSnapshot {
             id: AgentProfileId("agp_native_prepared_default".into()),
-            revision: 1,
+            // Revision 2 materializes the pinned instructions during preparation.
+            // Reconcile unclaimed revision-1 homes instead of replaying different
+            // bytes under their existing home operation identity.
+            revision: 2,
             digest: digest(&agent)?,
             content: agent,
         };
