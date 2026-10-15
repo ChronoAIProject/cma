@@ -18,6 +18,7 @@ fn history() -> Vec<AgentLogKind> {
     use AgentLogKind::*;
     vec![
         TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },
@@ -30,6 +31,7 @@ fn history() -> Vec<AgentLogKind> {
         TurnCompleted { turn_sequence: 1 },
         ConversationGap { frames: 99 }, // Idle loss does not belong to either turn.
         TurnStarted {
+            model: None,
             turn_sequence: 6,
             origin_key: None,
         },
@@ -46,6 +48,7 @@ fn history() -> Vec<AgentLogKind> {
         },
         TurnCompleted { turn_sequence: 6 },
         TurnStarted {
+            model: None,
             turn_sequence: 13,
             origin_key: None,
         },
@@ -85,6 +88,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
         id: agent.id.clone(),
         created_at: AT.into(),
         model: agent.profile.content.model.clone(),
+        initial_model: agent.profile.content.model.clone(),
         runtime_generation: Some(1),
         active_turn: active.then_some(turn),
         head: kinds.len() as u64,

@@ -546,6 +546,7 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
             appended_at: LATER.into(),
             agent_logs: vec![
                 AgentLogKind::TurnStarted {
+                    model: None,
                     turn_sequence: 2,
                     origin_key: None,
                 },

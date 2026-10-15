@@ -224,6 +224,7 @@ pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisi
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
         SandboxServiceError::NameConflict
         | SandboxServiceError::SandboxOriginConflict
+        | SandboxServiceError::SandboxLimitReached { .. }
         | SandboxServiceError::NotFound => {
             AgentLifecycleProvisioningError::Conflict(error.to_string())
         }

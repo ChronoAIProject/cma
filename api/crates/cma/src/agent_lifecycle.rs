@@ -166,7 +166,8 @@ impl InlineAgentLifecycle {
             existing_agent_id,
             actor,
         } = input;
-        let (agent_revision, workspace_profile, sandbox_profile) = profiles::create_profiles(
+        let profile_started = tokio::time::Instant::now();
+        let profile_result = profiles::create_profiles(
             self.profiles.as_ref(),
             caller,
             &request,
@@ -176,7 +177,15 @@ impl InlineAgentLifecycle {
             limits,
             behavior,
         )
-        .await?;
+        .await;
+        tracing::info!(
+            operation_id = %lease.id,
+            phase = "profiles",
+            elapsed_ms = profile_started.elapsed().as_millis(),
+            success = profile_result.is_ok(),
+            "inline Agent lifecycle preparation phase completed"
+        );
+        let (agent_revision, workspace_profile, sandbox_profile) = profile_result?;
         self.progress(
             &lease,
             "sandbox_ready",
@@ -187,15 +196,23 @@ impl InlineAgentLifecycle {
         let sandbox_id = if let Some(id) = existing_sandbox_id {
             SandboxId(id)
         } else {
-            let sandbox = match validation::create_sandbox(
+            let admission_started = tokio::time::Instant::now();
+            let admission_result = validation::create_sandbox(
                 self.sandbox.as_ref(),
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
                 &lease.id,
             )
-            .await
-            {
+            .await;
+            tracing::info!(
+                operation_id = %lease.id,
+                phase = "sandbox_admission",
+                elapsed_ms = admission_started.elapsed().as_millis(),
+                success = admission_result.is_ok(),
+                "inline Agent lifecycle preparation phase completed"
+            );
+            let sandbox = match admission_result {
                 Ok(value) => value,
                 Err(SandboxServiceError::ConnectionsRequired { services }) => {
                     return Err(AgentLifecycleProvisioningError::ConnectionRequired {

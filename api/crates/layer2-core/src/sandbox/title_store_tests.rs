@@ -24,6 +24,7 @@ fn append(store: &InMemoryAgentTitleStore, id: &AgentId, kinds: Vec<AgentLogKind
 fn completed_turn(owner: &str, assistant: &str) -> Vec<AgentLogKind> {
     vec![
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },
@@ -57,6 +58,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         vec![AgentLogKind::TurnCompleted { turn_sequence: 1 }],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -67,6 +69,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -79,6 +82,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -95,6 +99,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -108,6 +113,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -121,6 +127,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -135,6 +142,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
                 failure: failure(),
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 2,
                 origin_key: None,
             },
@@ -148,6 +156,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -161,6 +170,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         ],
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 1,
                 origin_key: None,
             },
@@ -168,6 +178,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
                 content: "nested".into(),
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 2,
                 origin_key: None,
             },
@@ -223,6 +234,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
         &non_one,
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 7,
                 origin_key: None,
             },

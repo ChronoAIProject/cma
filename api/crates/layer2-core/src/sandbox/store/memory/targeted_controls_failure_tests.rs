@@ -185,6 +185,7 @@ async fn approval_requires_pending_identity_from_exact_active_turn_snapshot() {
                 worktree_id: agent.worktree_id.clone(),
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 2,
                 origin_key: None,
             },
@@ -201,6 +202,7 @@ async fn approval_requires_pending_identity_from_exact_active_turn_snapshot() {
                 decision: "allow".into(),
             }),
             2 => kinds.push(AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 4,
                 origin_key: None,
             }),

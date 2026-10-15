@@ -25,6 +25,9 @@ mod targeted_controls;
 #[path = "queued_cancellation_tests.rs"]
 mod queued_cancellations;
 
+#[path = "command_model_tests.rs"]
+mod models;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: crate::resource_access::CredentialSource::Retained,

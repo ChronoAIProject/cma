@@ -124,6 +124,7 @@ impl AgentOperationService {
         let mut logs = vec![
             operation_log(&next, operation_sequence)?,
             AgentLogKind::TurnStarted {
+                model: Some(current.settings().model),
                 turn_sequence,
                 origin_key: self
                     .command_claim

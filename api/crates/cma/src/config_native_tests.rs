@@ -43,6 +43,60 @@ fn native_prepared_target_is_explicit_bounded_and_requires_full_native_home() {
 }
 
 #[test]
+fn native_warm_pool_target_defaults_for_native_and_is_bounded() {
+    assert_eq!(configured(&[]).unwrap().runtime.native_warm_pool_target, 0);
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let native = [
+        ("CHRONO_SANDBOX_PROVIDER", "agent-sandbox"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_full_home_v2"),
+    ];
+    assert_eq!(
+        configured(&native).unwrap().runtime.native_warm_pool_target,
+        1
+    );
+    assert_eq!(
+        configured(
+            &[
+                native.to_vec(),
+                vec![("CHRONO_NATIVE_WARM_POOL_TARGET", "3")]
+            ]
+            .concat()
+        )
+        .unwrap()
+        .runtime
+        .native_warm_pool_target,
+        3
+    );
+    for value in ["", "-1", "1001", "true", "1.0"] {
+        assert!(configured(
+            &[
+                native.to_vec(),
+                vec![("CHRONO_NATIVE_WARM_POOL_TARGET", value)]
+            ]
+            .concat()
+        )
+        .unwrap_err()
+        .contains("CHRONO_NATIVE_WARM_POOL_TARGET"));
+    }
+    let mut legacy_home = native.to_vec();
+    legacy_home.retain(|(name, _)| !name.starts_with("CHRONO_AGENT_SANDBOX_HOME_"));
+    legacy_home.extend([
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "legacy_snapshot"),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "seed"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID", "seed-uid"),
+        ("CHRONO_NATIVE_WARM_POOL_TARGET", "1"),
+    ]);
+    assert!(configured(&legacy_home)
+        .unwrap_err()
+        .contains("requires agent-sandbox allocation and a native VCT home"));
+}
+
+#[test]
 fn native_runtime_transport_requires_explicit_valid_selection() {
     use layer3_adapter::hosted::NativeRuntimeTransport;
     assert_eq!(

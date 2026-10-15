@@ -9,6 +9,8 @@ import { loadAgent } from '../agent/loadAgent';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { useLifecycleTransport } from './lifecycleTransport';
+import { connectionClient } from '../connections/client';
+import { readAgentConnections } from '../connections/preparation';
 
 const operation: AgentLifecycleOperationView = {
   id: 'operation-one',
@@ -22,7 +24,15 @@ function deferred<Value>() {
   const promise = new Promise<Value>((done) => (resolve = done));
   return { promise, resolve };
 }
-beforeEach(() => sessionStorage.clear());
+beforeEach(() => {
+  sessionStorage.clear();
+  vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    owner: 'alice',
+    ready: true,
+    checked_at: new Date().toISOString(),
+    services: [],
+  });
+});
 afterEach(() => vi.restoreAllMocks());
 
 it('overlaps actual-Agent preparation with lineage checks and transfers the pending selection across navigation unmount', async () => {
@@ -56,20 +66,50 @@ it('overlaps actual-Agent preparation with lineage checks and transfers the pend
   expect(readAgent).toHaveBeenCalledOnce();
   expect(readSandbox).not.toHaveBeenCalled();
   expect(prepare).toHaveBeenCalledExactlyOnceWith('agt_1', 'alice');
+  expect(connectionClient.check).toHaveBeenCalledExactlyOnceWith(
+    { type: 'agent', id: 'agt_1' },
+    undefined,
+    expect.any(AbortSignal),
+  );
   expect(onCreated).not.toHaveBeenCalled();
   await act(async () => detail.resolve({ ...AGENT_DETAIL, status: 'starting' }));
   await waitFor(() =>
     expect(onCreated).toHaveBeenCalledExactlyOnceWith({ id: 'agt_1', status: 'starting' }),
   );
   view.unmount();
-  const loading = loadAgent(client, 'agt_1', new AbortController().signal);
+  const entryIdentity = deferred<string | undefined>();
+  const finalIdentity = deferred<string | undefined>();
+  h.currentUser
+    .mockResolvedValueOnce('alice')
+    .mockReturnValueOnce(entryIdentity.promise)
+    .mockReturnValueOnce(finalIdentity.promise);
+  const published = vi.fn();
+  const loading = loadAgent(client, 'agt_1', new AbortController().signal).then((ready) => {
+    published();
+    return ready;
+  });
   flag.resolve(response);
+  await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(3));
+  expect(readAgent).toHaveBeenCalledOnce();
+  expect(h.snapshot).not.toHaveBeenCalled();
+  expect(published).not.toHaveBeenCalled();
+  entryIdentity.resolve('alice');
+  await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(4));
+  expect(readAgent).toHaveBeenCalledTimes(2);
+  expect(h.snapshot).toHaveBeenCalledOnce();
+  expect(published).not.toHaveBeenCalled();
+  finalIdentity.resolve('alice');
   expect(await loading).toMatchObject({
     detail: { id: 'agt_1', status: 'starting' },
     v2: expect.anything(),
   });
   expect(h.eligibility).toHaveBeenCalledOnce();
-  expect(h.currentUser).toHaveBeenCalledTimes(5);
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  expect(published).toHaveBeenCalledOnce();
+  expect(
+    await readAgentConnections(client, 'agt_1', 'alice', new AbortController().signal),
+  ).toMatchObject({ report: { owner: 'alice', ready: true }, prepared: true });
+  expect(connectionClient.check).toHaveBeenCalledOnce();
 });
 
 it.each([
@@ -83,6 +123,7 @@ it.each([
   await act(async () => undefined);
   expect(h.currentUser).not.toHaveBeenCalled();
   expect(h.eligibility).not.toHaveBeenCalled();
+  expect(connectionClient.check).not.toHaveBeenCalled();
 });
 
 it('reuses one preparation across repeated operation polls and running-to-succeeded updates', () => {

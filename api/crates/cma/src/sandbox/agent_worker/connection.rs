@@ -88,7 +88,7 @@ impl AgentWorker {
         Ok(context)
     }
 
-    pub(in crate::sandbox) async fn finish_connection_publication(
+    pub(super) async fn try_finish_connection_publication(
         &self,
         mut agent: Agent,
         attachment: &crate::sandbox::live_agents::LiveAgentAttachment,
@@ -140,9 +140,7 @@ impl AgentWorker {
                 Err(error) => return Err(error),
             }
         }
-        Err(SandboxStoreError::Unavailable(
-            "agent changed during every connection publication commit".into(),
-        ))
+        Err(SandboxStoreError::Conflict)
     }
 }
 

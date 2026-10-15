@@ -100,6 +100,7 @@ pub(super) async fn fixture_with_origin(
         agent,
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },

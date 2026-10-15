@@ -102,6 +102,11 @@ pub(super) fn project(
         .position(|entry| matches!(entry.kind, AgentLogKind::TurnStarted { .. }))
         .map_or(history.len(), |offset| start + 1 + offset);
     let mut response = empty(agent, turn);
+    response.model = super::model::for_turn(
+        agent.profile.content.model.as_deref(),
+        turn,
+        history.iter().map(|entry| (entry.seq, Some(&entry.kind))),
+    )?;
     response.created_at =
         layer2_core::seconds_from_rfc3339(&history[start].appended_at).unwrap_or_default();
     response.previous_response_id = previous.map(|turn| response_id(&agent.id, turn));
@@ -199,12 +204,7 @@ pub(super) fn empty(agent: &Agent, turn: u64) -> ResponseObject {
         incomplete_details: None,
         instructions: None,
         max_output_tokens: None,
-        model: agent
-            .profile
-            .content
-            .model
-            .clone()
-            .unwrap_or_else(|| "deployment-default".into()),
+        model: super::model::named_or_default(agent.selected_model().as_deref()),
         output: Vec::new(),
         parallel_tool_calls: false,
         previous_response_id: None,

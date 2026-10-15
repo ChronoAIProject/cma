@@ -111,6 +111,7 @@ async fn authorized_snapshot_keeps_live_identity_generation_turn_and_commit_fenc
         }
         open.held = Some(candidate);
         open.queue_authorized(layer2_core::sandbox::AgentEventStreamSnapshot {
+            initial_model: agent.profile.content.model.clone(),
             created_at: "2026-09-05T00:00:00Z".into(),
             model: None,
             id: agent.id.clone(),
@@ -148,6 +149,7 @@ async fn resumed_run_finishes_with_approvals_recorded_before_its_cursor() {
         agent.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },

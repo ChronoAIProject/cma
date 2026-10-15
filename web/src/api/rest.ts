@@ -1,4 +1,4 @@
-import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
@@ -131,7 +131,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         },
       );
       if (!response.ok)
-        throw new ProtocolError(`Agent lifecycle status failed (${String(response.status)}).`);
+        throw new ApiError(
+          response.status,
+          `Agent lifecycle status failed (${String(response.status)}).`,
+        );
       const value = (await response.json()) as AgentLifecycleOperationView;
       if (
         value.id !== operationId ||
