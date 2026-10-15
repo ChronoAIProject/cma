@@ -86,6 +86,7 @@ array preserves owner steering interleaved with Agent answers. `owner_message`
 is only the initial owner-message summary; `agent_messages` contains only
 assistant-message summaries. Concatenating those summaries loses the actual
 conversation order and later owner guidance.
+
 # Organization share management
 
 `client.resource_access()` provides `effective`, `list_shares`, `read_share`,
@@ -258,7 +259,6 @@ WebP are supported. At most 256 immutable artifacts are retained per Agent;
 pages contain at most 50. Revoked authority prevents future reads but cannot
 recall a file already downloaded.
 
-
 ## Channel usage
 
 `agents().channel_usage(agent_id)` returns explicit channel facts independently
@@ -294,7 +294,6 @@ async fn inspect_channel_use(client: &Client, agent_id: &str) -> Result<()> {
 These methods only observe facts. Binding history never grants authority, and
 these routes cannot write or clear channel usage. Every request rechecks current
 resource authority after membership or sharing changes.
-
 
 `AgentProvenanceInventoryOptions` combines `channel_active` and `channel_history`
 with `creation_origin` and existing personal, organization or shared scope.
@@ -405,3 +404,9 @@ compaction can reduce context size while lifetime counts remain unchanged.
 Counts include cached input and advance only on provider reports; absent
 historical usage is never inferred from message length. Retained older runtimes
 continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agents().upload_attachment(agent_id, name, media_type, content, &key).await` uploads one binary file of at most 20 MiB to an owner-authorized active Agent. Empty files are supported. Use `application/octet-stream` for an unknown media type. The returned `AgentAttachment` includes the verified persisted `path`, sanitized `name`, exact `size_bytes`, `media_type`, and `sha256`.
+
+Uploading never sends a message or executes content. Refer to the returned path in the next Agent input. Retry an uncertain result with the same key and unchanged filename, type and bytes. Conflicting reuse is refused. Attachments require a supported runtime with full persistent home storage and are stored under `/home/attachments/<agent-id>/<attachment-id>/`; retained unsupported images and inactive Agents return typed errors. The existing approved-artifact APIs retain their separate publication contract.
