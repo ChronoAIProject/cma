@@ -5,6 +5,25 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+At **13:29 SGT**, the deployed pair is Agent Manager `c4272f83` (generation
+33) and Web `1d337c1a` (generation 111). The manifests pin their verified registry
+digests. Web now displays outgoing messages before network checks complete;
+authorized acceptance still owns draft clearing and Sent status. The prepared
+Agent admission race has a bounded exact-intent retry. Both local image builds,
+source/digest checks, vulnerability scans and production rollout verification
+passed; four retained conversations kept every historical turn. PR #1027 has
+merged with all 15 CI jobs passed. The later message-display/admission changes
+are a follow-up and do not yet have a completed merge record.
+
+The new Web's 1,853 component/unit tests pass. Actual browser paint timing and
+the popup/OAuth journey remain unverified because no browser surface is
+available. New source-flow measurements are pending; previous source eligibility
+passed four of four under five seconds and durable acknowledgement passed three
+of four. Full-home/original-PVC persistence remains verified; underlying resume
+still takes about 26 seconds while public acceptance is fast. See the verification
+document for exact boundaries and preserved failures. The following checkpoints
+are historical and do not describe the current image pins.
+
 At 12:26 SGT, API `6571e110` remains deployed. Web `53bbe2f7` replaced
 `47b56be7` at 12:25:35 SGT with verified public assets. Live Stop, exact interruption
 and one completed follow-up now pass; original-volume resume also passes identity
