@@ -180,6 +180,7 @@ impl Fixture {
 pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
     ProvisionInput {
         behavior: record.input.behavior,
+        first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),
         runtime_image: record.input.resolved_image.clone(),
         capacity: record.input.capacity.unwrap(),

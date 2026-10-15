@@ -205,18 +205,37 @@ pub(super) fn repository_location(
     })
 }
 
+pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
+    if request.repository.is_some() {
+        return first_message(request);
+    }
+    "You are running in a CMA workspace. Preserve existing files and changes. This is local workspace readiness only; no repository or external-service task has been requested. Do not probe GitHub or other optional services, or request access merely for readiness. Briefly report readiness and wait for the user's next task. For a later user task, request access only when that task requires it.".into()
+}
+
+pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
+    (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
+        input
+            .setup_message
+            .clone()
+            .unwrap_or_else(|| first_message(&input.request))
+    })
+}
+
+// Freeze these bytes for operations admitted before setup messages were captured.
 pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
     let mut message =
         "You are running in a CMA workspace. Preserve existing files and changes. ".to_string();
+    message.push_str("For GitHub tasks, use gh api through CMA's api-github (GitHub OAuth) service. Use API source checkout instead of gh repo clone. ");
     if let Some(repository) = &request.repository {
         // JSON quotation keeps user supplied URL/ref data distinct from instructions.
         let repository = serde_json::to_string(repository).expect("repository is serializable");
-        message.push_str(&format!("The user selected this GitHub repository: {repository}. Set up this repository in your current workspace using your available tools. Preserve any existing files and changes. "));
-        message.push_str("The genuine gh CLI already routes GitHub API requests through CMA's api-github (GitHub OAuth) service. If that access is missing, request api-github through agent_key_scope_revision and wait for CMA's confirmed update; no Sandbox restart is needed. This API connection does not authenticate native git clone/fetch/push. If setup requires that unavailable transport, report the limitation and preserve the workspace. ");
+        message.push_str(&format!("The user selected this GitHub repository: {repository}. Prepare its source in your current workspace. "));
+        message.push_str("Honor the requested ref; when absent, read default_branch from GET /repos/{owner}/{repo}. Resolve the ref through the commits API and pin the returned commit SHA. Download /repos/{owner}/{repo}/tarball/{sha} with gh api and safely stage its source; preserve existing files, local changes and .git metadata. Initialize a local Git repository only if the destination is not already in one. Report the source commit and readiness. ");
     } else {
         message.push_str("Keep this workspace ready for the user's next task. ");
     }
-    message.push_str("If a required NyxID service or GitHub access is missing, call the agent_key_scope_revision MCP tool to request access. Do not ask the user to paste a secret. Wait for CMA to confirm updated access before retrying. Briefly report readiness or the required access.");
+    message.push_str("When the user asks to create a repository, use POST /user/repos or /orgs/{org}/repos with the intended owner and visibility; do not create one during this readiness step. Use Contents or Git Data APIs for requested publication, updating refs without force. ");
+    message.push_str("If GitHub access is missing, request api-github through agent_key_scope_revision; use the same MCP tool for other missing NyxID services. Do not ask the user to paste a secret. Wait for CMA's confirmed update before retrying; no Sandbox restart is needed. Briefly report readiness or the required access.");
     message
 }
 

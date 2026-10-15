@@ -82,3 +82,50 @@ it('drops previous-owner names and ignores late reads when the owner provider re
     ),
   );
 });
+
+it('restores a settled name synchronously when the same view returns', async () => {
+  const profiles = referenceClient();
+  const services = vi.spyOn(profiles.authoring!, 'listServices');
+  const draw = (visible: boolean) => (
+    <CmaClientProvider client={unavailableClient} profiles={profiles}>
+      <ReferenceProvider onNavigate={vi.fn()}>
+        {visible ? <ReferenceLink kind="service" id="github" /> : null}
+      </ReferenceProvider>
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  await screen.findByRole('link', { name: 'GitHub' });
+  view.rerender(draw(false));
+  view.rerender(draw(true));
+  expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/catalog-github',
+  );
+  expect(screen.queryByText('Loading name')).not.toBeInTheDocument();
+  expect(services).toHaveBeenCalledOnce();
+  await screen.findByRole('link', { name: 'GitHub' });
+});
+
+it('drops resolved names immediately when the client changes without a provider remount', async () => {
+  const first = referenceClient(),
+    second = referenceClient();
+  vi.spyOn(second.authoring!, 'listServices').mockResolvedValue([
+    { id: 'github', name: 'Replacement service', catalogId: 'replacement-catalog' },
+  ]);
+  const draw = (profiles: typeof first) => (
+    <CmaClientProvider client={unavailableClient} profiles={profiles}>
+      <ReferenceProvider onNavigate={vi.fn()}>
+        <ReferenceLink kind="service" id="github" />
+      </ReferenceProvider>
+    </CmaClientProvider>
+  );
+  const view = render(draw(first));
+  await screen.findByRole('link', { name: 'GitHub' });
+  view.rerender(draw(second));
+  expect(screen.queryByRole('link', { name: 'GitHub' })).not.toBeInTheDocument();
+  expect(screen.getByText('Loading name')).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Replacement service' })).toHaveAttribute(
+    'href',
+    'https://nyx.chrono-ai.fun/services/replacement-catalog',
+  );
+});

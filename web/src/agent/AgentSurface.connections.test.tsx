@@ -103,6 +103,7 @@ it('sends ordinary live v2 messages without repeating the initial connection cat
     'Keep this message',
     expect.any(Function),
     expect.any(Function),
+    expect.any(Function),
   );
   expect(connectionClient.check).toHaveBeenCalledOnce();
   fireEvent.change(test.field, { target: { value: 'Next message' } });
@@ -110,6 +111,7 @@ it('sends ordinary live v2 messages without repeating the initial connection cat
   expect(connectionClient.check).toHaveBeenCalledOnce();
   expect(test.send).toHaveBeenLastCalledWith(
     'Next message',
+    expect.any(Function),
     expect.any(Function),
     expect.any(Function),
   );
@@ -230,7 +232,7 @@ it('cancels a pending connection check when access becomes uncertain and never r
   );
   expect(signal?.aborted).toBe(true);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(test.field);
-  expect(test.field).toHaveValue('  Keep this message  ');
+  await waitFor(() => expect(test.field).toHaveValue('  Keep this message  '));
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   await act(async () => finish(connected));
   expect(test.send).not.toHaveBeenCalled();
@@ -256,6 +258,7 @@ it('checks each send in the background, holds duplicate submissions, and sends t
     'Keep this message',
     expect.any(Function),
     expect.any(Function),
+    expect.any(Function),
   );
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
   expect(connectionClient.check).toHaveBeenLastCalledWith(
@@ -274,6 +277,7 @@ it('checks each send in the background, holds duplicate submissions, and sends t
     'A later draft',
     expect.any(Function),
     expect.any(Function),
+    expect.any(Function),
   );
 });
 
@@ -284,12 +288,14 @@ it('opens connection recovery only for a missing connection and sends once after
   expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
   await screen.findByText('Connection needed');
   expect(test.send).not.toHaveBeenCalled();
-  expect(test.field).toHaveValue('  Keep this message  ');
+  expect(test.field).toHaveValue('');
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(window.open).not.toHaveBeenCalled();
   vi.mocked(connectionClient.check).mockResolvedValue(connected);
   await waitFor(() => expect(test.send).toHaveBeenCalledOnce(), { timeout: 3000 });
   expect(test.send).toHaveBeenCalledWith(
     'Keep this message',
+    expect.any(Function),
     expect.any(Function),
     expect.any(Function),
   );
@@ -357,7 +363,9 @@ it('keeps the original owner bound when background verification opens recovery',
   await screen.findByText('Your CMA account changed. Reopen this connection step to continue.');
   expect(test.send).not.toHaveBeenCalled();
   expect(connectionClient.start).not.toHaveBeenCalled();
-  expect(test.field).toHaveValue('  Keep this message  ');
+  expect(test.field).toHaveValue('');
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(test.field).toHaveValue('  Keep this message  '));
 });
 
 it('aborts a background check and ignores its late reply after leaving the Agent', async () => {

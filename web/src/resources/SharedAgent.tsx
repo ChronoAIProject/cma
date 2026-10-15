@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { AgentHeader } from '../agent/AgentHeader';
 import { ActiveThinking } from '../agent/ActiveThinking';
 import type { ApprovalDecision } from '../agent/controller';
+import { agentDisplayTitle } from '../agent/presentation';
 import '../agent/Agent.css';
 
 interface Props {
@@ -34,7 +35,7 @@ export function SharedAgent({
   onDetailsOpenChange,
 }: Props) {
   const agentId = detail.id;
-  const title = detail.title?.trim() || 'Untitled agent';
+  const title = agentDisplayTitle(detail);
   useEffect(() => {
     document.title = `${title} · CMA`;
     return () => {

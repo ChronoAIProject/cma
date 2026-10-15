@@ -80,7 +80,11 @@ it('pages the public catalog with its scope and shows version-only responses to 
       denied={vi.fn()}
     />,
   );
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Image catalog'), 'public');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Image catalog' }),
+    'public',
+  );
   fireEvent.click(await screen.findByRole('button', { name: 'Open image' }));
   expect(await screen.findByText('registry/runtime@sha256:example')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Make public' })).toBeNull();
@@ -92,7 +96,11 @@ it('pages the public catalog with its scope and shows version-only responses to 
     '/api/image-manager/v1/images?scope=public&after=image-one',
     expect.anything(),
   );
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Image catalog'), 'owned');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Image catalog' }),
+    'owned',
+  );
   await waitFor(() => expect(screen.queryByText('registry/runtime@sha256:example')).toBeNull());
   expect(screen.queryByRole('heading', { name: 'Second runtime' })).toBeNull();
 });

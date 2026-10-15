@@ -12,9 +12,11 @@ export function useAgentSource(agentId: string, enabled: boolean): SourceState {
 export function AgentSourceLabel({
   source,
   provenance,
+  originLabel,
 }: {
   readonly source: SourceState;
   readonly provenance: ProvenanceState;
+  readonly originLabel?: string;
 }) {
   const trigger =
     source.agentId === provenance.agentId &&
@@ -24,7 +26,7 @@ export function AgentSourceLabel({
       : undefined;
   return (
     <p className="agent-header__source">
-      {creationLabel(provenance)}
+      {originLabel ?? creationLabel(provenance)}
       {trigger === undefined ? null : (
         <>
           {' · Published Trigger: '}

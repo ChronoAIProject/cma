@@ -31,6 +31,7 @@ impl AgentService {
             CreationAttribution {
                 actor: actor.cloned(),
                 initiation: None,
+                first_message_purpose: super::super::FirstMessagePurpose::Setup,
             },
         )
         .await

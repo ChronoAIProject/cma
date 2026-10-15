@@ -152,8 +152,7 @@ impl InlineAgentLifecycle {
                             revision.revision,
                         ),
                         title: Some(input.request.name.clone()),
-                        first_message: (input.behavior == LifecycleBehavior::PromptRepository)
-                            .then(|| validation::first_message(&input.request)),
+                        first_message: input.first_message.clone(),
                         origin: AgentOrigin::Lifecycle {
                             operation_id: input.lease.id.clone(),
                         },

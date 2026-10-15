@@ -33,9 +33,13 @@ it('loads actual settings and retains the same update body and key after an unce
   );
   const model = await screen.findByLabelText('Model');
   expect(model).toHaveTextContent('GPT-6');
-  expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('High');
   expect(screen.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Lost response');
   expect(model).toBeDisabled();
@@ -62,7 +66,11 @@ it('does not offer an apply operation while a turn is active', async () => {
     </CmaClientProvider>,
   );
   await screen.findByLabelText('Model');
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'low');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'low',
+  );
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   expect(update).not.toHaveBeenCalled();
 });
@@ -137,13 +145,13 @@ it('waits for runtime confirmation when the server reports pending settings', as
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
   expect(screen.getByText('Waiting for the runtime to confirm these settings.')).toBeVisible();
-  expect(screen.getByLabelText('Model')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Model' })).toBeDisabled();
   expect(screen.queryByText('Settings applied to this Agent.')).not.toBeInTheDocument();
   await act(() => vi.advanceTimersByTimeAsync(2000));
   expect(
     screen.queryByText('Waiting for the runtime to confirm these settings.'),
   ).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Model')).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Model' })).toBeEnabled();
   vi.useRealTimers();
 });
 
@@ -164,7 +172,7 @@ it('loads the scoped model catalog, preserves an unavailable current model, and 
     </CmaClientProvider>,
   );
   await screen.findByText('Catalog unavailable');
-  expect(screen.getByLabelText('Model')).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Model' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: 'Retry models' }));
   await userEvent.click(screen.getByRole('button', { name: 'Model' }));
   expect(
@@ -228,7 +236,7 @@ it('keeps retained runtime models disabled while applying reasoning changes to t
   );
   await screen.findByText(/Model changes are unavailable for this Agent/);
   expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('GPT-6');
-  await userEvent.click(screen.getByLabelText('Model'));
+  await userEvent.click(screen.getByRole('button', { name: 'Model' }));
   const unsupported = screen.getByRole('menuitemradio', {
     name: /GPT-6 Astra This Agent cannot select/,
   });
@@ -236,7 +244,11 @@ it('keeps retained runtime models disabled while applying reasoning changes to t
   await userEvent.click(unsupported);
   expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('GPT-6');
   await userEvent.keyboard('{Escape}');
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   expect(screen.getByLabelText('Permission mode')).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Settings applied to this Agent.');
@@ -282,12 +294,20 @@ it('refreshes capability after a turn and preserves reasoning edits when a model
   );
   const { rerender } = render(view(false));
   await screen.findByLabelText('Model');
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Model'), 'gpt-6-astra');
-  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Model' }),
+    'gpt-6-astra',
+  );
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
   rerender(view(true));
   await screen.findByText(/Model changes are unavailable for this Agent/);
-  expect(screen.getByLabelText('Model')).toHaveTextContent('gpt-6');
-  expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('Medium');
+  expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('gpt-6');
+  expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
   rerender(view(false));
   await screen.findByText(/Model changes are unavailable for this Agent/);
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
