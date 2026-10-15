@@ -14,13 +14,13 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-0785d328"
+        chrono.ai/goal-build: "goal-20261015-61dad4d5"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "0785d32885529244f9a1b0f5004d45f03849c3ab"
-        cma.chronoai.dev/image-digest: "sha256:a6c4a04e1202879e515b5366705ee6b1f69d88783048f0e3c556402d1023c011"
-        cma.chronoai.dev/image-source: "0785d32885529244f9a1b0f5004d45f03849c3ab"
-        cma.chronoai.dev/local-build: "goal-20261015-0785d328"
-        cma.chronoai.dev/observed-image-provenance-sha256: "df3b819b6567ac80bc0ff683bfeac3885d2b39f3ad373c8c9fa930ace424ee30"
+        cma.chronoai.dev/candidate: "61dad4d50989e8275ac884b32ad4fe055852f146"
+        cma.chronoai.dev/image-digest: "sha256:ec569cf8da130385fd51fed630d226565f473d40ef05343f91e267d05ebd915c"
+        cma.chronoai.dev/image-source: "61dad4d50989e8275ac884b32ad4fe055852f146"
+        cma.chronoai.dev/local-build: "goal-20261015-61dad4d5"
+        cma.chronoai.dev/observed-image-provenance-sha256: "b4bb28dbc75f1b12bdac9db1c5deea2644765bdc2e161fa086960906df92fb32"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -43,7 +43,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:a6c4a04e1202879e515b5366705ee6b1f69d88783048f0e3c556402d1023c011
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:ec569cf8da130385fd51fed630d226565f473d40ef05343f91e267d05ebd915c
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
