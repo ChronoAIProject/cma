@@ -218,7 +218,7 @@ export function Tree({
                         <TreeRow
                           nodeId={sandboxNode}
                           level={1}
-                          label={sandbox.name}
+                          label={`Sandbox Machine - ${sandbox.id.replace(/^sbx_/, '')}`}
                           icon={<IconDataOutline16 />}
                           route={{ kind: 'sandbox', sandboxId: sandbox.id }}
                           selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
@@ -290,6 +290,10 @@ export function Tree({
                               .map((workspace) => {
                                 const workspaceNode = `workspace:${workspace.id}`;
                                 const workspaceReady = workspace.status === 'ready';
+                                const selectedAgent =
+                                  route.kind === 'agent'
+                                    ? workspace.agents.find((agent) => agent.id === route.agentId)
+                                    : undefined;
                                 const workspaceExpanded =
                                   workspaceReady && !collapsed.has(workspaceNode);
                                 return (
@@ -298,7 +302,11 @@ export function Tree({
                                       nodeId={workspaceNode}
                                       parentId={sandboxNode}
                                       level={2}
-                                      label={workspace.name}
+                                      label={
+                                        selectedAgent?.runtimeMetadata?.workingDirectory?.trim() ||
+                                        workspace.path ||
+                                        workspace.name
+                                      }
                                       icon={
                                         workspace.source.type === 'git_repository' ? (
                                           <IconBranchOutline16 />
@@ -359,7 +367,11 @@ export function Tree({
                                                 nodeId={`agent:${agent.id}`}
                                                 parentId={workspaceNode}
                                                 level={3}
-                                                label={agent.title?.trim() || 'Untitled agent'}
+                                                label={
+                                                  agent.runtimeMetadata?.description?.trim() ||
+                                                  agent.title?.trim() ||
+                                                  'Untitled agent'
+                                                }
                                                 icon={<IconAgentPresetOutline16 />}
                                                 route={{ kind: 'agent', agentId: agent.id }}
                                                 selected={
