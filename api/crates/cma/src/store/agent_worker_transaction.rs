@@ -23,6 +23,7 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
+mod contention;
 mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
@@ -91,21 +92,20 @@ async fn commit_agent_work_observed(
 ) -> Result<(), SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut last_transient = None;
+    let jitter = uuid::Uuid::new_v4().as_u128() as u64;
     for attempt in 0..TRANSACTION_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+        contention::backoff(attempt, jitter).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
-                last_transient = Some(error.to_string());
+                last_transient = Some(error);
                 continue;
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
         if let Err(error) = start_transaction(&mut session).await {
             if is_transient(&error) {
-                last_transient = Some(error.to_string());
+                last_transient = Some(error);
                 continue;
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
@@ -123,7 +123,7 @@ async fn commit_agent_work_observed(
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
-                last_transient = Some(error.to_string());
+                last_transient = Some(error);
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
@@ -133,7 +133,7 @@ async fn commit_agent_work_observed(
         };
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(()),
-            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Retry(error) => last_transient = Some(error),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
@@ -170,10 +170,7 @@ async fn commit_agent_work_observed(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "agent work publication exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    Err(contention::exhausted(&mutation, last_transient.as_ref()))
 }
 
 async fn apply_publication(
