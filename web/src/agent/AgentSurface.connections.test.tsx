@@ -99,12 +99,20 @@ it('consumes a fresh creation check for the first v2 send and checks the next se
   const test = await setup(true);
   expect(connectionClient.check).toHaveBeenCalledOnce();
   await act(async () => submit());
-  expect(test.send).toHaveBeenCalledExactlyOnceWith('Keep this message', expect.any(Function));
+  expect(test.send).toHaveBeenCalledExactlyOnceWith(
+    'Keep this message',
+    expect.any(Function),
+    expect.any(Function),
+  );
   expect(connectionClient.check).toHaveBeenCalledOnce();
   fireEvent.change(test.field, { target: { value: 'Next message' } });
   await act(async () => submit());
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
-  expect(test.send).toHaveBeenLastCalledWith('Next message', expect.any(Function));
+  expect(test.send).toHaveBeenLastCalledWith(
+    'Next message',
+    expect.any(Function),
+    expect.any(Function),
+  );
 });
 
 it('checks again after opening settings instead of reusing creation connection readiness', async () => {
@@ -213,14 +221,18 @@ it('checks each send in the background, holds duplicate submissions, and sends t
   );
   submit();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(test.field).toBeEnabled();
   expect(test.send).not.toHaveBeenCalled();
   submit();
   fireEvent.change(test.field, { target: { value: 'A later draft' } });
   await act(async () => finish(connected));
-  expect(test.send).toHaveBeenCalledExactlyOnceWith('Keep this message', expect.any(Function));
+  expect(test.send).toHaveBeenCalledExactlyOnceWith(
+    'Keep this message',
+    expect.any(Function),
+    expect.any(Function),
+  );
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
   expect(connectionClient.check).toHaveBeenLastCalledWith(
     { type: 'agent', id: 'agt_1' },
@@ -234,7 +246,11 @@ it('checks each send in the background, holds duplicate submissions, and sends t
   await act(async () => submit());
   expect(connectionClient.check).toHaveBeenCalledTimes(3);
   expect(test.send).toHaveBeenCalledTimes(2);
-  expect(test.send).toHaveBeenLastCalledWith('A later draft', expect.any(Function));
+  expect(test.send).toHaveBeenLastCalledWith(
+    'A later draft',
+    expect.any(Function),
+    expect.any(Function),
+  );
 });
 
 it('opens connection recovery only for a missing connection and sends once after server verification', async () => {
@@ -248,7 +264,11 @@ it('opens connection recovery only for a missing connection and sends once after
   expect(window.open).not.toHaveBeenCalled();
   vi.mocked(connectionClient.check).mockResolvedValue(connected);
   await waitFor(() => expect(test.send).toHaveBeenCalledOnce(), { timeout: 3000 });
-  expect(test.send).toHaveBeenCalledWith('Keep this message', expect.any(Function));
+  expect(test.send).toHaveBeenCalledWith(
+    'Keep this message',
+    expect.any(Function),
+    expect.any(Function),
+  );
   act(() => test.send.mock.calls[0]?.[1]?.());
   expect(test.field).toHaveValue('');
 });
@@ -262,6 +282,7 @@ it('cancels connection recovery without sending or changing the draft', async ()
   await act(async () => undefined);
   expect(test.send).not.toHaveBeenCalled();
   expect(test.field).toHaveValue('  Keep this message  ');
+  expect(screen.getByText('Not sent')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
 });
 
@@ -327,6 +348,27 @@ it('aborts a background check and ignores its late reply after leaving the Agent
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(connected));
   expect(test.send).not.toHaveBeenCalled();
+});
+
+it('does not clear the draft when an already dispatched send accepts after access changes', async () => {
+  const test = await setup();
+  await act(async () => submit());
+  expect(test.send).toHaveBeenCalledOnce();
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      controller={test.controller}
+      accessUncertain
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  act(() => test.send.mock.calls[0]?.[1]?.({ runId: 'old-generation' }));
+  expect(test.field).toHaveValue('  Keep this message  ');
+  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
 });
 
 it('keeps one durable access dialog when the Agent surface and resource footer refresh', async () => {
