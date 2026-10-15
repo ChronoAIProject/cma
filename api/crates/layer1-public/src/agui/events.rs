@@ -216,3 +216,45 @@ fn approval_path(id: &str) -> String {
 fn is_false(value: &bool) -> bool {
     !value
 }
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use layer2_core::sandbox::{
+        agent_io::AgentEvent, AgentDescriptionSource, AgentRuntimeMetadata,
+    };
+
+    #[test]
+    fn observation_agui_and_v2_preserve_setup_provenance_atomically() {
+        let entry = AgentLogEntry {
+            agent_id: layer2_core::AgentId("agt_observation".into()),
+            seq: 12,
+            appended_at: "2026-10-15T00:00:00Z".into(),
+            kind: AgentLogKind::RuntimeMetadataChanged {
+                metadata: AgentRuntimeMetadata {
+                    description: Some("Setup input".into()),
+                    description_source: Some(AgentDescriptionSource::PromptPreview),
+                    description_is_setup_preview: true,
+                    ..Default::default()
+                },
+            },
+        };
+        let frame = &project(&entry, 1)[0];
+        assert_eq!(frame.body["delta"][0]["path"], "/runtimeMetadata");
+        assert_eq!(
+            frame.body["delta"][0]["value"],
+            json!({
+                "workingDirectory": null, "description": "Setup input",
+                "descriptionSource": "prompt_preview", "descriptionIsSetupPreview": true
+            })
+        );
+        let replay = serde_json::to_value(AgentEvent::from(entry)).unwrap();
+        assert_eq!(
+            replay["kind"]["metadata"],
+            json!({
+                "description":"Setup input", "description_source":"prompt_preview",
+                "description_is_setup_preview":true
+            })
+        );
+    }
+}

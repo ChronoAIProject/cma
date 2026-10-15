@@ -1237,3 +1237,12 @@ identity on completion and history reload, native explicit-title priority even
 when equal to the preview, and native `thread/settings/update` to metadata on the
 same running process/thread. It uses Codex 0.147.0, ACP 1.4.0 and a local Responses
 fixture. It does not establish production acceptance or generate semantic titles.
+
+
+The existing native empty-thread persistence workaround seeds the reserved name
+`New Agent`. A fresh provider history load cannot distinguish that seed from an
+identical deliberate native name if its explicit change was never durably
+observed. Already recorded `provider_title` metadata, including `New Agent`,
+remains authoritative over subsequent preview/unknown observations. No title is
+rewritten to resolve this retained provider ambiguity, and no provenance is
+invented for an unobserved legacy name.

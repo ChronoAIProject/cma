@@ -121,13 +121,21 @@ Keepalive comments are not events.
 | `REASONING_MESSAGE_CONTENT` | Live-only reasoning text when the deployment advertises live frames |
 | `STATE_DELTA` | JSON Patch-style updates to the closed state paths below |
 
-State paths include `/status`, `/title`, `/usage/inputTokens`,
+State paths include `/status`, `/title`, `/runtimeMetadata`, `/usage/inputTokens`,
 `/usage/outputTokens`, `/usage/contextUsed`, `/usage/contextWindow`, `/mode`,
 `/plan`, `/configOptions`, `/availableCommands`, `/signIn`, `/conversationGap`,
 `/firstMessage` and `/pendingApprovals/<escaped-id>`. Approval ids use JSON
 Pointer escaping. Usage values are accumulated readings, not token deltas.
 `/firstMessage` carries `state` and `recoveryGeneration`; Agent readiness alone
 does not prove that an admitted initial message has completed.
+
+`/runtimeMetadata` replaces one snapshot with `workingDirectory`, `description`,
+`descriptionSource` and `descriptionIsSetupPreview`. The source is `provider_title`,
+`prompt_preview`, or null when unknown. Only a prompt preview positively marked
+as setup should be excluded from a display title. Preserve explicit native
+titles even when equal to setup text. Treat description and its provenance as
+one update; this event does not mutate the configured Agent title. Shared reads
+continue to withhold private runtime metadata.
 
 During own-account startup, `/signIn` carries the provider challenge before
 authentication completes. The durable `conversation_opened` event replaces
