@@ -1,4 +1,85 @@
-# CMA native Sandbox production verification — 2026-10-14
+# CMA native Sandbox production verification
+
+## Local production candidates — PR #1027
+
+This is an interim observation at 09:10 SGT on 2026-10-15, not a declaration
+that the complete acceptance bar passed. Authorized local builds allow
+production testing while required GitHub checks continue. The PR remains
+unmerged. CMA stays in its original cluster, runtime workloads stay in the
+separate agent-sandbox cluster, and Image Manager remains undeployed.
+
+| Deployed component | Source | Immutable registry digest |
+| --- | --- | --- |
+| Agent Manager, generation 29 | `9d5f3dcc1b4e6ec821c33fc4950828104a24523e` | `sha256:be653cac8c5cc52c3f01e31645af258a980007de69e2f47026ac90b0831f0dcf` |
+| Shared Web, generation 107 | `33f8a5e0389a7e4a77dea4ad678dfab700f11324` | `sha256:0935333d6311398b564f48876b32da7fbdf1a56bb4d88cb2fc404fbd1b5a314b` |
+
+Registry manifests, Linux/amd64 platform manifests and source labels were
+checked against immutable local build metadata. These checks do not constitute
+an independent signed source attestation. Fixed HIGH/CRITICAL vulnerability
+scans passed. Web asset `index-Bl9kHEA7.js` has the same SHA-256 in the running
+Pod and public response:
+`91fb5a9a158c1e1db2e3d52d8d32bbfcd78d552beb334eb35aa853670f4f1d9d`.
+The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
+
+| Boundary and evidence | Result | Interpretation |
+| --- | --- | --- |
+| API9d warm pilot02: input eligibility / durable input / live connection / Agent Ready | 2,507.511 / 3,609.991 / 4,488.087 / 4,571.302 ms | One functional and API performance pass; not browser click/render proof |
+| Web33f/API9d source-ordered sample01: Send eligibility / durable acknowledgement | 7,548.177 / 9,141.613 ms | Functional pass, both five-second boundaries failed |
+| API9d pause acceptance / early resume input admission | 278.837 / 1,112.389 ms | Public acceptance passed; input was durable while Reviving |
+| API9d actual resume / completed marker response | 25,048.418 / 31,099.333 ms | Underlying recovery remains slower than five seconds |
+| API9d disposable source fixture deletion / native finality | 215.634 / 66,115.616 ms | Public deletion accepted quickly; native cleanup completed in background |
+
+The source measurement runs actual production SDK, authentication, loader,
+connection-preparation and input-admission functions. It omits React effects,
+DOM rendering, browser connection reuse and background navigation traffic;
+it is not a conservative upper bound for browser performance. Current Computer
+Use has no available browser surface, so this candidate's browser timing,
+popup and external OAuth callback remain unverified. The first connection
+check was successfully reused once in the new sample; most remaining delay
+occurred before the operation exposed its Agent, then during sequential loading.
+
+The latest resume retained the original Claim, Sandbox and PVC, replaced only
+the Pod, and preserved exact `/home` and `/home/.codex` contents, metadata and
+links. Conversation identity and history survived. The full-home mount uses
+the original PVC's `home` subdirectory mounted at `/home`. A read-only native
+timeline observed about 12 seconds from scheduling until Pod infrastructure
+was ready to start containers, followed by actual runtime/protocol startup.
+CMA did not modify the agent-sandbox controller or infrastructure.
+
+Explicit Luna and gpt-6 turns completed in the same conversation on API9d;
+runtime JSONL metadata independently confirmed both selections. Historical
+Luna output retained its original model after settings were restored; old
+turns without model evidence remained `unknown`. A previous service-scope
+request settled with exactly one automatic notification and acknowledgement
+on the preceding API `cd7e5d89`; that result does not prove the newer
+contention repair or a fresh external OAuth journey.
+
+Stop is still under investigation: the observed cancel requests returned
+HTTP 409, and the original retained key was ultimately proven not admitted.
+The turn completed naturally. A production-shaped real Mongo test covers
+active-target admission and same-key recovery, and safe stage diagnostics
+are in the next API candidate. No successful live Stop is claimed here.
+An ordinary second Agent in a prepared Sandbox exposed an MCP authority
+binding defect. The fix and real Mongo regression passed locally; its live
+optional-GitHub retest awaits the next API rollout. Exhausted owner Sandbox
+quota is now a terminal creation conflict in that candidate, rather than an
+endless transient retry. Future samples must have quota headroom.
+
+Private evidence: `/tmp/cma-api-rollout-9d5f3dcc`,
+`/tmp/cma-web-rollout-33f8a5e0`,
+`/tmp/cma-public-prepared-9d5f3dcc-pilot-02`,
+`/tmp/cma-source-flow-33f8a5e0-api9d5f3dcc-sample-01`,
+`/tmp/cma-resume-early-input-9d5f3dcc-complete-frozen-20261015-01`,
+`/tmp/cma-model-retest-9d5f3dcc-complete-frozen-20261015-01`, and
+`/tmp/cma-public-delete-9d5f3dcc-source-01`. These operator artifacts remain
+outside the repository. Existing failed reports are preserved unchanged.
+
+Every API reader and rollback image must include `c8ee3872` or an equivalent
+reader for the durable model-bearing `TurnStarted` events already written.
+Compatible fallback digest
+`sha256:f5fdac8f8967f2f859cb4b65d25f0cb6b335b34baf6edd626025f6a7e85ef5fc`
+is retained and scanned; it has not been rolled out for a live recovery test.
+Never delete or rewrite history to permit an older strict reader.
 
 ## Full-home preservation and lifecycle performance — PR #1019
 
