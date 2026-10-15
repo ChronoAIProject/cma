@@ -7,6 +7,7 @@ import { workspaceFixture } from '../../test/hierarchy';
 import { harness, item, json, page } from './controller.fixture';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { loadV2Agent } from './load';
+import type { AgentLoadLineage } from '../loadAgent';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -18,14 +19,14 @@ function deferred<Value>() {
   return { promise, resolve, reject };
 }
 
-async function setup() {
+async function setup(lineage?: AgentLoadLineage) {
   const h = harness();
   const v2 = await h.client.agentTransport!.open('agt_1');
   if (!v2) throw new Error('Expected v2 fixture');
   const progress = vi.fn();
   const abort = new AbortController();
   const start = (allowIncomplete = false) =>
-    loadV2Agent(h.client, 'agt_1', abort.signal, v2, allowIncomplete, progress).then(
+    loadV2Agent(h.client, 'agt_1', abort.signal, v2, allowIncomplete, progress, lineage).then(
       (value) => ({ value, error: undefined }),
       (error: unknown) => ({ value: undefined, error }),
     );
@@ -36,6 +37,118 @@ beforeEach(() => sessionStorage.clear());
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+const lineage: AgentLoadLineage = {
+  agentId: AGENT_DETAIL.id,
+  workspaceId: AGENT_DETAIL.workspace.id,
+  sandboxId: AGENT_DETAIL.sandbox.id,
+};
+
+it('reads a hinted Workspace with fresh Agent metadata after entry authorization and preserves final authorization', async () => {
+  const h = await setup(lineage);
+  const entry = deferred<string | undefined>();
+  const final = deferred<string | undefined>();
+  h.currentUser.mockClear().mockReturnValueOnce(entry.promise).mockReturnValueOnce(final.promise);
+  const detail = deferred<AgentDetail>();
+  const workspace = deferred<WorkspaceDetail>();
+  const detailRead = vi.spyOn(h.client, 'readAgent').mockReturnValue(detail.promise);
+  const workspaceRead = vi.spyOn(h.client, 'readWorkspace').mockReturnValue(workspace.promise);
+  const settled = vi.fn();
+  const result = h.start().then((value) => {
+    settled();
+    return value;
+  });
+  expect(detailRead).not.toHaveBeenCalled();
+  expect(workspaceRead).not.toHaveBeenCalled();
+  entry.resolve('alice');
+  await waitFor(() => expect(workspaceRead).toHaveBeenCalledOnce());
+  expect(detailRead).toHaveBeenCalledOnce();
+  expect(workspaceRead).toHaveBeenCalledWith(lineage.workspaceId, { signal: h.abort.signal });
+  expect(h.snapshot).toHaveBeenCalledOnce();
+  workspace.resolve(workspaceFixture());
+  await Promise.resolve();
+  expect(h.currentUser).toHaveBeenCalledOnce();
+  expect(settled).not.toHaveBeenCalled();
+  detail.resolve(AGENT_DETAIL);
+  await waitFor(() => expect(h.currentUser).toHaveBeenCalledTimes(2));
+  expect(settled).not.toHaveBeenCalled();
+  expect(h.progress).not.toHaveBeenCalled();
+  final.resolve('alice');
+  expect(await result).toMatchObject({ value: { detail: AGENT_DETAIL }, error: undefined });
+});
+
+it.each(['agentId', 'workspaceId', 'sandboxId'] as const)(
+  'rejects a hinted %s mismatch without publishing projections',
+  async (field) => {
+    const h = await setup({ ...lineage, [field]: 'different-resource' });
+    expect(await h.start()).toMatchObject({
+      error: { message: 'Agent projections changed identity.' },
+    });
+    expect(h.progress).not.toHaveBeenCalled();
+    expect(h.post).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['bob', undefined])(
+  'rejects an account change to %s after the hinted Workspace resolves before Agent metadata',
+  async (owner) => {
+    const h = await setup(lineage);
+    const detail = deferred<AgentDetail>();
+    vi.spyOn(h.client, 'readAgent').mockReturnValue(detail.promise);
+    const workspace = vi.spyOn(h.client, 'readWorkspace');
+    const result = h.start();
+    await waitFor(() => expect(workspace).toHaveBeenCalledOnce());
+    h.currentUser.mockResolvedValue(owner);
+    detail.resolve(AGENT_DETAIL);
+    expect(await result).toMatchObject({ error: { name: 'IdentityChangedError' } });
+    expect(h.progress).not.toHaveBeenCalled();
+  },
+);
+
+it('consumes a late parallel Workspace rejection after Agent metadata has already failed', async () => {
+  const h = await setup(lineage);
+  const detail = deferred<AgentDetail>();
+  const workspace = deferred<WorkspaceDetail>();
+  vi.spyOn(h.client, 'readAgent').mockReturnValue(detail.promise);
+  vi.spyOn(h.client, 'readWorkspace').mockReturnValue(workspace.promise);
+  const result = h.start();
+  await waitFor(() => expect(h.snapshot).toHaveBeenCalledOnce());
+  detail.reject(new Error('Agent refused'));
+  expect(await result).toMatchObject({ error: { message: 'Agent refused' } });
+  workspace.reject(new Error('Later Workspace refusal'));
+  await Promise.allSettled([detail.promise, workspace.promise]);
+  expect(h.progress).not.toHaveBeenCalled();
+});
+
+it('overlaps equally slow Agent and Workspace reads without shortening either identity check', async () => {
+  const h = await setup(lineage);
+  vi.useFakeTimers();
+  const delay = <Value>(ms: number, value: Value) =>
+    new Promise<Value>((resolve) => setTimeout(() => resolve(value), ms));
+  h.currentUser.mockClear().mockImplementation(() => delay(250, 'alice'));
+  vi.spyOn(h.client, 'readAgent').mockImplementation(() => delay(300, AGENT_DETAIL));
+  const workspace = vi
+    .spyOn(h.client, 'readWorkspace')
+    .mockImplementation(() => delay(300, workspaceFixture()));
+  h.snapshot.mockImplementation(() => delay(100, json(page([], 0))));
+  const settled = vi.fn();
+  const result = h.start().then((value) => {
+    settled();
+    return value;
+  });
+  await vi.advanceTimersByTimeAsync(249);
+  expect(workspace).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(workspace).toHaveBeenCalledOnce();
+  expect(h.currentUser).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.currentUser).toHaveBeenCalledTimes(2);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(249);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await result).toMatchObject({ value: { detail: AGENT_DETAIL }, error: undefined });
 });
 
 it('overlaps the first snapshot and usage with hierarchy reads, then waits for fresh account authority', async () => {
