@@ -41,9 +41,20 @@ fn delivery_ready(
         .progress
         .grant_generation_floor
         .ok_or(AgentAccessError::Invalid)?;
+    let approved = record.approved_services()?;
     if sandbox.runtime.as_ref() != Some(&hot.runtime)
         || sandbox.lifecycle.next_authority != hot.lifecycle_next_authority
         || sandbox.lifecycle.operation.is_some()
+        || sandbox
+            .credential
+            .service_scope
+            .as_ref()
+            .is_none_or(|scope| {
+                Some(scope.revision) != record.expected_scope_revision.unwrap_or(0).checked_add(1)
+                    || scope.authorized_by != record.requester.owner
+                    || scope.credential_generation_floor != floor
+                    || scope.services != approved
+            })
     {
         return Err(AgentAccessError::Invalid);
     }
@@ -59,8 +70,5 @@ fn delivery_ready(
         && agent.id == record.requester.agent_id
         && agent.conversation.conversation_id.as_deref() == Some(&record.requester.conversation)
         && agent.conversation.runtime_generation == hot.runtime.provision_generation
-        && record
-            .approved_services()?
-            .iter()
-            .all(|service| sandbox.credential.effective_reaches().contains(service)))
+        && sandbox.credential.effective_reaches() == approved)
 }

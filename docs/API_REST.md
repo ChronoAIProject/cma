@@ -970,6 +970,35 @@ and non-cacheable. Typed refusals use `agent_access_invalid` (400),
 `agent_access_forbidden` (403), `agent_access_not_found` (404),
 `agent_access_conflict` (409), and `agent_access_unavailable` (503).
 
+`PUT /api/v1/agents/{id}/service-access` accepts
+`{ "services": ["chrono-llm-public", "ornn-api"], "expected_services": ["chrono-llm-public", "ornn-api", "api-github"] }`
+with an `Idempotency-Key` and returns HTTP 202 `AgentAccessRequestView`.
+The owner Save is consent to replace the complete service set shared by all
+Agents in that Sandbox. Optional services may be removed; the current platform
+baseline is mandatory. Both sets are bounded to 1–32 distinct service identifiers.
+`expected_services` must equal the currently effective set. A stale set or reuse
+of the same key with a different selection returns 409. Exact retries recover the
+original durable request even after its scope change has applied. A new owner
+Save starts `connecting`, without a separate pending approval.
+
+Before final Save or Approve, the browser connection flow can check
+`{ "type": "agent_service_access", "id": "agent-id", "services": ["selected-service-id"] }`.
+This owner-bound target resolves the selected scope and any model-access
+prerequisites without granting access or recording consent. Complete required
+connections before submitting final consent; the worker revalidates connections
+and retained owner authority before changing scope.
+
+New scope updates rotate the managed key in the existing live runtime. They do
+not pause or restart the Sandbox, replace its Pod, or replace Agent conversations.
+A paused Sandbox waits for an explicit owner resume. The scope revision,
+runtime identity and credential generation floor are durable; a concurrent
+lifecycle or later scope change cannot retarget an old update. Runtime delivery
+and old-key revocation must both complete before the callback. A busy Agent
+receives durable steering in its original active turn; a quiet Agent receives a
+normal message in its original conversation. `succeeded` requires confirmed
+callback delivery, independent of the time needed to finish the model response.
+Historical already-paused workflows retain their original recovery path.
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
@@ -1217,6 +1246,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
 | `GET /api/v1/agents/{id}/access-requests` | - | - | 200 AgentAccessRequestList |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | ApproveAgentAccessRequest; key | - | 200 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |

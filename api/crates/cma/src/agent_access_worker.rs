@@ -61,8 +61,8 @@ impl AgentAccessWorker {
                     }
                     _ = interval.tick() => {
                         if *shutdown.borrow() { break; }
-                        // Each iteration performs one bounded durable phase, so
-                        // a pending owner connection never holds the worker.
+                        // Drain bounded immediately ready durable phases; pending
+                        // owner connections release their lease for other work.
                         if self.tick().await.is_err() {
                             tracing::warn!("Agent access workflow will retry a durable request");
                         }
@@ -99,6 +99,7 @@ impl AgentAccessWorker {
                     return Err(AgentAccessError::NotFound);
                 };
                 if current.phase.terminal() {
+                    self.store.access_admitted.notify_one();
                     return Ok(());
                 }
                 if current
@@ -122,6 +123,7 @@ impl AgentAccessWorker {
                     };
                     match self.store.release_access_request(&lease, delay).await {
                         Ok(()) => {
+                            self.store.access_admitted.notify_one();
                             if delay < Duration::from_secs(1) {
                                 let wake = self.store.access_admitted.clone();
                                 tokio::spawn(async move {
@@ -142,6 +144,7 @@ impl AgentAccessWorker {
                         _ => "access_update_cannot_continue",
                     };
                     self.store.fail_access_request(&lease, code).await?;
+                    self.store.access_admitted.notify_one();
                     return Ok(());
                 }
             }
@@ -173,7 +176,6 @@ impl AgentAccessWorker {
         &self,
         record: &AgentAccessRecord,
     ) -> Result<bool, AgentAccessError> {
-        self.authority(record).await?;
         let services = record.approved_services()?;
         let requirements = tokio::time::timeout(
             Duration::from_secs(20),
@@ -225,7 +227,12 @@ impl AgentAccessWorker {
         match record.phase {
             Phase::Connecting => {
                 if self.connections_ready(record).await? {
-                    self.advance(record, Phase::WaitingQuiet).await?;
+                    if sandbox.status == SandboxStatus::Active {
+                        waiting_quiet::schedule(&self.store, record, &sandbox, async { Ok(true) })
+                            .await?;
+                    } else {
+                        self.advance(record, Phase::WaitingQuiet).await?;
+                    }
                 }
             }
             Phase::WaitingQuiet => {

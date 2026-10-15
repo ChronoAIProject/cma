@@ -1170,3 +1170,25 @@ The pinned agent-sandbox v1.0.2 controller does not inject public DNS when custo
 rules are configured. Explicitly review cluster DNS reachability in the selected
 egress policy; do not copy only the ingress exception and accidentally drop DNS
 or public endpoint access.
+
+### Hot service-access scope compatibility
+
+Owner service-access Save now replaces the exact scope shared by every Agent in
+an existing managed-key Sandbox, retaining the runtime and conversations. The
+worker rotates the key and completes old-key revocation before confirming
+callback delivery. Live acceptance must measure final Save/Approve through
+credential delivery, revocation completion and actual callback write; the
+requested five-second budget excludes subsequent model response completion.
+Local scheduler and runtime continuity tests alone do not establish that live
+latency budget.
+
+The first hot update persists `SandboxCredentialState.service_scope`, a
+`ServiceAccessRevised` event, access-request `scope_mode` and
+`expected_scope_revision`, the `updating` phase, `progress.hot_update`, and a
+persistent notification intent. Every control-plane reader and retained rollback
+image must understand those fields and events before new writes are enabled.
+Legacy additive grants, paused workflows and notification records without the
+optional intent remain readable. Never remove scope revisions, rewrite historical
+receipts, or restart user runtimes to recover an older reader. The runtime wire
+credential operation already supports replacing the in-memory key on the pinned
+live runtime; this change does not require a new home file or a Pod replacement.

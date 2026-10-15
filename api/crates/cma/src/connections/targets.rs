@@ -97,55 +97,14 @@ impl ConnectionTargets for StoredConnectionTargets {
         }
         match target {
             ConnectionTarget::AgentServiceAccess { id, services } => {
-                if !caller.authorization.allows(Capability::UseOwnSandboxes) {
-                    return Err(ConnectionError::Forbidden);
-                }
-                layer2_core::sandbox::agent_access::validate_access_services(services)
-                    .map_err(|_| ConnectionError::Changed)?;
-                let mut selected = services
-                    .iter()
-                    .cloned()
-                    .map(ServiceId::new)
-                    .collect::<Vec<_>>();
-                selected.sort();
-                if selected.windows(2).any(|pair| pair[0] == pair[1]) {
-                    return Err(ConnectionError::Changed);
-                }
-                let agent = self
-                    .stores
-                    .sandbox_model
-                    .get_agent(id)
-                    .await
-                    .map_err(|_| ConnectionError::Unavailable)?
-                    .filter(|agent| agent.owner == caller.subject && agent.status.is_live())
-                    .ok_or(ConnectionError::NotFound)?;
-                let sandbox = self
-                    .stores
-                    .sandbox_model
-                    .get_sandbox(&agent.sandbox_id)
-                    .await
-                    .map_err(|_| ConnectionError::Unavailable)?
-                    .filter(|sandbox| {
-                        sandbox.owner == caller.subject
-                            && sandbox.status != SandboxStatus::Retired
-                            && sandbox.credential.source.is_managed()
-                    })
-                    .ok_or(ConnectionError::NotFound)?;
-                let baseline = self
-                    .policy
-                    .current_sandbox_policy()
-                    .await
-                    .map_err(|_| ConnectionError::Unavailable)?
-                    .baseline_services;
-                if !baseline.iter().all(|service| selected.contains(service)) {
-                    return Err(ConnectionError::Changed);
-                }
-                // Resolving this target establishes only connection prerequisites;
-                // it never records consent, issues a key or changes Sandbox scope.
-                Ok(sandbox
-                    .profile
-                    .content
-                    .connection_services_for_grants(&selected))
+                scope::services(
+                    &self.stores.sandbox_model,
+                    self.policy.as_ref(),
+                    caller,
+                    id,
+                    services,
+                )
+                .await
             }
             ConnectionTarget::AgentAccessRequest { id } => {
                 if !caller.authorization.allows(Capability::UseOwnSandboxes) {
@@ -250,3 +209,6 @@ impl ConnectionTargets for StoredConnectionTargets {
         }
     }
 }
+
+#[path = "targets_scope.rs"]
+mod scope;

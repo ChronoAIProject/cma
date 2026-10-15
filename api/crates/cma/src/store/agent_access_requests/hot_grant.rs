@@ -27,7 +27,7 @@ async fn apply(
     let mut record = super::worker::leased(store, lease, session).await?;
     if !matches!(
         record.phase,
-        AgentAccessPhase::WaitingQuiet | AgentAccessPhase::Updating
+        AgentAccessPhase::Connecting | AgentAccessPhase::WaitingQuiet | AgentAccessPhase::Updating
     ) {
         return Err(AgentAccessError::Conflict.into());
     }

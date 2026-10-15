@@ -250,6 +250,23 @@ fn validate_progress(
                     sandbox.runtime.as_ref() != Some(&hot.runtime)
                         || sandbox.lifecycle.next_authority != hot.lifecycle_next_authority
                 }))
+            || (record.phase == AgentAccessPhase::Updating
+                && (sandbox.work.lease.is_some()
+                    || sandbox.lifecycle.checkpoint_capture.is_some()
+                    || !sandbox.credential.revoke_debt.is_empty()
+                    || sandbox
+                        .credential
+                        .service_scope
+                        .as_ref()
+                        .is_none_or(|scope| {
+                            Some(scope.revision)
+                                != record.expected_scope_revision.unwrap_or(0).checked_add(1)
+                                || scope.authorized_by != record.requester.owner
+                                || scope.credential_generation_floor != floor
+                                || !record
+                                    .approved_services()
+                                    .is_ok_and(|approved| scope.services == approved)
+                        })))
             || !sandbox.credential.delivered
             || sandbox.credential.pending.is_some()
             || sandbox.credential.current.as_ref() != progress.delivered_credential.as_ref()
