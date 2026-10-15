@@ -85,6 +85,18 @@ pub struct SandboxServiceGrant {
     pub credential_generation_floor: u64,
 }
 
+/// The latest exact owner-approved scope, separate from immutable creation scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxServiceScopeRevision {
+    pub revision: u64,
+    pub services: Vec<ServiceId>,
+    pub authorized_by: SubjectId,
+    pub authorized_at: String,
+    /// Credentials at or below this reservation predate this exact scope.
+    pub credential_generation_floor: u64,
+}
+
 /// Non-secret evidence for one sandbox credential. For supplied credentials the
 /// key id is a hash receipt, state version is one and expiry is unknown (empty).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +138,8 @@ pub struct SandboxCredentialState {
     pub reaches: Vec<ServiceId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub service_grants: Vec<SandboxServiceGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_scope: Option<SandboxServiceScopeRevision>,
     /// Highest custody generation reserved for this sandbox.
     pub key_generation: u64,
     pub delivered: bool,
@@ -140,12 +154,18 @@ pub struct SandboxCredentialState {
 
 impl SandboxCredentialState {
     pub fn service_access_generation_floor(&self) -> u64 {
+        if let Some(scope) = &self.service_scope {
+            return scope.credential_generation_floor;
+        }
         self.service_grants
             .last()
             .map_or(0, |grant| grant.credential_generation_floor)
     }
 
     pub fn effective_reaches(&self) -> Vec<ServiceId> {
+        if let Some(scope) = &self.service_scope {
+            return scope.services.clone();
+        }
         self.reaches
             .iter()
             .chain(self.service_grants.iter().flat_map(|grant| &grant.services))
@@ -169,7 +189,8 @@ impl SandboxCredentialState {
                     .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         };
         self.source.validate()
-            && (self.source.is_managed() || self.service_grants.is_empty())
+            && (self.source.is_managed()
+                || (self.service_grants.is_empty() && self.service_scope.is_none()))
             && self.current.as_ref().is_none_or(authority_valid)
             && self.pending.as_ref().is_none_or(authority_valid)
             && self.delivered == self.current.is_some()

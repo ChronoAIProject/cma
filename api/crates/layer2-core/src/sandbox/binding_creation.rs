@@ -32,6 +32,7 @@ impl SandboxService {
             credential: SandboxCredentialState {
                 source: binding.credential_source(),
                 service_grants: vec![],
+                service_scope: None,
                 reaches: content.nyxid_services.clone(),
                 key_generation: 0,
                 delivered: false,

@@ -88,7 +88,9 @@ mod workspace_lifecycle;
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
-        if !sandbox.credential.service_grants.is_empty() {
+        if !sandbox.credential.service_grants.is_empty()
+            || sandbox.credential.service_scope.is_some()
+        {
             return Err(SandboxStoreError::InvalidTransaction(
                 "service access requires an existing sandbox and an atomic grant",
             ));

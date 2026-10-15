@@ -434,6 +434,7 @@ impl TestApp {
                     source: Default::default(),
                     reaches: revision.content.credential_services(&[]),
                     service_grants: Vec::new(),
+                    service_scope: None,
                     key_generation: 0,
                     delivered: false,
                     current: None,

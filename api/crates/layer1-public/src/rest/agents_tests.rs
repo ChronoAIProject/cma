@@ -366,6 +366,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("api-github")],
             key_generation: 0,
             delivered: false,

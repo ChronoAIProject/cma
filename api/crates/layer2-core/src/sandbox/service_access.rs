@@ -11,6 +11,7 @@ const MAX_ADDITIONAL_SERVICES: usize = 32;
 
 impl Sandbox {
     pub(super) fn validate_service_access(&self) -> Result<(), SandboxModelError> {
+        self.validate_service_scope()?;
         if self.credential.service_grants.is_empty() {
             return Ok(());
         }
@@ -83,7 +84,7 @@ impl Sandbox {
         if additions.is_empty() {
             return Ok(None);
         }
-        if !self.service_access_is_settled() {
+        if !self.service_access_is_settled() || self.credential.service_scope.is_some() {
             return Err(invalid_access());
         }
         let grant = SandboxServiceGrant {
@@ -110,6 +111,7 @@ impl Sandbox {
         if self.credential.source != next.credential.source
             || self.credential.reaches != next.credential.reaches
             || self.credential.service_grants != next.credential.service_grants
+            || self.credential.service_scope != next.credential.service_scope
             || next.credential.key_generation < self.credential.key_generation
         {
             return Err(invalid_access());
@@ -133,6 +135,19 @@ impl Sandbox {
         event: &SandboxEventKind,
         at: &str,
     ) -> Result<(), SandboxModelError> {
+        if let SandboxEventKind::ServiceAccessRevised { scope } = event {
+            let mut expected = self.clone();
+            let actual = expected.revise_live_service_access(
+                &scope.authorized_by,
+                &scope.services,
+                at.into(),
+            )?;
+            return if &actual == scope && &expected == next {
+                Ok(())
+            } else {
+                Err(invalid_access())
+            };
+        }
         let SandboxEventKind::ServiceAccessGranted { grant } = event else {
             return self.validate_service_access_successor(next);
         };
