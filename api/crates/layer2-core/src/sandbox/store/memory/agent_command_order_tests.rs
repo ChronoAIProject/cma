@@ -47,6 +47,7 @@ fn insert(
         }
     };
     let record = AdmittedAgentCommand {
+        queued_input: None,
         receipt: AdmissionReceipt {
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
