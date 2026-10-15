@@ -12,6 +12,7 @@ import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
 import type { AgentV2Session } from './transport/client';
 import type { MessageAcceptance } from './controllerTypes';
+import { ApiError } from '@chronoai/cma-sdk';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 
 interface Options {
@@ -89,6 +90,7 @@ export function useAgentActions({
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: (receipt?: MessageAcceptance) => void,
       onReceiptObserved?: (receipt: MessageAcceptance) => void,
+      onRefused?: () => void,
     ) => {
       if (
         currentContext.current !== context ||
@@ -171,6 +173,17 @@ export function useAgentActions({
           },
         );
       } catch (error: unknown) {
+        if (
+          !controller.signal.aborted &&
+          currentContext.current === context &&
+          session !== undefined &&
+          !approving &&
+          !accepted &&
+          error instanceof ApiError &&
+          error.status === 422 &&
+          error.code === 'invalid_response_input'
+        )
+          onRefused?.();
         if (!controller.signal.aborted && !onIdentityChange(error))
           setActionError(errorMessage(error));
       } finally {

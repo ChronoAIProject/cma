@@ -715,9 +715,16 @@ the viewer's name. Identity rendering does not alter message text or attribution
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
 breaks and use the existing caption label token at 12/18 for **Sending…**.
-Show **Sent** and clear the matching draft only after authorized acceptance;
-uncertain delivery shows **Awaiting confirmation**, and a cancelled connection
-check shows **Not sent**. These local rows never submit or retry an input.
+On valid Send, immediately hand the visible text and ready attachment records to
+that outgoing row and show an empty, editable composer. Retain the original draft
+snapshot until authorized acceptance; only then show **Sent** and discard that
+snapshot. A refusal or uncertain outcome restores untouched input and ready
+attachments without uploading again. New typing belongs to the next draft and
+must never be cleared or replaced by a late callback, even when its text is
+identical. Its earlier outgoing row still retains the submitted text and exact
+file references. Uncertain delivery shows **Awaiting confirmation**; a cancelled
+connection check or authoritative admission refusal shows **Not sent**. These
+local rows never submit or retry an input. Quick messages preserve the current draft.
 Reconcile with durable user messages by command or run identity, never text,
 so intentional identical messages remain separate. Account, Agent and access
 changes invalidate both local rows and late draft-clearing callbacks. Retained
@@ -773,7 +780,8 @@ selection through reloads and flag changes; existing AG-UI tabs keep their
 transport. Preserve an uncertain message or response action with its exact key,
 body and original target. Use the existing status band and compact Button for
 **Recover pending request**; recovery is explicit and never retargets an action.
-Keep the draft editable and clear only the draft matching a retained acceptance.
+Keep the draft editable; the immediate visual handoff retains its original
+snapshot until matching acceptance and restores untouched input on uncertainty.
 A refused intent may be corrected after an authoritative admission refusal.
 
 Responses v2 may load Agent/Workspace details, usage and the first activity page
@@ -829,7 +837,8 @@ An unresolved Worktree retains its empty commit and actual creation state;
 queued acceptance never claims runtime readiness. Keep the actual Starting label and recorded
 preparation visible. Responses v2 tabs offer the normal editable composer,
 **Message Agent** placeholder and **Send message** without an extra Starting or
-sending notification in the composer. Clear the matching draft only on durable admission; the creation first
+sending notification in the composer. Hand off its visible draft immediately and
+retain the snapshot until durable admission; the creation first
 message keeps its earlier queue position. Existing AG-UI tabs wait for readiness.
 Missing/stale parent state, access uncertainty, saving or lifecycle changes hold
 Starting input and its explicit uncertain-request recovery.
@@ -858,7 +867,8 @@ centered on the same row beside the input, with a flexible input column and two
 32px button columns (44px on mobile), separated by the existing 8px gap. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
-Keep the draft editable and retain it until admission is confirmed. An uncertain
+Keep the next draft editable while retaining the submitted snapshot until
+admission is confirmed. An uncertain
 earlier input holds another queue submission until explicit recovery. Existing
 AG-UI tabs retain their current composer behavior during protocol migration.
 
@@ -2248,3 +2258,4 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Share Agent display-title selection across header, browser title and sidebar. Keep explicit native titles, omit only previews positively identified as automatic setup, and fall back to the configured name. Preserve unknown legacy descriptions and title provenance through live updates, hierarchy refresh and replay without selecting a message by role or position. |
 
 - 2026-10-15 — Apply the existing shared opacity presence to dropdown menus as well as dialogs: closing releases keyboard/pointer actions and focus immediately while its inert frame fades; quick reopening cancels stale removal. Use the existing duration/easing for composer drop-up max-height and menu hover tint, with reduced motion removing both transitions. No palette, geometry, menu action, or message admission changes.
+| 2026-10-15 | Hand visible text and ready attachments to the outgoing message immediately on valid Send. Retain the original snapshot until authorized acceptance, restore untouched input on refusal or uncertainty, and preserve newly typed text and later attachments. Keep exact request recovery, navigation drafts, IME and separate queue/Stop behavior; authoritative v2 refusals show Not sent. |
