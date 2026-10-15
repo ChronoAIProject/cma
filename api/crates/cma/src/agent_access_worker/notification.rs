@@ -16,7 +16,7 @@ impl AgentAccessWorker {
         let lease = record.lease.as_ref().ok_or(AgentAccessError::Conflict)?;
         if record.progress.hot_update.is_some() {
             let prepared = self.store.prepare_access_notification(lease).await?;
-            if prepared.progress != record.progress {
+            if prepared.phase != record.phase || prepared.progress != record.progress {
                 return Ok(());
             }
         }
