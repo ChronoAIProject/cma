@@ -748,3 +748,35 @@ Evidence is stored locally under `/tmp/cma-hot-production-browser-20261015` and
 `/tmp/cma-compact-composer-release-20261015`. Hot service-scope replacement,
 revocation and the five-second Codex callback are a separate pending release;
 this verification does not declare those targets achieved.
+
+## 2026-10-15 attachment persistence and lifecycle timing
+
+The same disposable Agent `agt_474fe2e794ec4e939f39fce3cf68ca50` was explicitly
+paused and resumed. Public pause acknowledgment took 312 ms and resume
+acknowledgment took 347 ms. The observed backend states took 9.205 seconds to
+reach paused and 25.819 seconds to return active. These measurements do not
+prove actual runtime pause/resume within five seconds. The original native
+Claim, Sandbox, PVC UID and PV were retained; the replacement Pod mounted the
+same writable whole `/home` volume.
+
+After resume, Codex read the disk and computed matching sizes and SHA-256 hashes
+for the pasted PNG, dropped text file and 20 MiB boundary file. The clipboard
+image was compared with its real upload receipt, since Chromium re-encodes PNG
+clipboard contents. Exact 20 MiB upload, identical idempotent replay, conflicting
+bytes rejection (409) and 20 MiB plus one byte rejection (413) also passed.
+Boundary upload took 8.045 seconds; this is upload time, separate from message
+send acknowledgment after an attachment is Ready.
+
+The post-resume browser harness initially typed multiline content as Enter key
+events and unintentionally submitted extra prompt fragments. Only the completed
+file-hash result is used as persistence evidence; those extra sends are excluded
+from latency measurements. The remaining fixture draft was cleared and the page
+reloaded without resubmission. A later duplicate turn encountered provider 402
+`insufficient_credits`. With the owner's subsequent authorization, an active
+10-credit, seven-day grant scoped to `chrono-llm-public` was issued through the
+owner's NyxID admin account to continue verification. No paid checkout occurred.
+
+Evidence: `/tmp/cma-hot-fixture-home-20261015`,
+`/tmp/cma-prod-attachment-boundaries-20261015/proof.json`,
+`/tmp/cma-hot-production-browser-20261015/resume-file-persistence-proof.json`,
+and `/tmp/cma-test-credit-grant-20261015`.
