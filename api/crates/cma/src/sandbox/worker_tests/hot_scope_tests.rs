@@ -66,7 +66,12 @@ async fn due_sweep_stops_on_retry_and_never_reports_active_before_old_key_revoca
     harness.credentials.fail_revokes(1);
     assert_eq!(harness.worker.run_due(now).await.unwrap(), 1);
     let blocked = harness.stored(&created.id).await;
-    assert_eq!(blocked.status, SandboxStatus::CredentialRotating, "{:?}", blocked.failure);
+    assert_eq!(
+        blocked.status,
+        SandboxStatus::CredentialRotating,
+        "{:?}",
+        blocked.failure
+    );
     assert_eq!(blocked.work.step, SandboxWorkStep::RevokeRotatedCredential);
     assert!(!blocked.credential.revoke_debt.is_empty());
     assert!(blocked.work.attempts > 0);
