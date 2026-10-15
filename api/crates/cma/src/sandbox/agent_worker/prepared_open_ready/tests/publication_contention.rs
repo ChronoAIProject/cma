@@ -19,7 +19,7 @@ async fn claimed(fixture: &Fixture) -> (Agent, LiveAgentAttachment, SystemTime) 
         FirstMessageRecord::new(
             &ready.creation_key,
             "preserve this exact input",
-            &rfc3339_at(now),
+            rfc3339_at(now),
         )
         .unwrap(),
     );
