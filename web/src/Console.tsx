@@ -99,6 +99,7 @@ function ConsoleContent({
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
     suspended: accessUncertain,
+    authorizedLineage: agentAccess.personalLineage,
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
         ? navigation.items
@@ -208,7 +209,11 @@ function ConsoleContent({
           viewerId={user.id}
           revision={revision}
           permissions={permissions}
-          busy={actions.pending || actions.deletingSandboxIds.has(route.sandboxId)}
+          busy={
+            actions.pending ||
+            actions.busySandboxIds.has(route.sandboxId) ||
+            actions.deletingSandboxIds.has(route.sandboxId)
+          }
           onAction={actions.select}
           onNavigate={onNavigate}
         />
@@ -387,6 +392,7 @@ function ConsoleContent({
                     }))}
                     refreshError={navigation.refreshError}
                     lifecycleBusy={actions.pending}
+                    busySandboxIds={actions.busySandboxIds}
                     deletingSandboxIds={actions.deletingSandboxIds}
                     onViewDeletion={actions.viewDeletion}
                     route={route}

@@ -172,6 +172,7 @@ async fn binding_is_verified_and_legacy_turns_remain_explicitly_unbound() {
     append(
         &legacy.store,
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: Some("legacy-key".into()),
         },
@@ -183,6 +184,7 @@ async fn binding_is_verified_and_legacy_turns_remain_explicitly_unbound() {
     append(
         &legacy.store,
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 4,
             origin_key: Some("command:cmd_missing".into()),
         },

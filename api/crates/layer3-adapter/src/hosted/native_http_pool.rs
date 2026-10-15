@@ -194,7 +194,9 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         slot: Arc<NativeHttpSlot>,
     ) -> crate::Result<NativeLease> {
+        let waiting = std::time::Instant::now();
         let mut checkout = slot.connection.clone().lock_owned().await;
+        let wait_ms = u64::try_from(waiting.elapsed().as_millis()).unwrap_or(u64::MAX);
         slot.idle_timer.lock().unwrap().take();
         let lease = NativeLease {
             connection: checkout.take(),
@@ -204,6 +206,20 @@ impl ProviderHostedControlTransport {
             checkout,
         };
         lease.current().await?;
+        let reused_connection = lease
+            .connection
+            .as_ref()
+            .is_some_and(|connection| !connection.sender.is_closed());
+        // Retain only bounded identity/timing metadata, never requests, headers,
+        // tokens or runtime responses. Suppress uncontended sub-millisecond reuse.
+        if wait_ms > 0 || !reused_connection {
+            tracing::info!(
+                runtime_id = lease.handle.as_str(),
+                wait_ms,
+                reused_connection,
+                "Native runtime HTTP connection checked out"
+            );
+        }
         Ok(lease)
     }
 

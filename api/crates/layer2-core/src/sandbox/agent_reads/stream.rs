@@ -53,6 +53,8 @@ pub struct AgentEventStreamSnapshot {
     pub id: AgentId,
     pub created_at: String,
     pub model: Option<String>,
+    /// Immutable creation model, used only for legacy turns before settings edits.
+    pub initial_model: Option<String>,
     pub runtime_generation: Option<u64>,
     pub active_turn: Option<u64>,
     pub head: u64,
@@ -118,9 +120,10 @@ impl AgentReadService {
         let entries = self.complete_log(&agent).await?;
         fold_agent_log(&agent, &entries).map_err(AgentReadError::Corrupt)?;
         Ok(AgentEventStreamSnapshot {
+            model: agent.selected_model(),
             id: agent.id,
             created_at: agent.created_at,
-            model: agent.profile.content.model,
+            initial_model: agent.profile.content.model,
             runtime_generation: agent.conversation.runtime_generation,
             active_turn: agent.conversation.active_turn,
             head: agent.conversation.last_seq,

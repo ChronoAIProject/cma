@@ -252,6 +252,7 @@ fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceP
     };
     let kind = match kind {
         AgentLogKind::TurnStarted { turn_sequence, .. } => AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence,
             origin_key: None,
         },

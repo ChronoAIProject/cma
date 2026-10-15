@@ -136,6 +136,7 @@ pub fn bind_command_dispatch(
                 || matches!(order, AgentInputOrder::AfterTurn { turn_sequence } if *turn_sequence != latest_turn)
                 || mutation.agent_logs.get(1)
                     != Some(&AgentLogKind::TurnStarted {
+                        model: Some(current.settings().model),
                         turn_sequence: operation.turn_sequence,
                         origin_key: Some(format!("command:{}", claim.command_id.as_str())),
                     })

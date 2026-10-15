@@ -217,6 +217,7 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
+        let attempt_now = now;
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -290,7 +291,14 @@ impl AgentWorker {
                 .await?
             {
                 tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
-                return Ok(());
+                return self
+                    .publish_prepared_connection(
+                        &agent,
+                        &context,
+                        &attachment,
+                        attempt_now + started.elapsed(),
+                    )
+                    .await;
             }
             self.startup_progress(
                 agent,

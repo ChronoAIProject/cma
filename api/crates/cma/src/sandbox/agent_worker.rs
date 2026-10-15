@@ -11,6 +11,7 @@ use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod cleanup;
 mod connection;
+mod connection_retry;
 mod first_message;
 mod live_skills;
 mod prepared_open_ready;
@@ -45,6 +46,7 @@ pub(crate) struct AgentWorkerConfig {
     pub retry_delay: Duration,
     pub open_timeout: Duration,
     pub sign_in_timeout: Duration,
+    parent_readiness: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl AgentWorkerConfig {
@@ -56,7 +58,13 @@ impl AgentWorkerConfig {
             retry_delay: DEFAULT_RETRY,
             open_timeout: DEFAULT_OPEN_TIMEOUT,
             sign_in_timeout: DEFAULT_SIGN_IN_TIMEOUT,
+            parent_readiness: None,
         }
+    }
+
+    pub(crate) fn with_parent_readiness(mut self, readiness: Arc<tokio::sync::Notify>) -> Self {
+        self.parent_readiness = Some(readiness);
+        self
     }
 }
 

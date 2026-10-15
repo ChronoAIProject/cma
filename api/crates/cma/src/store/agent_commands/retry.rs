@@ -10,7 +10,15 @@ pub(super) struct CommandAdmissionRetries {
 
 impl CommandAdmissionRetries {
     pub(super) fn new(authority_deadline: Option<Instant>) -> Self {
-        let budget = Instant::now() + Duration::from_secs(5);
+        Self::with_deadline(authority_deadline, None)
+    }
+
+    pub(super) fn with_deadline(
+        authority_deadline: Option<Instant>,
+        retry_deadline: Option<Instant>,
+    ) -> Self {
+        let ceiling = Instant::now() + Duration::from_secs(5);
+        let budget = retry_deadline.map_or(ceiling, |deadline| deadline.min(ceiling));
         Self {
             deadline: authority_deadline.map_or(budget, |deadline| deadline.min(budget)),
             attempt: 0,

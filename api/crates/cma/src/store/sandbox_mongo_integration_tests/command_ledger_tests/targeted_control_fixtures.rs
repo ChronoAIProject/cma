@@ -65,6 +65,7 @@ pub(super) async fn composed(
         },
         observed_agent_revision: agent.revision,
         agent_created_at: agent.created_at.clone(),
+        retry_deadline: None,
     };
     (store, agent, request, source)
 }

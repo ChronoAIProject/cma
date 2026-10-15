@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from './ConnectionWizard';
-import { connectionClient, type ConnectionTarget } from './client';
+import { connectionClient, type ConnectionReport, type ConnectionTarget } from './client';
 
 interface PendingAction {
   readonly id: number;
@@ -45,7 +45,12 @@ export function useConnectionGate(enabled = true, scope?: object) {
     setPending(undefined);
     value.action();
   };
-  const checkAndRun = async (target: ConnectionTarget, owner: string, action: () => void) => {
+  const checkAndRun = async (
+    target: ConnectionTarget,
+    owner: string,
+    action: () => void,
+    prepared?: () => ConnectionReport | undefined,
+  ) => {
     if (!enabled || active.current !== undefined) return;
     const value: PendingAction = {
       id: ++serial.current,
@@ -60,7 +65,8 @@ export function useConnectionGate(enabled = true, scope?: object) {
     setInteractive(false);
     setPending(value);
     try {
-      const report = await connectionClient.check(target, undefined, value.request!.signal);
+      const report =
+        prepared?.() ?? (await connectionClient.check(target, undefined, value.request!.signal));
       if (active.current !== value) return;
       if (report.owner !== owner)
         throw new Error('Your CMA account changed. Open the Agent again to continue.');

@@ -44,7 +44,10 @@ it('keeps Starting input disabled unless durable queuing is explicitly enabled',
       onStop={vi.fn()}
     />,
   );
-  expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled();
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  expect(field).toBeDisabled();
+  expect(field).toHaveAttribute('placeholder', 'Message Agent');
+  expect(screen.queryByText('Agent is starting.')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
   expect(onSend).not.toHaveBeenCalled();
