@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { sandboxFixture } from '../test/hierarchy';
-import { sandboxLifecycleAction, sandboxLifecycleLabel, sandboxRefreshDelay } from './lifecycle';
+import {
+  sandboxChildStatus,
+  sandboxChildrenReadable,
+  sandboxLifecycleAction,
+  sandboxLifecycleLabel,
+  sandboxRefreshDelay,
+  sandboxUnavailableNotice,
+} from './lifecycle';
 
 describe('public Sandbox lifecycle presentation', () => {
+  it('keeps existing Agents readable and working while their service key updates', () => {
+    const sandbox = sandboxFixture('credential_rotating');
+    expect(sandboxChildrenReadable(sandbox)).toBe(true);
+    expect(sandboxChildStatus(sandbox, 'working')).toBe('working');
+    expect(sandboxLifecycleLabel(sandbox)).toBe('Updating access');
+    expect(sandboxUnavailableNotice(sandbox)).toContain('Agents and conversations remain available');
+  });
   it.each(['active', 'paused'] as const)(
     'does not infer %s eligibility when unreported',
     (status) => {

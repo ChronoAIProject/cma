@@ -322,6 +322,7 @@ function ConsoleContent({
         route.kind === 'agent' && personalAgentId !== undefined && !accessUncertain ? (
           <AgentDetails
             key={route.agentId}
+            owner={user.id}
             open={detailsOpen}
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}

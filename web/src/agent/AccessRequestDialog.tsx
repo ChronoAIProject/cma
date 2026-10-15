@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
-import { connectionClient } from '../connections/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
@@ -8,6 +7,7 @@ import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
 import { accessRequests, validAccessServices, type AgentAccessRequest } from './accessRequests';
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
 import type { SandboxStatus } from '../api/types';
+import { useScopeConnections } from './scopeConnections';
 
 export function AgentAccessRequests({
   agentId,
@@ -79,7 +79,7 @@ export function AgentAccessRequests({
         </div>
       ) : (
         <AccessRequestDialog
-          key={request.id}
+          key={`${owner}:${agentId}:${request.id}`}
           request={request}
           owner={owner}
           granted={granted}
@@ -121,44 +121,21 @@ function AccessRequestDialog({
   const [error, setError] = useState<string>();
   const active = useRef<AbortController | undefined>(undefined);
   const [connected, setConnected] = useState(false);
+  const [preparingConnections, setPreparingConnections] = useState(false);
+  const preflight = useScopeConnections(
+    request.agent_id,
+    owner,
+    services,
+    request.status === 'pending' && !intent,
+  );
   const connectionTargetId =
     request.status === 'connecting' || request.status === 'applying'
       ? request.connection?.target.id
       : undefined;
   useEffect(() => () => active.current?.abort(), []);
-  useEffect(() => {
-    if (!connected || !connectionTargetId) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const check = async () => {
-      try {
-        const report = await connectionClient.check(
-          { type: 'agent_access_request', id: connectionTargetId },
-          undefined,
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        if (!report.ready || (owner !== undefined && report.owner !== owner)) {
-          setConnected(false);
-          return;
-        }
-      } catch {
-        if (controller.signal.aborted) return;
-        // The wizard rechecks authority and presents connection or sign-in failures.
-        setConnected(false);
-        return;
-      }
-      timer = setTimeout(() => void check(), 2000);
-    };
-    // A ready connection can expire while the durable workflow is still applying.
-    timer = setTimeout(() => void check(), 2000);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [connected, connectionTargetId, owner]);
   const decide = async (action: 'approve' | 'deny') => {
-    if (active.current || saved.error) return;
+    if (active.current || saved.error || (action === 'approve' && !intent && !preflight.ready))
+      return;
     const selected = intent ?? {
       key: crypto.randomUUID(),
       action,
@@ -193,6 +170,7 @@ function AccessRequestDialog({
       if (!abort.signal.aborted) {
         saveAccessDecision(owner, request.agent_id, request.id);
         setSaved({});
+        if (selected.action === 'approve' && preflight.ready) setConnected(true);
         onUpdate(value);
         onRefresh();
       }
@@ -208,6 +186,20 @@ function AccessRequestDialog({
       if (!abort.signal.aborted) setPending(false);
     }
   };
+  if (preparingConnections)
+    return (
+      <ConnectionWizard
+        target={preflight.target}
+        expectedOwner={owner}
+        presentation="dialog"
+        dialogTitle="Connect Agent services"
+        onCancel={() => setPreparingConnections(false)}
+        onReady={(report) => {
+          preflight.connected(report);
+          setPreparingConnections(false);
+        }}
+      />
+    );
   if (connectionTargetId && request.connection && !connected)
     return (
       <ConnectionWizard
@@ -239,14 +231,10 @@ function AccessRequestDialog({
             </Button>
             <Button
               variant="primary"
-              disabled={pending || !!saved.error}
+              disabled={pending || !!saved.error || (!intent && !preflight.ready)}
               onClick={() => void decide('approve')}
             >
-              {pending
-                ? 'Saving decision…'
-                : intent
-                  ? 'Retry access decision'
-                  : 'Approve and connect'}
+              {pending ? 'Saving decision…' : intent ? 'Retry access decision' : 'Approve'}
             </Button>
           </>
         ) : (
@@ -257,9 +245,8 @@ function AccessRequestDialog({
       <p>Your Agent requested service access to continue its task.</p>
       <p>{request.reason}</p>
       <p>
-        Approving briefly pauses and resumes this shared Sandbox to update its Agent keys. Other
-        Agents keep their conversation history. If the Sandbox is already paused, the request waits
-        until you resume it.
+        Approving updates service access without restarting this Sandbox or interrupting its Agents.
+        If the Sandbox is already paused, the request waits until you resume it.
       </p>
       {request.status === 'pending' ? (
         <ScopePicker
@@ -292,6 +279,22 @@ function AccessRequestDialog({
             : (request.error ??
               'Access could not be applied. The Agent has not been notified that access is ready.')}
         </p>
+      ) : null}
+      {connectionTargetId && connected && request.connection ? (
+        <Button onClick={() => setConnected(false)}>Review service connections</Button>
+      ) : null}
+      {preflight.checking ? <p role="status">Checking service connections…</p> : null}
+      {preflight.needsConnection ? (
+        <>
+          <p>Connect the selected services before approving access.</p>
+          <Button onClick={() => setPreparingConnections(true)}>Connect services</Button>
+        </>
+      ) : null}
+      {preflight.error ? (
+        <>
+          <p role="alert">{preflight.error}</p>
+          <Button onClick={preflight.retry}>Retry connection check</Button>
+        </>
       ) : null}
       {saved.error ? <p role="alert">{saved.error}</p> : null}
       {error ? <p role="alert">{error}</p> : null}

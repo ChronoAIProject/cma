@@ -14,7 +14,7 @@ export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
 }
 
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
-  return ['active', 'paused', 'pausing', 'reviving'].includes(sandbox.status);
+  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving'].includes(sandbox.status);
 }
 
 export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
@@ -22,7 +22,7 @@ export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus 
   const purpose = sandbox.lifecycle?.operation?.purpose;
   if (purpose === 'pause') return 'pausing';
   if (purpose === 'revive' || purpose === 'image_rotation') return 'reviving';
-  return sandbox.status === 'active' ? status : sandbox.status;
+  return ['active', 'credential_rotating'].includes(sandbox.status) ? status : sandbox.status;
 }
 
 export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
@@ -34,6 +34,8 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
     return `${sandboxLifecycleLabel(sandbox)}. Agent conversations and history remain available.`;
   if (sandbox.status === 'paused')
     return 'This Sandbox is paused. Your work is preserved. Open an Agent to read its conversation, or resume the Sandbox to continue working.';
+  if (sandbox.status === 'credential_rotating')
+    return 'Service access is updating. Your Agents and conversations remain available.';
   if (sandbox.status === 'retired')
     return 'This Sandbox has been deleted. Its runtime is gone; retained history remains read-only.';
   if (sandbox.status === 'retiring')
