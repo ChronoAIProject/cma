@@ -227,6 +227,12 @@ restart/retry, alongside the selected immutable image. Pool administration is
 limited to the trusted deployment runtime image; custom images remain available
 for ordinary Agent/Trigger/consumer creation.
 
+Reaching the owner's Sandbox quota ends a new Agent lifecycle operation with an
+explicit limit conflict; it must not remain queued as a retryable dependency
+failure. Paused Sandboxes still retain storage and count toward this quota.
+Retiring disposable acceptance Sandboxes releases their slot after cleanup;
+prepared capacity alone does not bypass owner admission limits.
+
 New inline Sandbox configurations allow up to 16 workspaces and 16 Agents per
 workspace, within the existing admission bounds. Previously accepted lifecycle
 operations keep their original immutable limits and resource reservation when
