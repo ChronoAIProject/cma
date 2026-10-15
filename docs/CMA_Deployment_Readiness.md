@@ -5,7 +5,28 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-At **18:51 SGT on 15 October 2026**, production runs Agent Manager
+The current deployment is recorded in the linked verification document and
+immutable manifests. On 15 October at 22:31 SGT, Web `dfc4d128` (generation 121)
+and Agent Manager `b28d39c0` (generation 45) are verified live. Web provides
+continuous route/message/menu/dialog transitions, retained views and immediate
+visible draft handoff. New Agents receive persistent GitHub API source guidance;
+empty setup captures a local-only readiness message without requesting optional
+GitHub access. The default runtime is `d97121b5`; existing owner runtimes keep
+their pinned images and full-home volumes. Prepared target one uses revision two
+with the exact immutable instructions materialized before adoption. The accepted
+repository workflow is authenticated `gh api` source download plus a local Git
+workspace, independently verified on a new production testing Agent.
+Image Manager remains deferred.
+
+Rollback readers must retain the native-title fields, captured V1 guidance,
+prepared-home revision handling and optional `LifecycleInput.setup_message`,
+in addition to the earlier scope, callback and attachment schemas described
+below. New operations store their exact setup prompt; historical operations
+without it retain the unchanged historical builder. Reverting only the default
+runtime does not remove these durable API reader requirements.
+
+The following 18:51 checkpoint is historical. At **18:51 SGT on 15 October 2026**,
+production ran Agent Manager
 `edaeca82` (generation 38), Web `fa1e3f13` (generation 116), and Event Gateway
 `477bf801` (generation 7). All three exact image digests and Ready Pod ownership
 were verified. The default runtime is `ff9834c4`, digest
@@ -1206,3 +1227,43 @@ optional intent remain readable. Never remove scope revisions, rewrite historica
 receipts, or restart user runtimes to recover an older reader. The runtime wire
 credential operation already supports replacing the in-memory key on the pinned
 live runtime; this change does not require a new home file or a Pod replacement.
+
+
+### Runtime title provenance reader floor
+
+Automatic first-message purpose and runtime description provenance add optional
+fields to two strict persisted structures: `FirstMessageRecord.purpose` and
+`AgentRuntimeMetadata.description_source` / `description_is_setup_preview`.
+The latter is nested both in Agent observations and `RuntimeMetadataChanged`
+log records. Current readers accept old records with these fields absent; missing
+purpose/source remains unknown and the setup flag defaults to false. Payload
+hashes, creation fingerprints, turn identities and history remain unchanged.
+
+Deploy the compatible API reader before the new runtime image and frontend.
+Any API rollback target must include these readers before new durable writes
+occur: new Agent admissions write purpose even while older runtimes are retained.
+A pre-feature API binary uses `deny_unknown_fields` and cannot safely read these
+new records. Restoring that binary after feature writes is unsupported.
+
+A safe rollback restores the previous Web and default runtime selection while
+retaining the compatible API reader. Existing Sandboxes keep their pinned image,
+home, conversation and history. Never strip fields/events, rotate a live Sandbox,
+or restore an earlier database snapshot to accommodate an old reader. This reader
+floor is a release constraint; old-binary rollback has not been demonstrated.
+
+The title bridge change requires a new runtime image for new allocations. Retained
+runtimes emit unknown provenance until they supply positive evidence. The pinned
+local provider test proves empty-conversation reload, exact multiline prompt
+identity on completion and history reload, native explicit-title priority even
+when equal to the preview, and native `thread/settings/update` to metadata on the
+same running process/thread. It uses Codex 0.147.0, ACP 1.4.0 and a local Responses
+fixture. It does not establish production acceptance or generate semantic titles.
+
+
+The existing native empty-thread persistence workaround seeds the reserved name
+`New Agent`. A fresh provider history load cannot distinguish that seed from an
+identical deliberate native name if its explicit change was never durably
+observed. Already recorded `provider_title` metadata, including `New Agent`,
+remains authoritative over subsequent preview/unknown observations. No title is
+rewritten to resolve this retained provider ambiguity, and no provenance is
+invented for an unobserved legacy name.

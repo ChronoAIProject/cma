@@ -501,6 +501,9 @@
   border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
   border-radius: 19px;
   box-shadow: var(--dsw-shadow-lv2);
+  transition:
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    box-shadow var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .agent-composer__editor:focus-within {
@@ -532,6 +535,7 @@
   line-height: 24px;
   background: transparent;
   border: 0;
+  transition: max-height var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 .agent-composer__editor:hover textarea,
@@ -598,6 +602,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .agent-composer__editor,
+  .agent-composer textarea {
+    transition: none;
+  }
+
   .message[data-streaming] .message__body > p::after {
     animation: none;
   }

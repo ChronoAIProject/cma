@@ -28,7 +28,9 @@ pub(in crate::store) async fn replay_proof_revision(
         || !agent.work.receipts.is_empty()
         || agent.work.resolved_skills.as_deref() != Some(&[])
         || !agent.profile.content.skills.is_empty()
-        || !agent.profile.content.system_prompt.is_empty()
+        || !crate::agent_lifecycle::guidance::is_prepared_prompt(
+            &agent.profile.content.system_prompt,
+        )
         || sandbox.status != SandboxStatus::Active
         || !sandbox.credential.delivered
         || sandbox.lifecycle.checkpoint_capture.is_some()
@@ -95,7 +97,7 @@ pub(in crate::store) async fn replay_proof_revision(
         let home = AgentHomeRequest::new(
             format!("agent:{}:home:create:v1", agent.id),
             crate::sandbox::runtime_options(agent, sandbox, tree),
-            String::new(),
+            agent.profile.content.system_prompt.clone(),
             Vec::new(),
         );
         if agent.work.cleanup_debt.len() != 2

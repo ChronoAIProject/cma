@@ -8,6 +8,7 @@ import type { OptimisticMessage } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
 import { UserMessage } from './UserMessage';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
+import { useMessageArrival } from './messageArrival';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -20,6 +21,7 @@ interface MessageStreamProps {
   readonly viewPosition?: AgentViewPosition;
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
+  readonly arrivalsEnabled?: boolean;
 }
 
 export function MessageStream({
@@ -33,7 +35,9 @@ export function MessageStream({
   viewPosition,
   user,
   unknownUserName,
+  arrivalsEnabled = true,
 }: MessageStreamProps) {
+  const streamRef = useMessageArrival(conversation, optimisticMessages, arrivalsEnabled);
   const identity = messageIdentity('user', user, unknownUserName);
   const endRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(viewPosition?.pinned ?? true);
@@ -105,7 +109,7 @@ export function MessageStream({
       finalReply.set(entry.item.runId, entry.item.id);
 
   return (
-    <div className="message-stream" aria-live="polite">
+    <div className="message-stream" aria-live="polite" ref={streamRef}>
       {entries.length === 0 &&
       !optimisticMessages?.length &&
       conversation.activeRunId === undefined ? (
@@ -141,6 +145,7 @@ export function MessageStream({
           className="message message--user"
           aria-label={identity.name}
           key={`local:${message.id}`}
+          data-message-key={`local:${message.id}`}
         >
           <MessageAvatar identity={identity} />
           <div className="message__body">

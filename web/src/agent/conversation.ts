@@ -9,6 +9,7 @@ import { orderEntries } from './chronology';
 import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
+import { descriptionSource, mergeRuntimeMetadata } from './runtimeMetadata';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -205,10 +206,15 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         ? next
         : {
             ...next,
-            runtimeMetadata: {
+            runtimeMetadata: mergeRuntimeMetadata(next.runtimeMetadata, {
               workingDirectory: text(metadata.working_directory),
               description: text(metadata.description),
-            },
+              descriptionSource: descriptionSource(metadata.description_source),
+              descriptionIsSetupPreview:
+                typeof metadata.description_is_setup_preview === 'boolean'
+                  ? metadata.description_is_setup_preview
+                  : undefined,
+            }),
           };
     }
     case 'conversation_gap':
@@ -331,10 +337,15 @@ function patchState(
       ? state
       : {
           ...state,
-          runtimeMetadata: {
+          runtimeMetadata: mergeRuntimeMetadata(state.runtimeMetadata, {
             workingDirectory: text(metadata.workingDirectory),
             description: text(metadata.description),
-          },
+            descriptionSource: descriptionSource(metadata.descriptionSource),
+            descriptionIsSetupPreview:
+              typeof metadata.descriptionIsSetupPreview === 'boolean'
+                ? metadata.descriptionIsSetupPreview
+                : undefined,
+          }),
         };
   }
   if (path === '/usage') {

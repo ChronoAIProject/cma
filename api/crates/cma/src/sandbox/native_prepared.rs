@@ -308,7 +308,7 @@ fn validate_plan(record: &WarmSandbox) -> layer3_adapter::Result<()> {
         || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
         || workspace.profile.content.workspace_name().ok().as_deref() != Some("workspace")
         || !agent.content.skills.is_empty()
-        || !agent.content.system_prompt.is_empty()
+        || !crate::agent_lifecycle::guidance::is_prepared_prompt(&agent.content.system_prompt)
     {
         return Err(rejected(
             "native prepared plan is outside managed empty-workspace defaults",

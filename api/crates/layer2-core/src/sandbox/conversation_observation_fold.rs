@@ -22,7 +22,38 @@ pub(super) fn metadata(
         .description
         .filter(|d| !d.trim().is_empty() && d.len() <= 4096 && !d.chars().any(char::is_control))
     {
-        metadata.description = Some(description);
+        if metadata.description_source != Some(super::AgentDescriptionSource::ProviderTitle)
+            || observation.description_source == Some(super::AgentDescriptionSource::ProviderTitle)
+        {
+            let retained_setup = observation.description_input.is_none()
+                && metadata.description.as_ref() == Some(&description)
+                && metadata.description_is_setup_preview;
+            metadata.description_is_setup_preview = observation.description_source
+                == Some(super::AgentDescriptionSource::PromptPreview)
+                && (retained_setup
+                    || current
+                        .conversation
+                        .first_message
+                        .as_ref()
+                        .is_some_and(|message| {
+                            message.purpose == Some(super::FirstMessagePurpose::Setup)
+                                && message.turn_sequence.is_some()
+                                && match observation.description_input.as_ref() {
+                                    Some(
+                                        layer3_adapter::ConversationDescriptionInput::Current(text),
+                                    ) => {
+                                        message.turn_sequence == current.conversation.active_turn
+                                            && text == &message.text
+                                    }
+                                    Some(layer3_adapter::ConversationDescriptionInput::First(
+                                        text,
+                                    )) => text == &message.text,
+                                    None => false,
+                                }
+                        }));
+            metadata.description = Some(description);
+            metadata.description_source = observation.description_source;
+        }
     }
     if *metadata == current.conversation.observations.metadata {
         return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));

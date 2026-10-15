@@ -14,6 +14,7 @@ import {
 } from '../profiles/types.js';
 import {
   array,
+  boolean,
   enumeration,
   integer,
   nullable,
@@ -38,6 +39,8 @@ export const firstMessageDelivery = enumeration(
 export type FirstMessageDelivery = Output<typeof firstMessageDelivery>;
 export const firstMessageState = object({
   state: firstMessageDelivery,
+  purpose: optional(enumeration('setup', 'task')),
+  turn_sequence: optional(integer),
   queued_at: text,
   completed_at: optional(text),
   failed_at: optional(text),
@@ -82,6 +85,8 @@ export type AgentSandbox = Output<typeof agentSandbox>;
 export const agentRuntimeMetadata = object({
   working_directory: optional(text),
   description: optional(text),
+  description_source: optional(enumeration('provider_title', 'prompt_preview')),
+  description_is_setup_preview: optional(boolean),
 });
 export type AgentRuntimeMetadata = Output<typeof agentRuntimeMetadata>;
 export const agentTurnUsage = object({

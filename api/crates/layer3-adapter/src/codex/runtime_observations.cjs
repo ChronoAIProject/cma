@@ -48,6 +48,48 @@ function runtimeObservations(source) {
     source = source.split(before).join(after);
   };
   replace(usageBefore, usageAfter);
+  // Before its first prompt (including after load), upstream has no notification
+  // handler. Observe metadata there too; prompt subscription replaces this one.
+  replace('  async subscribeToSessionEvents(sessionId, eventHandler, approvalHandler, elicitationHandler) {', `  subscribeToSessionMetadata(sessionId, eventHandler) {
+    this.codexClient.onServerNotification(sessionId, (event) => {
+      this.enqueueSessionNotification(sessionId, () => eventHandler(event));
+    });
+  }
+  async subscribeToSessionEvents(sessionId, eventHandler, approvalHandler, elicitationHandler) {`);
+  // The native bridge already distinguishes explicit names from prompt previews.
+  // Preserve that evidence; text equality is not evidence of a native title.
+  replace('          title: notification.params.threadName ?? null', `          title: notification.params.threadName ?? null,
+          _meta: { cma: { runtimeMetadata: {
+            description: notification.params.threadName ?? undefined,
+            descriptionSource: "provider_title"
+          } } }`);
+  replace('        title: explicitTitle', `        title: explicitTitle,
+        _meta: { cma: { runtimeMetadata: {
+          description: explicitTitle, descriptionSource: "provider_title"
+        } } }`);
+  replace(`    const historyTitle = this.findFirstUserMessageTitle(thread) ?? this.normalizeSessionTitle(thread.preview);
+    await this.publishFallbackSessionTitle(sessionState, historyTitle);`, `    const input = this.findFirstUserMessageInput(thread);
+    const historyTitle = this.normalizeSessionTitle(input) ?? this.normalizeSessionTitle(thread.preview);
+    await this.publishFallbackSessionTitle(sessionState, historyTitle, input, "first");`);
+  replace('  findFirstUserMessageTitle(thread) {', '  findFirstUserMessageInput(thread) {');
+  replace(`        const title = this.normalizeSessionTitle(item.content.filter((input) => input.type === "text").map((input) => input.text).join(" "));
+        if (title) return title;`, `        const input = item.content.filter((input) => input.type === "text").map((input) => input.text).join(" ");
+        if (this.normalizeSessionTitle(input)) return input;`);
+  replace('  async publishFallbackSessionTitle(sessionState, title) {',
+    '  async publishFallbackSessionTitle(sessionState, title, input, position) {');
+  replace(`      sessionUpdate: "session_info_update",
+      title
+    });`, `      sessionUpdate: "session_info_update",
+      title,
+      _meta: { cma: { runtimeMetadata: {
+        description: title, descriptionSource: "prompt_preview",
+        descriptionInput: input, descriptionInputPosition: position
+      } } }
+    });`);
+  replace('        this.createPromptFallbackTitle(params.prompt)\n', `        this.createPromptFallbackTitle(params.prompt),
+        params.prompt.filter((block) => block.type === "text").map((block) => block.text).join(" "),
+        "current"
+`);
   // The persistence patch seeds empty threads with New Agent. That placeholder
   // must not suppress ACP's existing provider-history description on reload.
   replace('    const explicitTitle = this.normalizeSessionTitle(thread.name);',
@@ -67,10 +109,19 @@ function runtimeObservations(source) {
   replace('      cwd: request.cwd,\n      additionalDirectories: sessionMetadata.additionalDirectories,',
     '      cwd: sessionMetadata.thread?.cwd ?? request.cwd,\n      additionalDirectories: sessionMetadata.additionalDirectories,', 2);
   replace('    this.sessions.set(sessionId, sessionState);', `    this.sessions.set(sessionId, sessionState);
+    const metadataHandler = new CodexEventHandler(this.connection, sessionState, false, false, this.sessionFailureEpoch);
+    this.codexAcpClient.subscribeToSessionMetadata(sessionId, async (event) => {
+      if (this.sessions.get(sessionId) === sessionState &&
+          ["thread/name/updated", "thread/settings/updated"].includes(event.method)) {
+        await metadataHandler.handleNotification(event);
+      }
+    });
     await new ACPSessionConnection(this.connection, sessionId).update({
       sessionUpdate: "session_info_update", _meta: { cma: { runtimeMetadata: {
         workingDirectory: sessionMetadata.thread?.cwd,
-        description: (sessionMetadata.thread?.name !== "New Agent" ? sessionMetadata.thread?.name : undefined) || sessionMetadata.thread?.preview || undefined
+        description: (sessionMetadata.thread?.name !== "New Agent" ? sessionMetadata.thread?.name : undefined) || sessionMetadata.thread?.preview || undefined,
+        descriptionSource: sessionMetadata.thread?.name && sessionMetadata.thread.name !== "New Agent"
+          ? "provider_title" : sessionMetadata.thread?.preview ? "prompt_preview" : undefined
       } } }
     });`, 2);
   return source;

@@ -137,7 +137,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=cfa73e9b6da1ab4b516ab54703d7891ebde8e290762f42456ec036c37b444ff0
+ARG CODEX_ACP_SHA256=bcbfa2156e69b630fb3777b275ff739efd6c030159348e9cbae79a56ffa663c5
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -256,8 +256,9 @@ RUN set -eux; \
     nyxid --version
 
 # Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
-# its local Unix-socket transport only when api-github is in the Sandbox grant;
-# the scoped NyxID credential remains in the supervisor, outside the home.
+# its local Unix-socket transport to managed runtimes for live scope changes.
+# Requests require the current api-github grant; the scoped NyxID credential
+# remains in the supervisor, outside the home.
 COPY --from=github-build /out/gh /usr/local/bin/gh
 RUN gh --version
 

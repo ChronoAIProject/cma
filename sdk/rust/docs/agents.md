@@ -413,6 +413,21 @@ The `runtime_metadata_changed` event updates the same snapshot. These fields
 do not rewrite the immutable Workspace/Worktree paths or infer changes from
 shell commands. Shared readers do not receive private directory metadata.
 
+`description_source` optionally identifies `provider_title` or `prompt_preview`;
+absence means unknown. `description_is_setup_preview: true` is positive evidence
+that this provider preview came from the exact recorded automatic setup input.
+Only a `prompt_preview` with that flag should be excluded from the display title.
+An explicit `provider_title` remains authoritative even if its text equals setup
+text. Use the configured Agent title when a setup preview is excluded; no semantic
+title generator or first actual user-task inference is implied. Keep these fields
+with `description` as one snapshot when replaying metadata updates.
+
+Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence`. Missing purpose is legacy unknown;
+Agent creation origin and user-role message position are not substitutes for it.
+A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
+
+
 `usage_updated` contains absolute lifetime input/output consumption and
 `turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
 observed turn. The usage read also exposes optional `current_turn`. Match that

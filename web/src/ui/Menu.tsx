@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IconCheckOutline16 } from './icons';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
+import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
 
 /**
@@ -121,6 +122,9 @@ export function Menu({
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const parentExiting = usePresenceExiting();
+  const interactive = open && !parentExiting;
+  const { present, exiting } = usePresence(interactive);
 
   /*
    * The list is positioned by writing to its node rather than by holding
@@ -132,7 +136,7 @@ export function Menu({
    * thing a layout effect exists for.
    */
   useLayoutEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const place = () => {
@@ -169,10 +173,10 @@ export function Menu({
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [open, side, align, matchAnchorWidth]);
+  }, [interactive, side, align, matchAnchorWidth]);
 
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -199,7 +203,7 @@ export function Menu({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, onClose]);
+  }, [interactive, onClose]);
 
   /*
    * Focus lands on the first row when the list opens, and on the selected one
@@ -207,13 +211,13 @@ export function Menu({
    * from the keyboard rather than merely reachable.
    */
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
     (chosen ?? rows[0])?.focus();
-  }, [open, selectedId]);
+  }, [interactive, selectedId]);
 
   /*
    * And returns to the trigger when the list closes, if it was still inside
@@ -226,9 +230,9 @@ export function Menu({
    */
   const wasOpen = useRef(false);
   useEffect(() => {
-    const closing = wasOpen.current && !open;
-    wasOpen.current = open;
-    if (!closing) {
+    const closing = wasOpen.current && !interactive;
+    wasOpen.current = interactive;
+    if (!closing || parentExiting) {
       return;
     }
     const active = document.activeElement;
@@ -236,9 +240,10 @@ export function Menu({
     if (inList || active === document.body) {
       rootRef.current?.querySelector('button')?.focus();
     }
-  }, [open]);
+  }, [interactive, parentExiting]);
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!interactive) return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
@@ -266,13 +271,14 @@ export function Menu({
     }
   };
 
-  const list = !open ? null : (
+  const list = !present ? null : (
     <div
       ref={listRef}
       className={['menu', dense ? 'menu--dense' : '', 'menu--portal'].filter(Boolean).join(' ')}
       style={MEASURING}
       role="menu"
       aria-label={label}
+      {...presenceAttributes(exiting)}
       onKeyDown={onListKeyDown}
       /*
        * A portal's events still bubble through the React tree, so without
@@ -289,7 +295,9 @@ export function Menu({
           entry={entry}
           selected={entry.id === selectedId || selectedIds?.includes(entry.id) === true}
           choosing={selectedId !== undefined || selectedIds !== undefined}
-          onSelect={onSelect}
+          onSelect={(id) => {
+            if (interactive) onSelect(id);
+          }}
         />
       ))}
     </div>
@@ -302,7 +310,7 @@ export function Menu({
       onKeyDown={(event) => {
         // Portalled rows bubble here too. Dismiss this menu before Escape
         // reaches an enclosing dialog, including when its trigger has focus.
-        if (open && event.key === 'Escape') {
+        if (interactive && event.key === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
           onClose();
