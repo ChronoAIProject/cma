@@ -26,6 +26,8 @@ mod concurrency_tests;
 mod deferred_command_tests;
 #[path = "cookie_authorization_tests/personal_owner_tests.rs"]
 mod personal_owner_tests;
+#[path = "cookie_authorization_tests/provider_overlap_tests.rs"]
+mod provider_overlap_tests;
 #[path = "cookie_authorization_tests/resource_command_tests.rs"]
 mod resource_command_tests;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]
@@ -519,7 +521,9 @@ async fn provider_deadline_covers_discovery_userinfo_and_introspection_together(
     let state = fixture.seed().await;
     fixture.control.discovery.write().await.delay = Duration::from_millis(80);
     fixture.control.userinfo.write().await.delay = Duration::from_millis(80);
-    fixture.control.introspection.write().await.delay = Duration::from_millis(80);
+    // Discovery remains serial, followed by concurrent provider reads. Their total
+    // must still be bounded by the same per-caller deadline.
+    fixture.control.introspection.write().await.delay = Duration::from_millis(160);
     assert_eq!(PROVIDER_VERIFICATION_TIMEOUT, Duration::from_secs(15));
     assert_unavailable(
         request_with_timeout(
