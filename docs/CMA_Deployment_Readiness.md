@@ -6,8 +6,8 @@ failures and receipt paths, see
 This document keeps operational instructions and dated infra diagnostics.
 
 PR #1027 is being tested through authorized local production builds. As of
-09:35 SGT on 2026-10-15, Agent Manager source `74842c4a` and Web source
-`5c6baab1` are deployed in the existing CMA cluster. Their immutable image and
+09:45 SGT on 2026-10-15, Agent Manager source `74842c4a` and Web source
+`47b56be7` are deployed in the existing CMA cluster. Their immutable image and
 running Pod identities were verified, along with the public Web asset hash.
 The five-second creation goal is not yet consistently met; source-ordered
 measurements are not browser measurements. Current candidate evidence and

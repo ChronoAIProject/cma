@@ -2,7 +2,7 @@
 
 ## Local production candidates — PR #1027
 
-This is an interim observation at 09:35 SGT on 2026-10-15, not a declaration
+This is an interim observation at 09:45 SGT on 2026-10-15, not a declaration
 that the complete acceptance bar passed. Authorized local builds allow
 production testing while required GitHub checks continue. The PR remains
 unmerged. CMA stays in its original cluster, runtime workloads stay in the
@@ -11,20 +11,21 @@ separate agent-sandbox cluster, and Image Manager remains undeployed.
 | Deployed component | Source | Immutable registry digest |
 | --- | --- | --- |
 | Agent Manager, generation 30 | `74842c4aabd467055e91882eb3e720c8cc9e042d` | `sha256:1650c4c85e438b20ce240ba1aa3da74462d737ee01367a2f4c3756f2870bda6f` |
-| Shared Web, generation 108 | `5c6baab14c805949c655df64c09d32946a991f5b` | `sha256:8251c7d2864eef96f0628ecdba8d4a0735a9be97b9773c25211241d08602c3bf` |
+| Shared Web, generation 109 | `47b56be7c35c89c3813f8da981af533f00b608d5` | `sha256:27a307765d40554c9a2afa399626abb9a0a5fcfcc4fd69461bd089c310ffbb85` |
 
 Registry manifests, Linux/amd64 platform manifests and source labels were
 checked against immutable local build metadata. These checks do not constitute
 an independent signed source attestation. Fixed HIGH/CRITICAL vulnerability
-scans passed. Web asset `index-Bm6g-fS3.js` has the same SHA-256 in the running
+scans passed. Web asset `index-Bt0dT2fp.js` has the same SHA-256 in the running
 Pod and public response:
-`14de6b9dd70530eb1f8ece64ea80e16b15363f87969deb647b640cd093015b1a`.
+`2a9e09486bc9b5af4e89a1d73e934ea795abcaf89b57b5c043066710e748dda2`.
 The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
 
 | Boundary and evidence | Result | Interpretation |
 | --- | --- | --- |
 | API9d warm pilot02: input eligibility / durable input / live connection / Agent Ready | 2,507.511 / 3,609.991 / 4,488.087 / 4,571.302 ms | One functional and API performance pass; not browser click/render proof |
 | Web33f/API9d source-ordered sample01: Send eligibility / durable acknowledgement | 7,548.177 / 9,141.613 ms | Functional pass, both five-second boundaries failed |
+| Web5c6/API748 source sample01: Send eligibility / durable acknowledgement | 3,584.134 / 4,276.849 ms | Timing below five seconds, but functional failure: first message remained queued and the input timed out |
 | API9d pause acceptance / early resume input admission | 278.837 / 1,112.389 ms | Public acceptance passed; input was durable while Reviving |
 | API9d actual resume / completed marker response | 25,048.418 / 31,099.333 ms | Underlying recovery remains slower than five seconds |
 | API748 disposable source fixture deletion / native finality | 205.279 / 65,836.100 ms | Public deletion accepted quickly; native cleanup completed in background |
@@ -37,6 +38,13 @@ Use has no available browser surface, so this candidate's browser timing,
 popup and external OAuth callback remain unverified. The first connection
 check was successfully reused once in the new sample; most remaining delay
 occurred before the operation exposed its Agent, then during sequential loading.
+The next Web5c6 sample improved input timing but exposed an execution failure:
+Mongo write conflicts exhausted connection-publication retries after the new
+18-minute worker lease was claimed. First-message delivery remained queued;
+the ordinary command expired. Both acceptance flags remain failed. A repair
+for known-aborted publication and exact-lease retry is under validation. The
+new Web47b source only extracts TypeScript declarations to meet the source
+size gate; its emitted controller behavior is unchanged.
 
 The latest resume retained the original Claim, Sandbox and PVC, replaced only
 the Pod, and preserved verification fixtures throughout `/home` and
@@ -70,7 +78,8 @@ owner Sandbox quota is now a terminal creation conflict in production, rather th
 endless transient retry. Future samples must have quota headroom.
 
 Private evidence: `/tmp/cma-api-rollout-74842c4a`,
-`/tmp/cma-web-rollout-5c6baab1`,
+`/tmp/cma-web-rollout-47b56be7`,
+`/tmp/cma-source-flow-5c6baab1-api74842c4a-sample-01`,
 `/tmp/cma-stop-response-diagnostic-nextapi-20261015-01`,
 `/tmp/cma-public-prepared-9d5f3dcc-pilot-02`,
 `/tmp/cma-source-flow-33f8a5e0-api9d5f3dcc-sample-01`,

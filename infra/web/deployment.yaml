@@ -14,9 +14,10 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/candidate: "04ccbd6a3adb9ec2c2f46ab9d2b01ae93c6f7b9f"
-        cma.chronoai.dev/image-source: "993591d35f937e26cdc3c2756a596dc4132e6282"
-        cma.chronoai.dev/ci-run: "38539408542"
+        cma.chronoai.dev/candidate: "47b56be7c35c89c3813f8da981af533f00b608d5"
+        cma.chronoai.dev/image-source: "47b56be7c35c89c3813f8da981af533f00b608d5"
+        cma.chronoai.dev/build-mode: "local-production-test"
+        cma.chronoai.dev/local-build: "goal-20261015-47b56be7"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -39,7 +40,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:dc5b98bfebc3605597b2dd096f4bd807df459c667d8b62d4b5b8788303fcc951
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:27a307765d40554c9a2afa399626abb9a0a5fcfcc4fd69461bd089c310ffbb85
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
