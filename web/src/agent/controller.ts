@@ -18,6 +18,7 @@ import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedMessage } from './transport/queuedStatus';
 import { presentAgent } from './presentation';
+import { mergeRuntimeMetadata } from './runtimeMetadata';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
   AgentCommand,
@@ -133,13 +134,23 @@ export function useAgentController(
             ? summary.status
             : current.detail.status;
         const title = summary.title?.trim() ? summary.title : current.detail.title;
-        if (current.detail.status === status && current.detail.title === title) return current;
+        const runtimeMetadata = mergeRuntimeMetadata(
+          current.detail.runtimeMetadata,
+          summary.runtimeMetadata,
+        );
+        if (
+          current.detail.status === status &&
+          current.detail.title === title &&
+          current.detail.runtimeMetadata === runtimeMetadata
+        )
+          return current;
         return {
           ...current,
           detail: {
             ...current.detail,
             status,
             title,
+            runtimeMetadata,
             updatedAt: summary.updatedAt,
           },
         };

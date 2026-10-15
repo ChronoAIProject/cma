@@ -435,7 +435,14 @@ controls. Its browser region scrolls and fills the remaining height.
 The tree is Sandbox -> Workspace -> Agent. Sandbox labels use
 `Sandbox Machine - <UUID>`; Workspace labels use the selected Agent's confirmed
 runtime working directory, with the recorded workspace path as fallback. Agent
-labels prefer the provider's session description, then the recorded title.
+labels share one selector with the Agent header and browser document title.
+An explicit native provider title takes priority, even when it equals the
+automatic setup message. A prompt preview confirmed by public provenance to
+come from automatic setup is omitted; the configured Agent name is the
+fallback. Preserve descriptions whose legacy provenance is unknown. Do not
+guess setup from wording or choose a task by its position among user messages:
+service-access callbacks can also use that role. Display selection leaves the
+raw runtime description and conversation history intact.
 Runtime metadata arrives through the public event stream, never a directory
 poll. Long labels truncate with ellipsis and expose full text on hover. Rows
 retain stable status/icon slots, and expansion belongs to the signed-in viewer.
@@ -2238,3 +2245,4 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
 | 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
 | 2026-10-15 | Let the whole modal card scroll at viewport widths or heights of 480px or less. Preserve the shared centered geometry and 20% margins while keeping fields, Close and footer actions reachable instead of collapsing the body to zero height; let shared input wrappers shrink within the narrow content width. |
+| 2026-10-15 | Share Agent display-title selection across header, browser title and sidebar. Keep explicit native titles, omit only previews positively identified as automatic setup, and fall back to the configured name. Preserve unknown legacy descriptions and title provenance through live updates, hierarchy refresh and replay without selecting a message by role or position. |

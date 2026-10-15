@@ -397,6 +397,7 @@ function ConsoleContent({
                             ? {
                                 ...summary,
                                 status: agent.state.detail.status,
+                                title: agent.state.detail.title,
                                 runtimeMetadata: agent.state.detail.runtimeMetadata,
                               }
                             : summary,
