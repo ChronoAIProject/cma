@@ -5,42 +5,45 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-At **16:47 SGT on 15 October 2026**, production runs Agent Manager
-`26438942` (generation 36), Web `a76ecc46` (generation 113), and Event Gateway
+At **18:02 SGT on 15 October 2026**, production runs Agent Manager
+`8cad5bcd` (generation 37), Web `fa1e3f13` (generation 116), and Event Gateway
 `477bf801` (generation 7). All three exact image digests and Ready Pod ownership
-were verified. The default runtime is `af2f8231`, digest
-`sha256:78fdcb884f41bd99baf2bcbc41d5f605ac6149fd46d4a974c737961ab2b2d36d`.
+were verified. The default runtime is `ff9834c4`, digest
+`sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae`.
 The manifests now pin this observed deployment. Image Manager remains deferred;
 CMA remains in Tokyo and the native runtime remains in its separate cluster.
 
-This release adds attachment upload, retained per-reply token counts, quieter
-transient reconnection, removal of the ordinary-message catalog preflight,
-first-message publication/lease recovery, pause quiescence and an explicit retry
-for a failed scope request. Event Gateway uses the Agent Manager browser login;
-all 16 authenticated/anonymous/origin-isolation checks passed. Public Web assets
-match the running Pod byte for byte. The final Web suite passed 202 files /
-1,895 tests, type checking, lint, formatting and the CSS collision check.
+This release adds live key replacement and optional service revocation with a
+confirmed callback to the original Agent. Runtime GitHub transport is prepared
+before the first grant. Web adds sender identities, compact/upward-expanding
+drafts and explicitly approximate live output tokens alongside actual usage.
+Attachment upload, quieter reconnection, fast message admission and the shared
+Event Gateway browser login remain active. Public Web assets match the running
+Pod bytes. The combined Web suite passed 205 files / 1,932 tests, type checking,
+lint, formatting and build.
 
 Full-home runtime and native Linux attachment upload/replay/recreation proofs
 passed before activation. Existing Sandboxes retain their recorded runtime
 images and original volumes. New allocations use the new default policy; its
-CMA-created warm target has one observed Ready replica with the whole-`/home`
-mount and `OnRootMismatch` policy verified at 16:50:50 SGT. This does not by
-itself prove prepared-Agent readiness. Fresh end-to-end timing and lifecycle acceptance
-for this exact pair remain pending. Earlier actual resume took about 21.7 seconds
-and the preceding creation sample reached Agent Ready at 5.406 seconds, so the
-complete five-second goal is **not accepted**. Production browser paint timing
-and the external OAuth popup journey remain unmeasured because the available
-computer-use surfaces contain no browser.
+CMA-created warm target had one observed Ready replica. Whole-`/home` mounting
+and `OnRootMismatch` remain in the policy. Actual production browser creation
+reached an enabled composer in 3.373 seconds; this excludes first model response
+completion. Pasted images and dragged files were consumed by the Agent, with a
+381 ms message receipt after attachment upload. Actual runtime pause/resume
+still took about 9 seconds / 21–26 seconds despite prompt admission, so the
+complete five-second lifecycle goal is **not accepted**. Fresh external OAuth
+consent remains unmeasured.
 
-Scope revision in this deployed batch still uses the paused-Sandbox workflow:
-approved access waits for the owner to resume. Updating a running Sandbox key
-without a pause is a separate follow-up and is not delivered by these pins.
-After allocating the new runtime, do not roll Agent Manager back to `477bf801`
-or any reader that rejects the optional `agent_attachment_upload` capability.
-The attachment-aware `26438942` image is the current compatible rollback floor,
-in addition to the durable-format requirements documented below. Changing the
-default image alone does not repair existing incompatible readers.
+Production hot key updates passed both quiet and busy-Agent callbacks in under
+two seconds. Actual optional GitHub grant/private repository read/removal also
+passed, with callbacks at 3.399 and 1.844 seconds and the original Pod, boot,
+conversation and PVC/PV retained. The owner's existing GitHub OAuth connection
+was used. Native Git clone/push is separate from this verified GitHub API path.
+After these hot writes, every rollback reader must support the new scope fields,
+events and persistent callback intent described below, as well as attachment
+capability and whole-home policy records. `26438942` alone is no longer a valid
+rollback floor. Retain the compatible `8cad5bcd` implementation; changing only
+the default runtime image cannot make an older reader compatible.
 
 The following checkpoints are historical and do not describe the current pins.
 

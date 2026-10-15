@@ -1,8 +1,28 @@
 # CMA native Sandbox production verification
 
+## Current production — 15 October, 18:02 SGT
+
+The latest deployed images supersede the dated release below:
+
+| Component | Image source | Generation | Immutable image digest |
+|---|---|---|---|
+| Agent Manager | `8cad5bcd71134811bdaf057d080897c11a5fddfd` | 37 | `sha256:6a17a9495e121d83037cabd1a15106eef3c4168de6ba9731e636a593b729611b` |
+| Web | `fa1e3f13a2583723aadc9c1412b0f21177e58f06` | 116 | `sha256:b65f7001b95edd3b9eaad46f30344f5be363199ab860b233f0409fca92f07ab6` |
+| Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
+| Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
+
+Production checks now cover live key replacement and revocation without a
+restart, actual private GitHub API access, pasted/dropped attachments, message
+identities and estimates during streamed output. Measured warm creation reached
+an enabled composer in 3.373 seconds. Key-change callbacks passed the five-second
+target, including an active turn. Actual controller pause/resume remains slower
+than five seconds; fresh external OAuth and native Git transport are separate
+coverage limits. Exact evidence and measurement boundaries are in the dated
+15 October sections at the end of this document.
+
 ## Attachment, usage and message release — 15 October, 16:47 SGT
 
-The observed production deployment is now:
+The preceding production deployment was:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
