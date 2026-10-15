@@ -1,4 +1,5 @@
 import type { ConversationState } from './model';
+import { visibleTurnText } from './tokenEstimate';
 function number(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -21,6 +22,14 @@ export function durableUsage(state: ConversationState, kind: Readonly<Record<str
         };
   return {
     ...state,
+    visibleUsageAnchor:
+      currentTurn !== undefined &&
+      String(currentTurn.turnSequence) === state.activeRunId &&
+      (state.usage?.currentTurn?.turnSequence !== currentTurn.turnSequence ||
+        state.usage.currentTurn.inputTokens !== currentTurn.inputTokens ||
+        state.usage.currentTurn.outputTokens !== currentTurn.outputTokens)
+        ? { ...currentTurn, parts: visibleTurnText(state) }
+        : state.visibleUsageAnchor,
     turnUsage:
       currentTurn === undefined
         ? state.turnUsage

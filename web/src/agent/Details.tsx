@@ -9,6 +9,7 @@ import { ScopeSettings } from './ScopeSettings';
 import { SkillsSettings } from './SkillsSettings';
 
 interface AgentDetailsProps {
+  readonly owner?: string;
   readonly detail?: AgentDetail;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
@@ -18,6 +19,7 @@ interface AgentDetailsProps {
 }
 
 export function AgentDetails({
+  owner,
   detail,
   pending,
   historyLoading = false,
@@ -62,7 +64,12 @@ export function AgentDetails({
             active={open}
             busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
           />
-          <ScopeSettings key={`scope:${detail.id}`} detail={detail} />
+          <ScopeSettings
+            key={`scope:${owner}:${detail.id}`}
+            detail={detail}
+            owner={owner}
+            active={open}
+          />
           <SkillsSettings
             key={`skills:${detail.id}`}
             agentId={detail.id}

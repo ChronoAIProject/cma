@@ -72,6 +72,13 @@ export interface ConversationState {
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
   readonly turnUsage?: Readonly<Record<string, NonNullable<AgentUsage['currentTurn']>>>;
+  /** Ephemeral visible text already covered by the latest provider usage report. */
+  readonly visibleUsageAnchor?: {
+    readonly turnSequence: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly parts: readonly { readonly id: string; readonly text: string }[];
+  };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */

@@ -143,6 +143,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
