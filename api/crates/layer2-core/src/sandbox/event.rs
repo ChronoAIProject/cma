@@ -238,6 +238,9 @@ pub enum SandboxEventKind {
     ServiceAccessGranted {
         grant: super::SandboxServiceGrant,
     },
+    ServiceAccessRevised {
+        scope: super::SandboxServiceScopeRevision,
+    },
     CheckpointSealed {
         object_reference: String,
     },
