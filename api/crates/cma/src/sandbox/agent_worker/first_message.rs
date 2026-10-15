@@ -43,17 +43,9 @@ impl AgentWorker {
             | FirstMessageDispatchOutcome::NotConfigured
             | FirstMessageDispatchOutcome::Accepted(_)
             | FirstMessageDispatchOutcome::RecoveryRequired(_) => {
-                let current = self.current_dispatch(&agent, &authority).await?;
-                let now = publication_time(now, &current)?;
-                self.progress(
-                    current,
-                    AgentWorkStep::None,
-                    now,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
-                )
+                self.retry_dispatch_publication(&agent, &outcome, now, |current, at| async {
+                    self.finish_dispatch_publication(current, at).await
+                })
                 .await
             }
             FirstMessageDispatchOutcome::Retryable(_) => {
