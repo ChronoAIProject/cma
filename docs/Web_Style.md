@@ -930,6 +930,10 @@ unchanged. Retired Triggers expose provenance but no new quick-message actions.
 
 ### Preparation, pause, and recovery
 
+While the New agent request is in flight, show **Starting your Agent…**. Show
+same-request recovery wording only after the request has stopped waiting without
+a receipt; a healthy admission must not flash a recovery instruction.
+
 Preparation has stable step rows from Sandbox events and current instance facts:
 software installation, Workspace preparation, Worktree creation, Agent startup,
 and optional first-message delivery. Never infer successful work from elapsed time
@@ -2293,3 +2297,5 @@ draft. Summary readers never receive the management history control.
 
 - 2026-10-15 — Reuse already resolved profile/service/skill labels synchronously when a view returns within the same authenticated reference provider. Keep existing link identities and error handling, and discard names immediately when the client/account changes so loading text does not flash in place of known names.
 | 2026-10-15 | Preserve recent owner Sandbox content and immutable Agent creation labels across route re-entry within a bounded account/client scope. Revalidate access and lifecycle state before controls become usable; discard denied, missing, shared and retired projections, reject late replies, and retain no privileged provenance facts. |
+
+- 2026-10-15 — Keep New agent admission copy in its starting state while the request is in flight; retain same-request recovery wording after an unresolved outcome, avoiding a recovery flash during healthy creation.

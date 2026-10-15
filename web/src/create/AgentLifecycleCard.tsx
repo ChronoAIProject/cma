@@ -256,8 +256,14 @@ function AgentLifecycleForm({
         ) : null}
         {lifecycle.intent && !createdReceipt ? (
           <p role="status">
-            Creation of “{lifecycle.intent.body.name}” has not been confirmed. Recover this request
-            to continue.
+            {pending ? (
+              <>Starting your Agent…</>
+            ) : (
+              <>
+                Creation of “{lifecycle.intent.body.name}” has not been confirmed. Recover this
+                request to continue.
+              </>
+            )}
           </p>
         ) : null}
         {failure ? (
