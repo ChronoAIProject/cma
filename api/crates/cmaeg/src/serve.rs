@@ -40,6 +40,7 @@ pub(crate) async fn serve(
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
+    state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
