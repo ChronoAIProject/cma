@@ -26,7 +26,7 @@ describe('operator public default picker', () => {
       />,
     );
     await user.click(await screen.findByRole('button', { name: 'More profiles' }));
-    await user.click(screen.getByLabelText('Default agent profile'));
+    await user.click(screen.getByRole('button', { name: 'Default agent profile' }));
     await screen.findByRole('menuitemradio', { name: 'Public agent / revision 8 / Owner' });
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
     expect(change).not.toHaveBeenCalled();
@@ -53,7 +53,7 @@ describe('operator public default picker', () => {
         expect.objectContaining({ q: 'review', cursor: undefined }),
       ),
     );
-    expect(screen.getByLabelText('Default agent profile')).toHaveTextContent(
+    expect(screen.getByRole('button', { name: 'Default agent profile' })).toHaveTextContent(
       'Current profile / revision 3',
     );
     expect(change).toHaveBeenCalledTimes(1);
