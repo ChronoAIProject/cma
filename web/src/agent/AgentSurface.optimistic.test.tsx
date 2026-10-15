@@ -64,10 +64,11 @@ const bubbles = (text: string) =>
     .getAllByRole('article', { name: 'You' })
     .filter((article) => within(article).queryByText(text) !== null);
 
-it('renders immediately before deferred connections, identity and POST, then merges by command exactly once', async () => {
+it('skips the per-message catalog wait, retains identity and acknowledgement gates, and merges exactly once', async () => {
   const { h, field } = await setup();
   const connections = deferred<ConnectionReport>();
   vi.mocked(connectionClient.check).mockReturnValueOnce(connections.promise);
+  const initialChecks = vi.mocked(connectionClient.check).mock.calls.length;
   const identity = deferred<string>();
   h.currentUser.mockReturnValueOnce(identity.promise);
   const response = deferred<Response>();
@@ -77,7 +78,8 @@ it('renders immediately before deferred connections, identity and POST, then mer
   expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(h.post).not.toHaveBeenCalled();
   expect(field).toHaveValue('Immediate local message');
-  await act(async () => connections.resolve(connected));
+  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks);
+  click();
   expect(h.post).not.toHaveBeenCalled();
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await act(async () => identity.resolve('alice'));
@@ -93,6 +95,7 @@ it('renders immediately before deferred connections, identity and POST, then mer
   expect(bubbles('Immediate local message')).toHaveLength(1);
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   expect(h.post).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks);
 });
 
 it('retains exact command ownership through completion before acknowledgement and never matches old identical text', async () => {
@@ -231,16 +234,16 @@ it('keeps correlation after a transient post-receipt identity failure without cl
   expect(h.post).toHaveBeenCalledOnce();
 });
 
-it('hides a pending preview on account change without releasing the send', async () => {
+it('hides a pending preview on account change without releasing the identity-gated send', async () => {
   const { h, field, view, Agent } = await setup();
-  const check = deferred<ConnectionReport>();
-  vi.mocked(connectionClient.check).mockReturnValueOnce(check.promise);
+  const identity = deferred<string>();
+  h.currentUser.mockReturnValueOnce(identity.promise);
   click();
   expect(bubbles('Immediate local message')).toHaveLength(1);
   view.rerender(<Agent viewer="bob" />);
   expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
   expect(screen.queryAllByRole('article', { name: 'You' })).toHaveLength(0);
-  await act(async () => check.resolve(connected));
+  await act(async () => identity.resolve('alice'));
   expect(h.post).not.toHaveBeenCalled();
   expect(field).toHaveValue('Immediate local message');
 });

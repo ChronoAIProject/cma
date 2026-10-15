@@ -404,20 +404,30 @@ export function AgentSurface({
           onSend={async (content, onAccepted) => {
             if (readOnly || verified === undefined) return;
             const message = optimistic.begin(content);
+            const send = () => {
+              void controller
+                .send(
+                  content,
+                  (receipt) => {
+                    if (message.accepted(receipt)) onAccepted();
+                  },
+                  message.observed,
+                )
+                .then(message.settled, message.settled);
+            };
+            if (
+              state.v2?.owner === (viewerId ?? verified.owner) &&
+              controller.resourceAvailability.state === 'live'
+            ) {
+              // The transport rechecks identity and the backend admits this durable
+              // command. Runtime permission requests use the Agent access dialog.
+              send();
+              return;
+            }
             await connections.checkAndRun(
               { type: 'agent', id: agentId },
               viewerId ?? verified.owner,
-              () => {
-                void controller
-                  .send(
-                    content,
-                    (receipt) => {
-                      if (message.accepted(receipt)) onAccepted();
-                    },
-                    message.observed,
-                  )
-                  .then(message.settled, message.settled);
-              },
+              send,
               state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
               message.cancelled,
             );

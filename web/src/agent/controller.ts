@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
@@ -365,7 +365,7 @@ export function useAgentController(
     onIdentityChange,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
       const controller = actionAbortRef.current;
       controller?.abort();
@@ -374,7 +374,7 @@ export function useAgentController(
         actionKindRef.current = undefined;
       }
     };
-  }, [agentId, client, suspended]);
+  }, [agentId, client, options.viewerId, suspended]);
 
   const reload = useCallback(() => {
     setActionError(undefined);
