@@ -47,15 +47,21 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
               turnSequence: item.response_binding.turn_sequence,
             },
     };
-  if (item.kind?.type === 'message' && item.kind.role === 'user' && state.responseBinding)
+  if (item.kind?.type === 'message' && item.kind.role === 'user') {
+    // The original response owns only its first input. Steering within that same
+    // turn requires its own server-proven command identity, never a text match.
+    const firstInput = !state.messages.some(
+      (message) => message.role === 'user' && message.runId === state.activeRunId,
+    );
+    const commandId =
+      item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
     next = {
       ...next,
       messages: next.messages.map((message) =>
-        message.id === `event:${item.sequence}`
-          ? { ...message, commandId: state.responseBinding!.commandId }
-          : message,
+        message.id === `event:${item.sequence}` ? { ...message, commandId } : message,
       ),
     };
+  }
   if (next.activeRunId === undefined) next = { ...next, responseBinding: undefined };
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
     next = {

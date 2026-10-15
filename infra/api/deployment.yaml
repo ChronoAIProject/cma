@@ -19,17 +19,17 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-b28d39c0"
+        chrono.ai/goal-build: "goal-20261015-95a61f88"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:970961026f8442959874d09a6149588521a27be8433ac582943233fe8b0ed9a3"
+        cma.chronoai.dev/api-image-digest: "sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e"
         cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "b28d39c0b008a0d1342d66168a1e3a6b77383b7c"
-        cma.chronoai.dev/image-digest: "sha256:970961026f8442959874d09a6149588521a27be8433ac582943233fe8b0ed9a3"
-        cma.chronoai.dev/image-source: "b28d39c0b008a0d1342d66168a1e3a6b77383b7c"
-        cma.chronoai.dev/local-build: "goal-20261015-b28d39c0"
-        cma.chronoai.dev/observed-image-provenance-sha256: "d3acd34a66895f4e0b3470b00fa3632ebac6c042011965c74f03fba1420951ca"
+        cma.chronoai.dev/candidate: "95a61f881bc0963ad983c673661c24ebe88cc6f4"
+        cma.chronoai.dev/image-digest: "sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e"
+        cma.chronoai.dev/image-source: "95a61f881bc0963ad983c673661c24ebe88cc6f4"
+        cma.chronoai.dev/local-build: "goal-20261015-95a61f88"
+        cma.chronoai.dev/observed-image-provenance-sha256: "3cec3e2f3838eadea3434c3e6432448ffef91c302b4f387ab0153a20929edd08"
         # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e"
+        cma.chronoai.dev/runtime-image: "sha256:e53d4dc7943192d321a26ebde1bd93a0b75c5737946114600e695fd4e826d273"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -64,7 +64,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:970961026f8442959874d09a6149588521a27be8433ac582943233fe8b0ed9a3
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

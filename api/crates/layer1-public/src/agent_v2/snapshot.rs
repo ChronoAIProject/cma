@@ -2,6 +2,7 @@ use super::{cursor, error::Error, parse, projection, shapes::EventPage, AgentV2S
 use crate::AuthenticatedResourceCaller;
 use axum::{
     extract::{Path, RawQuery, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
     Json,
 };
@@ -25,7 +26,7 @@ pub(super) async fn authorize(
 }
 
 #[utoipa::path(get, path = "/api/v2/agents/{agent_id}/events/snapshot", tag = "agent events v2",
-    params(("agent_id" = String, Path), ("limit" = Option<u16>, Query), ("page_cursor" = Option<String>, Query)),
+    params(("agent_id" = String, Path), ("limit" = Option<u16>, Query), ("page_cursor" = Option<String>, Query), ("Prefer" = Option<String>, Header)),
     responses((status = 200, body = EventPage), (status = 400, body = crate::rest::ProblemDocument),
     (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument),
     (status = 503, body = crate::rest::ProblemDocument)))]
@@ -34,8 +35,17 @@ pub(super) async fn read(
     auth: AuthenticatedResourceCaller,
     Path(id): Path<String>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
-    match page(&state, &auth, AgentId(id), raw).await {
+    match page(
+        &state,
+        &auth,
+        AgentId(id),
+        raw,
+        projection::message_bindings(&headers),
+    )
+    .await
+    {
         Ok(page) => {
             let mut response = Json(page).into_response();
             response
@@ -52,6 +62,7 @@ async fn page(
     auth: &AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
+    message_bindings: bool,
 ) -> Result<EventPage, Error> {
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = authorize(state, auth, &id).await?;
@@ -61,7 +72,15 @@ async fn page(
         Some(value) => cursor::parse_page(&value, &identity, header.head)?,
         None => (header.head, 0),
     };
-    let window = projection::window(state, &authorization, after, Some(through), limit).await?;
+    let window = projection::window(
+        state,
+        &authorization,
+        after,
+        Some(through),
+        limit,
+        message_bindings,
+    )
+    .await?;
     let items = projection::items(&window, &identity)?;
     let delivered = items.last().map_or(after, |item| item.sequence);
     let page = EventPage {

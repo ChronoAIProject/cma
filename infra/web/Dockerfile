@@ -7,6 +7,9 @@ COPY sdk/typescript/package.json sdk/typescript/package-lock.json /build/sdk/typ
 RUN npm ci --prefix /build/sdk/typescript --omit=dev --ignore-scripts
 COPY web/ ./
 COPY sdk/typescript/src/ /build/sdk/typescript/src/
+# Public Event Gateway documentation shares the backend's canonical sources.
+COPY docs/CMAEG_Integration.md docs/CMAEG_Architecture.md docs/CMAEG_Protocol.md /build/docs/
+COPY api/crates/cmaeg/assets/docs/ /build/api/crates/cmaeg/assets/docs/
 # Which build the status band names (docs/Web_Style.md section 6). Baked into
 # the bundle here because that is the only moment the answer is knowable and
 # cannot later disagree with the code. The publisher passes the release

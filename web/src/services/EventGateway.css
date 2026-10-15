@@ -1,0 +1,117 @@
+.gateway-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  min-height: 100%;
+}
+.gateway-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) var(--space-3);
+}
+.gateway-sidebar__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.gateway-sidebar__heading h2 {
+  margin: 0;
+  font-size: var(--text-ui);
+  color: var(--dsw-alias-label-secondary);
+}
+.gateway-sidebar__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.gateway-sidebar__channel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.gateway-sidebar__channel:hover,
+.gateway-sidebar__channel[aria-current='page'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.gateway-sidebar__channel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.gateway-sidebar__channel > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gateway-sidebar__channel small,
+.gateway-sidebar__empty {
+  color: var(--dsw-alias-label-secondary);
+}
+.gateway-content {
+  min-width: 0;
+}
+.gateway-detail,
+.gateway-empty {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+.gateway-detail[hidden] {
+  display: none;
+}
+.gateway-detail header {
+  margin-bottom: var(--space-6);
+}
+.gateway-detail h1,
+.gateway-empty h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-page);
+}
+.gateway-detail header p,
+.gateway-empty p {
+  color: var(--dsw-alias-label-secondary);
+}
+.gateway-detail__section {
+  margin-block: var(--space-6);
+}
+.gateway-detail__section h2 {
+  font-size: var(--text-title);
+}
+.gateway-detail__section dt {
+  color: var(--dsw-alias-label-secondary);
+  margin-top: var(--space-3);
+}
+.gateway-detail__section dd {
+  margin: var(--space-1) 0;
+  overflow-wrap: anywhere;
+}
+.gateway-detail pre {
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+}
+@media (max-width: 640px) {
+  .gateway-layout {
+    grid-template-columns: 1fr;
+  }
+  .gateway-detail,
+  .gateway-empty {
+    padding: var(--space-4);
+  }
+}

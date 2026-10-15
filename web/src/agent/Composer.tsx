@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import type { AgentStatus } from '../api/types';
+import type { AgentStatus, AgentUsage } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
@@ -15,9 +15,18 @@ import {
 } from './attachments';
 import { useComposerAttachments } from './useComposerAttachments';
 import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachments';
+import { useComposerCommands } from './ComposerCommands';
+import { commandRefusal, type SessionCommand } from './slashCommands';
+import { SteeringModePicker, type SteeringMode } from './SteeringMode';
+import { UsageFooter } from './UsageFooter';
 
 interface ComposerProps {
   readonly draft?: AgentDraft;
+  readonly availableCommands?: readonly SessionCommand[];
+  readonly usage?: AgentUsage;
+  readonly showUsage?: boolean;
+  readonly steeringMode?: SteeringMode;
+  readonly onSteeringModeChange?: (mode: SteeringMode) => void;
   readonly status: AgentStatus;
   readonly pausedNotice?: string;
   readonly running: boolean;
@@ -27,6 +36,7 @@ interface ComposerProps {
   readonly controlsUnavailable?: boolean;
   readonly requestPending?: boolean;
   readonly acceptedMessage?: string;
+  readonly acceptedSteeringMessage?: string;
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
@@ -59,6 +69,11 @@ function fit(field: HTMLTextAreaElement): void {
 
 export function Composer({
   draft,
+  availableCommands,
+  usage,
+  showUsage = false,
+  steeringMode = 'queue',
+  onSteeringModeChange,
   status,
   pausedNotice,
   running,
@@ -68,6 +83,7 @@ export function Composer({
   controlsUnavailable = false,
   requestPending = false,
   acceptedMessage,
+  acceptedSteeringMessage,
   inputAvailability,
   busy,
   quickMessages = [],
@@ -79,7 +95,9 @@ export function Composer({
   const content = draft?.content ?? localContent;
   const setContent = draft?.setContent ?? setLocalContent;
   const previousAccepted = useRef(acceptedMessage);
+  const previousSteering = useRef(acceptedSteeringMessage);
   const [submitting, setSubmitting] = useState(false);
+  const [commandError, setCommandError] = useState<string>();
   const [handoff, setHandoff] = useState<{ attachments: readonly DraftAttachment[] }>();
   const editVersion = useRef(0);
   const submitted = useRef<{ message: string; version: number; clearsDraft: boolean } | undefined>(
@@ -107,26 +125,40 @@ export function Composer({
           (item) => !handoff.attachments.some(({ key }) => key === item.key),
         );
   const messageContent = attachmentMessage(visibleContent, visibleAttachments);
+  const commands = useComposerCommands(
+    visibleContent,
+    availableCommands,
+    usable && !inputBlocked && !busy && !submitting && !requestPending,
+    inputRef,
+    (value) => {
+      editVersion.current += 1;
+      setCommandError(undefined);
+      setContent(value);
+    },
+  );
 
   useLayoutEffect(() => {
-    if (acceptedMessage === previousAccepted.current) return;
+    const changed = [
+      acceptedMessage === previousAccepted.current ? undefined : acceptedMessage,
+      acceptedSteeringMessage === previousSteering.current ? undefined : acceptedSteeringMessage,
+    ].filter((value) => value !== undefined);
     previousAccepted.current = acceptedMessage;
+    previousSteering.current = acceptedSteeringMessage;
     // A receipt from an earlier visit cannot own text newly typed on this visit.
     if (submitted.current === undefined && editVersion.current !== 0) return;
-    if (
-      submitted.current !== undefined &&
-      submitted.current.message === acceptedMessage &&
-      (!submitted.current.clearsDraft || submitted.current.version !== editVersion.current)
-    )
-      return;
-    if (
-      acceptedMessage !== undefined &&
-      attachmentMessage(content, attachments.items) === acceptedMessage
-    ) {
-      setContent('');
-      attachments.accept(attachments.items);
+    for (const accepted of changed) {
+      if (
+        submitted.current !== undefined &&
+        submitted.current.message === accepted &&
+        (!submitted.current.clearsDraft || submitted.current.version !== editVersion.current)
+      )
+        continue;
+      if (attachmentMessage(content, attachments.items) === accepted) {
+        setContent('');
+        attachments.accept(attachments.items);
+      }
     }
-  }, [acceptedMessage, content, setContent, attachments]);
+  }, [acceptedMessage, acceptedSteeringMessage, content, setContent, attachments]);
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
@@ -158,6 +190,7 @@ export function Composer({
       !usable ||
       busy ||
       (running && !queueWhileRunning) ||
+      (running && steeringMode === 'interrupt' && controlsUnavailable) ||
       starting ||
       inputBlocked ||
       requestPending ||
@@ -165,6 +198,9 @@ export function Composer({
       sending.current
     )
       return;
+    const refusal = commandRefusal(message, availableCommands, visibleAttachments.length > 0);
+    setCommandError(refusal);
+    if (refusal) return;
     const originalContent = content;
     const submittedAttachments = attachments.items;
     const version = editVersion.current;
@@ -228,6 +264,14 @@ export function Composer({
         }
         onSend={submit}
       />
+      {commands.panel}
+      <Presence>
+        {commandError ? (
+          <p className="agent-composer__notice" role="alert">
+            {commandError}
+          </p>
+        ) : null}
+      </Presence>
       <Presence>
         {!hasNotice ? null : (
           <p id={noticeId} className="agent-composer__notice" role="status">
@@ -272,9 +316,15 @@ export function Composer({
                 value={visibleContent}
                 disabled={!usable}
                 aria-describedby={hasNotice ? noticeId : undefined}
+                aria-autocomplete="list"
+                aria-haspopup="listbox"
+                aria-expanded={commands.open}
+                aria-controls={commands.open ? commands.id : undefined}
+                aria-activedescendant={commands.activeId}
                 placeholder={preparing ? 'Message Agent' : placeholder(status)}
                 onChange={(event) => {
                   editVersion.current += 1;
+                  setCommandError(undefined);
                   if (handoff !== undefined) attachments.accept(handoff.attachments);
                   setHandoff(undefined);
                   setContent(event.target.value);
@@ -287,7 +337,9 @@ export function Composer({
                 }}
                 onBlur={() => {
                   composing.current = false;
+                  commands.onBlur();
                 }}
+                onFocus={commands.onFocus}
                 onKeyDown={(event) => {
                   // Safari can end composition before the confirming Enter and reports keyCode 229.
                   if (
@@ -296,6 +348,7 @@ export function Composer({
                     event.nativeEvent.keyCode === 229
                   )
                     return;
+                  if (commands.onKeyDown(event)) return;
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
                     submit();
@@ -312,42 +365,61 @@ export function Composer({
             </div>
           </div>
         </div>
-        {!running || queueWhileRunning ? (
-          <Button
-            placement="agent-composer__submit"
-            variant="primary"
-            type="submit"
-            icon={<IconSendOutline16 />}
-            aria-label={running ? 'Queue message' : 'Send message'}
-            title={running ? 'Queue message' : 'Send message'}
-            disabled={
-              !usable ||
-              busy ||
-              submitting ||
-              starting ||
-              inputBlocked ||
-              requestPending ||
-              messageContent === '' ||
-              attachments.blocked
-            }
-            aria-describedby={hasNotice ? noticeId : undefined}
-          />
-        ) : null}
-        {running ? (
-          <Button
-            placement="agent-composer__submit agent-composer__submit--stop"
-            variant="primary"
-            icon={<IconStopFill16 />}
-            aria-label="Stop response"
-            title={
-              controlsUnavailable
-                ? 'This turn does not support response controls.'
-                : 'Stop response'
-            }
-            disabled={busy || controlsUnavailable}
-            onClick={() => void onStop()}
-          />
-        ) : null}
+        <div className="agent-composer__actions">
+          {!running || queueWhileRunning ? (
+            <Button
+              placement="agent-composer__submit"
+              variant="primary"
+              type="submit"
+              icon={<IconSendOutline16 />}
+              aria-label={
+                running
+                  ? steeringMode === 'queue'
+                    ? 'Queue message'
+                    : 'Interrupt with message'
+                  : 'Send message'
+              }
+              title={
+                running
+                  ? steeringMode === 'queue'
+                    ? 'Queue message'
+                    : 'Interrupt with message'
+                  : 'Send message'
+              }
+              disabled={
+                !usable ||
+                busy ||
+                submitting ||
+                starting ||
+                inputBlocked ||
+                requestPending ||
+                messageContent === '' ||
+                attachments.blocked ||
+                (running && steeringMode === 'interrupt' && controlsUnavailable)
+              }
+              aria-describedby={hasNotice ? noticeId : undefined}
+            />
+          ) : null}
+          {running ? (
+            <Button
+              placement="agent-composer__submit agent-composer__submit--stop"
+              variant="primary"
+              icon={<IconStopFill16 />}
+              aria-label="Stop response"
+              title={
+                controlsUnavailable
+                  ? 'This turn does not support response controls.'
+                  : 'Stop response'
+              }
+              disabled={busy || controlsUnavailable}
+              onClick={() => void onStop()}
+            />
+          ) : null}
+        </div>
+        {showUsage ? <UsageFooter usage={usage} /> : null}
+        {onSteeringModeChange === undefined ? null : (
+          <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
+        )}
       </form>
     </div>
   );

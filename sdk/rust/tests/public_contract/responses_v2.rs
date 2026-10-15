@@ -45,6 +45,23 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await,
             )
         }
+        "GET /api/v2/agents/{agent_id}/queued-inputs" => {
+            c.check(api.list_queued_inputs(c.param("agent_id")).await)
+        }
+        "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input" => {
+            let key = c
+                .case
+                .request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_default();
+            c.check(
+                api.edit_queued_input(c.param("agent_id"), c.param("response_id"), &c.body()?, key)
+                    .await,
+            )
+        }
         "GET /api/v2/commands/{command_id}" => {
             c.check(api.read_command(c.param("command_id")).await)
         }

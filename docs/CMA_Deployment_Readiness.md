@@ -1267,3 +1267,23 @@ observed. Already recorded `provider_title` metadata, including `New Agent`,
 remains authoritative over subsequent preview/unknown observations. No title is
 rewritten to resolve this retained provider ambiguity, and no provenance is
 invented for an unobserved legacy name.
+
+### Editable queued-input reader floor
+
+The composer queue release adds public queued-input discovery and atomic per-message
+edits. Queue listing uses pages of at most four entries; the repository SDKs traverse
+those pages within one bounded operation. Deploy the compatible Agent Manager before
+the frontend that consumes these routes. The Event Gateway backend requires no schema
+or runtime change for the unified portal navigation.
+
+Edited input retains its original admission identity and FIFO order. The effective
+text is a revisioned sidecar with an explicit compatibility marker, so a worker from
+before this release fails closed instead of dispatching the original text. Drain or
+cancel pending edited entries with the compatible API before rolling back that API to
+an older binary. Exact edit retries retain the original idempotency key and source
+revision; a lost response must not become a new edit request.
+
+The runtime command-discovery patch applies to new allocations through the default
+runtime pin. Existing Sandboxes retain their recorded image, home, conversation and
+native command inventory. Verify browser queue edits with attachments, independent
+removal, exact steering message binding, and retained Sandbox identity after rollout.

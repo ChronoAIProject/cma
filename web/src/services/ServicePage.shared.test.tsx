@@ -17,10 +17,8 @@ it('opens Event Gateway from the CMA session without an independent sign-in flow
   );
   expect(await screen.findByText('owner channels')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Sign in with NyxID' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Sign out of CMA' })).toHaveAttribute(
-    'href',
-    '/auth/logout',
-  );
+  expect(screen.queryByRole('link', { name: 'Sign out of CMA' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Sign out/ })).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledWith(
     '/api/event-gateway/auth/session',
     expect.objectContaining({ credentials: 'same-origin' }),
@@ -34,6 +32,40 @@ it('returns a signed-out visitor through the Agent Manager OAuth entry point', a
     '/auth/login?return_to=%2Fevent-gateway',
   );
   expect(screen.queryByText('private channels')).not.toBeInTheDocument();
+});
+it('keeps authenticated forms mounted and passes a retry notice into the portal frame', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(session())))
+    .mockRejectedValueOnce(new TypeError('Session refresh interrupted'))
+    .mockResolvedValueOnce(new Response(JSON.stringify(session())));
+  vi.stubGlobal('fetch', fetcher);
+  render(
+    <ServicePage service="event-gateway" renderStatus={(content) => <aside>{content}</aside>}>
+      {(_value, _denied, notice) => (
+        <main>
+          {notice}
+          <label>
+            Draft
+            <input />
+          </label>
+        </main>
+      )}
+    </ServicePage>,
+  );
+  const input = await screen.findByLabelText('Draft');
+  fireEvent.change(input, { target: { value: 'Unsaved channel' } });
+  await act(async () => {
+    fireEvent.focus(window);
+  });
+  expect(await screen.findByRole('alert')).toHaveTextContent('Session refresh interrupted');
+  expect(screen.getByLabelText('Draft')).toBe(input);
+  expect(input).toHaveValue('Unsaved channel');
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Draft')).toBe(input);
 });
 it('replaces owned content on an account change and removes it when the common session expires', async () => {
   const fetcher = vi

@@ -25,7 +25,7 @@ mod tests;
 
 #[utoipa::path(get, path = "/api/v2/agents/{agent_id}/events", tag = "agent events v2",
     params(("agent_id" = String, Path), ("after_cursor" = Option<String>, Query),
-    ("follow" = Option<bool>, Query), ("Last-Event-ID" = Option<String>, Header)),
+    ("follow" = Option<bool>, Query), ("Last-Event-ID" = Option<String>, Header), ("Prefer" = Option<String>, Header)),
     responses((status = 200, body = String, content_type = "text/event-stream"),
     (status = 400, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument),
     (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
@@ -50,6 +50,7 @@ async fn open(
     headers: HeaderMap,
 ) -> Result<Following, Error> {
     let (after, follow) = parse::tail(raw, &headers)?;
+    let message_bindings = projection::message_bindings(&headers);
     let authorization = snapshot::authorize(&state, &auth, &id).await?;
     // Subscription precedes the initial head observation, including its IO.
     let watching = if follow {
@@ -75,6 +76,7 @@ async fn open(
         identity,
         after,
         follow,
+        message_bindings,
         pending: VecDeque::new(),
         watching,
         held: None,
@@ -100,6 +102,7 @@ pub(super) struct Following {
     pub after: u64,
     through: Option<u64>,
     pub follow: bool,
+    message_bindings: bool,
     pub pending: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
     pub held: Option<AgentLiveFragment>,
@@ -117,6 +120,7 @@ impl Following {
             self.after,
             self.through,
             200,
+            self.message_bindings,
         )
         .await?;
         if cursor::incarnation(&window.header) != self.identity {
