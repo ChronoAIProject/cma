@@ -1,8 +1,7 @@
 //! Gateway-owned Mongo records and the portal browser session composition.
 use crate::{
-    auth, records, service_auth, Config, CMAEG_COOKIE_KEY_FILE, CMAEG_MONGODB_AUTHORITY_MODE,
-    CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI, CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET,
-    CMAEG_WEB_ORIGIN,
+    auth, records, service_auth, Config, CMAEG_MONGODB_AUTHORITY_MODE, CMAEG_MONGODB_DATABASE,
+    CMAEG_MONGODB_URI, CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET,
 };
 use std::sync::Arc;
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -13,7 +12,7 @@ pub(crate) async fn compose(
     (
         Arc<records::RecordClient>,
         Arc<auth::CreatorAuthenticator>,
-        Option<Arc<cma_service_auth::browser::BrowserAuth>>,
+        Option<cma_service_auth::NyxIdAuth>,
     ),
     Error,
 > {
@@ -23,8 +22,6 @@ pub(crate) async fn compose(
         CMAEG_MONGODB_AUTHORITY_MODE,
         CMAEG_NYXID_CLIENT_ID,
         CMAEG_NYXID_CLIENT_SECRET,
-        CMAEG_WEB_ORIGIN,
-        CMAEG_COOKIE_KEY_FILE,
     ]
     .iter()
     .any(|key| std::env::var_os(key).is_some());
@@ -44,14 +41,6 @@ pub(crate) async fn compose(
         })?;
         let client_secret = std::env::var(CMAEG_NYXID_CLIENT_SECRET)
             .map_err(|_| format!("{CMAEG_NYXID_CLIENT_SECRET} is required when independent Gateway storage is enabled"))?;
-        let web_origin = std::env::var(CMAEG_WEB_ORIGIN).map_err(|_| {
-            format!("{CMAEG_WEB_ORIGIN} is required when independent Gateway storage is enabled")
-        })?;
-        let cookie_key_file = std::env::var(CMAEG_COOKIE_KEY_FILE).map_err(|_| {
-            format!(
-                "{CMAEG_COOKIE_KEY_FILE} is required when independent Gateway storage is enabled"
-            )
-        })?;
         let mongo = mongodb::Client::with_uri_str(mongo_uri).await?;
         let database_handle = mongo.database(&database_name);
         let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
@@ -66,15 +55,6 @@ pub(crate) async fn compose(
             &client_id,
             client_secret,
         )?;
-        let browser = std::sync::Arc::new(cma_service_auth::browser::BrowserAuth::new(
-            service_identity.clone(),
-            &database_handle,
-            records::mongo::SESSIONS,
-            &web_origin,
-            "/api/event-gateway",
-            "/event-gateway",
-            &std::fs::read(cookie_key_file)?,
-        )?);
         let records = std::sync::Arc::new(
             records::RecordClient::new(
                 &config.management.cma_base_url,
@@ -84,9 +64,9 @@ pub(crate) async fn compose(
         );
         let creator_auth = std::sync::Arc::new(
             auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
-                .with_service(service_identity),
+                .with_service(service_identity.clone()),
         );
-        (records, creator_auth, Some(browser))
+        (records, creator_auth, Some(service_identity))
     } else {
         let records = std::sync::Arc::new(
             records::RecordClient::new(

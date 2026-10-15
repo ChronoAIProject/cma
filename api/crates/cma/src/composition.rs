@@ -8,6 +8,7 @@ mod credentials;
 mod event_routing;
 mod profiles;
 mod routes;
+use crate::auth::service_portal;
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -474,7 +475,10 @@ impl ControlPlaneComposition {
             recorder,
             limits,
             stores,
-            agent_access.tool_routes,
+            agent_access.tool_routes.merge(service_portal::router(
+                auth.clone(),
+                config.gateway.as_ref(),
+            )?),
         );
 
         Ok(Self {

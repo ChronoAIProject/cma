@@ -192,7 +192,7 @@ describe('independent CMA service navigation', () => {
     render(<ServicePage service="event-gateway">{() => <p>private channels</p>}</ServicePage>);
     expect(await screen.findByRole('link', { name: 'Sign in with NyxID' })).toHaveAttribute(
       'href',
-      '/api/event-gateway/auth/login',
+      '/auth/login?return_to=%2Fevent-gateway',
     );
     expect(screen.queryByText('private channels')).toBeNull();
     expect(fetcher.mock.calls[0]?.[0]).toBe('/api/event-gateway/auth/session');
