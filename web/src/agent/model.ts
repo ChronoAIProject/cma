@@ -1,4 +1,4 @@
-import type { AgentStatus, AgentUsage } from '../api/types';
+import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
 
 export interface ConversationMessage {
   readonly order?: number;
@@ -69,6 +69,7 @@ export interface ConversationState {
   readonly approvals: readonly ApprovalRequest[];
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */
   readonly activeRunStartedAt?: string;

@@ -188,6 +188,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         ]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),

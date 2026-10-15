@@ -111,6 +111,8 @@ pub enum ConversationUpdate {
     },
     WithoutPromptEvidence(Box<ConversationUpdate>),
     Said(SessionUpdate),
+    Metadata(crate::ConversationMetadata),
+    Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
     TurnEnded(PromptResponse),
     Lost {
@@ -153,7 +155,11 @@ impl ConversationUpdate {
             )),
             Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
             Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
-            Self::Said(_) | Self::Lost { .. } | Self::SignInRequired { .. } => None,
+            Self::Said(_)
+            | Self::Metadata(_)
+            | Self::Usage(_)
+            | Self::Lost { .. }
+            | Self::SignInRequired { .. } => None,
         }
     }
 }

@@ -419,3 +419,20 @@ is being applied; reconnecting preserves the approved scope and current request.
 access. Read the list again after a connection return. `denied` and `failed` are
 terminal outcomes; an optional `error` supplies safe failure detail. SDK validation rejects crossed Agent/request identities,
 inconsistent connection targets, and duplicate list IDs.
+
+## Runtime observations
+
+Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`
+with the provider's canonical `working_directory` and session `description`.
+The `runtime_metadata_changed` event updates the same snapshot. These fields
+do not rewrite the immutable Workspace/Worktree paths or infer changes from
+shell commands. Shared readers do not receive private directory metadata.
+
+`usage_updated` contains absolute lifetime input/output consumption and
+`turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
+observed turn. The usage read also exposes optional `current_turn`. Match that
+sequence to the running turn before displaying a current-turn counter. Context
+compaction can reduce context size while lifetime counts remain unchanged.
+Counts include cached input and advance only on provider reports; absent
+historical usage is never inferred from message length. Retained older runtimes
+continue emitting the compatible `usage` vocabulary.

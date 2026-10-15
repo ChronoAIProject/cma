@@ -4,6 +4,7 @@ import {
   dictionary,
   enumeration,
   integer,
+  nullable,
   object,
   optional,
   tagged,
@@ -11,7 +12,7 @@ import {
   variant,
   type Output,
 } from '../schema.js';
-import { firstMessageDelivery } from './types.js';
+import { firstMessageDelivery, agentRuntimeMetadata } from './types.js';
 
 export const agentWorkStep = enumeration(
   'wait_for_workspace',
@@ -103,6 +104,16 @@ export const agentEventKind = tagged({
     output_tokens: integer,
     context_used: integer,
     context_window: optional(integer),
+  }),
+  runtime_metadata_changed: variant('runtime_metadata_changed', { metadata: agentRuntimeMetadata }),
+  usage_updated: variant('usage_updated', {
+    input_tokens: integer,
+    output_tokens: integer,
+    context_used: integer,
+    context_window: nullable(integer),
+    turn_sequence: nullable(integer),
+    turn_input_tokens: integer,
+    turn_output_tokens: integer,
   }),
   mode_changed: variant('mode_changed', { mode: text }),
   plan_set: variant('plan_set', { entries: array(object({ title: text, status: text })) }),

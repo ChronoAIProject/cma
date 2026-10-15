@@ -136,6 +136,25 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
                 {"op": "replace", "path": "/usage/contextWindow", "value": context_window}
             ]}),
         )],
+        AgentLogKind::RuntimeMetadataChanged { metadata } => vec![delta(
+            "/runtimeMetadata",
+            json!({"workingDirectory": metadata.working_directory, "description": metadata.description}),
+        )],
+        AgentLogKind::UsageUpdated {
+            input_tokens,
+            output_tokens,
+            context_used,
+            context_window,
+            turn_sequence,
+            turn_input_tokens,
+            turn_output_tokens,
+        } => vec![delta(
+            "/usage",
+            json!({
+                "inputTokens": input_tokens, "outputTokens": output_tokens, "contextUsed": context_used, "contextWindow": context_window,
+                "currentTurn": turn_sequence.map(|turn_sequence| json!({"turnSequence": turn_sequence, "inputTokens": turn_input_tokens, "outputTokens": turn_output_tokens}))
+            }),
+        )],
         AgentLogKind::ModeChanged { mode } => vec![delta("/mode", json!(mode))],
         AgentLogKind::PlanSet { entries } => vec![delta("/plan", json!(entries))],
         AgentLogKind::ConfigOptionsSet { options } => vec![delta("/configOptions", json!(options))],

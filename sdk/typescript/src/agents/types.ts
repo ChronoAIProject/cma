@@ -79,7 +79,19 @@ export const agentSandbox = object({
   profile: instanceProfileReference,
 });
 export type AgentSandbox = Output<typeof agentSandbox>;
+export const agentRuntimeMetadata = object({
+  working_directory: optional(text),
+  description: optional(text),
+});
+export type AgentRuntimeMetadata = Output<typeof agentRuntimeMetadata>;
+export const agentTurnUsage = object({
+  turn_sequence: integer,
+  input_tokens: integer,
+  output_tokens: integer,
+});
+export type AgentTurnUsage = Output<typeof agentTurnUsage>;
 export const agentSummary = object({
+  runtime_metadata: optional(agentRuntimeMetadata),
   id: text,
   sandbox_id: text,
   workspace_id: text,
@@ -92,6 +104,7 @@ export const agentSummary = object({
 });
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
+  runtime_metadata: optional(agentRuntimeMetadata),
   id: text,
   status: agentStatus,
   profile: agentProfileSummary,
@@ -177,6 +190,7 @@ export const agentTranscript = object({
 });
 export type AgentTranscript = Output<typeof agentTranscript>;
 export const agentUsage = object({
+  current_turn: optional(agentTurnUsage),
   agent_id: text,
   through_seq: integer,
   input_tokens: integer,

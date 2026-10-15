@@ -537,6 +537,7 @@ fn live_agent(sandbox: &Sandbox, index: usize) -> Agent {
         capabilities: RuntimeCapabilities::default(),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{index}")),
             runtime_generation: Some(3),

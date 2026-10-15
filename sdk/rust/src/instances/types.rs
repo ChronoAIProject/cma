@@ -201,6 +201,8 @@ pub struct Worktree {
 /// Compact Agent row included in Workspace hierarchy detail.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct HierarchyAgentSummary {
+    /// Canonical runtime metadata for this owned Agent.
+    pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
     /// Agent identifier.
     pub id: String,
     /// Allocated Worktree identifier.

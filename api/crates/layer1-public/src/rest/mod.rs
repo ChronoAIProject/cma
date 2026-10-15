@@ -20,6 +20,7 @@ pub use agent_access_requests::agent_access_requests_router;
 #[cfg(test)]
 mod agent_access_requests_tests;
 mod agent_artifacts;
+mod agent_observation_shapes;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]

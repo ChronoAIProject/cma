@@ -121,6 +121,18 @@ pub enum AgentLogKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_window: Option<u64>,
     },
+    RuntimeMetadataChanged {
+        metadata: super::AgentRuntimeMetadata,
+    },
+    UsageUpdated {
+        input_tokens: u64,
+        output_tokens: u64,
+        context_used: u64,
+        context_window: Option<u64>,
+        turn_sequence: Option<u64>,
+        turn_input_tokens: u64,
+        turn_output_tokens: u64,
+    },
     ModeChanged {
         mode: String,
     },

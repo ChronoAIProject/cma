@@ -530,6 +530,7 @@ impl TestApp {
             capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
             status: AgentStatus::Ready,
             conversation: ConversationState {
+                observations: Default::default(),
                 settings: None,
                 conversation_id: Some("conversation".into()),
                 runtime_generation: Some(1),
