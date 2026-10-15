@@ -1050,10 +1050,21 @@ identity changes. Mounting a conversation does not start machine-resource polls.
 
 The conversation footer contains Context quota and cumulative Agent input/output
 tokens, including earlier turns and preserved across compaction. The Thinking
-row shows the current turn's input/output totals. Unreported input and output
-each say unavailable, with an explanation that some existing Agents only report
-totals after a turn finishes. Missing counts are never displayed as zero or
-estimated from text, elapsed time or the context quota. Each reported
+row shows the current turn's input/output totals. Unreported input says unavailable.
+Before a token report arrives, live visible reply and reasoning text may show
+an explicitly labeled `≈ N visible output tokens` estimate using a local
+o200k_base tokenizer. Its explanation excludes hidden reasoning, tool calls and
+inputs, and states that actual model usage may differ. Load the tokenizer only
+for an active turn, in a background worker; update at most five times per second,
+reuse unchanged text chunks, and cap counted text at 65,536 UTF-16 code units with
+a visible partial label. Missing text, unavailable tokenization and missing provider counts have
+written states. Estimates are never added to session totals or retained as actual
+turn usage. An authoritative turn report replaces its estimate and records the
+visible text boundary it covers. Later model calls in the same turn display
+`+ ≈ N newly visible output tokens` beside the last reported counts, counting
+only new visible text past that boundary. Repeated identical reports do not
+advance the boundary; restored text does not count twice. Missing counts
+are never displayed as zero or inferred from elapsed time or context quota. Each reported
 increase animates towards that actual value over 600ms, never beyond it. Values
 use tabular numerals; reduced motion and hidden documents settle immediately.
 Accessible labels expose the actual count without announcing every animation
@@ -2218,3 +2229,4 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
 
 | 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
+| 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |
