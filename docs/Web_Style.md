@@ -1030,6 +1030,19 @@ Accessible labels expose the actual count without announcing every animation
 frame. The cumulative footer uses the same observed-count animation. A new turn
 resets only its own counters.
 
+Each completed turn keeps its reported input/output counts below its final Agent
+reply, in the existing 12/18 caption style. Earlier intermediate replies do not
+repeat the same turn total. Full durable replay restores every available turn's
+counts; a turn without a report explicitly says input/output unavailable.
+
+Routine stream reconnection is quiet for 2.5 seconds; a continuing failure then
+shows the existing connection status. If live fragments need refreshing, show
+one neutral caption while recorded replies are restored. Fresh live observations
+clear a reasoning-only refresh, and a recorded reply or turn completion clears
+its reply refresh. A new turn clears the previous transient refresh. Confirmed
+durable history gaps and authentication/terminal errors retain their separate
+recovery messages.
+
 Tracks use reported ceilings first, independently for each resource. When a
 ceiling is absent, the exact pinned Sandbox Profile revision may supply a
 configured capacity. Its id and revision must match, and its digest must match
@@ -2169,3 +2182,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Accept pasted images and dropped or selected files in the message composer. Show fixed-height upload records, image thumbnails, bounded two-file concurrency, individual retry/removal, and compact sent-file records. Wait for persistent upload receipts before sending exact sandbox paths. Retain up to six viewer-scoped drafts and ready attachments across navigation; abort in-flight uploads on departure and keep explicit same-key retry. |
 
 | 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
+
+| 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |

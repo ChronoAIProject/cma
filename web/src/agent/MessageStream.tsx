@@ -88,6 +88,15 @@ export function MessageStream({
     ...conversation.recovery.map((item) => ({ kind: 'recovery' as const, item })),
   ];
   entries.sort((left, right) => (left.item.order ?? 0) - (right.item.order ?? 0));
+  const finalReply = new Map<string, string>();
+  for (const entry of entries)
+    if (
+      entry.kind === 'message' &&
+      entry.item.role === 'assistant' &&
+      entry.item.runId !== undefined &&
+      !entry.item.liveOnly
+    )
+      finalReply.set(entry.item.runId, entry.item.id);
 
   return (
     <div className="message-stream" aria-live="polite">
@@ -103,6 +112,20 @@ export function MessageStream({
           approvalBusy={approvalBusy}
           approvalReadOnly={approvalReadOnly}
           onApproval={onApproval}
+          showUsage={
+            entry.kind === 'message' &&
+            entry.item.runId !== undefined &&
+            entry.item.runId !== conversation.activeRunId &&
+            finalReply.get(entry.item.runId) === entry.item.id
+          }
+          usage={
+            entry.kind === 'message' && entry.item.runId !== undefined
+              ? (conversation.turnUsage?.[entry.item.runId] ??
+                (String(conversation.usage?.currentTurn?.turnSequence) === entry.item.runId
+                  ? conversation.usage?.currentTurn
+                  : undefined))
+              : undefined
+          }
         />
       ))}
       {optimisticMessages?.map((message) => (

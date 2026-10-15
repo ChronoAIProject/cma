@@ -1,9 +1,35 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useAgentController } from '../controller';
 import { at, binding, cursor, harness, item, json, page } from './controller.fixture';
 
 beforeEach(() => sessionStorage.clear());
+afterEach(() => vi.useRealTimers());
+
+it('keeps a short reconnect quiet, reports a persistent outage, and clears it on a valid frame', async () => {
+  const h = harness();
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(h.streaming).toBe(true));
+  vi.useFakeTimers();
+  await act(async () => {
+    h.fail();
+    await vi.advanceTimersByTimeAsync(2000);
+  });
+  expect(result.current.actionError).toBeUndefined();
+  await act(async () => h.gap('reconnected', null));
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(result.current.actionError).toBeUndefined();
+  await act(async () => {
+    h.fail();
+    await vi.advanceTimersByTimeAsync(2600);
+  });
+  expect(result.current.actionError).toContain('Live updates are reconnecting');
+  await act(async () => h.gap('reconnected', null));
+  expect(result.current.actionError).toBeUndefined();
+  expect(h.post).not.toHaveBeenCalled();
+  unmount();
+  await act(async () => vi.advanceTimersByTimeAsync(10000));
+});
 
 it('does not invent a lost-update warning when opening an active turn from recorded history', async () => {
   const h = harness();
@@ -81,36 +107,71 @@ it('keeps an idle conversation clear of loss notices when its stream connects af
   unmount();
 });
 
-it.each([1, null])('retains real fragment loss on reconnect with server turn %s', async (turn) => {
+it('clears a reasoning-only refresh on new live data and preserves confirmed history gaps', async () => {
   const h = harness();
   const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(h.streaming).toBe(true));
   await act(async () => {
     h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
-    h.live('text_delta', 'Uncommitted text', 1);
-    h.live('reasoning_summary_delta', 'Uncommitted thought', 1);
-    h.gap('reconnected', turn);
+    h.live('reasoning_summary_delta', 'An unfinished thought', 1);
+    h.gap('reconnected', 1);
   });
   expect(result.current.state).toMatchObject({
-    conversation: {
-      messages: [],
-      reasoning: [],
-      recovery: [expect.objectContaining({ id: 'live-gap:1', title: 'Live updates interrupted' })],
-    },
+    conversation: { recovery: [expect.objectContaining({ clearsOn: 'live-update' })] },
   });
+  await act(async () => h.live('reasoning_summary_delta', 'A fresh thought', 1));
+  expect(result.current.state).toMatchObject({ conversation: { recovery: [] } });
   await act(async () => {
-    h.durable(2, { type: 'message', role: 'assistant', content: 'Durable completion' });
+    h.durable(2, { type: 'history_gap', frames: 2 });
+    h.gap('lagged', 1);
     h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
-    h.gap('reconnected', null);
+    h.durable(4, { type: 'turn_started', turn_sequence: 4 });
   });
   expect(result.current.state).toMatchObject({
     conversation: {
-      messages: [expect.objectContaining({ content: 'Durable completion' })],
-      recovery: [expect.objectContaining({ id: 'live-gap:1' })],
+      recovery: [
+        expect.objectContaining({ id: 'history-gap:2', title: 'Incomplete conversation history' }),
+      ],
     },
   });
   unmount();
 });
+
+it.each([1, null])(
+  'keeps fragment recovery until the recorded reply restores server turn %s',
+  async (turn) => {
+    const h = harness();
+    const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+    await waitFor(() => expect(h.streaming).toBe(true));
+    await act(async () => {
+      h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+      h.live('text_delta', 'Uncommitted text', 1);
+      h.live('reasoning_summary_delta', 'Uncommitted thought', 1);
+      h.gap('reconnected', turn);
+    });
+    expect(result.current.state).toMatchObject({
+      conversation: {
+        messages: [],
+        reasoning: [],
+        recovery: [
+          expect.objectContaining({ id: 'live-gap:1', title: 'Refreshing live updates…' }),
+        ],
+      },
+    });
+    await act(async () => {
+      h.durable(2, { type: 'message', role: 'assistant', content: 'Durable completion' });
+      h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
+      h.gap('reconnected', null);
+    });
+    expect(result.current.state).toMatchObject({
+      conversation: {
+        messages: [expect.objectContaining({ content: 'Durable completion' })],
+        recovery: [],
+      },
+    });
+    unmount();
+  },
+);
 
 it('still reports server-confirmed lag and durable history gaps while idle', async () => {
   const h = harness();
@@ -124,7 +185,7 @@ it('still reports server-confirmed lag and durable history gaps while idle', asy
   expect(result.current.state).toMatchObject({
     conversation: {
       recovery: [
-        expect.objectContaining({ id: 'live-gap:0', title: 'Live updates interrupted' }),
+        expect.objectContaining({ id: 'live-gap:0', title: 'Refreshing live updates…' }),
         expect.objectContaining({
           id: 'history-gap:1',
           detail: 'Some conversation updates were lost before they could be recorded.',
@@ -149,7 +210,7 @@ it('does not silently discard unfinished text when an idle reconnect follows can
     conversation: {
       activeRunId: undefined,
       messages: [],
-      recovery: [expect.objectContaining({ title: 'Live updates interrupted' })],
+      recovery: [expect.objectContaining({ title: 'Refreshing live updates…' })],
     },
   });
   unmount();
@@ -219,7 +280,7 @@ it('clears uncommitted fragments on a gap and suppresses text already covered by
       cursor: 1,
       messages: [expect.objectContaining({ content: 'suffix' })],
       reasoning: [],
-      recovery: [expect.objectContaining({ title: 'Live updates interrupted' })],
+      recovery: [expect.objectContaining({ title: 'Refreshing live updates…' })],
     },
   });
   await act(async () => {
