@@ -94,7 +94,11 @@ it('starts one check during an authorized load and keeps Send behind complete hi
   fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
   expect(ready.send).not.toHaveBeenCalled();
   await act(async () => fresh.resolve(connected));
-  expect(ready.send).toHaveBeenCalledExactlyOnceWith('Keep the draft', expect.any(Function));
+  expect(ready.send).toHaveBeenCalledExactlyOnceWith(
+    'Keep the draft',
+    expect.any(Function),
+    expect.any(Function),
+  );
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
 });
 

@@ -1,0 +1,282 @@
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { CmaClientProvider } from '../api/context';
+import { connectionClient, type ConnectionReport } from '../connections/client';
+import { accessRequests } from './accessRequests';
+import { AgentSurface } from './AgentSurface';
+import { useAgentController } from './controller';
+import { accepted, binding, harness } from './transport/controller.fixture';
+import { agentClient } from '../test/agent';
+
+const connected: ConnectionReport = {
+  owner: 'alice',
+  ready: true,
+  checked_at: '2026-10-15T00:00:00Z',
+  services: [],
+};
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+beforeEach(() => {
+  sessionStorage.clear();
+  vi.spyOn(connectionClient, 'check').mockResolvedValue(connected);
+  vi.spyOn(accessRequests, 'list').mockResolvedValue([]);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
+
+async function setup() {
+  const h = harness();
+  function Agent({ viewer = 'alice', agent = 'agt_1' }: { viewer?: string; agent?: string }) {
+    const controller = useAgentController(h.client, agent, { viewerId: viewer });
+    return (
+      <CmaClientProvider client={h.client}>
+        <AgentSurface
+          agentId={agent}
+          viewerId={viewer}
+          lifecycleClient={h.client}
+          controller={controller}
+          detailsOpen={false}
+          onDetailsOpenChange={() => {}}
+          onNavigate={() => {}}
+        />
+      </CmaClientProvider>
+    );
+  }
+  const view = render(<Agent />);
+  await waitFor(() => expect(h.streaming).toBe(true));
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Immediate local message' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  return { h, view, field, Agent };
+}
+const click = () => fireEvent.click(screen.getByRole('button', { name: /^(Send|Queue) message$/ }));
+const bubbles = (text: string) =>
+  screen
+    .getAllByRole('article', { name: 'You' })
+    .filter((article) => within(article).queryByText(text) !== null);
+
+it('renders immediately before deferred connections, identity and POST, then merges by command exactly once', async () => {
+  const { h, field } = await setup();
+  const connections = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValueOnce(connections.promise);
+  const identity = deferred<string>();
+  h.currentUser.mockReturnValueOnce(identity.promise);
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(h.post).not.toHaveBeenCalled();
+  expect(field).toHaveValue('Immediate local message');
+  await act(async () => connections.resolve(connected));
+  expect(h.post).not.toHaveBeenCalled();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => identity.resolve('alice'));
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  await act(async () => response.resolve(accepted()));
+  await waitFor(() => expect(field).toHaveValue(''));
+  expect(screen.getByText('Sent')).toBeInTheDocument();
+  await act(async () => {
+    h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+  });
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledOnce();
+});
+
+it('retains exact command ownership through completion before acknowledgement and never matches old identical text', async () => {
+  const { h, field } = await setup();
+  await act(async () => {
+    h.durable(
+      1,
+      { type: 'turn_started', turn_sequence: 1 },
+      { ...binding, command_id: 'old_command', response_id: 'old_response' },
+    );
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+    h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
+  });
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  expect(bubbles('Immediate local message')).toHaveLength(2);
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  await act(async () => {
+    h.durable(4, { type: 'turn_started', turn_sequence: 4 }, { ...binding, turn_sequence: 4 });
+    h.durable(5, { type: 'message', role: 'user', content: 'Immediate local message' });
+    h.durable(6, { type: 'turn_completed', turn_sequence: 4 });
+    response.resolve(accepted());
+  });
+  await waitFor(() => expect(field).toHaveValue(''));
+  expect(bubbles('Immediate local message')).toHaveLength(2);
+  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
+});
+
+it('preserves the draft and original request through a lost acknowledgement, reload and explicit recovery', async () => {
+  const { h, field, view, Agent } = await setup();
+  h.post.mockRejectedValueOnce(new TypeError('Network unavailable'));
+  click();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  await waitFor(() => expect(screen.getByText('Awaiting confirmation')).toBeInTheDocument());
+  expect(field).toHaveValue('Immediate local message');
+  expect(h.post).toHaveBeenCalledOnce();
+  const original = h.post.mock.calls[0]![0]!;
+  view.unmount();
+  render(<Agent />);
+  await screen.findByText('Awaiting confirmation');
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+  await waitFor(() => expect(screen.getByText('Sent')).toBeInTheDocument());
+  expect(h.post).toHaveBeenCalledTimes(2);
+  const recovered = h.post.mock.calls[1]![0]!;
+  expect(recovered.body).toBe(original.body);
+  expect(new Headers(recovered.headers).get('idempotency-key')).toBe(
+    new Headers(original.headers).get('idempotency-key'),
+  );
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+});
+
+it('uses observed receipt metadata only to reconcile replay while the acceptance identity check is still pending', async () => {
+  const { h, field } = await setup();
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  const identity = deferred<string>();
+  h.currentUser.mockReturnValueOnce(identity.promise);
+  await act(async () => response.resolve(accepted()));
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  expect(field).toHaveValue('Immediate local message');
+  await act(async () => {
+    h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+    h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
+  });
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(field).toHaveValue('Immediate local message');
+  await act(async () => identity.resolve('alice'));
+  await waitFor(() => expect(field).toHaveValue(''));
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+});
+
+it('retains two separately accepted identical messages until their own command appears', async () => {
+  const { h, field, view, Agent } = await setup();
+  click();
+  await waitFor(() => expect(field).toHaveValue(''));
+  fireEvent.change(field, { target: { value: 'Immediate local message' } });
+  h.post.mockResolvedValueOnce(
+    new Response(new ReadableStream(), {
+      headers: {
+        'content-type': 'text/event-stream',
+        'x-cma-response-id': 'resp_2',
+        'x-cma-command-id': 'cmd_2',
+      },
+    }),
+  );
+  click();
+  await waitFor(() => expect(field).toHaveValue(''));
+  expect(bubbles('Immediate local message')).toHaveLength(2);
+  await act(async () => {
+    h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+    h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
+  });
+  expect(bubbles('Immediate local message')).toHaveLength(2);
+  expect(screen.getAllByText('Sent')).toHaveLength(1);
+  view.unmount();
+  render(<Agent />);
+  // The last accepted request remains visible from its exact journal receipt after reload.
+  expect(await screen.findByText('Sent')).toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledTimes(2);
+  const next = deferred<Response>();
+  h.post.mockReturnValueOnce(next.promise);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'After reload' },
+  });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  click();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(bubbles('After reload')).toHaveLength(1);
+});
+
+it('keeps correlation after a transient post-receipt identity failure without claiming acceptance or duplicating replay', async () => {
+  const { h, field } = await setup();
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  const identity = deferred<string>();
+  h.currentUser.mockReturnValueOnce(identity.promise);
+  await act(async () => response.resolve(accepted()));
+  await act(async () => {
+    h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+    identity.reject(new Error('Identity temporarily unavailable'));
+  });
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(field).toHaveValue('Immediate local message');
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Recover pending request' })).toBeEnabled();
+  expect(h.post).toHaveBeenCalledOnce();
+});
+
+it('hides a pending preview on account change without releasing the send', async () => {
+  const { h, field, view, Agent } = await setup();
+  const check = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValueOnce(check.promise);
+  click();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  view.rerender(<Agent viewer="bob" />);
+  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
+  expect(screen.queryAllByRole('article', { name: 'You' })).toHaveLength(0);
+  await act(async () => check.resolve(connected));
+  expect(h.post).not.toHaveBeenCalled();
+  expect(field).toHaveValue('Immediate local message');
+});
+
+it('keeps a legacy ambiguous submission unconfirmed with its draft intact and no automatic retry', async () => {
+  const request = deferred<void>();
+  const runAgent = vi.fn(() => request.promise);
+  const client = agentClient({ runAgent });
+  function LegacyAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <CmaClientProvider client={client}>
+        <AgentSurface
+          agentId="agt_1"
+          viewerId="alice"
+          lifecycleClient={client}
+          controller={controller}
+          detailsOpen={false}
+          onDetailsOpenChange={() => {}}
+          onNavigate={() => {}}
+        />
+      </CmaClientProvider>
+    );
+  }
+  render(<LegacyAgent />);
+  const field = await screen.findByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Legacy input\nwith a second line' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
+  click();
+  const pending = screen.getAllByRole('article', { name: 'You' }).at(-1)!;
+  expect(pending.querySelector('p')?.textContent).toBe('Legacy input\nwith a second line');
+  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  await waitFor(() => expect(runAgent).toHaveBeenCalledOnce());
+  await act(async () => request.reject(new TypeError('Lost response before first event')));
+  expect(screen.getByText('Awaiting confirmation')).toBeInTheDocument();
+  expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
+  expect(field).toHaveValue('Legacy input\nwith a second line');
+  expect(runAgent).toHaveBeenCalledOnce();
+});
