@@ -206,7 +206,7 @@ async fn exact_scope_revision_requires_matching_durable_event_and_preserves_lega
         event
     );
     let mut preloaded = store.get_sandbox(&before.id).await.unwrap().unwrap();
-    preloaded.id = crate::SandboxId::new("preloaded-scope");
+    preloaded.id = crate::SandboxId("sbx_preloaded_scope".into());
     preloaded.revision = 1;
     assert!(store.create_sandbox(preloaded).await.is_err());
 }
