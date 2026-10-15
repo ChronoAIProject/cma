@@ -57,6 +57,9 @@ fn introspection_claim(
         .map_err(Unavailable)
 }
 
+/// Unvalidated provider response, bound to userinfo only after both reads finish.
+pub(super) struct IntrospectionResponse(serde_json::Value);
+
 /// What the provider says this token may do, asked as this service.
 ///
 /// `None` when the provider advertises no introspection endpoint, which is the
@@ -64,12 +67,11 @@ fn introspection_claim(
 ///
 /// Inactive evidence is distinct from an active token with no permissions: only
 /// the latter may remain a delegated credential.
-pub(super) async fn introspect_permissions(
+pub(super) async fn fetch_introspection(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
-    expected_subject: &str,
-) -> Result<Option<PermissionObservation>, ProviderVerificationError> {
+) -> Result<Option<IntrospectionResponse>, ProviderVerificationError> {
     use ProviderVerificationError::Unavailable;
     let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
         return Ok(None);
@@ -119,27 +121,41 @@ pub(super) async fn introspect_permissions(
         super::identity::verification_failure("introspection", "invalid_json", None);
         Unavailable(format!("introspection body not usable: {e}"))
     })?;
-    introspection_claim(&body, expected_subject)
-        .map(|permissions| {
-            let api_expires_at = (body.get("active").and_then(serde_json::Value::as_bool)
-                == Some(true)
-                && body.get("sub").and_then(serde_json::Value::as_str) == Some(expected_subject)
-                && body.get("token_type").and_then(serde_json::Value::as_str) == Some("access")
-                && body.get("resource").is_none_or(|value| {
-                    value.is_null() || value.as_array().is_some_and(Vec::is_empty)
-                }))
-            .then(|| body.get("exp").and_then(serde_json::Value::as_u64))
-            .flatten()
-            .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
-            .filter(|expiry| *expiry > SystemTime::now());
-            Some(PermissionObservation {
-                permissions,
-                api_expires_at,
+    Ok(Some(IntrospectionResponse(body)))
+}
+
+impl IntrospectionResponse {
+    pub(super) fn verify(
+        self,
+        expected_subject: &str,
+    ) -> Result<PermissionObservation, ProviderVerificationError> {
+        let body = self.0;
+        introspection_claim(&body, expected_subject)
+            .map(|permissions| {
+                let api_expires_at = (body.get("active").and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                    && body.get("sub").and_then(serde_json::Value::as_str)
+                        == Some(expected_subject)
+                    && body.get("token_type").and_then(serde_json::Value::as_str)
+                        == Some("access")
+                    && body.get("resource").is_none_or(|value| {
+                        value.is_null() || value.as_array().is_some_and(Vec::is_empty)
+                    }))
+                .then(|| body.get("exp").and_then(serde_json::Value::as_u64))
+                .flatten()
+                .and_then(|seconds| {
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+                })
+                .filter(|expiry| *expiry > SystemTime::now());
+                PermissionObservation {
+                    permissions,
+                    api_expires_at,
+                }
             })
-        })
-        .inspect_err(|_| {
-            super::identity::verification_failure("introspection", "invalid_evidence", None);
-        })
+            .inspect_err(|_| {
+                super::identity::verification_failure("introspection", "invalid_evidence", None);
+            })
+    }
 }
 
 #[cfg(test)]
