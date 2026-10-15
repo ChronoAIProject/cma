@@ -26,6 +26,7 @@ import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
+import { useOptimisticMessages } from './optimisticMessages';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -101,6 +102,14 @@ export function AgentSurface({
   const verified = connection.verified;
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
+  const optimistic = useOptimisticMessages(
+    connection.scope,
+    !readOnly && state.status === 'ready',
+    state.status === 'ready' ? state.conversation : undefined,
+    state.status === 'ready' && state.v2?.owner === (viewerId ?? verified?.owner)
+      ? state.v2
+      : undefined,
+  );
   const discardPrepared = connection.discardPrepared;
   useLayoutEffect(() => {
     discardPrepared();
@@ -311,6 +320,7 @@ export function AgentSurface({
         ) : null}
         <MessageStream
           conversation={conversation}
+          optimisticMessages={optimistic.messages}
           approvalBusy={approvalBusy}
           approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
@@ -364,11 +374,23 @@ export function AgentSurface({
           }
           onSend={async (content, onAccepted) => {
             if (readOnly || verified === undefined) return;
+            const message = optimistic.begin(content);
             await connections.checkAndRun(
               { type: 'agent', id: agentId },
               viewerId ?? verified.owner,
-              () => void controller.send(content, onAccepted),
+              () => {
+                void controller
+                  .send(
+                    content,
+                    (receipt) => {
+                      if (message.accepted(receipt)) onAccepted();
+                    },
+                    message.observed,
+                  )
+                  .then(message.settled, message.settled);
+              },
               state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
+              message.cancelled,
             );
           }}
           onStop={controller.interrupt}
