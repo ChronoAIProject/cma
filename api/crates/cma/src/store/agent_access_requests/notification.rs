@@ -3,7 +3,7 @@ use super::*;
 use layer2_core::sandbox::agent_io::{
     command_key_digest, AdmittedAgentCommand, AgentCommand, AgentInput, CommandFailureCode,
 };
-use layer2_core::sandbox::{Agent, AgentOperationDelivery, AgentStatus, SandboxStatus};
+use layer2_core::sandbox::{Agent, AgentOperationDelivery, AgentStatus, Sandbox, SandboxStatus};
 
 impl AgentAccessRecord {
     pub(crate) fn notification_text(&self) -> Result<String, AgentAccessError> {
@@ -72,16 +72,19 @@ async fn prepare(
         .agent
         .as_ref()
         .ok_or(AgentAccessError::NotFound)?;
+    let sandbox = &snapshot.resource.lineage.sandbox;
     let previous = record.progress.clone();
     if let Some(intent) = previous.notification_intent.as_ref() {
         let command = admitted(store, &record, session).await?;
         if let Some(command) = command {
             if retryable_turn_change(&command) {
-                let mut next = choose(agent, Some(intent), true)?;
-                next.previous_commands
-                    .push(command.receipt.envelope.command_id);
-                record.progress.notification_intent = Some(next);
-                record.progress.notification_command_id = None;
+                select_unadmitted(
+                    &mut record,
+                    agent,
+                    sandbox,
+                    Some(intent),
+                    Some(command.receipt.envelope.command_id),
+                )?;
             } else {
                 // A lost admission reply is pinned even when its turn ended.
                 // Unknown delivery never changes kind, target or key.
@@ -91,7 +94,7 @@ async fn prepare(
             if previous.notification_command_id.is_some() {
                 return Err(AgentAccessError::Unavailable.into());
             }
-            record.progress.notification_intent = Some(choose(agent, Some(intent), false)?);
+            select_unadmitted(&mut record, agent, sandbox, Some(intent), None)?;
         }
     } else {
         // Only the new hot workflow selects intent. Legacy paused workflows
@@ -99,34 +102,66 @@ async fn prepare(
         if previous.notification_command_id.is_some() {
             return Err(AgentAccessError::Invalid.into());
         }
-        record.progress.notification_intent = Some(choose(agent, None, false)?);
+        select_unadmitted(&mut record, agent, sandbox, None, None)?;
     }
-    if record.progress == previous {
+    if record.phase == AgentAccessPhase::Notifying && record.progress == previous {
         return Ok(record);
-    }
-    if record.progress.notification_command_id.is_none() {
-        let sandbox = &snapshot.resource.lineage.sandbox;
-        let hot = record
-            .progress
-            .hot_update
-            .as_ref()
-            .ok_or(AgentAccessError::Invalid)?;
-        if sandbox.status != SandboxStatus::Active
-            || sandbox.runtime.as_ref() != Some(&hot.runtime)
-            || sandbox.lifecycle.next_authority != hot.lifecycle_next_authority
-        {
-            return Err(AgentAccessError::Conflict.into());
-        }
     }
     // The command admission transaction writes this same Agent document. An
     // old observation cannot commit between the absent-command read and this
     // persisted replacement; a later old admission also fails its revision.
+    // Terminal drift is committed with this proof too, so an obsolete callback
+    // cannot retain the Sandbox's scope-update lock indefinitely.
     fence(store, &snapshot, session).await?;
     let revision = record.revision;
     record.revision += 1;
     record.updated_at = layer2_core::now_rfc3339();
     replace_leased(store, lease, revision, &record, session).await?;
     Ok(record)
+}
+
+fn select_unadmitted(
+    record: &mut AgentAccessRecord,
+    agent: &Agent,
+    sandbox: &Sandbox,
+    previous: Option<&AgentAccessNotificationIntent>,
+    failed_command: Option<layer2_core::ids::AgentCommandId>,
+) -> Result<(), AgentAccessError> {
+    let hot = record
+        .progress
+        .hot_update
+        .as_ref()
+        .ok_or(AgentAccessError::Invalid)?;
+    if sandbox.lifecycle.next_authority != hot.lifecycle_next_authority
+        || sandbox
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime != &hot.runtime)
+        || matches!(
+            sandbox.status,
+            SandboxStatus::Pausing | SandboxStatus::Paused | SandboxStatus::Retiring
+        )
+    {
+        // The command lookup precedes this check. Only an absent command or a
+        // proved pre-write turn failure can reach it; uncertain delivery stays
+        // pinned to its existing receipt even after the runtime changes.
+        record.phase = AgentAccessPhase::Failed;
+        record.error = Some("agent_notification_runtime_changed".into());
+        record.lease = None;
+        record.progress.notification_command_id = failed_command;
+        return Ok(());
+    }
+    if sandbox.status != SandboxStatus::Active || sandbox.runtime.is_none() {
+        // Ordinary credential rotation can settle on the same runtime.
+        return Err(AgentAccessError::Conflict);
+    }
+    let mut next = choose(agent, previous, failed_command.is_some())?;
+    if let Some(command) = failed_command {
+        next.previous_commands.push(command);
+    }
+    record.progress.notification_intent = Some(next);
+    record.progress.notification_command_id = None;
+    Ok(())
 }
 
 fn choose(
