@@ -17,6 +17,7 @@ use crate::store::MongoSandboxStore;
 
 mod effects;
 mod notification;
+mod waiting_quiet;
 
 pub(crate) struct AgentAccessWorker {
     store: Arc<MongoSandboxStore>,
@@ -195,13 +196,13 @@ impl AgentAccessWorker {
                 }
             }
             Phase::WaitingQuiet => {
-                if sandbox.status == SandboxStatus::Active && self.connections_ready(record).await?
-                {
-                    self.store.schedule_access_request_pause(lease).await?;
-                } else if sandbox.status == SandboxStatus::Paused {
-                    // A later manual pause is not consent to automatically revive.
-                    return Err(AgentAccessError::Invalid);
-                }
+                waiting_quiet::schedule(
+                    &self.store,
+                    record,
+                    &sandbox,
+                    self.connections_ready(record),
+                )
+                .await?;
             }
             Phase::Pausing => self.paused(record, &sandbox).await?,
             Phase::Granting => self.grant(record, &sandbox).await?,
