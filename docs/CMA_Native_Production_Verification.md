@@ -2,6 +2,26 @@
 
 ## Local production candidates — PR #1027
 
+Release preparation at **12:41 SGT** pins the locally built API source
+`cef50ef8f821307e0981c122f17eff4116dc1201`, image
+`sha256:779341fd1d4c458badc746a194268b09a66c6291d0900e9768d04efef54689f8`.
+This candidate overlaps independent same-owner metadata reads after credential
+resolution and adds safe connection-phase timings. All 36 relevant broker/browser
+tests, strict Clippy and the local Linux/amd64 release build passed. Image
+publication, scanning, rollout and final-candidate measurements are tracked
+separately; this preparation entry does not claim their completion.
+
+The completed Web53/API6571 series has four functional passes. Source-flow
+Send eligibility was **3.530, 4.083, 4.124 and 3.991 seconds**; operation-success
+observations were **4.723, 4.816, 4.870 and 4.733 seconds**. Durable input
+acknowledgement was **4.277, 5.817, 5.620 and 5.484 seconds**. Each repeated
+sample encountered one definite non-admission conflict, retried the identical
+key and body, and completed exactly one logical input. Thus source eligibility
+passed 4/4, durable acknowledgement passed 1/4, and both thresholds together
+passed 1/4. Actual browser Composer timing remains unmeasured; these results
+cannot serve as a browser upper bound. Evidence is frozen in
+`/tmp/cma-source-web53-api6571-series-summary-20261015.json`.
+
 Current follow-up at **12:26 SGT**: API `6571e110` is deployed and the connection
 publication repair passed a fresh functional creation sample. Web `53bbe2f7`
 completed rollout at 12:25:35 SGT, generation 110, image
