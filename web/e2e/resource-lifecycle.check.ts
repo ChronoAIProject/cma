@@ -247,10 +247,12 @@ for (const width of [1440, 390]) {
     const geometry = await dialog.evaluate((element) => {
       const box = element.getBoundingClientRect();
       return (
-        box.left >= 0 &&
-        box.right <= innerWidth &&
-        box.top >= 0 &&
-        box.bottom <= innerHeight &&
+        box.left >= innerWidth * 0.2 - 1 &&
+        box.right <= innerWidth * 0.8 + 1 &&
+        box.top >= innerHeight * 0.2 - 1 &&
+        box.bottom <= innerHeight * 0.8 + 1 &&
+        Math.abs((box.left + box.right) / 2 - innerWidth / 2) <= 1 &&
+        Math.abs((box.top + box.bottom) / 2 - innerHeight / 2) <= 1 &&
         element.scrollWidth <= element.clientWidth
       );
     });
@@ -297,24 +299,29 @@ for (const width of [1440, 390]) {
       const head = rect('.sidebar__head'),
         tree = rect('.resource-tree'),
         account = rect('.sidebar__account');
-      const brand = rect('.sidebar__brand'),
-        badge = rect('.sidebar__build'),
-        create = rect('.sidebar__new'),
+      const create = rect('.sidebar__new'),
         toggle = rect('.sidebar__toggle');
       return {
         fills: tree.height > 600 && account.top - tree.bottom <= 12 && tree.top - head.bottom <= 12,
-        separated:
-          brand.right <= badge.left && badge.right <= create.left && create.right <= toggle.left,
+        separated: create.right <= toggle.left,
         fits: toggle.right <= element.getBoundingClientRect().right,
       };
     });
     expect(geometry).toEqual({ fills: true, separated: true, fits: true });
+    await expect(page.locator('.sidebar__brand, .sidebar__build')).toHaveCount(0);
+    const brand = page.locator('.service-tabs__brand');
+    const badge = page.locator('.service-tabs__build');
+    await expect(badge).toBeVisible();
+    const brandBox = (await brand.boundingBox())!;
+    const badgeBox = (await badge.boundingBox())!;
+    expect(badgeBox.x).toBeGreaterThanOrEqual(brandBox.x + brandBox.width);
+    expect(badgeBox.y).toBeGreaterThan(brandBox.y);
     await home.click();
     await expect(page).toHaveURL(`${baseURL}/`);
-    await expect(page.getByRole('heading', { name: 'Welcome to CMA' })).toBeVisible();
-    await expect(page.locator('.frame__details')).toBeEmpty();
+    await expect(page.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeVisible();
+    await expect(page.locator('.frame')).toBeHidden();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    const character = page.getByRole('button', { name: 'Spin CMA character' });
+    const character = page.getByRole('button', { name: 'Get Started', exact: true });
     await expect(character).toHaveAttribute('data-ready', '');
     const canvas = character.locator('canvas');
     const pixels = () =>
@@ -338,16 +345,18 @@ for (const width of [1440, 390]) {
     const first = await pixels();
     expect(first.colored).toBeGreaterThan(1000);
     await expect.poll(async () => (await pixels()).signature).not.toBe(first.signature);
-    await character.click();
     await page.screenshot({ path: info.outputPath(`home-${width}.png`), fullPage: true });
     await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
     await page.evaluate(() => document.fonts.ready);
     await expect.poll(async () => (await pixels()).colored).toBeGreaterThan(1000);
     await page.screenshot({ path: info.outputPath(`home-${width}-dark.png`), fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await expect(character).toBeDisabled();
+    await expect(character).toBeEnabled();
     const still = await canvas.screenshot();
     expect(await canvas.screenshot()).toEqual(still);
+    await character.click();
+    await expect(page).toHaveURL(`${baseURL}/agent-manager`);
+    await expect(page.locator('.frame')).toBeVisible();
     if (width === 390)
       await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
     await page.locator('.sidebar__new').click();
