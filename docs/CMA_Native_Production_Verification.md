@@ -39,8 +39,9 @@ check was successfully reused once in the new sample; most remaining delay
 occurred before the operation exposed its Agent, then during sequential loading.
 
 The latest resume retained the original Claim, Sandbox and PVC, replaced only
-the Pod, and preserved exact `/home` and `/home/.codex` contents, metadata and
-links. Conversation identity and history survived. The full-home mount uses
+the Pod, and preserved verification fixtures throughout `/home` and
+`/home/.codex`: exact bytes, metadata and links. Conversation identity and
+history survived. The full-home mount uses
 the original PVC's `home` subdirectory mounted at `/home`. A read-only native
 timeline observed about 12 seconds from scheduling until Pod infrastructure
 was ready to start containers, followed by actual runtime/protocol startup.
