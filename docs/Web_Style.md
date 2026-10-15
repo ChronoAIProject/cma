@@ -746,7 +746,9 @@ Send until complete history, current Sandbox state and required connections are
 verified; an early activity page alone does not authorize interaction.
 
 Once a retained creation operation names its actual Agent, its modal may prepare
-that exact Agent's transport while lineage is checked. Transfer the same v2
+that exact Agent's transport and owner-authorized connection check while lineage
+is checked. Transfer both once to the same Agent, owner and client after personal
+access is verified. Transfer the same v2
 selection once into navigation, keeping the loader's fresh account check and the
 existing persisted transport choice. Closing or changing the creation scope
 cancels preparation; account and local sign-in epoch changes invalidate it. A
@@ -756,8 +758,25 @@ After current personal access is verified for an exact Agent, check required
 connections while its conversation loads. Keep the result bound to that Agent,
 viewer, client and uninterrupted authorization generation. Refused or uncertain
 access discards the result and cancels pending checks. Send still waits for full
-history and current Sandbox eligibility, and each click freshly checks connections
-before submitting the captured draft. No extra preparation notice is introduced.
+history and current Sandbox eligibility. A v2 send may consume the creation's
+transferred ready connection report once, within one second of receiving it on a
+monotonic clock. Opening settings, a known grant/profile change, loss of focus or
+visibility, or a changed authorization scope discards this handoff. Ordinary,
+expired and subsequent sends freshly check connections before submitting the
+captured draft; missing connections keep the existing recovery dialog. Every send
+still freshly checks account identity and the server independently authorizes
+admission and execution, including required connections before dispatch. No extra
+preparation notice is introduced.
+
+The same current personal access read may supply immutable Agent, Workspace and
+Sandbox IDs to overlap fresh reads. Load the Workspace beside the Agent after
+the normal v2 entry identity check, then verify both fresh projections against
+those IDs before the final account check and any publication. Observe the parent
+Sandbox while history loads; that observation never admits input before the
+complete authorized conversation is ready. Owner/client/access changes,
+visibility loss, observation expiry and newly discovered bootstrap authority
+retain their existing invalidation and recheck behavior. A changed lineage
+requires a new load and cannot reuse the previously loaded view.
 
 A newly admitted Agent may open while its recorded state is **Starting**, after
 verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
@@ -1312,7 +1331,13 @@ and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
-separate facts. A standard Button opens the Sandbox's canonical progress page.
+separate facts. Accepted requests show a concise acknowledgement; the underlying
+wait and the standard Button to the Sandbox's canonical progress page stay in a
+closed **Operation progress** disclosure. Dismissing the acknowledgement keeps
+background observation and the target's busy lock, and a later failure becomes
+visible. Resume verifies the current owner's connections without opening a modal
+when they are ready; missing connections open the existing connection wizard.
+Unverifiable or changed-owner results keep the action held and show the error.
 After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
@@ -2097,3 +2122,11 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Prepare transport for the actual created Agent during lineage reads, hand it to one navigation load with fresh entry authorization, and overlap exact-Agent connection verification with authorized conversation loading. Preserve retained transport choices, cancel stale account/target generations, and keep all history, parent and click-time Send checks. |
 
 | 2026-10-14 | Open actual Starting Agents during their own lifecycle bootstrap only with exact server-proven lineage and current owner/parent checks. Fresh Agent and parent reads permit durable v2 queued input while that parent is Provisioning or Installing; withdrawn proof, lifecycle barriers and AG-UI remain held. Preserve unresolved Worktree state and distinguish queued acceptance from runtime readiness. |
+
+| 2026-10-15 | During an explicit Sandbox revival, permit owner messages through the retained durable Responses v2 transport after fresh matching Agent, parent, owner and Worktree checks. Acknowledge the durable receipt while retaining actual Resuming state and inactive runtime resources; dispatch waits for backend readiness. Stale observations, checkpoints, other lifecycle operations and AG-UI keep input held. |
+
+| 2026-10-15 | Retry an explicit Responses v2 admission conflict up to three times while keeping the exact retained message and request key. Recheck account authority and the retained pending intent before each retry, honor navigation cancellation, and acknowledge only a durable receipt. A received receipt, uncertain network outcome, different refusal or exhausted retry budget retains the existing explicit recovery behavior. |
+
+| 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |
+| 2026-10-15 | Prepare exact-owner Agent connections during creation and transfer the result into its authorized personal view. Permit one immediate v2 send to consume that report within one second; scope, settings, grants and visibility changes invalidate it. Preserve normal per-send recovery and all client/server authorization checks. |
+| 2026-10-15 | Use only current personal-access lineage IDs to overlap fresh Workspace and Agent reads and start parent Sandbox observation during conversation loading. Keep entry/final account checks, full-history input gating, fresh projection identity checks and all observation invalidation rules. |

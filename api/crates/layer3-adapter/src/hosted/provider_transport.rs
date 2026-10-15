@@ -265,6 +265,16 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
     ) -> crate::Result<Socket> {
+        self.connect_with_prepared_stream(endpoint, agent_id, None)
+            .await
+    }
+
+    async fn connect_with_prepared_stream(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        agent_id: &AgentSlot,
+        prepared: Option<crate::agent_sandbox::RuntimeStream>,
+    ) -> crate::Result<Socket> {
         let mut url = endpoint.conversation(agent_id.as_str())?;
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
@@ -284,12 +294,16 @@ impl ProviderHostedControlTransport {
         };
         if endpoint.native_binding().is_some() {
             let connected = async {
-                let stream = self
-                    .native_stream(
-                        endpoint,
-                        crate::agent_sandbox::RuntimeStreamKind::Conversation,
-                    )
-                    .await?;
+                let stream = match prepared {
+                    Some(stream) => stream,
+                    None => {
+                        self.native_stream(
+                            endpoint,
+                            crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                        )
+                        .await?
+                    }
+                };
                 let (socket, _) =
                     tokio_tungstenite::client_async_with_config(request, stream, Some(config))
                         .await
@@ -323,6 +337,8 @@ impl ProviderHostedControlTransport {
 mod control;
 #[path = "native_http_pool.rs"]
 mod native_pool;
+#[path = "provider_open.rs"]
+mod open;
 
 #[path = "native_status.rs"]
 mod native_status;
@@ -400,18 +416,9 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
         timing.completed("transport_endpoint");
-        let response = self
-            .exchange_at(handle, &endpoint, RequestFrame::OpenAgent(launch.clone()))
+        let (mut receipt, socket) = self
+            .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
-        let mut receipt = match response {
-            ResponseFrame::OpenAgent(receipt) => receipt,
-            ResponseFrame::Failure(failure) => {
-                return Err(super::provider_http::runtime_failure(failure))
-            }
-            _ => unreachable!("control correlation verifies open response operation"),
-        };
-        timing.completed("runtime_open");
-        let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
         timing.completed("conversation_transport");
         let subscription = if settings.own_credential {
             match &self.subscriptions {

@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
@@ -101,6 +101,24 @@ export function AgentSurface({
   const verified = connection.verified;
   const connectionError = connection.error;
   const connections = useConnectionGate(!readOnly, connection.scope);
+  const discardPrepared = connection.discardPrepared;
+  useLayoutEffect(() => {
+    discardPrepared();
+  }, [detailsOpen, discardPrepared]);
+  const connectionConfiguration =
+    state.status === 'ready'
+      ? JSON.stringify([state.detail.sandbox.id, state.detail.sandbox.profile, state.detail.reach])
+      : undefined;
+  const observedConfiguration = useRef<{ scope: object; value: string } | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (connectionConfiguration === undefined) return;
+    if (
+      observedConfiguration.current?.scope === connection.scope &&
+      observedConfiguration.current.value !== connectionConfiguration
+    )
+      discardPrepared();
+    observedConfiguration.current = { scope: connection.scope, value: connectionConfiguration };
+  }, [connectionConfiguration, connection.scope, discardPrepared]);
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus();
@@ -350,6 +368,7 @@ export function AgentSurface({
               { type: 'agent', id: agentId },
               viewerId ?? verified.owner,
               () => void controller.send(content, onAccepted),
+              state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
             );
           }}
           onStop={controller.interrupt}

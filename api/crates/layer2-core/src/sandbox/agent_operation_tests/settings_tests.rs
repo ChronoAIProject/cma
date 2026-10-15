@@ -10,6 +10,49 @@ fn desired() -> AgentSettings {
 }
 
 #[tokio::test]
+async fn selected_model_is_atomically_retained_with_each_dispatched_turn() {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let ready = test_agent(AgentStatus::Ready, None);
+    seed_active_parent(&store).await;
+    store.create_agent(ready.clone()).await.unwrap();
+    let (sender, _) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    let selection = AgentSettings {
+        model: "selected-alternate".into(),
+        ..desired()
+    };
+    service
+        .update_settings(&owner(), &ready.id, selection.clone())
+        .await
+        .unwrap();
+    service
+        .send_message(&owner(), &ready.id, "use selected model".into())
+        .await
+        .unwrap();
+    let entries = store.agent_log(&ready.id, 0, 30).await.unwrap();
+    let models: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            AgentLogKind::TurnStarted { model, .. } => Some(model.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(models, [Some(selection.model)]);
+    assert_eq!(
+        store.get_agent(&ready.id).await.unwrap().unwrap().profile,
+        ready.profile
+    );
+    let serialized = serde_json::to_vec(&entries).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Vec<AgentLogEntry>>(&serialized).unwrap(),
+        entries
+    );
+}
+
+#[tokio::test]
 async fn settings_fence_before_rpc_preserve_profile_and_replay_without_second_effect() {
     let store = Arc::new(InMemorySandboxStore::default());
     let ready = test_agent(AgentStatus::Ready, None);

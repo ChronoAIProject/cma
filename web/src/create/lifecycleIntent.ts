@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from '../api/client';
 import type {
   AgentLifecycleCreateInput,
@@ -117,7 +118,9 @@ export function useLifecycleIntent(
     let timer: ReturnType<typeof setTimeout> | undefined;
     let phase: string | undefined;
     let phaseStartedAt = Date.now();
+    let retryDelay = 500;
     const poll = async () => {
+      const readStartedAt = Date.now();
       try {
         const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
         if (abort.signal.aborted) return;
@@ -125,21 +128,38 @@ export function useLifecycleIntent(
           value.id !== receipt.id ||
           (current.current?.agentId && value.agent_id !== current.current.agentId)
         )
-          throw new Error('Agent setup identity could not be verified.');
+          throw new ProtocolError('Agent setup identity could not be verified.');
         if (value.phase !== phase) {
           phase = value.phase;
           phaseStartedAt = Date.now();
         }
         setOperation(value);
         setFailure(undefined);
+        retryDelay = 500;
         if (value.status === 'waiting_for_connection') setConnection(value.connection);
-        if (value.status === 'queued' || value.status === 'running')
+        if (value.status === 'queued' || value.status === 'running') {
           // A slow earlier phase must not add a full second to observing Agent readiness.
+          // Count the read itself toward the cadence without overlapping requests.
           // Keep each new phase responsive, then back off if that phase stalls.
-          timer = setTimeout(() => void poll(), Date.now() - phaseStartedAt < 10000 ? 250 : 1000);
+          const interval = Date.now() - phaseStartedAt < 10000 ? 250 : 1000;
+          const elapsed = Math.max(0, Date.now() - readStartedAt);
+          timer = setTimeout(() => void poll(), Math.max(0, interval - elapsed));
+        }
       } catch (error: unknown) {
-        if (!abort.signal.aborted)
-          setFailure(error instanceof Error ? error.message : 'Status unavailable.');
+        if (abort.signal.aborted) return;
+        setFailure(error instanceof Error ? error.message : 'Status unavailable.');
+        if (
+          error instanceof ProtocolError ||
+          (error instanceof ApiError && !error.isRetryable && error.status !== 408)
+        ) {
+          // Lost access or identity invalidates the visible observation, but
+          // never erases the retained command or submits a replacement.
+          setOperation(undefined);
+          setConnection(undefined);
+          return;
+        }
+        timer = setTimeout(() => void poll(), retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 5000);
       }
     };
     void poll();

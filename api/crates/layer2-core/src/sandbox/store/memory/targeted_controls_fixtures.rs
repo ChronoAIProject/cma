@@ -115,6 +115,7 @@ pub(in crate::sandbox::store::memory) async fn fixture() -> (
         },
         observed_agent_revision: agent.revision,
         agent_created_at: agent.created_at.clone(),
+        retry_deadline: None,
     };
     (store, agent, request, response)
 }

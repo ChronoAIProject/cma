@@ -33,6 +33,7 @@ it.each(['personal', 'refused'] as const)(
       services: [],
     });
     const client = agentClient({ resourceViews: sdk, readAgent: detail });
+    const parent = vi.spyOn(client, 'readSandbox');
     const view = render(
       <CmaClientProvider client={client}>
         <Console
@@ -51,6 +52,7 @@ it.each(['personal', 'refused'] as const)(
     await waitFor(() => expect(sdk.agents.readAccessible).toHaveBeenCalledOnce());
     expect(check).not.toHaveBeenCalled();
     expect(detail).not.toHaveBeenCalled();
+    expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
     await act(async () => {
       if (access === 'personal') finish(authorized);
       else refuse(new ApiError(403, 'Not allowed'));
@@ -58,11 +60,16 @@ it.each(['personal', 'refused'] as const)(
     if (access === 'personal') {
       await waitFor(() => expect(check).toHaveBeenCalledOnce());
       expect(detail).toHaveBeenCalledOnce();
+      expect(parent.mock.calls.filter(([id]) => id === WIRE_AGENT.sandbox.id)).toHaveLength(1);
+      expect(parent).toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, {
+        signal: expect.any(AbortSignal),
+      });
       expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
     } else {
       expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
       expect(check).not.toHaveBeenCalled();
       expect(detail).not.toHaveBeenCalled();
+      expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
     }
     view.unmount();
   },

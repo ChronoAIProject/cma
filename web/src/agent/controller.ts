@@ -1,18 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
-import { loadAgent, transientReadFailure, type ReadyAgent } from './loadAgent';
+import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
-import type { AgentLiveEvent, AgentSummary, SandboxEvent } from '../api/types';
+import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { currentAgentStatus, sameAgent } from './status';
 import { mergeTranscriptSnapshot } from './chronology';
-import {
-  useSandboxInput,
-  type SandboxInputAvailability,
-  type SandboxResourceAvailability,
-} from './sandboxInput';
+import { useSandboxInput } from './sandboxInput';
 import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
 import { useAgentState } from './state';
 import { foldV2Frame, foldV2Item } from './transport/projection';
@@ -20,47 +16,14 @@ import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
-import { useQueuedMessage, type QueuedMessageControl } from './transport/queuedStatus';
-
-export type AgentResourceState =
-  | { readonly status: 'idle' }
-  | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
-  | ({ readonly status: 'ready' } & ReadyAgent);
-
-export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete';
-export type ApprovalDecision = 'allow' | 'deny' | 'abort';
-
-export interface AgentController {
-  readonly queuedMessage?: QueuedMessageControl;
-  readonly pendingMessage?: string;
-  readonly acceptedMessage?: string;
-  readonly pendingControl?: boolean;
-  readonly controlNotice?: string;
-  readonly controlsUnavailable?: boolean;
-  readonly recoverPending?: () => Promise<void>;
-  readonly state: AgentResourceState;
-  readonly inputAvailability: SandboxInputAvailability;
-  readonly resourceAvailability: SandboxResourceAvailability;
-  readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
-  readonly pending?: AgentCommand;
-  readonly actionError?: string;
-  readonly reload: () => void;
-  readonly clearActionError: () => void;
-  readonly send: (content: string, onAccepted?: () => void) => Promise<void>;
-  readonly interrupt: () => Promise<void>;
-  readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
-  readonly stop: () => Promise<void>;
-  readonly delete: () => Promise<void>;
-}
-
-interface AgentControllerOptions {
-  readonly viewerId?: string;
-  readonly suspended?: boolean;
-  readonly summary?: AgentSummary;
-  readonly onHierarchyChange?: () => void;
-  readonly onDeleted?: () => void;
-}
+import { useQueuedMessage } from './transport/queuedStatus';
+import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
+export type {
+  AgentCommand,
+  AgentController,
+  AgentResourceState,
+  ApprovalDecision,
+} from './controllerTypes';
 
 function errorMessage(error: unknown): string {
   if (isIdentityChanged(error)) return new IdentityChangedError().message;
@@ -95,19 +58,39 @@ export function useAgentController(
   options: AgentControllerOptions = {},
 ): AgentController {
   const suspended = options.suspended === true;
+  const {
+    agentId: lineageAgentId,
+    workspaceId: lineageWorkspaceId,
+    sandboxId: lineageSandboxId,
+  } = options.authorizedLineage ?? {};
+  const lineage = useMemo(
+    () =>
+      !suspended &&
+      options.viewerId !== undefined &&
+      lineageAgentId === agentId &&
+      lineageAgentId !== undefined &&
+      lineageWorkspaceId !== undefined &&
+      lineageSandboxId !== undefined
+        ? { agentId: lineageAgentId, workspaceId: lineageWorkspaceId, sandboxId: lineageSandboxId }
+        : undefined,
+    [agentId, suspended, options.viewerId, lineageAgentId, lineageWorkspaceId, lineageSandboxId],
+  );
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [, setRequestRevision] = useState(0);
   const [state, setState, stateRef] = useAgentState(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
-  const loaded = useRef<{ client: CmaWebClient; agentId?: string; revision: number } | undefined>(
-    undefined,
-  );
+  const loaded = useRef<
+    | { client: CmaWebClient; agentId?: string; revision: number; lineage?: AgentLoadLineage }
+    | undefined
+  >(undefined);
   const { inputAvailability, resourceAvailability, progressObservation } = useSandboxInput(
     client,
     suspended ? undefined : agentId,
-    state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
+    state.status === 'ready' && state.detail.id === agentId
+      ? state.detail.sandbox.id
+      : lineage?.sandboxId,
     state.status === 'ready' &&
       state.detail.id === agentId &&
       state.detail.status === 'starting' &&
@@ -116,6 +99,10 @@ export function useAgentController(
       ? state.detail.bootstrap
       : undefined,
     options.viewerId,
+    options.viewerId !== undefined &&
+      (state.status === 'ready' && state.detail.id === agentId
+        ? state.v2 !== undefined
+        : lineage !== undefined),
   );
   const activeTurn =
     state.status === 'ready' &&
@@ -214,14 +201,22 @@ export function useAgentController(
         loaded.current?.client === client &&
         loaded.current.agentId === agentId &&
         loaded.current.revision === revision &&
+        loaded.current.lineage === lineage &&
         stateRef.current.status === 'ready'
       )
         return;
-      loaded.current = { client, agentId, revision };
+      loaded.current = { client, agentId, revision, lineage };
       setState({ status: 'loading' });
-      void loadAgent(client, agentId, controller.signal, true, (ready) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
-      })
+      void loadAgent(
+        client,
+        agentId,
+        controller.signal,
+        true,
+        (ready) => {
+          if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+        },
+        lineage,
+      )
         .then((ready) => {
           if (controller.signal.aborted) return;
           liveCursor.current = ready.conversation.cursor;
@@ -235,7 +230,7 @@ export function useAgentController(
     return () => {
       controller.abort();
     };
-  }, [agentId, applyLive, client, revision, setState, stateRef, suspended]);
+  }, [agentId, applyLive, client, lineage, revision, setState, stateRef, suspended]);
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;

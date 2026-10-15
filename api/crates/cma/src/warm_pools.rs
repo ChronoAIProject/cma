@@ -112,12 +112,15 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
     }
 }
 
+const SYSTEM_ACTOR: &str = "cma-system";
+
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
     image: RuntimeImage,
     home: Option<HomeVolumePolicy>,
     default_capacity: layer3_adapter::SandboxCapacity,
+    default_target: u32,
 }
 
 impl NativeWarmPools {
@@ -127,6 +130,7 @@ impl NativeWarmPools {
         image: String,
         home: Option<HomeVolumePolicy>,
         default_capacity: layer3_adapter::SandboxCapacity,
+        default_target: u32,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -134,7 +138,57 @@ impl NativeWarmPools {
             image: deployment_image(image),
             home,
             default_capacity,
+            default_target,
         })
+    }
+
+    /// Persist the deployment-owned default target before the reconciler starts.
+    /// The target is keyed by the exact immutable plan, so a runtime image or
+    /// Pod-policy change creates a new pool identity and never mutates a claimed
+    /// pool. Provider resources are still created only by the normal reconciler.
+    pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
+        if self.default_target == 0 {
+            return Ok(());
+        }
+        let provider = self
+            .adapter
+            .native_pools()
+            .ok_or(WarmPoolError::Unavailable)?;
+        let home = self.home.clone().ok_or(WarmPoolError::Unavailable)?;
+        let body = ConfigureWarmPoolBody {
+            cpu_millis: self.default_capacity.cpu_millis,
+            memory_mib: self.default_capacity.memory_mib,
+            target_replicas: self.default_target,
+        };
+        let plan = provider
+            .plan(&NativePoolSpec {
+                image: self.image.clone(),
+                cpu_millis: body.cpu_millis,
+                memory_mib: body.memory_mib,
+                home,
+            })
+            .map_err(|_| WarmPoolError::Invalid)?;
+        // An operator may already have configured this exact immutable plan
+        // under another idempotency key. Reuse that durable target instead of
+        // tripping the collection's unique plan index during startup.
+        if self
+            .store
+            .list()
+            .await?
+            .iter()
+            .any(|target| target.plan.config_sha256 == plan.config_sha256)
+        {
+            return Ok(());
+        }
+        let target = default_target(plan, body);
+        if self.store.find(&target.id).await?.is_some() {
+            return Ok(());
+        }
+        // A prior image/policy remains independently owned and may still back
+        // retained Sandboxes. It is deliberately not resized or deleted here.
+        // Lost insert acknowledgements are resolved by the store's idempotent
+        // identity lookup. A duplicate exact plan is safe to leave untouched.
+        self.store.insert(target).await.map(|_| ())
     }
 
     pub fn spawn(
@@ -303,6 +357,25 @@ fn authorize(caller: &Caller) -> Result<(), WarmPoolError> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| WarmPoolError::Forbidden)
+}
+
+fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBody) -> PoolTarget {
+    let key = format!("system-default-v1-{}", plan.config_sha256);
+    PoolTarget {
+        id: target_id(SYSTEM_ACTOR, &key),
+        document_schema_version: 1,
+        revision: 1,
+        actor: SYSTEM_ACTOR.into(),
+        target_replicas: requested.target_replicas,
+        requested,
+        plan,
+        binding: None,
+        applied_revision: 0,
+        error: None,
+        lease: None,
+        lease_until: mongodb::bson::DateTime::from_millis(0),
+        reconcile_after: mongodb::bson::DateTime::from_millis(0),
+    }
 }
 
 fn target_id(actor: &str, key: &str) -> String {

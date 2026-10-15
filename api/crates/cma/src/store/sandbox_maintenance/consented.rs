@@ -248,6 +248,18 @@ async fn apply(
     let requested_at = layer2_core::now_rfc3339();
     let (expected_revision, sandbox, event) = match action {
         Action::Pause => {
+            // Another approved request may have expanded this shared Sandbox
+            // while this one waited. Reject stale consent before downtime;
+            // the later grant must not discover it after pausing the runtime.
+            let approved = record.approved_services()?;
+            if current
+                .credential
+                .effective_reaches()
+                .iter()
+                .any(|service| !approved.contains(service))
+            {
+                return Err(AgentAccessError::Invalid.into());
+            }
             let activities = live_activities(store, &agents, session).await?;
             match apply_consented_quiet_pause(
                 &current,
@@ -431,3 +443,7 @@ mod tests;
 #[cfg(test)]
 #[path = "consented_revival_tests.rs"]
 mod revival_tests;
+
+#[cfg(test)]
+#[path = "consented_scope_tests.rs"]
+mod scope_tests;

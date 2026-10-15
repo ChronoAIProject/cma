@@ -185,6 +185,7 @@ impl Fixture {
     fn turn(&self, sequence: u64, owner: &str) {
         for kind in [
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: sequence,
                 origin_key: None,
             },

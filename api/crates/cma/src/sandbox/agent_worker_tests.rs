@@ -49,6 +49,8 @@ const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod fixture_store;
 use fixture_store::FixtureStore;
+mod connection_contention_tests;
+mod first_message_contention_tests;
 mod lifecycle_connection_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
@@ -880,6 +882,7 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
             recovery_generation: 1,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence,
             origin_key: Some("in-progress-first".into()),
         },

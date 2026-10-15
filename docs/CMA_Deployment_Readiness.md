@@ -5,7 +5,40 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The latest completed production deployment is PR #1022, candidate `d9a6d440`,
+At 12:26 SGT, API `6571e110` remains deployed. Web `53bbe2f7` replaced
+`47b56be7` at 12:25:35 SGT with verified public assets. Live Stop, exact interruption
+and one completed follow-up now pass; original-volume resume also passes identity
+checks, with 505 ms acceptance and 26.353 s actual readiness. The first API6571
+creation sample completed functionally but exceeded five seconds (5.224 s to
+source-flow Send eligibility). Fresh optimized-Web timing and actual browser
+acceptance remain pending. The following 12:16 snapshot is historical.
+
+PR #1027 is being tested through authorized local production builds. As of
+12:16 SGT on 2026-10-15, Agent Manager source `6571e110` and Web source
+`47b56be7` are deployed in the existing CMA cluster. The combined API image
+`sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d`
+was published after Google authentication was restored. Generation 31 and its
+exact imageID were Ready at 12:16:26 SGT; authenticated owner access and retained
+fixture identities, settings and history passed continuity checks. Branch head
+`0c16330e` passed all 15 CI jobs; it is separate from the deployed image source.
+Runtime `cad2058`, Event Gateway and the shared Web image remain unchanged,
+and Image Manager remains undeployed. The Deployment keeps prepared target one
+and singleton/Recreate operation. Strict kubeconform validated all 48 resources
+without skips; kube-linter and HTTPRoute ownership checks passed.
+
+The API748 optional-GitHub existing-Sandbox diagnostic passed, and the 12:16
+read-only follow-up confirmed the original Claim, Sandbox, PVC and PV identities
+and full-home template mount. Two retired test fixtures also passed exact native
+resource absence checks. These diagnostic and cleanup results do not establish
+final API6571 acceptance. Browser/model, fresh warm creation and live Stop
+verification are still pending. The five-second creation goal is not yet
+consistently met; source-ordered
+measurements are not browser measurements. Current candidate evidence and
+remaining acceptance gaps are recorded in the
+[PR #1027 verification](CMA_Native_Production_Verification.md#local-production-candidates--pr-1027).
+The compatible rollback floor below applies to these production records.
+
+The preceding merged production deployment is PR #1022, candidate `d9a6d440`,
 merged as `4dc1325f`, with all 15 CI jobs passed. Agent Manager/Web were Ready
 at 23:13:31 SGT on 2026-10-14. Warm creation reached the exact Agent surface
 in 10.179 seconds and enabled Send in 11.696 seconds, so the strict five-second
@@ -67,6 +100,30 @@ message receipts and logs intact; do not rewrite or delete records to make an
 older image parse them. Runtime and full-home storage are unchanged by this
 API/Web-only candidate. Capture retained workload and conversation evidence
 before and after any repair, as for an upgrade.
+
+The per-turn model correction in `c8ee3872` adds optional `model` evidence to
+durable `TurnStarted` events. The value is captured from the selected Agent
+settings in the same fenced transaction that admits the turn; later settings
+changes cannot rewrite a completed response's model. The new reader accepts
+older events without this field. Older API binaries use strict event
+deserialization and reject a new event containing `model`, so compatibility is
+one-way: **after the first model-bearing turn is committed, every Agent Manager
+reader and rollback image must include `c8ee3872` or an equivalent compatible
+reader, as well as all preceding durable-format support**. A pre-`c8ee3872` image
+is no longer a valid rollback even after that turn completes or its Agent stops.
+
+Before allowing the new writer to serve traffic, retain an immutable compatible
+API image digest and record its source revision and readiness checks in the
+rollout evidence. For the next combined performance/lifecycle candidate, the
+standalone `c8ee3872` API build is the compatibility floor; keep its digest as the
+rollback target instead of the previously deployed API digest. Complete the
+transition of old Agent Manager readers before accepting new model-bearing
+turns; do not leave an old replica serving retained histories during a mixed
+rollout. A rollback changes the application image only and must preserve the
+stored events, message receipts, original PVCs and conversations. Verify both a
+retained model-bearing turn and a new turn after recovery. Do not remove the
+field, rewrite history, or relax MongoDB validation to enable an older image.
+This field does not change the runtime protocol or whole-home storage layout.
 
 The preceding `03cbd332` Agent Manager/shared Web release was Ready at
 16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
@@ -202,6 +259,12 @@ lifecycle operations preserve accepted capacity for
 restart/retry, alongside the selected immutable image. Pool administration is
 limited to the trusted deployment runtime image; custom images remain available
 for ordinary Agent/Trigger/consumer creation.
+
+Reaching the owner's Sandbox quota ends a new Agent lifecycle operation with an
+explicit limit conflict; it must not remain queued as a retryable dependency
+failure. Paused Sandboxes still retain storage and count toward this quota.
+Retiring disposable acceptance Sandboxes releases their slot after cleanup;
+prepared capacity alone does not bypass owner admission limits.
 
 New inline Sandbox configurations allow up to 16 workspaces and 16 Agents per
 workspace, within the existing admission bounds. Previously accepted lifecycle
@@ -830,6 +893,31 @@ worker lease or preparation cannot publish success. An interrupted attempt keeps
 both debts; recovery can replay the pair or use the ordinary individual steps
 when preparation evidence is unavailable. No runtime request is omitted, and
 metadata conflict retries contain publication only.
+
+First-message admission backs off bounded transaction conflicts. When all attempts
+are known to have aborted, the worker rereads the exact first-message record and
+its current unexpired writer lease before releasing that lease for a one-second
+retry. An admitted or uncertain dispatch is never reset to queued; ambiguous
+commits keep their existing reconciliation path. This prevents an unadmitted
+first message from waiting for the full worker lease after database contention.
+
+Connection publication has a separate lease after the opened conversation becomes
+Ready. Its Mongo transactions also back off known-aborted conflicts. If bounded
+publication attempts are exhausted, recovery rereads that exact connection claim
+and releases only its unchanged, unexpired lease for a one-second retry. It may
+adopt concurrent title/log metadata and a newly queued initial message; settings,
+existing input, runtime generation, work state or successor lease changes refuse
+that recovery. The ordinary worker reconnects under a new fence before dispatch.
+Unknown commits keep reconciliation and cannot release the lease as an abort.
+This path does not reset or replay an admitted user command whose queue deadline
+has expired.
+
+Response Stop inspection and reservation share one five-second retry scheduling
+budget with bounded backoff and jitter. Credential authority retains its original
+deadline. The budget does not cancel an in-flight transaction, resolve an unknown
+commit as a failure, or guarantee that the complete HTTP request takes less than
+five seconds. An uncertain result retains its exact control key and target for
+reconciliation; a new key must not be used to hide the uncertain original request.
 
 For acceptance, record a ready reservation's IDs and native Claim/member/PVC
 identity; submit one explicit create; verify that the resulting owned hierarchy

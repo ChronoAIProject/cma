@@ -863,6 +863,7 @@ async fn control_routes_require_operation_keys_before_runtime_resolution() {
         working.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },
@@ -951,6 +952,7 @@ async fn approval_events_transcript_usage_and_resources_are_public_safe() {
         waiting.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin-key".into()),
             },

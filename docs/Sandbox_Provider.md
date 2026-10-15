@@ -13,8 +13,9 @@ The final image must demonstrate operation receipts, credential generations,
 per-Agent configuration and exact conversation resumption. Retained OpenSandbox
 runtimes must still support releasing writer holds left by earlier deployments.
 CMA no longer captures or restores whole-home archives. Changing
-`CHRONO_SANDBOX_IMAGE` requires an immutable digest and triggers recorded rotation;
-a new tag or label is not evidence.
+`CHRONO_SANDBOX_IMAGE` requires an immutable digest and selects the image for new
+allocations; existing Sandboxes retain their pinned image across pause, resume
+and control-plane upgrades. A new tag or label is not runtime evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
@@ -117,6 +118,16 @@ the selected pool request, original claim UID, assigned Sandbox and home receipt
 in separate durable transitions. Retries preserve the selected image and Pod
 policy. A reservation already committed to ordinary storage stays on that path.
 Native reservations cannot allocate an ordinary replacement PVC on retry.
+
+Lifecycle publication retries confirmed aborted Mongo transactions with bounded
+backoff. If contention still exhausts that budget, the worker rereads the exact
+lease, phase, runtime and credential before scheduling a retry and releasing its
+own unchanged lease. It never releases a successor's lease or repeats a commit
+whose result is unknown; unknown results use the existing reconciliation path.
+This prevents transient queue-completion contention from waiting for the long
+lifecycle lease to expire. Persistent database unavailability can still defer
+recovery. Disposable replica-set tests cover repeated write conflicts, ambiguous
+commits, preserved runtime identity and a single completed lifecycle event.
 
 Retirement also handles claims that never reached runtime admission. It records
 discovered claim/member identities before requesting claim-first deletion, then

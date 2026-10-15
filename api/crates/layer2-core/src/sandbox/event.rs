@@ -57,6 +57,10 @@ pub enum AgentLogKind {
     },
     TurnStarted {
         turn_sequence: u64,
+        /// Exact owner-selected runtime model fenced with this turn. Absent on
+        /// legacy records; an empty value explicitly delegates to runtime default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin_key: Option<String>,
     },

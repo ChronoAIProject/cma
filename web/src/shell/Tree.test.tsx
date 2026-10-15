@@ -36,6 +36,7 @@ function renderTree(
     readonly items?: readonly NavigationSandbox[];
     readonly refreshError?: string;
     readonly lifecycleBusy?: boolean;
+    readonly busySandboxIds?: ReadonlySet<string>;
     readonly onAction?: (action: TreeAction) => void;
     readonly onNavigate?: (route: AppRoute) => void;
     readonly deletingSandboxIds?: ReadonlySet<string>;
@@ -48,6 +49,7 @@ function renderTree(
       items={options.items ?? navigationFixture(options.paused === true ? 'paused' : 'active')}
       refreshError={options.refreshError}
       lifecycleBusy={options.lifecycleBusy}
+      busySandboxIds={options.busySandboxIds}
       deletingSandboxIds={options.deletingSandboxIds}
       onViewDeletion={options.onViewDeletion}
       route={{ kind: 'home' }}
@@ -59,6 +61,29 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it('locks only the Sandbox whose lifecycle request is still being confirmed', async () => {
+    const actor = userEvent.setup();
+    renderTree({
+      busySandboxIds: new Set(['sbx_1']),
+      items: [
+        ...navigationFixture(),
+        ...navigationFixture().map((item) => ({
+          sandbox: { ...item.sandbox, id: 'sbx_2', name: 'Other sandbox', workspaces: [] },
+          workspaces: [],
+        })),
+      ],
+    });
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    expect(screen.getByRole('menuitem', { name: /Pause/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    await actor.keyboard('{Escape}');
+    await actor.click(screen.getByRole('button', { name: 'Options for Other sandbox' }));
+    for (const name of ['Pause', 'New agent', 'Delete'])
+      expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'false');
+  });
+
   it('allows removing a Workspace with live Agents through the deletion dialog', async () => {
     const onAction = vi.fn();
     renderTree({ onAction });

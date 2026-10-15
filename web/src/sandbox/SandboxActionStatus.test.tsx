@@ -130,3 +130,35 @@ it('backs off on transient read failure and never reports completion after lost 
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   expect(readSandbox).toHaveBeenCalledTimes(2);
 });
+
+it('keeps accepted progress optional and observes the target after dismissing its status', async () => {
+  vi.useFakeTimers();
+  let sandbox = sandboxFixture('pausing');
+  const onSettled = vi.fn();
+  const onClose = vi.fn();
+  const onNavigate = vi.fn();
+  const props = {
+    client: agentClient({ readSandbox: vi.fn(async () => sandbox) }),
+    request,
+    onSettled,
+    onClose,
+    onNavigate,
+  };
+  const view = render(<SandboxActionStatus {...props} />);
+  await act(async () => {});
+  expect(screen.getByRole('status')).toHaveTextContent(/^Pause request accepted\.$/);
+  expect(screen.getByText('Waiting for the Sandbox to pause.')).not.toBeVisible();
+  expect(screen.getByRole('button', { name: 'View Sandbox progress' })).not.toBeVisible();
+  fireEvent.click(screen.getByText('Operation progress'));
+  expect(screen.getByText('Waiting for the Sandbox to pause.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'View Sandbox progress' }));
+  expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss status' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  view.rerender(<SandboxActionStatus {...props} request={{ ...request, hidden: true }} />);
+  expect(screen.queryByRole('region', { name: 'Sandbox request' })).not.toBeInTheDocument();
+  expect(onSettled).not.toHaveBeenCalled();
+  sandbox = sandboxFixture('paused');
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(onSettled).toHaveBeenCalledExactlyOnceWith(true);
+});

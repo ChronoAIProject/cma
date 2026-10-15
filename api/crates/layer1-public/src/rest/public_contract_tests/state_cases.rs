@@ -71,6 +71,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mut logs = if active_turn.is_some() {
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },

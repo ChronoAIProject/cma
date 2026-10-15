@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import type { AgentTransportPreparation } from '../agent/transport/preparation';
+import { prepareAgentConnections } from '../connections/preparation';
 
 /** Start selection only after this retained operation names its actual Agent. */
 export function useLifecycleTransport(
@@ -18,10 +19,21 @@ export function useLifecycleTransport(
   useEffect(() => {
     if (!eligible || !operationId || !agentId || !viewerId) return;
     const preparation = client.agentTransport?.prepare(agentId, viewerId);
-    active.current = preparation;
+    const connections = preparation && prepareAgentConnections(client, agentId, viewerId);
+    const handoff = {
+      handoff() {
+        preparation?.handoff();
+        connections?.handoff();
+      },
+      release() {
+        preparation?.release();
+        connections?.release();
+      },
+    };
+    active.current = handoff;
     return () => {
-      preparation?.release();
-      if (active.current === preparation) active.current = undefined;
+      handoff.release();
+      if (active.current === handoff) active.current = undefined;
     };
   }, [agentId, client, eligible, operationId, viewerId]);
   return useCallback(() => active.current?.handoff(), []);

@@ -34,6 +34,7 @@ impl SandboxTransactionStore for MongoSandboxStore {
         }
         if parent_ready {
             self.agent_admitted.notify_one();
+            self.agent_parent_ready.notify_waiters();
         }
         Ok(())
     }

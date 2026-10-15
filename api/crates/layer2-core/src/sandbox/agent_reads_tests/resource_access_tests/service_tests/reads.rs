@@ -24,6 +24,7 @@ async fn history(store: &InMemorySandboxStore) -> Agent {
                 runtime_generation: 7,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },

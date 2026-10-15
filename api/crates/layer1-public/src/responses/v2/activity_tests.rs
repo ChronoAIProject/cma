@@ -22,6 +22,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
         id: id.clone(),
         created_at: at.into(),
         model: Some("test".into()),
+        initial_model: Some("test".into()),
         runtime_generation: Some(1),
         active_turn: (!terminal).then_some(1),
         head: kinds.len() as u64,
@@ -83,6 +84,7 @@ fn kinds(events: &[Value]) -> Vec<&str> {
 fn tool_completion_appends_after_text_without_renumbering_earlier_events() {
     let mut history = vec![
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },
@@ -137,6 +139,7 @@ fn tool_completion_appends_after_text_without_renumbering_earlier_events() {
 fn overlapping_tool_failure_has_bounded_names_empty_bodies_and_stable_indexes() {
     let history = [
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },
