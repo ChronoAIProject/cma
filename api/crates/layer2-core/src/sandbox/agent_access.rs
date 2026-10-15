@@ -21,6 +21,8 @@ pub struct AgentAccessRequest {
     pub services: Vec<String>,
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 

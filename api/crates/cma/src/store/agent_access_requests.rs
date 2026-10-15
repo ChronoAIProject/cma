@@ -105,6 +105,9 @@ pub(in crate::store) use lineage::validate_lineage;
 mod admission;
 mod decisions;
 pub(in crate::store) mod grant;
+mod retry;
+#[cfg(test)]
+mod retry_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 mod worker;
@@ -114,6 +117,7 @@ pub(super) async fn ensure_indexes(
 ) -> Result<(), layer2_core::StoreError> {
     for keys in [
         doc! {"record.requester.agent_id":1,"record.created_at":-1},
+        doc! {"record.requester.agent_id":1,"record.proposal.retry_of":1},
         doc! {"record.requester.sandbox_id":1,"record.phase":1},
         doc! {"record.phase":1,"record.retry_at":1,"record.lease.expires_at":1},
     ] {

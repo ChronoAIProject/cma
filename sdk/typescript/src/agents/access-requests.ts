@@ -23,6 +23,7 @@ const accessRequest = object({
   status: enumeration('pending', 'connecting', 'applying', 'succeeded', 'denied', 'failed'),
   services,
   reason: text,
+  retry_of: optional(text),
   connection: optional(
     object({ target: object({ type: enumeration('agent_access_request'), id: text }) }),
   ),
@@ -35,6 +36,8 @@ function projection(agentId: string, requestId?: string) {
     const result = accessRequest(value);
     if (
       !result.id ||
+      (result.retry_of !== undefined &&
+        (!/^aar_[a-f0-9]{64}$/.test(result.retry_of) || result.retry_of === result.id)) ||
       result.agent_id !== agentId ||
       (requestId !== undefined && result.id !== requestId) ||
       (result.connection && result.connection.target.id !== result.id) ||

@@ -120,6 +120,7 @@ impl AgentAccessRecord {
             status: self.phase.status(),
             services: self.proposal.services.clone(),
             reason: self.proposal.reason.clone(),
+            retry_of: self.proposal.retry_of.clone(),
             error: self.error.clone(),
         }
     }
@@ -137,6 +138,7 @@ impl AgentAccessRecord {
         let approved = matches!(self.decision, Some(AgentAccessDecision::Approved { .. }));
         if self.revision == 0
             || self.id != request_id(identity, &self.proposal.request_key)?
+            || self.proposal.retry_of.as_deref() == Some(&self.id)
             || self.body_sha256 != digest(&self.proposal)?
             || identity.agent_id != identity.creation.agent_id
             || identity.sandbox_id != identity.creation.sandbox_id

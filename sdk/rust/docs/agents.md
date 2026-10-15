@@ -388,6 +388,12 @@ with an optional safe `error` detail. The SDK rejects crossed Agent/request
 identities, inconsistent connection targets and duplicate list IDs. Listing never
 approves services or resumes an Agent.
 
+An explicit retry after a failed access request is a new pending consent attempt.
+Its optional `retry_of` names the preserved failed request. The Agent tool returns
+new attempt parameters after failure; old-key replay continues to return the old
+outcome. New attempts require fresh owner approval and never inherit an earlier
+approval or runtime update.
+
 ## Runtime observations
 
 Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`

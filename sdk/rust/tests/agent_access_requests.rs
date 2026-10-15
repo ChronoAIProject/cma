@@ -179,3 +179,45 @@ async fn invalid_access_decisions_fail_before_network_effects() {
     assert_eq!(server.request_count(), 0);
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn failed_predecessor_identity_survives_a_fresh_pending_consent_attempt() {
+    let server = WireServer::new().await;
+    let prior = format!("aar_{}", "a".repeat(64));
+    let current = format!("aar_{}", "b".repeat(64));
+    let mut next = receipt("pending");
+    next["id"] = current.clone().into();
+    next["retry_of"] = prior.clone().into();
+    server.expect(wire::json(
+        "GET",
+        "/api/v1/agents/agent-one/access-requests",
+        None,
+        200,
+        json!({"items":[next.clone()]}),
+        true,
+    ));
+    let result = server
+        .client
+        .agents()
+        .access_requests("agent-one")
+        .await
+        .unwrap();
+    assert_eq!(result.items[0].retry_of.as_deref(), Some(prior.as_str()));
+    assert_eq!(serde_json::to_value(&result.items[0]).unwrap(), next);
+    for invalid in ["foreign".to_owned(), current] {
+        next["retry_of"] = invalid.into();
+        server.expect(wire::json(
+            "GET",
+            "/api/v1/agents/agent-one/access-requests",
+            None,
+            200,
+            json!({"items":[next.clone()]}),
+            true,
+        ));
+        assert!(matches!(
+            server.client.agents().access_requests("agent-one").await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.assert_drained();
+}
