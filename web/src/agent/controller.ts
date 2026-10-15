@@ -1,23 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
-import {
-  loadAgent,
-  transientReadFailure,
-  type AgentLoadLineage,
-  type ReadyAgent,
-} from './loadAgent';
+import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
-import type { AgentLiveEvent, AgentSummary, SandboxEvent } from '../api/types';
+import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { currentAgentStatus, sameAgent } from './status';
 import { mergeTranscriptSnapshot } from './chronology';
-import {
-  useSandboxInput,
-  type SandboxInputAvailability,
-  type SandboxResourceAvailability,
-} from './sandboxInput';
+import { useSandboxInput } from './sandboxInput';
 import { foldAgentEvent, foldLiveEvent, type ConversationState } from './conversation';
 import { useAgentState } from './state';
 import { foldV2Frame, foldV2Item } from './transport/projection';
@@ -25,48 +16,14 @@ import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
-import { useQueuedMessage, type QueuedMessageControl } from './transport/queuedStatus';
-
-export type AgentResourceState =
-  | { readonly status: 'idle' }
-  | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
-  | ({ readonly status: 'ready' } & ReadyAgent);
-
-export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete';
-export type ApprovalDecision = 'allow' | 'deny' | 'abort';
-
-export interface AgentController {
-  readonly queuedMessage?: QueuedMessageControl;
-  readonly pendingMessage?: string;
-  readonly acceptedMessage?: string;
-  readonly pendingControl?: boolean;
-  readonly controlNotice?: string;
-  readonly controlsUnavailable?: boolean;
-  readonly recoverPending?: () => Promise<void>;
-  readonly state: AgentResourceState;
-  readonly inputAvailability: SandboxInputAvailability;
-  readonly resourceAvailability: SandboxResourceAvailability;
-  readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
-  readonly pending?: AgentCommand;
-  readonly actionError?: string;
-  readonly reload: () => void;
-  readonly clearActionError: () => void;
-  readonly send: (content: string, onAccepted?: () => void) => Promise<void>;
-  readonly interrupt: () => Promise<void>;
-  readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
-  readonly stop: () => Promise<void>;
-  readonly delete: () => Promise<void>;
-}
-
-interface AgentControllerOptions {
-  readonly viewerId?: string;
-  readonly suspended?: boolean;
-  readonly authorizedLineage?: AgentLoadLineage;
-  readonly summary?: AgentSummary;
-  readonly onHierarchyChange?: () => void;
-  readonly onDeleted?: () => void;
-}
+import { useQueuedMessage } from './transport/queuedStatus';
+import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
+export type {
+  AgentCommand,
+  AgentController,
+  AgentResourceState,
+  ApprovalDecision,
+} from './controllerTypes';
 
 function errorMessage(error: unknown): string {
   if (isIdentityChanged(error)) return new IdentityChangedError().message;
