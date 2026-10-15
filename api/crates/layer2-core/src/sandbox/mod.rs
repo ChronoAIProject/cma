@@ -3,6 +3,7 @@
 mod admin;
 mod agent;
 pub mod agent_artifacts;
+pub mod agent_attachments;
 mod agent_context;
 pub mod agent_io;
 pub mod agent_live_skills;

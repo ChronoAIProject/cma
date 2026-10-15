@@ -683,3 +683,6 @@ fn agent_limits_count_only_live_agents_in_the_selected_workspace() {
         Ok(())
     );
 }
+
+#[path = "agent_attachments_tests.rs"]
+mod attachments;
