@@ -29,7 +29,14 @@ its own `next_request` starts the next attempt. Active, denied and succeeded
 requests cannot be used as retry predecessors.
 
 `pending` awaits owner consent; `connecting` and `applying` require observation.
-Only `succeeded` confirms that CMA verified the runtime access update. A denied
+Only `succeeded` confirms that CMA delivered the new key to the retained runtime,
+revoked the old key, and confirmed delivery of the callback to the original
+Agent conversation. An active turn receives durable steering so notification
+does not wait behind that turn. The model's response may finish later. Scope
+updates preserve the live Sandbox, Pod and conversations. Optional services can
+also be removed through the owner's public service-access Save; all Agents in
+the Sandbox share the resulting key and the required platform baseline remains
+selected. A denied
 request never includes an automatic retry instruction. GitHub access uses the
 canonical service slug `api-github` or `api-github-pat`, selected for the owner's
 connection type; `github` is not a registered service slug.
@@ -42,3 +49,11 @@ approval or silently restarts another Agent or Sandbox.
 After a linked retry is first recorded, rollback must retain a reader that
 understands the optional persisted `proposal.retry_of` field. Earlier binaries
 with strict proposal decoding cannot read those new records.
+
+Hot scope writes add optional exact `service_scope` credential revisions,
+`scope_mode`, `expected_scope_revision`, `progress.hot_update` and durable
+notification intent, plus the `updating` workflow phase and
+`ServiceAccessRevised` Sandbox event. Once any of these are persisted, every API
+reader and rollback image must retain the compatible readers. Reverting to an
+older binary with strict decoding is not a supported rollback. Historical
+additive grants and already-paused access workflows remain readable.

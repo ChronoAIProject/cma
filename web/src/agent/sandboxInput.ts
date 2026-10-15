@@ -220,7 +220,10 @@ function resourceAvailability(observation: Observation | undefined): SandboxReso
   const sandbox = observation.sandbox;
   if (sandbox.status === 'paused')
     return { state: 'paused', notice: 'Sandbox paused. Live resources resume when it is active.' };
-  if (sandbox.status !== 'active' || !sandbox.runtimeVersion?.trim())
+  if (
+    !['active', 'credential_rotating'].includes(sandbox.status) ||
+    !sandbox.runtimeVersion?.trim()
+  )
     return {
       state: 'inactive',
       notice: 'Live resources are unavailable while the Sandbox runtime is inactive.',
@@ -253,6 +256,10 @@ function inputAvailability(
     return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
   if (queueWhileStarting && observation.bootstrapAllowed) return { allowed: true };
   if (observation.revivalAllowed) return { allowed: true };
+  // Credential delivery replaces the live proxy's key without replacing its
+  // runtime or conversation. Lifecycle/checkpoint barriers remain authoritative.
+  if (sandbox.status === 'credential_rotating' && sandbox.lifecycle.operation === undefined)
+    return { allowed: true };
   if (
     sandbox.lifecycle.operation !== undefined ||
     (sandbox.status !== 'active' && (queueWhileStarting || sandbox.status !== 'paused'))

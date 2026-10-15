@@ -34,7 +34,8 @@ USER 101:101
 COPY --from=build /build/web/dist /usr/share/nginx/html
 # Same-origin proxy for the API, so the bundle needs no knowledge of where the
 # control plane lives.
-# Includes the route-specific 20 MiB streaming attachment upload limit.
+# Includes the route-specific 20 MiB streaming attachment upload limit and
+# compression of public immutable JavaScript/CSS assets.
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080
 # Health is asserted by the Kubernetes probes in infra/web/deployment.yaml.

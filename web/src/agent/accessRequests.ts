@@ -42,10 +42,19 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
     throw new ProtocolError('Agent Manager returned an invalid access request.');
   return request;
 }
+export class AgentAccessError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 async function readResponse(response: Response): Promise<unknown> {
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
-    throw new Error(
+    throw new AgentAccessError(
+      response.status,
       typeof problem.detail === 'string'
         ? problem.detail
         : `Agent access could not be updated (${String(response.status)}).`,
@@ -56,6 +65,29 @@ async function readResponse(response: Response): Promise<unknown> {
 const path = (agentId: string) =>
   `/api/agent-manager/v1/agents/${encodeURIComponent(agentId)}/access-requests`;
 export const accessRequests = {
+  async replace(
+    agentId: string,
+    services: readonly string[],
+    expectedServices: readonly string[],
+    key: string,
+    signal: AbortSignal,
+  ): Promise<AgentAccessRequest> {
+    if (!validAccessServices(services) || !validAccessServices(expectedServices))
+      throw new Error('Choose 1 to 32 services with valid service identifiers.');
+    return accessRequest(
+      await readResponse(
+        await fetch(`/api/agent-manager/v1/agents/${encodeURIComponent(agentId)}/service-access`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal,
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+          body: JSON.stringify({ services, expected_services: expectedServices }),
+        }),
+      ),
+      agentId,
+    );
+  },
   async list(agentId: string, signal: AbortSignal): Promise<readonly AgentAccessRequest[]> {
     const value = (await readResponse(
       await fetch(path(agentId), { credentials: 'same-origin', cache: 'no-store', signal }),

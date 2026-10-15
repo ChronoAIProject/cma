@@ -394,6 +394,17 @@ new attempt parameters after failure; old-key replay continues to return the old
 outcome. New attempts require fresh owner approval and never inherit an earlier
 approval or runtime update.
 
+To add or revoke services directly, call `agents().update_service_access(agent_id, &body, &key)` with `UpdateAgentServiceAccessRequest { services, expected_services }`.
+`services` is the exact desired shared Sandbox scope; `expected_services` is the
+last observed effective scope. Both must include `chrono-llm-public` and
+`ornn-api`. Save is explicit owner consent. The service returns HTTP 202 and the
+durable access request, and rejects stale selections with HTTP 409 before
+changing access. Preserve the same body and key after an uncertain reply.
+Prepare any external service connections before final approval. An active
+Sandbox receives its replacement credential without restarting Agents;
+`succeeded` confirms runtime acknowledgement, old-key revocation and callback
+delivery to the originating Agent. An already paused Sandbox waits for resume.
+
 ## Runtime observations
 
 Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`

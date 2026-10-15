@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { V2AgentCursor, V2AgentEventKind } from '@chronoai/cma-sdk';
 import { ActiveThinking } from './ActiveThinking';
 import { UsageFooter } from './UsageFooter';
@@ -32,9 +32,19 @@ const draw = (conversation: ConversationState) => (
   </>
 );
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'Worker',
+    class {
+      postMessage() {}
+      terminate() {}
+    },
+  );
+});
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it.each(['responses', 'agui'] as const)(
@@ -85,7 +95,9 @@ it.each(['responses', 'agui'] as const)(
     expect(screen.getByLabelText('Turn output tokens: 20')).toHaveTextContent('20 output');
     view.rerender(draw(start(observed, 32)));
     expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
-    expect(screen.getByText('Turn input unavailable · output unavailable')).toBeInTheDocument();
+    expect(
+      screen.getByRole('region', { name: 'What the agent is working through' }),
+    ).toHaveTextContent('Turn input unavailable · output unavailable');
     expect(screen.getByLabelText('Total output tokens: 107')).toHaveTextContent('107 output');
   },
 );
@@ -99,7 +111,9 @@ it('keeps legacy context-only reports distinct from real token counts and animat
     kind: { type: 'usage', input_tokens: 0, output_tokens: 0, context_used: 23657 },
   });
   const view = render(draw(legacy));
-  expect(screen.getByText('Turn input unavailable · output unavailable')).toBeInTheDocument();
+  expect(
+    screen.getByRole('region', { name: 'What the agent is working through' }),
+  ).toHaveTextContent('Turn input unavailable · output unavailable');
   const observed = foldAgentEvent(legacy, {
     seq: 26,
     appendedAt: at,

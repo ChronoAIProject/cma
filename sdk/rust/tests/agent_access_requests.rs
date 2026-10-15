@@ -221,3 +221,54 @@ async fn failed_predecessor_identity_survives_a_fresh_pending_consent_attempt() 
     }
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn scope_replacement_keeps_exact_selection_guard_and_idempotency_on_replay() {
+    let server = WireServer::new().await;
+    let body = UpdateAgentServiceAccessRequest {
+        services: vec!["chrono-llm-public".into(), "ornn-api".into()],
+        expected_services: vec![
+            "chrono-llm-public".into(),
+            "ornn-api".into(),
+            "api-github".into(),
+        ],
+    };
+    let key = IdempotencyKey::new("scope-replacement").unwrap();
+    for _ in 0..2 {
+        let mut response = receipt("applying");
+        response["services"] = json!(body.services);
+        let mut expected = wire::json(
+            "PUT",
+            "/api/v1/agents/agent-one/service-access",
+            Some(serde_json::to_value(&body).unwrap()),
+            202,
+            response.clone(),
+            true,
+        );
+        expected
+            .headers
+            .insert("idempotency-key".into(), "scope-replacement".into());
+        server.expect(expected);
+        let result = server
+            .client
+            .agents()
+            .update_service_access("agent-one", &body, &key)
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(result).unwrap(), response);
+    }
+    let invalid = UpdateAgentServiceAccessRequest {
+        expected_services: vec![],
+        ..body
+    };
+    assert!(matches!(
+        server
+            .client
+            .agents()
+            .update_service_access("agent-one", &invalid, &key)
+            .await
+            .unwrap_err(),
+        Error::Validation { .. }
+    ));
+    server.assert_drained();
+}

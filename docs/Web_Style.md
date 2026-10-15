@@ -199,6 +199,11 @@ themes; components still never read static tokens directly:
 | `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
 | `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
 
+Message-avatar fallback aliases are also appearance-independent:
+`--dsw-alias-avatar-bg` is `coal 950` (`#060606`), and
+`--dsw-alias-avatar-label` is `coal 50` (`#EDF2E2`). They retain a black circle
+with readable initials in either theme.
+
 - **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
   cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
 - **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
@@ -675,9 +680,23 @@ Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
 Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
 The owner's message is right-aligned on the existing accent wash, capped at the
-smaller of 525px and 82% of the axis. The Agent message is unboxed at 16/28.
+smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
+
+Every user or Agent message has a 32px circular avatar beside its reading column,
+separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
+name uses caption ink at 12/18, weight 600, with 4px before the content. The Agent
+name is always **Chrono Agent**, with a bundled, static front-face capture of the
+existing §23 3D character; message rows do not start WebGL scenes. Personal user
+messages use the current signed-in display name and avatar, falling back to the
+account handle and then **You**. Missing, unsafe or failed avatar images show
+centered uppercase initials at 12/18, weight 600, on the avatar fallback aliases.
+Only HTTPS avatar URLs and local absolute paths are rendered, without a referrer.
+Names wrap instead of widening the message column. Avatars are decorative beside
+the visible name. Durable, streaming and optimistic messages use the same layout
+and identity. Shared messages without author identity say **Participant**, never
+the viewer's name. Identity rendering does not alter message text or attribution.
 
 An explicit Send or quick-message action immediately adds its text to the
 owner's message flow before connection or network checks finish. Preserve line
@@ -822,7 +841,7 @@ active response stay visible while status observation and cancellation proceed.
 Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
 is running, using the existing circular composer buttons. Keep both controls
 centered on the same row beside the input, with a flexible input column and two
-40px button columns (44px on mobile), separated by the existing 8px gap. Enter
+32px button columns (44px on mobile), separated by the existing 8px gap. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
 Keep the draft editable and retain it until admission is confirmed. An uncertain
@@ -837,8 +856,19 @@ local sign-in epoch changes clear the prior view before any new-account read is
 shown. A live gap discards uncommitted partial text and Thinking while preserving
 recorded messages, settled tools and the turn's original start time.
 
-The composer uses its existing capsule, send/stop icon seat, focus treatment, and
-bounded growth. Stop interrupts the current turn; it does not delete the Agent.
+The composer keeps a compact, fixed 38px desktop seat with 32px Send/Stop controls.
+The one-line input centers its 24px line vertically with 6px padding on either side.
+Below 30rem, the input and controls retain 44px targets within a 46px capsule seat.
+Long drafts expand upward while the capsule is hovered or focused, capped at the
+smaller of 336px and 40dvh. They collapse to one line otherwise, preserving the
+draft and selection. Expansion overlays history without moving the controls or
+conversation scrollport. Use the existing capsule background, focus treatment
+and shadow. Put Attach files on the same row and its paste/drop hint in the
+button title; thumbnail and upload status records remain visible above that row.
+Pasted screenshots use the clipboard's file items when its file list is empty;
+plain text paste retains normal editing behavior. A confirmed message includes
+both the text and the exact uploaded attachment paths for that Agent.
+Stop interrupts the current turn; it does not delete the Agent.
 Approval decisions are explicit at the point of interruption. Only public API
 operations appear as commands.
 
@@ -1020,10 +1050,21 @@ identity changes. Mounting a conversation does not start machine-resource polls.
 
 The conversation footer contains Context quota and cumulative Agent input/output
 tokens, including earlier turns and preserved across compaction. The Thinking
-row shows the current turn's input/output totals. Unreported input and output
-each say unavailable, with an explanation that some existing Agents only report
-totals after a turn finishes. Missing counts are never displayed as zero or
-estimated from text, elapsed time or the context quota. Each reported
+row shows the current turn's input/output totals. Unreported input says unavailable.
+Before a token report arrives, live visible reply and reasoning text may show
+an explicitly labeled `≈ N visible output tokens` estimate using a local
+o200k_base tokenizer. Its explanation excludes hidden reasoning, tool calls and
+inputs, and states that actual model usage may differ. Load the tokenizer only
+for an active turn, in a background worker; update at most five times per second,
+reuse unchanged text chunks, and cap counted text at 65,536 UTF-16 code units with
+a visible partial label. Missing text, unavailable tokenization and missing provider counts have
+written states. Estimates are never added to session totals or retained as actual
+turn usage. An authoritative turn report replaces its estimate and records the
+visible text boundary it covers. Later model calls in the same turn display
+`+ ≈ N newly visible output tokens` beside the last reported counts, counting
+only new visible text past that boundary. Repeated identical reports do not
+advance the boundary; restored text does not count twice. Missing counts
+are never displayed as zero or inferred from elapsed time or context quota. Each reported
 increase animates towards that actual value over 600ms, never beyond it. Values
 use tabular numerals; reduced motion and hidden documents settle immediately.
 Accessible labels expose the actual count without announcing every animation
@@ -2184,3 +2225,8 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | Show explicit unavailable input/output when a turn has no reported token counts; explain retained Agents that report only completed-turn totals. Animate real cumulative footer updates as well as current-turn observations, preserving actual initial totals and settling hidden/reduced-motion views without waiting for an animation frame. |
 
 | 2026-10-15 | Retain each completed turn's observed token counts under its final Agent reply using durable replay. Keep brief reconnects quiet, present live-fragment refresh as a neutral caption, and clear it on matching recovered observations while preserving confirmed history gaps and failures. |
+
+| 2026-10-15 | Compact the composer to one centered row with fixed Send/Stop seats, expand long drafts upward on focus or hover, and keep attachment previews above the row. Read screenshot clipboard file items when FileList is empty, avoid duplicate uploads, and preserve plain text paste and accepted-message clearing. |
+
+| 2026-10-15 | Add consistent avatar and display-name rows to durable, streaming and optimistic messages. Use the existing 3D character's static front-face capture for Chrono Agent, current personal account identity for user messages, and black-circle initials when an avatar is absent or fails. Keep unknown shared authors distinct from the viewer and preserve narrow-layout wrapping and accessible names. |
+| 2026-10-15 | Show clearly labeled approximate visible output tokens while a live turn awaits provider usage. Count current reply and visible reasoning with a lazily loaded o200k_base worker, throttle to five updates per second, cache bounded chunks and label the bounded text cap. Authoritative reports replace estimates and anchor their covered text; later model calls show only newly visible estimates beside actual counts. Preserve replay boundaries and cumulative totals. |

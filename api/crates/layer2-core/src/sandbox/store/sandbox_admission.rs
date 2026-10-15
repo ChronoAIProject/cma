@@ -63,6 +63,7 @@ impl SandboxAdmission {
         })?;
         if self.sandbox.revision != 1
             || !self.sandbox.credential.service_grants.is_empty()
+            || self.sandbox.credential.service_scope.is_some()
             || self.sandbox.status != SandboxStatus::Provisioning
             || self.sandbox.name != self.name.value()
             || !valid_requested_name(self.name.value())

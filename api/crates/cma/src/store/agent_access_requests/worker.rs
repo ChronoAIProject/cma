@@ -188,6 +188,7 @@ fn legal_transition(from: AgentAccessPhase, to: AgentAccessPhase) -> bool {
             (Connecting, WaitingQuiet)
                 | (Pausing, Granting)
                 | (Reviving, Notifying)
+                | (Updating, Notifying)
                 | (Notifying, Succeeded)
         )
 }
@@ -221,7 +222,11 @@ fn validate_progress(
     {
         return Err(AgentAccessError::Conflict);
     }
-    if record.phase == AgentAccessPhase::Reviving && next == AgentAccessPhase::Notifying {
+    if matches!(
+        record.phase,
+        AgentAccessPhase::Reviving | AgentAccessPhase::Updating
+    ) && next == AgentAccessPhase::Notifying
+    {
         let floor = progress
             .grant_generation_floor
             .ok_or(AgentAccessError::Conflict)?;
@@ -238,7 +243,30 @@ fn validate_progress(
                 sandbox.work.step,
                 SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
             )
-            || progress.revive_operation_id.as_deref() != Some(&latest_operation)
+            || (record.phase == AgentAccessPhase::Reviving
+                && progress.revive_operation_id.as_deref() != Some(&latest_operation))
+            || (record.phase == AgentAccessPhase::Updating
+                && progress.hot_update.as_ref().is_none_or(|hot| {
+                    sandbox.runtime.as_ref() != Some(&hot.runtime)
+                        || sandbox.lifecycle.next_authority != hot.lifecycle_next_authority
+                }))
+            || (record.phase == AgentAccessPhase::Updating
+                && (sandbox.work.lease.is_some()
+                    || sandbox.lifecycle.checkpoint_capture.is_some()
+                    || !sandbox.credential.revoke_debt.is_empty()
+                    || sandbox
+                        .credential
+                        .service_scope
+                        .as_ref()
+                        .is_none_or(|scope| {
+                            Some(scope.revision)
+                                != record.expected_scope_revision.unwrap_or(0).checked_add(1)
+                                || scope.authorized_by != record.requester.owner
+                                || scope.credential_generation_floor != floor
+                                || !record
+                                    .approved_services()
+                                    .is_ok_and(|approved| scope.services == approved)
+                        })))
             || !sandbox.credential.delivered
             || sandbox.credential.pending.is_some()
             || sandbox.credential.current.as_ref() != progress.delivered_credential.as_ref()

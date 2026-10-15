@@ -108,6 +108,7 @@ pub(super) async fn seed(store: &InMemorySandboxStore) -> Workspace {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: vec![],
+            service_scope: None,
             reaches: vec![
                 ServiceId::new("github"),
                 ServiceId::new("chrono-llm-public"),
