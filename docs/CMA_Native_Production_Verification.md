@@ -1172,3 +1172,20 @@ original profile/home payload. All 108 focused CMA contracts, two generic core
 publication contracts and strict Clippy passed before building. The current
 reader supports both old empty preparation and captured instructions; keep that
 reader compatibility for any API rollback.
+
+## Prepared-home instruction incident — 15 October, 21:24 SGT
+
+The first new V1-guidance warm claim was admitted in 174 ms but failed during
+Agent startup. Production verification found that the preparation materializer
+still wrote an empty instruction file while adoption correctly expected the
+new captured prompt. This is a failed creation sample, not accepted performance.
+The fixed source writes the pinned prompt during preparation and advances the
+internal prepared profile revision so incompatible unclaimed homes are retired
+through normal CMA reconciliation. Claimed or owned records remain readable.
+
+While the corrected image is built and its concrete preparation/adoption
+regression runs, the CMA Deployment temporarily sets prepared target zero.
+This fences malformed ready claims and retires unclaimed prepared capacity.
+The normal creation path and underlying native warm pool remain enabled;
+existing owner Sandboxes retain their runtimes and volumes. Restore prepared
+target one only with the corrected API and verify fresh compatible capacity.
