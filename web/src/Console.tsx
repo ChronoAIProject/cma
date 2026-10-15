@@ -187,6 +187,7 @@ function ConsoleContent({
   ) : route.kind === 'agent' ? (
     <AgentSurface
       key={route.agentId}
+      user={user}
       lifecycleClient={client}
       draft={draft}
       agentId={route.agentId}
