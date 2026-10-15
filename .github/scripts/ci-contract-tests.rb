@@ -118,6 +118,23 @@ if mode == "release"
     end
     raise "Gateway contract accepted non-readiness health"
   end
+  %w[direct-gateway stripped-prefix].each do |mutation|
+    candidate = GatewaySourceContract.expected
+    route = candidate["infra/api/httproute.yaml"].find { |value| value.dig("metadata", "name") == "cma-web" }
+    bridge = route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/api/event-gateway" } }
+    if mutation == "direct-gateway"
+      bridge["backendRefs"] = GatewaySourceContract.backend("cma-event-gateway")
+    else
+      bridge["filters"] = GatewaySourceContract.service_route("event-gateway", "cma-agent-manager", "/")["filters"]
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
+  end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
   %w[http://cma-agent-manager.chrono-bot.svc https://cma-api.chrono-bot.svc http://cma-api.chrono-bot.svc:8080 missing duplicate].each do |origin|

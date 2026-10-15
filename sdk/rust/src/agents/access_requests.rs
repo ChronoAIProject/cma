@@ -40,6 +40,9 @@ pub struct AgentAccessRequest {
     pub services: Vec<String>,
     /// Explanation supplied by the originating Agent.
     pub reason: String,
+    /// Failed predecessor retained when this new consent attempt was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
     /// Connection recovery while an approved request is connecting or applying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentAccessConnection>,
@@ -73,6 +76,14 @@ fn valid_services(services: &[String]) -> bool {
 impl AgentAccessRequest {
     fn validate(&self, agent_id: &str, request_id: Option<&str>) -> Result<()> {
         if self.id.is_empty()
+            || self.retry_of.as_ref().is_some_and(|id| {
+                id == &self.id
+                    || id.len() != 68
+                    || !id.starts_with("aar_")
+                    || !id[4..]
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
             || self.agent_id != agent_id
             || request_id.is_some_and(|id| id != self.id)
             || !valid_services(&self.services)

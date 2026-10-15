@@ -18,6 +18,7 @@ async fn approve_calendar(
         .request_agent_access(
             first.requester.clone(),
             AgentAccessProposal {
+                retry_of: None,
                 request_key: key.into(),
                 services: vec!["calendar".into()],
                 reason: "Read the owner's calendar".into(),

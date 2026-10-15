@@ -1,5 +1,5 @@
 import { agentOperationDelivery, agentOperationKind, agentWorkStep } from '../agents/events.js';
-import { firstMessageDelivery } from '../agents/types.js';
+import { firstMessageDelivery, agentRuntimeMetadata } from '../agents/types.js';
 import { agentStatus } from '../instances/types.js';
 import {
   array,
@@ -60,6 +60,16 @@ export const v2AgentEventKind = tagged({
     output_tokens: integer,
     context_used: integer,
     context_window: nullable(integer),
+  }),
+  runtime_metadata_changed: kind('runtime_metadata_changed', { metadata: agentRuntimeMetadata }),
+  usage_updated: kind('usage_updated', {
+    input_tokens: integer,
+    output_tokens: integer,
+    context_used: integer,
+    context_window: nullable(integer),
+    turn_sequence: nullable(integer),
+    turn_input_tokens: integer,
+    turn_output_tokens: integer,
   }),
   mode_changed: kind('mode_changed', { mode: text }),
   plan_set: kind('plan_set', { entries: array(strict({ title: text, status: text })) }),

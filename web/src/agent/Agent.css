@@ -191,6 +191,7 @@
   line-height: 18px;
 }
 
+.message__usage,
 .message__delivery {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;

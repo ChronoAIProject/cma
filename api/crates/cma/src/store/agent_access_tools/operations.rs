@@ -33,8 +33,12 @@ impl MongoAgentAccessToolSource {
         } else {
             require_conversation(&snapshot, record.conversation.as_deref(), false)?;
         }
-        super::super::resource_access::fence_lineage(&self.store, &snapshot.resource, session)
-            .await?;
+        // Discovery returns no Agent identity and cannot admit a grant or a
+        // command. The transaction's snapshot proves the current receipt,
+        // lineage and runtime without writing to the concurrently publishing
+        // Agent. A write fence here starves MCP initialization as first-turn
+        // updates advance that same lineage. Actual tool calls and admission
+        // retain their mutation fences below and in the consent store.
         Ok(())
     }
 

@@ -1,0 +1,108 @@
+.composer-attachments {
+  min-width: 0;
+}
+
+.composer-attachments__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.composer-attachments__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  min-width: 0;
+  padding: 4px 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.composer-attachments__preview {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.composer-attachments__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-attachments__info {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.composer-attachments__info > * {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.composer-attachments__info small,
+.composer-attachments__toolbar small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.composer-attachments__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 4px;
+}
+
+.composer-attachments__error {
+  padding: 4px 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.message-attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.message-attachments li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  max-width: min(320px, 100%);
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.message-attachments li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachments li > svg,
+.message-attachments li > small {
+  flex: none;
+}

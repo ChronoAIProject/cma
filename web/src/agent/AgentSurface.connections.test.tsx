@@ -95,7 +95,7 @@ async function setup(prepared = false, detailsOpen = false, finishConnections?: 
 
 const submit = () => fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
 
-it('consumes a fresh creation check for the first v2 send and checks the next send normally', async () => {
+it('sends ordinary live v2 messages without repeating the initial connection catalog check', async () => {
   const test = await setup(true);
   expect(connectionClient.check).toHaveBeenCalledOnce();
   await act(async () => submit());
@@ -107,7 +107,7 @@ it('consumes a fresh creation check for the first v2 send and checks the next se
   expect(connectionClient.check).toHaveBeenCalledOnce();
   fireEvent.change(test.field, { target: { value: 'Next message' } });
   await act(async () => submit());
-  expect(connectionClient.check).toHaveBeenCalledTimes(2);
+  expect(connectionClient.check).toHaveBeenCalledOnce();
   expect(test.send).toHaveBeenLastCalledWith(
     'Next message',
     expect.any(Function),
@@ -115,7 +115,7 @@ it('consumes a fresh creation check for the first v2 send and checks the next se
   );
 });
 
-it('checks again after opening settings instead of reusing creation connection readiness', async () => {
+it('keeps a live v2 send independent of the connection catalog after opening settings', async () => {
   const test = await setup(true);
   test.rerender(
     <AgentSurface
@@ -129,12 +129,13 @@ it('checks again after opening settings instead of reusing creation connection r
     />,
   );
   vi.mocked(connectionClient.check).mockResolvedValue(missing);
-  submit();
-  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
-  expect(test.send).not.toHaveBeenCalled();
+  await act(async () => submit());
+  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
+  expect(test.send).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledOnce();
 });
 
-it('does not replenish creation readiness while initially open settings are awaiting connections', async () => {
+it('sends after initial readiness completes with settings open without a new catalog request', async () => {
   let finish!: (report: ConnectionReport) => void;
   vi.mocked(connectionClient.check).mockReturnValueOnce(
     new Promise((resolve) => (finish = resolve)),
@@ -153,13 +154,13 @@ it('does not replenish creation readiness while initially open settings are awai
     />,
   );
   vi.mocked(connectionClient.check).mockResolvedValue(missing);
-  submit();
-  expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeInTheDocument();
-  expect(test.send).not.toHaveBeenCalled();
-  expect(connectionClient.check).toHaveBeenCalledTimes(3);
+  await act(async () => submit());
+  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
+  expect(test.send).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledOnce();
 });
 
-it('discards creation readiness when the observed service grants change', async () => {
+it('lets live v2 admission and runtime permission requests own changed service grants', async () => {
   const test = await setup(true);
   if (test.controller.state.status !== 'ready') throw new Error('Ready fixture');
   test.rerender(
@@ -175,6 +176,29 @@ it('discards creation readiness when the observed service grants change', async 
         },
       }}
       detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  await act(async () => submit());
+  expect(screen.queryByRole('dialog', { name: 'Connect your accounts' })).not.toBeInTheDocument();
+  expect(test.send).toHaveBeenCalledOnce();
+  expect(connectionClient.check).toHaveBeenCalledOnce();
+});
+
+it('retains the connection gate when a v2 runtime is unavailable', async () => {
+  const test = await setup(true);
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      lifecycleClient={test.lifecycleClient}
+      controller={{
+        ...test.controller,
+        resourceAvailability: { state: 'unavailable', notice: 'The sandbox is paused.' },
+      }}
+      detailsOpen
       onDetailsOpenChange={vi.fn()}
       onNavigate={vi.fn()}
     />,

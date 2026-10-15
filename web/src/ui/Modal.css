@@ -1,10 +1,8 @@
 /*
  * The dialog — `docs/Web_Style.md` §12.4.
  *
- * One card size. A width chosen per surface is how two dialogs asking the
- * same kind of question end up different sizes; a surface that genuinely
- * needs more room says so with a placement class, which is a decision
- * somebody made rather than a default nobody noticed.
+ * One centered card size across surfaces. Each edge stays at least 20%
+ * inside the viewport; long content scrolls within the same shell.
  */
 
 .modal {
@@ -13,7 +11,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: 20vh 20vw;
+  padding-block: 20dvh;
   inset: 0;
 }
 
@@ -35,8 +35,11 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  width: min(440px, 100%);
-  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  width: min(700px, 60vw);
+  max-width: 60vw;
+  max-height: 60vh;
+  max-height: 60dvh;
   padding: 0 0 24px;
   overflow: hidden;
   background: var(--dsw-alias-bg-layer-2);
@@ -50,6 +53,7 @@
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  overflow: hidden;
 }
 
 .modal__header {
@@ -57,6 +61,7 @@
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+  flex: none;
   padding: 22px 14px 12px 24px;
 }
 
@@ -66,6 +71,8 @@
   font-size: 16px;
   font-weight: 500;
   line-height: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The close key is the button at its icon size, squared off rather than capsule. */
@@ -82,6 +89,7 @@
   color: var(--dsw-alias-label-primary);
   font-size: 14px;
   line-height: 22px;
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -95,7 +103,8 @@
   min-height: 0;
   margin-top: 20px;
   padding: 0 24px;
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .modal__footer {
@@ -103,19 +112,7 @@
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+  flex: none;
+  flex-wrap: wrap;
   padding: 0 24px;
-}
-
-/*
- * Two surfaces need more than the card's width, and say so here rather than
- * by taking a size prop: a width chosen per call site is how two dialogs
- * asking the same kind of question end up different sizes, and a class named
- * in one file is a decision a reviewer can find.
- */
-.modal--wide {
-  width: min(700px, 100%);
-}
-
-.modal--widest {
-  width: min(1000px, 100%);
 }

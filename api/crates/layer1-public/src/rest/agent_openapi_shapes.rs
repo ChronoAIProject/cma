@@ -1,5 +1,6 @@
 //! Public request and response shapes for CMA Agents.
 
+use super::agent_observation_shapes::{AgentRuntimeMetadataView, AgentTurnUsageView};
 use layer2_core::profiles::{PermissionLevel, SkillSource, ThinkingEffort};
 use layer2_core::sandbox::{
     Agent, AgentLineage, AgentStatus, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
@@ -171,6 +172,8 @@ pub(crate) struct FirstMessageStateView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentListItemView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_metadata: Option<AgentRuntimeMetadataView>,
     id: String,
     sandbox_id: String,
     workspace_id: String,
@@ -193,6 +196,7 @@ impl From<Agent> for AgentListItemView {
             worktree_id: agent.worktree_id.to_string(),
             status: agent.status,
             profile: (&agent).into(),
+            runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
             title: agent.title,
             created_at: agent.created_at,
             updated_at: agent.updated_at,
@@ -216,6 +220,8 @@ pub(crate) struct AgentBootstrapView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_metadata: Option<AgentRuntimeMetadataView>,
     id: String,
     #[schema(value_type = String)]
     status: AgentStatus,
@@ -285,6 +291,7 @@ impl AgentView {
             bootstrap,
             status: agent.status,
             profile: (&agent).into(),
+            runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
             worktree: WorktreeSummaryView {
                 id: worktree.id.to_string(),
                 name: worktree.name,
@@ -430,6 +437,8 @@ pub(crate) enum AgentTranscriptRoleView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentUsageView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) current_turn: Option<AgentTurnUsageView>,
     pub(crate) agent_id: String,
     pub(crate) through_seq: u64,
     pub(crate) input_tokens: u64,

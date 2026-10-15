@@ -170,7 +170,8 @@ it('holds approval and Stop response controls during history hydration', async (
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeDisabled();
@@ -207,7 +208,8 @@ it('holds approvals while saving and distinguishes pending admission from an act
     savingStartedAt: '2026-09-08T00:00:00Z',
   };
   const { rerender } = render(draw({ inputAvailability }));
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Keep my draft' } });
   expect(draft).toBeEnabled();
@@ -255,7 +257,8 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
 });
 
 it('names the full lineage and exposes messages, approvals, tools, reasoning, usage, and details', async () => {
@@ -288,7 +291,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
     />,
   );
   expect(screen.getByRole('navigation', { name: 'Agent location' })).toHaveTextContent(
-    'Atlas/chrono-bot/Agent',
+    'Atlas//workspaces/chrono-bot/Agent',
   );
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
@@ -326,7 +329,8 @@ it('removes completed preparation while preserving active and failed preparation
     />
   );
   const { rerender } = render(draw(AGENT_DETAIL));
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
   rerender(
     draw({

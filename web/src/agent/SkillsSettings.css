@@ -25,10 +25,27 @@
 }
 .agent-skills__list > li {
   display: grid;
+  grid-template-rows: 18px 18px 40px;
+  align-content: center;
+  box-sizing: border-box;
+  height: 112px;
+  min-height: 112px;
   gap: 6px;
   padding: 12px 0;
   min-width: 0;
-  overflow-wrap: anywhere;
+}
+.agent-skills__list > li > strong,
+.agent-skills__list > li > span,
+.agent-skills__list > li > p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-skills__list > li > strong {
+  font-size: 14px;
+  line-height: 18px;
 }
 .agent-skills__list > li + li {
   border-top: 1px solid var(--dsw-alias-border-l1);
@@ -40,8 +57,15 @@
 }
 .agent-skills__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+}
+.agent-skills__actions > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.agent-skills__actions .button {
   min-width: 0;
 }

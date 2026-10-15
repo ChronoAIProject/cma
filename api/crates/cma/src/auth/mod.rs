@@ -33,6 +33,7 @@ mod public_contract_tests;
 mod records;
 mod refresh;
 mod sandbox_prerequisite;
+pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
 #[cfg(test)]

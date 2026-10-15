@@ -111,6 +111,13 @@ function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
     status: value.status,
     profile: value.profile,
     title: value.title,
+    runtimeMetadata:
+      value.runtime_metadata === undefined
+        ? undefined
+        : {
+            workingDirectory: value.runtime_metadata.working_directory,
+            description: value.runtime_metadata.description,
+          },
     updatedAt: value.updated_at,
   };
 }
@@ -170,6 +177,13 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
     conformsTo: value.conforms_to,
     reach: value.reach,
     title: value.title,
+    runtimeMetadata:
+      value.runtime_metadata === undefined
+        ? undefined
+        : {
+            workingDirectory: value.runtime_metadata.working_directory,
+            description: value.runtime_metadata.description,
+          },
     pausedNotice: value.paused_notice,
     firstMessage:
       value.first_message === undefined

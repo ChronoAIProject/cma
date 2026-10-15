@@ -754,6 +754,7 @@ fn claimed(
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,

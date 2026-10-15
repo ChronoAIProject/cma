@@ -2,6 +2,8 @@ mod support;
 
 #[path = "rest/artifacts.rs"]
 mod artifacts;
+#[path = "rest/attachments.rs"]
+mod attachments;
 #[path = "rest/channel_usage.rs"]
 mod channel_usage;
 #[path = "rest/hierarchy.rs"]

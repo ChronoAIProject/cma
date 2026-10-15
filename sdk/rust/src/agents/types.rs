@@ -151,6 +151,8 @@ pub struct AgentSandbox {
 /// Owner-facing Agent list item.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentSummary {
+    /// Canonical runtime observations, absent on retained older runtimes.
+    pub runtime_metadata: Option<AgentRuntimeMetadata>,
     /// Agent identifier.
     pub id: String,
     /// Owning Sandbox identifier.
@@ -185,6 +187,8 @@ pub struct AgentBootstrap {
 /// Complete owner-facing Agent resource with its hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {
+    /// Canonical runtime observations, absent on retained older runtimes.
+    pub runtime_metadata: Option<AgentRuntimeMetadata>,
     /// Agent identifier.
     pub id: String,
     /// Current status.
@@ -341,6 +345,8 @@ pub struct AgentTranscript {
 /// Durable usage folded through one log position.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentUsage {
+    /// Latest observed turn, identified independently of context compaction.
+    pub current_turn: Option<AgentTurnUsage>,
     /// Agent identifier.
     pub agent_id: String,
     /// Last included event sequence.
@@ -386,4 +392,23 @@ pub struct AgentResources {
     pub received_bytes: Option<u64>,
     /// Sent network bytes, when known.
     pub sent_bytes: Option<u64>,
+}
+
+/// Canonical provider conversation metadata; individual shell commands do not change it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentRuntimeMetadata {
+    /// Persisted conversation working directory.
+    pub working_directory: Option<String>,
+    /// Provider conversation description.
+    pub description: Option<String>,
+}
+/// Actual consumed usage within one durable Agent turn.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentTurnUsage {
+    /// Durable turn sequence.
+    pub turn_sequence: u64,
+    /// Input tokens, including cached input.
+    pub input_tokens: u64,
+    /// Output tokens reported by the provider.
+    pub output_tokens: u64,
 }

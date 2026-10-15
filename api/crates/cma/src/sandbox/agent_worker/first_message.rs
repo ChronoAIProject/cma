@@ -17,13 +17,13 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if let Err(failure) = self.ensure_dispatch_connection(&agent).await {
             return self.handle_failure(agent, failure, now).await;
         }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let authority =
             AgentWorkAuthority::new(self.config.holder.clone(), fence).map_err(dispatch_error)?;
-        let started = tokio::time::Instant::now();
         let outcome = self
             .dependencies
             .operations
@@ -43,16 +43,11 @@ impl AgentWorker {
             | FirstMessageDispatchOutcome::NotConfigured
             | FirstMessageDispatchOutcome::Accepted(_)
             | FirstMessageDispatchOutcome::RecoveryRequired(_) => {
-                let current = self.current_dispatch(&agent, &authority).await?;
-                let now = publication_time(now, &current)?;
-                self.progress(
-                    current,
-                    AgentWorkStep::None,
-                    now,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
+                self.retry_dispatch_publication(
+                    &agent,
+                    &outcome,
+                    now + started.elapsed(),
+                    |current, at| async move { self.finish_dispatch_publication(current, at).await },
                 )
                 .await
             }

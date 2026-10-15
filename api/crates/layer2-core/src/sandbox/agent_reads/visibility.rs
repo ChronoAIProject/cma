@@ -35,6 +35,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | TurnMetadataSet { .. }
         | SignInRequired { .. }
         | FirstMessageChanged { .. }
+        | RuntimeMetadataChanged { .. }
         | ConfigOptionsSet { .. }
         | AvailableCommandsSet { .. } => None,
         TurnStarted {
@@ -79,6 +80,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | ApprovalResolved { .. }
         | OperationDeliveryChanged { .. }
         | Usage { .. }
+        | UsageUpdated { .. }
         | ModeChanged { .. }
         | PlanSet { .. }
         | ConversationGap { .. }

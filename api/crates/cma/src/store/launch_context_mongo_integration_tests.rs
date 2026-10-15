@@ -471,6 +471,7 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),

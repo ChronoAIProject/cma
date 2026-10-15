@@ -79,14 +79,20 @@ Sandbox controllers and CRDs remain infra-owned; manifests consume their API.
 
 ## Implemented identities and collections
 
-Browser callbacks are `/api/event-gateway/auth/callback` and
-`/api/image-manager/auth/callback` on the configured web origin. Each uses an
-independent confidential NyxID client, resource, 32-byte encryption key and
-`__Host-` HttpOnly cookie. OAuth state and PKCE verifier are consumed once.
-Encrypted tokens stay in `eg_auth_sessions` / `im_auth_sessions`; sessions have
-TTL indexes, an enforced maximum one-hour lifetime, per-request introspection,
-and exact-origin CSRF checks on cookie-authenticated writes. Logout is local to
-the selected service. No service reads another service's login collections.
+Agent Manager and Event Gateway share Agent Manager's existing NyxID client,
+`/auth/login` and `/auth/logout` flow, and HttpOnly CMA browser session. The
+`/api/event-gateway` bridge resolves the browser session in Agent Manager and
+forwards its server-held bearer; Event Gateway independently introspects that
+bearer and applies its own permissions and record ownership checks. No service
+reads another service's login collections. Historical `eg_auth_sessions` expire
+normally and are not accepted by the shared portal. See `Shared_Login.md` for
+the bridge's exact-origin checks, token custody, and route contract.
+
+Image Manager retains its independent `/api/image-manager/auth/callback`, client,
+resource, encryption key and `__Host-` HttpOnly cookie for its later rollout.
+OAuth state and PKCE verifier are consumed once. Encrypted tokens remain in
+`im_auth_sessions`, with TTL indexes, a maximum one-hour lifetime, per-request
+introspection and exact-origin CSRF checks. Image Manager logout is local to it.
 
 The Image Manager schema is `im_images`, `im_builds`, `im_schema_migrations`,
 `im_auth_sessions`. Successful immutable builds are the version catalog; image

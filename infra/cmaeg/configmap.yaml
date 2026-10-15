@@ -9,8 +9,6 @@ metadata:
 data:
   CMAEG_MONGODB_DATABASE: "chrono-bot"
   CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
-  CMAEG_WEB_ORIGIN: "https://bot.chrono-ai.fun"
-  CMAEG_COOKIE_KEY_FILE: "/var/run/cma-event-gateway-auth/cookie-key"
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"

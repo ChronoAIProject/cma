@@ -83,6 +83,8 @@ event_enum! { "type";
         ApprovalResolved => "approval_resolved" { approval_id: String, decision: String },
         OperationDeliveryChanged => "operation_delivery_changed" { operation_sequence: u64, operation: AgentOperationKind, state: AgentOperationDelivery },
         Usage => "usage" { input_tokens: u64, output_tokens: u64, context_used: u64, context_window: Option<u64> },
+        RuntimeMetadataChanged => "runtime_metadata_changed" { metadata: super::AgentRuntimeMetadata },
+        UsageUpdated => "usage_updated" { input_tokens: u64, output_tokens: u64, context_used: u64, context_window: Option<u64>, turn_sequence: Option<u64>, turn_input_tokens: u64, turn_output_tokens: u64 },
         ModeChanged => "mode_changed" { mode: String },
         PlanSet => "plan_set" { entries: Vec<PlanEntry> },
         ConfigOptionsSet => "config_options_set" { options: Vec<ConfigOption> },

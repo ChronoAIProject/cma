@@ -364,6 +364,8 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_metadata: Option<super::agent_observation_shapes::AgentRuntimeMetadataView>,
     pub id: String,
     pub worktree_id: String,
     pub workspace_id: String,
@@ -379,6 +381,7 @@ pub struct OwnerAgentSummaryView {
 impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
+            runtime_metadata: value.runtime_metadata.map(Into::into),
             id: value.id.to_string(),
             worktree_id: value.worktree_id.to_string(),
             workspace_id: value.workspace_id.to_string(),
