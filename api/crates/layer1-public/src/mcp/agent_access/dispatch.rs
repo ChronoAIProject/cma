@@ -138,7 +138,7 @@ fn list() -> Value {
             "required":["request_key","services","reason"],
             "properties":{
                 "request_key":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.:-]+$","description":"Stable idempotency key for this exact proposal; reuse it on retries."},
-                "services":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}},
+                "services":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"description":"Canonical NyxID service slugs, not display names. GitHub repository access uses api-github (GitHub OAuth) or api-github-pat (Personal Access Token); request the applicable service, not the unregistered slug github.","items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"}},
                 "reason":{"type":"string","minLength":1,"maxLength":2048,"description":"Explain to the owner why the Agent needs these services."},
             },
         },
