@@ -946,6 +946,29 @@ Available choices come from the owner's existing profile-authoring skills
 catalog. See [Agent skills](CMA_Agent_Skills_Runtime.md) for installation and
 recovery semantics.
 
+`POST /api/v1/agents/{id}/attachments?name=<filename>` uploads raw file bytes
+into the owned Agent's persistent environment. It requires an `Idempotency-Key`;
+`Content-Type` supplies the file's media type and defaults to
+`application/octet-stream`. Send one file per request, at most 20 MiB, without
+`Content-Encoding`. The API validates the actual received length and sanitizes
+the name to a single non-hidden filename. The response is
+`201 AgentAttachmentView` with `id`, `agent_id`, `name`, `path`, `size_bytes`,
+`media_type` and `sha256`. Uploading does not submit a conversation message;
+the client may reference the returned path in a later explicit message.
+
+Uploads require current owner authority, an active Sandbox and a retained
+runtime that advertises persistent attachment support. Sharing and delegated
+conversation rights do not authorize file writes. Agent ancestry, runtime and
+home identity are rechecked across the upload. Invalid metadata or incomplete
+bytes return `invalid_attachment` (400); oversized files return
+`attachment_too_large` (413). Unavailable environments, unsupported retained
+runtimes and changed upload identity return a typed 409. Upload capacity returns
+`attachment_capacity` (429), a body that does not complete within 45 seconds
+returns `attachment_timeout` (408), and transient runtime failures return
+`attachment_unavailable` (503). Retry uncertain uploads with the original key,
+metadata and bytes. Responses use `Cache-Control: private, no-store` and
+`X-Content-Type-Options: nosniff`.
+
 `GET /api/v1/agents/{id}/access-requests` returns `{ items }` for the Agent owner.
 Each item retains its exact request and Agent IDs, `services`, `reason`, durable
 `status`, and optional safe `error`. Owner approval uses
@@ -1217,6 +1240,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
 | `GET /api/v1/agents/{id}/access-requests` | - | - | 200 AgentAccessRequestList |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | ApproveAgentAccessRequest; key | - | 200 AgentAccessRequestView |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |
