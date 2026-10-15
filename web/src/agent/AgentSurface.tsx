@@ -210,6 +210,7 @@ export function AgentSurface({
         agentId={agentId}
         owner={viewerId}
         granted={detail.reach}
+        sandboxStatus={detail.sandbox.status}
         enabled={!readOnly && viewerId !== undefined}
       />
       <AgentHeader
