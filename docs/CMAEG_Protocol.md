@@ -150,7 +150,10 @@ flowchart TB
 
 `rendering` and `delivery` are separate fields: a rendered message can still fail
 to deliver. A confirmed or unknown explicit tool reply suppresses a later
-automatic answer. Partial chunk delivery is not full confirmation. External
+automatic answer. The chunking node above describes native Telegram and legacy
+relay delivery. With `CMAEG_NYXID_COMPLETE_REPLIES=true`, an ordinary relay answer
+is one complete request; NyxID owns the platform split, as specified in §10.
+Partial chunk delivery is not full confirmation. External
 delivery state is not durable; the gateway does not promise exactly-once effects.
 
 ### Flow E — Use the agent tools
@@ -392,7 +395,9 @@ clients SHOULD omit absent request values rather than invent empty strings.
 | Message blocks / card fields / buttons / choices / form fields | 16 / 16 / 8 / 20 / 12 |
 | Block and option IDs / option labels / card title and field label | 512 / 64 / 200 bytes |
 | Attachment reference / MCP URL | 4096 bytes |
-| Telegram rendered chunk | 4000 UTF-16 code units, including escaping |
+| Native Telegram, interactive/edit and legacy relay rendered chunk | 4000 UTF-16 code units, including escaping |
+| Complete NyxID relay request | 2097152 bytes (2 MiB) of serialized JSON, including identifier, metadata and escaping; never truncated |
+| Automatic provider output text | 256 KiB before rendering |
 | Channel ID / event reference / message reference | 512 / 4096 / 4096 bytes |
 | Relay JWT / JWT header / JWKS body / keys | 16 KiB / 1024 bytes / 32 KiB / 16 |
 | Provider metadata | 16 keys, 64 bytes per key, 512 bytes per value |
@@ -1480,12 +1485,16 @@ be unique within an option list. Forms use
 `{id,label,kind,required}`; kind is `{type:"text"}`, `{type:"number"}`,
 `{type:"date"}` or `{type:"choice",options}`. Block IDs must be unique within
 the message. Rendering never interprets arbitrary agent text as Telegram markup.
-Chunking preserves UTF-16 boundaries and complete escape atoms.
+Native Telegram, interactive/edit and legacy relay chunking preserves UTF-16
+boundaries and complete escape atoms. Complete ordinary relay rendering applies
+the same escaping and block degradation without chunking.
 
 A reply/update receipt is `{message_ref?,rendering,delivery}`. Rendering is
 `{outcome:"rendered|degraded|unsupported",blocks:[{index,outcome}]}`, where each
 block outcome is `{type:"exact"}`, `{type:"degraded",how}` or
-`{type:"dropped",why}`. Index `65535` describes whole-message chunking. Delivery
+`{type:"dropped",why}`. Index `65535` describes whole-message chunking in native
+Telegram and legacy relay delivery; complete ordinary relay replies have no
+chunking sentinel. Delivery
 is tagged by `outcome`: `confirmed` with optional `platform_message_id`,
 `rejected` with `reason`, `rate_limited` with `retry_after` seconds, `unknown`
 with `reason`, or `unsupported`. Unknown means the platform may have delivered;
@@ -1497,7 +1506,11 @@ Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,acti
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram
 capabilities are `true,false,"inline_keyboard","text","link_text",4000`; other
 relay platforms are `false,false,"numbered_text","text","link_text",4000`; custom
-are `false,false,"json","json","reference",32768`. Context retrieval requires
+are `false,false,"json","json","reference",32768`. `max_text_chars` retains its
+existing per-platform single-message/control hint meaning. It is not the tool
+input limit, a transport byte limit or a cap on a complete ordinary relay request.
+Integrations in complete mode SHOULD send one logical reply, rather than manually
+chunking it based solely on this hint. Context retrieval requires
 provider persistence described below; if unavailable it returns 503
 `provider_unavailable` with `detail:"event_context_unavailable"`.
 `expires_at` is the sealed event reference's Unix expiry in seconds; receiving a
@@ -2187,9 +2200,78 @@ has already replied. Typing/acknowledgement alone does not mark an answer delive
 
 NyxID relay sends on every platform are paced at least three seconds apart per
 route. The first send may consume an unexpired single-use reply token; subsequent
-sends use the channel key. A 429 can be retried once with the channel key after its bounded wait.
-Unknown sends are never blindly retried. Chunked messages retain their rendering
-report; partial delivery is not full confirmation.
+intentional sends use the channel key. Token selection happens after pacing; a
+claimed token is never replayed, including after event state cleanup.
+
+`CMAEG_NYXID_COMPLETE_REPLIES` selects a coordinated deployment mode:
+
+- **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
+  relay text at 4000 UTF-16 units and sends each part independently. A bare 429
+  can be retried once with the channel key after a bounded wait. This preserves
+  existing behavior, including its limitations: a URL may cross parts, a
+  reply-token-only route cannot send later parts, and NyxID cannot detect absent
+  parts of a logical reply. Legacy mode provides no whole-reply guarantee.
+- **`true` (verified complete replies).** Each ordinary logical reply is rendered
+  in full and serialized into exactly one existing
+  `POST /api/v1/channel-relay/reply` request with
+  `{message_id,reply:{text,metadata:null}}`. Acknowledgements, heartbeats, failure
+  notices and separate committed/tool replies remain separate logical requests.
+  NyxID owns final splitting for both ordinary and thread destinations. CMAEG
+  performs one route admission, pacing acquisition and credential selection for
+  this request; the reply token authorizes the whole logical reply. Native
+  direct Telegram still chunks locally, and interactive replies and edits must
+  still fit one 4000 UTF-16 unit part.
+
+Complete mode MUST remain disabled until the deployed NyxID has demonstrated
+ordinary **and** thread splitting without truncation or excerpt limits, including
+exact-cap and over-cap cases for its thread part-count bound. An over-cap request
+may be explicitly refused before any platform send, or use a verified fallback
+that preserves the full content; it must never silently send a prefix. The
+gateway transport bound does not promise every admitted payload will fit NyxID
+or platform capacity. NyxID must track each internal provider send, consume the reply token once for the logical request,
+and return a successful receipt only after every part is accepted. A partial,
+failed or uncertain send must return a non-200 response. This is an operator
+attestation, not automatic capability negotiation. The gateway cannot infer
+completeness from a receipt issued by an older truncating implementation.
+
+The exact complete serialized JSON body MUST be at most 2097152 bytes (2 MiB).
+Equality is accepted; a larger body is `rejected` with reason
+`relay_request_too_large` before gate admission/commit, credential claim or IO.
+The gateway never truncates to fit. This bound is independent of platform
+`max_text_chars`: existing tool ingress is 128 KiB, text fields are individually
+32 KiB with at most 16 blocks, and automatic output is bounded at 256 KiB.
+Sanitization plus JSON encoding expands an input byte at most fourfold (`@`
+becomes `@` plus a zero-width space; a backslash becomes four serialized
+backslashes). The 2 MiB limit therefore accommodates admitted tool bodies and
+maximum automatic output with envelope/rendered-block headroom. Independently
+constructed aggregates that pass individual field validation can exceed this
+transport bound and are explicitly refused. Empty text after sanitization is
+`rejected` with reason `empty_message`, without claiming a token.
+
+The NyxID receipt remains `{message_id,platform_message_id?}`: `message_id` is a
+nonempty outbound receipt identifier, distinct from the inbound identifier;
+`platform_message_id` is optional. Both identifiers, when present, are at most
+512 bytes and contain no control characters. The public `/v1` receipt and enum
+values are unchanged. Under the verified deployment contract, a valid 200 receipt
+confirms platform acceptance of the logical send. It supplies no recipient
+delivery/read receipt or evidence that a user read the reply. An optional
+platform ID can produce a `message_ref`, but does not enumerate parts. NyxID's optional `delivered_as` is a list of media
+kinds and is not completion evidence. A failed, malformed, oversized or lost
+receipt is `unknown`, with no confirmed `message_ref` and no automatic replay.
+In complete mode a bare 429 is also `unknown` with reason
+`rate_limited_unconfirmed`: earlier internal parts may have been delivered.
+CMAEG retains the bounded route cooldown but never retries that logical request,
+including with a channel key. Confirmed and unknown explicit replies both
+suppress automatic fallback answers.
+
+The default exchange timeout remains 5000 ms, configured by
+`CMAEG_NYXID_REPLY_TIMEOUT_MS`; it covers connection, send and receipt read for
+the complete request. The external tool deadline remains 8 s, including queueing
+and pacing. A timeout or cancellation after dispatch proves no absence of
+platform effects. Operators must verify that NyxID's complete splitting fits
+these deadlines and coordinate any future timeout change with upstream tool and
+proxy budgets. A fake transport passing this contract does not demonstrate live
+NyxID acceptance or platform reconstruction. See the operations rollout procedure.
 
 Provider idempotency deduplicates inbound events. Local delivery state prevents
 duplicates within a running replica; it is bounded and not durable. Crashes can

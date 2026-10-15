@@ -189,6 +189,13 @@ not confirm whether delivery happened. Confirmed tool replies mark the exact
 reference hash to suppress automatic final delivery. Telegram replies use NyxID's
 relay reply endpoint; edits and typing return `unsupported`.
 
+With the default `CMAEG_NYXID_COMPLETE_REPLIES=false`, relay delivery retains
+the legacy behavior below. After verifying the NyxID dependency, operators can
+select one complete ordinary relay request; see the [complete-reply contract](CMAEG_Protocol.md#10-delivery-semantics)
+and [coordinated rollout](CMAEG_Operations.md#coordinated-complete-reply-rollout).
+Native Telegram chunking and interactive/edit one-part constraints remain in
+effect.
+
 The Telegram renderer preserves escape atoms while splitting at 4,000 UTF-16
 units, preferring paragraph boundaries. It breaks mentions with a zero-width
 space and strips bidi controls. Cards become text, buttons and choices become
@@ -208,8 +215,9 @@ Already-admitted internal turns retain delivery authority through completion eve
 when their event references expire; new tool calls still enforce reference expiry.
 Expired reply tokens are replaced by the channel route key at dispatch time.
 
-The first send uses an unexpired reply token; later parts and sends use the retained
-channel route key. Each route has a three-second minimum interval on this replica.
+In default legacy relay mode, the first send uses an unexpired reply token; later
+parts and sends use the retained channel route key. Each route has a
+three-second minimum interval on this replica.
 A 429 delays one retry (Retry-After capped at ten seconds) using the channel key;
 a second 429 or a malformed/lost response has an unknown outcome and is not retried.
 Chunked sends stop on the first unconfirmed part and report partial delivery as

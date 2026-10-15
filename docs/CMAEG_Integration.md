@@ -288,6 +288,41 @@ parameter schemas; do not substitute native MCP argument shapes. Native MCP keep
 the four camelCase names, plus `readEventAttachment` when media is enabled. The
 NyxID REST base does not include a `/mcp` endpoint.
 
+Ordinary relay replies can use complete-reply mode after operators coordinate
+an upgraded NyxID deployment and enable `CMAEG_NYXID_COMPLETE_REPLIES`. In that
+mode CMAEG sends the complete escaped logical text once; NyxID performs final
+ordinary/thread platform splitting. Acks, progress and intentional separate
+replies keep separate requests. Native Telegram and interactive/edit constraints
+retain their existing behavior. The default remains legacy chunking until the
+NyxID full-send contract is verified; see the [rollout procedure](CMAEG_Operations.md#coordinated-complete-reply-rollout).
+
+Rust embedders select this mode with `RelayClient::with_complete_replies(true)`
+when composing the delivery engine. Existing `Config` and `DeliveryConfig`
+struct shapes and constructor signatures are retained. The low-level
+`RelayClient::send` and `send_rich` methods retain their existing payload and
+credential behavior; the new transport bound applies to complete ordinary
+delivery through the engine.
+
+The complete serialized relay JSON is limited to 2 MiB (2097152 bytes), including
+escaping, identifier and metadata. Oversized requests are refused before token
+claim or IO and are never truncated. Existing 128 KiB tool bodies, 32 KiB text
+fields and 16-block bounds remain unchanged. `max_text_chars` remains the existing
+per-platform single-message/control hint, not the tool input or complete relay
+payload limit. In complete mode, send one logical reply rather than manually
+chunking based solely on this hint. The default full exchange timeout is 5 s,
+while the external tool deadline is 8 s including queueing/pacing. Operators must measure and
+coordinate NyxID splitting against both budgets.
+
+A valid existing NyxID 200 `{message_id,platform_message_id?}` receipt represents
+all-parts acceptance only under that verified deployment contract. There is no
+new completion field, and `delivered_as` is a list of media kinds. Success means
+platform acceptance, not a recipient delivery/read receipt or evidence a user
+read the reply. Lost, malformed, failed or partial delivery cannot be confirmed
+by CMAEG. In complete mode a bare 429
+also means unknown and is never replayed, because an earlier platform part may
+have succeeded. The gateway keeps the route cooldown. Local fake tests do not
+prove live NyxID/IM delivery or reconstruction.
+
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
 and custom transports report editing and typing as unsupported. Telegram accepts
