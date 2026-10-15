@@ -819,3 +819,69 @@ These two passes do not establish optional GitHub grant/removal or fresh externa
 OAuth timing. Evidence: `/tmp/cma-hot-scope-live-8cad5bcd-active-20261015`,
 `/tmp/cma-hot-service-release-20261015`, and
 `/tmp/cma-runtime-ff9834c4-image-evidence.json`.
+
+## 2026-10-15 live GitHub grant, private read and revocation
+
+A new disposable Agent, `agt_a8006c4753ff4aab80dbee23c65f7761`, was created
+through the production browser on the new `ff9834c4` default runtime. One Create
+click reached an enabled composer in 3.373 seconds. This is warm input readiness,
+not first model response completion or a percentile guarantee.
+
+The actual installed `gh` performed three repository metadata reads through the
+managed NyxID `api-github` transport. The initial baseline scope was refused with
+a recognized NyxID service-scope HTTP 403. Codex then issued one real MCP access
+request. Owner approval installed the new key, revoked the old key and delivered
+the callback to the original conversation. The callback triggered a successful
+`gh api repos/ChronoAIProject/cma --jq .full_name` with exit code zero and the
+exact private repository name. An exact owner scope replacement then removed
+`api-github`; its automatic callback triggered another read, again refused by
+NyxID's service scope. There was no extra model prompt between these stages.
+
+| Production change | Installed key and old-key revocation | Actual callback delivered | Durable Succeeded |
+| --- | --- | --- | --- |
+| Add `api-github` | 2.096 s | 3.399 s | 3.509 s |
+| Remove `api-github` | 1.284 s | 1.844 s | 1.952 s |
+
+Both timings use the same conservative observer method described above. The
+same Pod, runtime boot, conversation, Claim, PVC/PV and API image remained in
+place. Final scope was restored to `chrono-llm-public` and `ornn-api`. Native
+tool records were correlated with public tool-call IDs; model statements alone
+were not used as command-result evidence. The test used the owner's existing
+GitHub OAuth connection, so it does not measure fresh external OAuth consent.
+This proves GitHub API transport; native Git clone/push is a separate capability.
+
+Evidence: `/tmp/cma-gh-hot-live-8cad5bcd-20261015-01/report.json` and
+`/tmp/cma-hot-github-production-browser-20261015/create-ui-timing.json`.
+
+## 2026-10-15 final chat identities, attachments and live token display
+
+Web source `fa1e3f13a2583723aadc9c1412b0f21177e58f06`, image digest
+`sha256:b65f7001b95edd3b9eaad46f30344f5be363199ab860b233f0409fca92f07ab6`,
+is deployed at generation 116 with one Ready replica. Public JavaScript bytes
+match the running Pod. Production messages show the owner's display name and
+avatar and the bundled Chrono Agent face and name; both image sources loaded.
+The empty composer measured 36 pixels high and remained enabled after the turn.
+
+On this exact Web release, native clipboard image paste and local file drag/drop
+produced two Ready previews. One Send delivered both attachment paths with the
+message; the response receipt arrived in 381 ms. Codex actually inspected the
+image and text and returned the correct shapes, colors, counts and file marker.
+The turn completed with 57,256 input and 243 output tokens.
+
+The recorded DOM timeline proves live estimates before authoritative usage:
+the first visible output estimate appeared at 6.745 seconds after Send, about
+72 ms after the indicator began estimating, then increased from 6 to 9 to 10.
+The first authoritative usage animation began at 9.119 seconds. Later streamed
+text increased the explicitly approximate newly-visible output estimate from
+1 to 45 while retaining the last reported counts. Final authoritative counts
+replaced that estimate. Estimates cover visible text/reasoning only and never
+alter accumulated authoritative session totals. No repeated live-interruption
+banner appeared in the 150 captured DOM samples.
+
+All 1,932 Web tests across 205 files, type checking, lint, formatting and build
+passed for this implementation. Static asset compression was checked against
+the actual built nginx image; the token worker's decompressed bytes matched its
+source asset. Evidence: `/tmp/cma-chat-final-browser-20261015`,
+`/tmp/cma-chat-release-20261015`,
+`/tmp/cma-chat-static-compression-proof-20261015.json`, and
+`/tmp/cma-final-chat-web-tests-20261015.log`.
