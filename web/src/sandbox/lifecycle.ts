@@ -14,7 +14,9 @@ export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
 }
 
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
-  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving'].includes(sandbox.status);
+  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving'].includes(
+    sandbox.status,
+  );
 }
 
 export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
