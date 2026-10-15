@@ -36,6 +36,42 @@ function show() {
     />,
   );
 }
+it('retains an approved request while paused without claiming runtime verification or repeating approval', async () => {
+  vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'applying' }]);
+  const decide = vi.spyOn(accessRequests, 'decide');
+  const view = render(
+    <AgentAccessRequests
+      agentId="agent-one"
+      owner="owner"
+      granted={['chrono-llm-public', 'ornn-api']}
+      sandboxStatus="paused"
+      enabled
+    />,
+  );
+  await screen.findByText(/The Sandbox is paused. Your approval is saved/);
+  expect(screen.queryByText(/Verifying the updated Agent key/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  view.rerender(
+    <AgentAccessRequests
+      agentId="agent-one"
+      owner="owner"
+      granted={['chrono-llm-public', 'ornn-api']}
+      sandboxStatus="active"
+      enabled
+    />,
+  );
+  await screen.findByText(/Verifying the updated Agent key/);
+  expect(decide).not.toHaveBeenCalled();
+});
+it('explains how to recover a failed update without exposing its internal error code', async () => {
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    { ...request, status: 'failed', error: 'access_update_cannot_continue' },
+  ]);
+  show();
+  await screen.findByRole('alert');
+  expect(screen.getByText(/Ask the Agent to create a new access request/)).toBeVisible();
+  expect(screen.queryByText('access_update_cannot_continue')).not.toBeInTheDocument();
+});
 it('opens only a durable request, keeps required scopes fixed, and submits only on explicit approval', async () => {
   const decide = vi
     .spyOn(accessRequests, 'decide')

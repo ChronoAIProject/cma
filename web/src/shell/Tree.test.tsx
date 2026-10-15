@@ -31,6 +31,7 @@ const READ_ONLY: TreePermissions = {
 function renderTree(
   options: {
     readonly viewerId?: string;
+    readonly route?: AppRoute;
     readonly permissions?: TreePermissions;
     readonly paused?: boolean;
     readonly items?: readonly NavigationSandbox[];
@@ -52,7 +53,7 @@ function renderTree(
       busySandboxIds={options.busySandboxIds}
       deletingSandboxIds={options.deletingSandboxIds}
       onViewDeletion={options.onViewDeletion}
-      route={{ kind: 'home' }}
+      route={options.route ?? { kind: 'home' }}
       permissions={options.permissions ?? FULL_ACCESS}
       onNavigate={options.onNavigate ?? vi.fn()}
       onAction={options.onAction ?? vi.fn()}
@@ -61,6 +62,36 @@ function renderTree(
 }
 
 describe('Sandbox navigation tree', () => {
+  it('uses the selected Agent runtime directory and description without guessing another Agent cwd', () => {
+    const items = navigationFixture().map((item) => ({
+      ...item,
+      workspaces: item.workspaces.map((workspace) => ({
+        ...workspace,
+        agents: workspace.agents.map((agent) => ({
+          ...agent,
+          runtimeMetadata: {
+            workingDirectory: '/home/cma/project-from-codex',
+            description: 'Investigate the failing deployment',
+          },
+        })),
+      })),
+    }));
+    const selectedId = items[0]!.workspaces[0]!.agents[0]!.id;
+    const view = renderTree({ items, route: { kind: 'agent', agentId: selectedId } });
+    expect(screen.getByText('/home/cma/project-from-codex')).toHaveAttribute(
+      'title',
+      '/home/cma/project-from-codex',
+    );
+    expect(
+      screen.getByRole('link', { name: /Investigate the failing deployment/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+    view.unmount();
+    renderTree({ items });
+    expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
+    expect(screen.queryByText('/home/cma/project-from-codex')).not.toBeInTheDocument();
+  });
+
   it('locks only the Sandbox whose lifecycle request is still being confirmed', async () => {
     const actor = userEvent.setup();
     renderTree({
@@ -73,13 +104,13 @@ describe('Sandbox navigation tree', () => {
         })),
       ],
     });
-    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
     expect(screen.getByRole('menuitem', { name: /Pause/ })).toHaveAttribute(
       'aria-disabled',
       'true',
     );
     await actor.keyboard('{Escape}');
-    await actor.click(screen.getByRole('button', { name: 'Options for Other sandbox' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 2' }));
     for (const name of ['Pause', 'New agent', 'Delete'])
       expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'false');
   });
@@ -88,7 +119,7 @@ describe('Sandbox navigation tree', () => {
     const onAction = vi.fn();
     renderTree({ onAction });
     const actor = userEvent.setup();
-    await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
     const remove = screen.getByRole('menuitem', { name: 'Remove' });
     expect(remove).toHaveAttribute('aria-disabled', 'false');
     await actor.click(remove);
@@ -104,28 +135,30 @@ describe('Sandbox navigation tree', () => {
       ...navigationFixture(),
       ...navigationFixture('paused').map((item) => ({
         ...item,
-        sandbox: { ...item.sandbox, id: 'sbx_paused', name: 'Sleeping project' },
+        sandbox: { ...item.sandbox, id: 'sbx_paused', name: 'Sandbox Machine - paused' },
         workspaces: [],
       })),
     ];
     const view = renderTree({ items });
-    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
+      'Sandbox Machine - 1',
+    );
     expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).toHaveTextContent(
-      'Sleeping project',
+      'Sandbox Machine - paused',
     );
     await actor.click(screen.getByRole('button', { name: 'Collapse Live sandboxes' }));
-    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
-    expect(screen.getByText('Sleeping project')).toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Machine - 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Sandbox Machine - paused')).toBeInTheDocument();
     view.unmount();
     const restored = renderTree({ items });
     expect(screen.getByRole('button', { name: 'Expand Live sandboxes' })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
-    expect(screen.getByText('Sleeping project')).toBeInTheDocument();
+    expect(screen.getByText('Sandbox Machine - paused')).toBeInTheDocument();
     restored.unmount();
     renderTree({ items, viewerId: 'another-owner' });
-    expect(screen.getByText('Atlas')).toBeInTheDocument();
+    expect(screen.getByText('Sandbox Machine - 1')).toBeInTheDocument();
   });
 
   it.each(['preparing', 'removing', 'failed'] as const)(
@@ -137,14 +170,16 @@ describe('Sandbox navigation tree', () => {
           workspaces: item.workspaces.map((workspace) => ({ ...workspace, status })),
         })),
       });
-      expect(screen.getByText('chrono-bot')).toBeInTheDocument();
+      expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
       expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
       expect(
-        screen.queryByRole('button', { name: /Expand chrono-bot|Collapse chrono-bot/ }),
+        screen.queryByRole('button', {
+          name: /Expand \/workspaces\/chrono-bot|Collapse \/workspaces\/chrono-bot/,
+        }),
       ).not.toBeInTheDocument();
-      expect(screen.getByText('chrono-bot').closest('[role="treeitem"]')).not.toHaveAttribute(
-        'aria-expanded',
-      );
+      expect(
+        screen.getByText('/workspaces/chrono-bot').closest('[role="treeitem"]'),
+      ).not.toHaveAttribute('aria-expanded');
     },
   );
 
@@ -164,10 +199,16 @@ describe('Sandbox navigation tree', () => {
       },
     }));
     renderTree({ items });
-    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
-    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent('Atlas');
-    expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Resuming');
-    expect(screen.getByRole('button', { name: 'Collapse Atlas' })).toBeInTheDocument();
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
+      'Sandbox Machine - 1',
+    );
+    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent(
+      'Sandbox Machine - 1',
+    );
+    expect(screen.getByRole('link', { name: /Sandbox Machine - 1/ })).toHaveTextContent('Resuming');
+    expect(
+      screen.getByRole('button', { name: 'Collapse Sandbox Machine - 1' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Agent one/ })).toHaveTextContent('Resuming');
   });
 
@@ -188,8 +229,8 @@ describe('Sandbox navigation tree', () => {
         },
       }));
       renderTree({ items, onAction });
-      expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Live');
-      await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+      expect(screen.getByRole('link', { name: /Sandbox Machine - 1/ })).toHaveTextContent('Live');
+      await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
       const pause = screen.getByRole('menuitem', { name: /^Pause/ });
       expect(pause).toHaveAttribute('aria-disabled', 'true');
       expect(pause).toHaveTextContent('Progress is being saved.');
@@ -200,7 +241,7 @@ describe('Sandbox navigation tree', () => {
         'false',
       );
       await actor.click(screen.getByRole('menuitem', { name: 'New workspace' }));
-      await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+      await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
       expect(screen.getByRole('menuitem', { name: 'New agent' })).toHaveAttribute(
         'aria-disabled',
         'false',
@@ -217,7 +258,9 @@ describe('Sandbox navigation tree', () => {
       });
       expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
       expect(screen.getByText('Agent one')).toBeInTheDocument();
-      await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
       expect(
         screen.getByRole('menuitem', { name: status === 'paused' ? /^Resume/ : /^Pause/ }),
       ).toHaveAttribute('aria-disabled', 'true');
@@ -227,14 +270,14 @@ describe('Sandbox navigation tree', () => {
   it('uses the reported Resume eligibility and blocks duplicate pending lifecycle actions', async () => {
     const actor = userEvent.setup();
     const view = renderTree({ paused: true });
-    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
     expect(screen.getByRole('menuitem', { name: 'Resume' })).toHaveAttribute(
       'aria-disabled',
       'false',
     );
     view.unmount();
     renderTree({ paused: true, lifecycleBusy: true });
-    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
     expect(screen.getByRole('menuitem', { name: /^Resume/ })).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -248,7 +291,9 @@ describe('Sandbox navigation tree', () => {
         sandbox: { ...item.sandbox, lifecycle: undefined },
       })),
     });
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
     expect(screen.getByRole('menuitem', { name: /^Pause/ })).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -258,8 +303,8 @@ describe('Sandbox navigation tree', () => {
 
   it('renders Sandbox, Workspace, and Agent rows without a Worktree navigation node', () => {
     renderTree();
-    expect(screen.getByText('Atlas')).toBeInTheDocument();
-    expect(screen.getByText('chrono-bot')).toBeInTheDocument();
+    expect(screen.getByText('Sandbox Machine - 1')).toBeInTheDocument();
+    expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
     const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
     expect(agent).not.toHaveAttribute('data-dimmed');
     expect(within(agent as HTMLElement).getByText('Ready')).toBeInTheDocument();
@@ -273,11 +318,13 @@ describe('Sandbox navigation tree', () => {
       renderTree({ items: navigationFixture(status), onNavigate });
       expect(screen.getAllByRole('treeitem')).toHaveLength(1);
       expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
-      expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
+      expect(screen.queryByText('/workspaces/chrono-bot')).not.toBeInTheDocument();
       expect(
-        screen.queryByRole('button', { name: /Expand Atlas|Collapse Atlas/ }),
+        screen.queryByRole('button', {
+          name: /Expand Sandbox Machine - 1|Collapse Sandbox Machine - 1/,
+        }),
       ).not.toBeInTheDocument();
-      await userEvent.setup().click(screen.getByRole('link', { name: /Atlas/ }));
+      await userEvent.setup().click(screen.getByRole('link', { name: /Sandbox Machine - 1/ }));
       expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
     },
   );
@@ -331,7 +378,7 @@ describe('Sandbox navigation tree', () => {
       const actor = userEvent.setup();
       await actor.click(screen.getByRole('link', { name: /Agent one/ }));
       expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agt_1' });
-      await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+      await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
       for (const name of [/^New agent/, /^Remove/]) {
         const action = screen.getByRole('menuitem', { name });
         expect(action).toHaveAttribute('aria-disabled', 'true');
@@ -354,7 +401,7 @@ describe('Sandbox navigation tree', () => {
 
   it('removes terminal Sandboxes, Workspaces and Agents from working navigation', () => {
     const retired = renderTree({ items: navigationFixture('retired') });
-    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sandbox Machine - 1')).not.toBeInTheDocument();
     expect(screen.getByText('No Sandboxes')).toBeInTheDocument();
     retired.unmount();
     const removed = renderTree({
@@ -366,7 +413,7 @@ describe('Sandbox navigation tree', () => {
         })),
       })),
     });
-    expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
+    expect(screen.queryByText('/workspaces/chrono-bot')).not.toBeInTheDocument();
     removed.unmount();
     renderTree({ items: navigationFixture('active', 'deleted') });
     expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
@@ -375,7 +422,7 @@ describe('Sandbox navigation tree', () => {
   it('persists collapsed groups independently for each viewer', async () => {
     const actor = userEvent.setup();
     const first = renderTree({ viewerId: 'viewer-one' });
-    await actor.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
+    await actor.click(screen.getByRole('button', { name: 'Collapse Sandbox Machine - 1' }));
     expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
     first.unmount();
 
@@ -392,13 +439,13 @@ describe('Sandbox navigation tree', () => {
     const actor = userEvent.setup();
     renderTree({ onAction: (action) => actions.push(action) });
 
-    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
     expect(screen.getByRole('menuitem', { name: 'Pause' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
     await actor.click(screen.getByRole('menuitem', { name: 'New workspace' }));
     expect(actions).toEqual([{ kind: 'new_workspace', sandboxId: 'sbx_1' }]);
 
-    await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
     await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
     expect(actions.at(-1)).toEqual({ kind: 'new_agent', sandboxId: 'sbx_1' });
 

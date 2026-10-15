@@ -3,7 +3,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentResources } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { testClient } from '../test/client';
-import { AGENT_USAGE } from '../test/agent';
 import { Resources, cpuMillis, formatBytes } from './Resources';
 import type { SandboxResourceAvailability } from './sandboxInput';
 
@@ -47,12 +46,7 @@ it('cancels reads on pause, ignores late samples, and starts CPU measurement aga
   const client = testClient({ readAgentResources: read });
   const draw = (availability: SandboxResourceAvailability) => (
     <CmaClientProvider client={client}>
-      <Resources
-        agentId="agt_1"
-        sandboxId="sbx_1"
-        availability={availability}
-        usage={AGENT_USAGE}
-      />
+      <Resources agentId="agt_1" sandboxId="sbx_1" availability={availability} />
     </CmaClientProvider>
   );
   const { rerender } = render(draw(liveAvailability));
@@ -68,7 +62,7 @@ it('cancels reads on pause, ignores late samples, and starts CPU measurement aga
   expect(read).toHaveBeenCalledTimes(2);
   expect(screen.getByText('RAM · paused')).toBeInTheDocument();
   expect(screen.queryByRole('progressbar', { name: 'RAM' })).not.toBeInTheDocument();
-  expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
+  expect(screen.queryByRole('progressbar', { name: 'Context' })).not.toBeInTheDocument();
   rerender(draw(liveAvailability));
   await act(async () => {});
   expect(read).toHaveBeenCalledTimes(3);
@@ -101,12 +95,7 @@ it('renders measured memory, network and context and derives live CPU on the nex
     .mockResolvedValue({ ...reading, uptime_ms: 15000, cpu_usage_usec: 11000000 });
   const view = render(
     <CmaClientProvider client={testClient({ readAgentResources: read })}>
-      <Resources
-        availability={liveAvailability}
-        agentId="agt_1"
-        sandboxId="sbx_1"
-        usage={{ ...AGENT_USAGE, contextWindow: 10000 }}
-      />
+      <Resources availability={liveAvailability} agentId="agt_1" sandboxId="sbx_1" />
     </CmaClientProvider>,
   );
   await act(async () => {
@@ -115,10 +104,7 @@ it('renders measured memory, network and context and derives live CPU on the nex
   expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
   expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
   expect(screen.getByText('Network · ↓ 2 KiB · ↑ 1 KiB')).toBeInTheDocument();
-  expect(screen.getByRole('progressbar', { name: 'Context' })).toHaveAttribute(
-    'aria-valuemax',
-    '10000',
-  );
+  expect(screen.queryByRole('progressbar', { name: 'Context' })).not.toBeInTheDocument();
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5000);
   });
@@ -147,7 +133,7 @@ it('retains last readings and explicitly marks a failed refresh', async () => {
   });
   expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Last reading; reconnecting');
-  expect(screen.getByText('Context · not reported')).toBeInTheDocument();
+  expect(screen.queryByText('Context · not reported')).not.toBeInTheDocument();
 });
 
 it('never displays a resource response for a different Agent', async () => {

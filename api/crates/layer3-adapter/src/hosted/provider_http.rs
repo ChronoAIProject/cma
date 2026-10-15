@@ -54,7 +54,9 @@ pub(super) fn runtime_failure(failure: WireFailure) -> AdapterError {
         AdapterError::Unavailable(detail)
     } else if matches!(
         failure.code.as_str(),
-        "mutation_authority_conflict" | "runtime_mutation_replay_mismatch"
+        "mutation_authority_conflict"
+            | "runtime_mutation_replay_mismatch"
+            | "attachment_upload_conflict"
     ) {
         AdapterError::OperationIdentityConflict(detail)
     } else if failure.code == "at_capacity" {

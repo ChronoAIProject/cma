@@ -31,6 +31,9 @@ impl RuntimeStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStatus {
+    /// Exact owner uploads can be published under the complete persistent home.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_attachment_upload: bool,
     /// Absent on retained supervisors that predate the additive operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_skill_install: bool,

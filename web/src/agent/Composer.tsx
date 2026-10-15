@@ -7,6 +7,9 @@ import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@chronoai/cma-sdk';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
+import { attachmentMessage, type UploadAttachment } from './attachments';
+import { useComposerAttachments } from './useComposerAttachments';
+import { ComposerAttachments } from './ComposerAttachments';
 
 interface ComposerProps {
   readonly draft?: AgentDraft;
@@ -22,6 +25,7 @@ interface ComposerProps {
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
+  readonly uploadAttachment?: UploadAttachment;
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
 }
@@ -62,6 +66,7 @@ export function Composer({
   inputAvailability,
   busy,
   quickMessages = [],
+  uploadAttachment,
   onSend,
   onStop,
 }: ComposerProps) {
@@ -79,13 +84,19 @@ export function Composer({
   const notice = inputAvailability.notice ?? pausedNotice;
   const hasNotice = notice !== undefined || inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status) || preparing;
+  const attachmentEnabled =
+    (status === 'ready' || status === 'working') && !inputBlocked && !starting && !busy;
+  const attachments = useComposerAttachments(draft, uploadAttachment, attachmentEnabled);
+  const messageContent = attachmentMessage(content, attachments.items);
 
   useLayoutEffect(() => {
     if (acceptedMessage === previousAccepted.current) return;
     previousAccepted.current = acceptedMessage;
-    if (acceptedMessage !== undefined)
-      setContent((current) => (current.trim() === acceptedMessage ? '' : current));
-  }, [acceptedMessage, setContent]);
+    if (acceptedMessage !== undefined && messageContent === acceptedMessage) {
+      setContent('');
+      attachments.accept(attachments.items);
+    }
+  }, [acceptedMessage, messageContent, setContent, attachments]);
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
@@ -110,7 +121,7 @@ export function Composer({
   }, []);
 
   const submit = (quickMessage?: string) => {
-    const message = quickMessage ?? content.trim();
+    const message = quickMessage ?? messageContent;
     if (
       message === '' ||
       composing.current ||
@@ -120,15 +131,20 @@ export function Composer({
       starting ||
       inputBlocked ||
       requestPending ||
+      (quickMessage === undefined && attachments.blocked) ||
       sending.current
     )
       return;
     const draft = content;
+    const submittedAttachments = attachments.items;
     sending.current = true;
     setSubmitting(true);
     void Promise.resolve(
       onSend(message, () => {
-        if (quickMessage === undefined) setContent((current) => (current === draft ? '' : current));
+        if (quickMessage === undefined) {
+          setContent((current) => (current === draft ? '' : current));
+          attachments.accept(submittedAttachments);
+        }
       }),
     ).finally(() => {
       sending.current = false;
@@ -137,7 +153,26 @@ export function Composer({
   };
 
   return (
-    <div className="agent-composer">
+    <div
+      className="agent-composer"
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        if (!submitting && !requestPending) attachments.add(files);
+      }}
+      onDragOver={(event) => {
+        if (!Array.from(event.dataTransfer.types).includes('Files')) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = attachmentEnabled ? 'copy' : 'none';
+      }}
+      onDrop={(event) => {
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length === 0) return;
+        event.preventDefault();
+        if (!submitting && !requestPending) attachments.add(files);
+      }}
+    >
       <QuickMessages
         messages={quickMessages}
         disabled={
@@ -214,7 +249,15 @@ export function Composer({
               }
             }}
           />
-          <div className="agent-composer__row" />
+          {uploadAttachment === undefined &&
+          attachments.items.length === 0 &&
+          attachments.error === undefined ? null : (
+            <ComposerAttachments
+              {...attachments}
+              enabled={attachmentEnabled && uploadAttachment !== undefined}
+              locked={submitting || requestPending}
+            />
+          )}
         </div>
         {!running || queueWhileRunning ? (
           <Button
@@ -231,7 +274,8 @@ export function Composer({
               starting ||
               inputBlocked ||
               requestPending ||
-              content.trim() === ''
+              messageContent === '' ||
+              attachments.blocked
             }
             aria-describedby={hasNotice ? noticeId : undefined}
           />

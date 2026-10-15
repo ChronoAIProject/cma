@@ -148,7 +148,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
     if let Some(browser) = browser {
-        router = browser.protect(router).merge(browser.routes());
+        router = router.merge(cma_service_auth::session::router(browser));
     }
     // The retained console has its own OAuth session, CSRF and owner checks.
     // Portal cookie middleware must not change that independent authority.

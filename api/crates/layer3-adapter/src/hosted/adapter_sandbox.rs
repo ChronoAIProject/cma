@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    async fn upload_agent_attachment(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentAttachmentRequest,
+        content: Vec<u8>,
+    ) -> crate::Result<crate::AgentAttachmentReceipt> {
+        self.upload_attachment(handle, request, content).await
+    }
+
     async fn reserve_home_request(
         &self,
         runtime: &RuntimeProvisionRequest,

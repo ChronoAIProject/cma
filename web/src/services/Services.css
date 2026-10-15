@@ -28,6 +28,23 @@
 .service-tabs__brand:hover {
   color: var(--dsw-alias-brand-text);
 }
+.service-tabs a.service-tabs__brand {
+  padding-inline: 0;
+}
+.service-tabs__build {
+  flex: none;
+  align-self: center;
+  max-width: 11ch;
+  margin-top: 12px;
+  margin-left: -4px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .service-tabs__mark {
   width: 26px;
   height: 26px;

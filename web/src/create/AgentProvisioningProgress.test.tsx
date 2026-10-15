@@ -39,6 +39,8 @@ afterEach(() => vi.useRealTimers());
 it('waits for reported stages and preserves concurrent completion without inventing ordered progress', () => {
   const view = render(progress());
   expect(screen.getAllByText('Waiting')).toHaveLength(4);
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+  expect(screen.getByText('Setup details').closest('details')).not.toHaveAttribute('open');
   expect(screen.queryByText('In progress')).not.toBeInTheDocument();
   view.rerender(
     progress(
@@ -56,7 +58,7 @@ it('waits for reported stages and preserves concurrent completion without invent
   expect(step('Key permissions').getByText('Ready')).toBeInTheDocument();
   expect(step('Agent startup').getByText('Waiting')).toBeInTheDocument();
   expect(screen.queryByText('Internal event details')).not.toBeInTheDocument();
-  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40');
 });
 
 it('uses server event times across remounts and stops elapsed timing at recorded Agent readiness', async () => {
@@ -73,6 +75,7 @@ it('uses server event times across remounts and stops elapsed timing at recorded
   expect(step('Agent startup').getByText('6s elapsed')).toBeInTheDocument();
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(step('Agent startup').getByText('11s elapsed')).toBeInTheDocument();
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20');
   first.unmount();
   const view = render(progress(operation(events)));
   expect(screen.getByText('Provisioning elapsed: 15s')).toBeInTheDocument();
@@ -145,4 +148,25 @@ it('orders recorded events by sequence and hides invalid timestamps and unknown 
   expect(screen.queryByText('In progress')).not.toBeInTheDocument();
   expect(screen.queryByText('unknown_backend_phase')).not.toBeInTheDocument();
   expect(screen.queryByText(/elapsed/)).not.toBeInTheDocument();
+});
+
+it('reserves the final fifth for confirmed successful completion with an Agent identifier', () => {
+  const events = [
+    event(1, 'sandbox_ready', 'ready', 1),
+    event(2, 'workspace_runtime', 'ready', 2),
+    event(3, 'key_scope_ready', 'ready', 3),
+    event(4, 'agent_startup', 'ready', 4),
+  ];
+  const view = render(progress(operation(events)));
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '80');
+  expect(screen.getByRole('progressbar')).toHaveAttribute(
+    'aria-valuetext',
+    '4 of 5 milestones confirmed',
+  );
+  view.rerender(progress(operation(events, { status: 'succeeded' })));
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '80');
+  expect(screen.queryByText('Agent ready')).not.toBeInTheDocument();
+  view.rerender(progress(operation(events, { status: 'succeeded', agent_id: 'confirmed-agent' })));
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+  expect(screen.getByText('Agent ready')).toBeInTheDocument();
 });
