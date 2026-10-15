@@ -24,6 +24,13 @@ export interface ReadyAgent {
   readonly historyUnavailable?: boolean;
 }
 
+/** IDs from the current exact personal access read; projections are still read afresh. */
+export interface AgentLoadLineage {
+  readonly agentId: string;
+  readonly workspaceId: string;
+  readonly sandboxId: string;
+}
+
 function withUsage(conversation: ConversationState, usage: AgentUsage): ConversationState {
   return { ...conversation, usage };
 }
@@ -38,10 +45,19 @@ export async function loadAgent(
   signal: AbortSignal,
   allowIncompleteHistory = false,
   onHistoryProgress?: (ready: ReadyAgent) => void,
+  lineage?: AgentLoadLineage,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
   if (v2 !== undefined)
-    return loadV2Agent(client, agentId, signal, v2, allowIncompleteHistory, onHistoryProgress);
+    return loadV2Agent(
+      client,
+      agentId,
+      signal,
+      v2,
+      allowIncompleteHistory,
+      onHistoryProgress,
+      lineage,
+    );
   const [detail, transcript, usage] = await Promise.all([
     client.readAgent(agentId, { signal }),
     client.readAgentTranscript(agentId, { signal }),
