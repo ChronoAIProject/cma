@@ -1,23 +1,24 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 20:01 SGT
+## Current production — 15 October, 20:48 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 39 | `sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132` |
-| Web | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 117 | `sha256:369c448ed9c44037021546c2885c7f3b155e2a2457c14ab9e2e1379797af9904` |
+| Agent Manager | `d21ba8aadf8265dd82b814ad2114b85696c5e06f` | 41 | `sha256:080df8df88d1b77cefd0a4e467d0c4554020b0480e82b88a881e6cbdc3211ab1` |
+| Web | `d21ba8aadf8265dd82b814ad2114b85696c5e06f` | 118 | `sha256:eade12030a18a48264d309803da12c869d0dd1a2ff03f4848a1d5e3368b1b8c8` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
-| Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
+| Default runtime | `d97121b5ac1b683b34cc89fde6802ac26451ad51` | — | `sha256:d019533f1b72c0094eaf29bd5de453125f34bafcb41e76bad2893b4189203e7e` |
 
 Production checks now cover live key replacement and revocation without a
 restart, actual private GitHub API access, pasted/dropped attachments, message
 identities and estimates during streamed output. Measured warm creation reached
 an enabled composer in 3.373 seconds. Key-change callbacks passed the five-second
 target, including an active turn. Actual controller pause/resume remains slower
-than five seconds; fresh external OAuth and native Git transport are separate
-coverage limits. Exact evidence and measurement boundaries are in the dated
+than five seconds; fresh external OAuth remains a separate coverage limit.
+The accepted Git workflow downloads source through the authenticated GitHub API
+and initializes a local Git workspace; native Git transport is outside this workflow. Exact evidence and measurement boundaries are in the dated
 15 October sections at the end of this document.
 
 ## Attachment, usage and message release — 15 October, 16:47 SGT
@@ -1095,3 +1096,26 @@ not a new browser-click or active-turn interruption measurement.
 Evidence: `/tmp/cma-final-audit-release-20261015/cma-agent-manager` and
 `/tmp/cma-metadata-live-20261015/rollout-identity-proof.json`, together with the
 single input intent, receipt and completed transcript in that fixture directory.
+
+## Title metadata release — 15 October, 20:48 SGT
+
+The title API and Web rollout passed exact image/source identity and Ready
+checks. Public Web asset `index-XJqupw_j.js` equals the running Pod bytes at
+SHA-256 `699ea28656b017bf2d36a39cb8ea4efe5b166ab2ba42a45de7a3048eefa5113a`.
+The default runtime passed all 13 native fixtures, its runtime contract and
+full-home initialization/replay checks before activation. No existing runtime
+was rotated; API, Web and runtime scans report no fixable HIGH/CRITICAL findings.
+
+A disposable production Agent verified header, sidebar and browser title
+fallback when the native description is positively identified as automatic
+setup. Its native working directory remains projected and its draft/history
+survive Agent-to-Sandbox navigation and a full reload. This read-only title
+harness deliberately blocked connection probes, so its screenshots are not
+normal composer-usability or error-free-send evidence. The setup metadata and
+raw history remain unchanged. An older-runtime fixture retained its native
+Sandbox, Claim, Pod, PVC/PV and transcript across the first API rollout.
+
+The title fields are persisted in strict records. A rollback must keep a reader
+compatible with these records; the earlier a03 API is not a safe reader after
+new title-feature writes. Image Manager remains undeployed. The subsequent
+animation and immediate-composer changes are not covered by this release.

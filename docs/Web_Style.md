@@ -1265,6 +1265,20 @@ too.
 **Nothing moves on hover**, and nothing is animated on the agent's own words. A turn arriving may
 fade; the text inside it does not animate as it is read.
 
+### View and message continuity
+
+Route changes fade the existing center surface over the shared slow duration
+(300 ms). Returning to an already visited service fades its retained body with
+the same timing. These transitions never remount working state, reset drafts or
+scroll positions, request resource reloads, or postpone input. A newer route
+cancels an unfinished transition. New optimistic outgoing messages and genuinely
+live assistant replies fade once over the normal duration (200 ms); loaded
+history, durable reconciliation, and subsequent streaming tokens do not replay
+that arrival. Use opacity only so text remains sharp and layout stays stable.
+Reduced motion disables arrivals and cancels an animation immediately if the
+preference changes while it is running. Menu and modal exit frames release
+interaction immediately; presentation must never delay an action.
+
 ### What motion is for here
 
 Inside a working surface, motion reports a changed surface or ongoing work.
@@ -2259,3 +2273,5 @@ draft. Summary readers never receive the management history control.
 
 - 2026-10-15 — Apply the existing shared opacity presence to dropdown menus as well as dialogs: closing releases keyboard/pointer actions and focus immediately while its inert frame fades; quick reopening cancels stale removal. Use the existing duration/easing for composer drop-up max-height and menu hover tint, with reduced motion removing both transitions. No palette, geometry, menu action, or message admission changes.
 | 2026-10-15 | Hand visible text and ready attachments to the outgoing message immediately on valid Send. Retain the original snapshot until authorized acceptance, restore untouched input on refusal or uncertainty, and preserve newly typed text and later attachments. Keep exact request recovery, navigation drafts, IME and separate queue/Stop behavior; authoritative v2 refusals show Not sent. |
+
+- 2026-10-15 — Add shared opacity arrivals for stable route surfaces and retained service re-entry (300 ms), and newly sent/live assistant messages (200 ms). Preserve drafts, focus, scroll, controller identity and history; streaming updates do not restart an arrival. Cancel stale transitions and honor live reduced-motion preference changes.
