@@ -100,8 +100,8 @@ macro_rules! transaction {
 mod records;
 pub(in crate::store) use records::{document, lease_filter, read};
 pub(crate) use records::{
-    AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessPhase,
-    AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
+    AgentAccessDecision, AgentAccessHotUpdate, AgentAccessLease, AgentAccessNotificationIntent,
+    AgentAccessPhase, AgentAccessProgress, AgentAccessRecord, AgentAccessScopeMode,
 };
 mod lineage;
 pub(in crate::store) use lineage::validate_lineage;
@@ -109,6 +109,7 @@ mod admission;
 mod decisions;
 pub(in crate::store) mod grant;
 mod hot_grant;
+mod notification;
 mod owner_scope;
 mod retry;
 #[cfg(test)]

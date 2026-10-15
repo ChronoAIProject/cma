@@ -1,7 +1,6 @@
 use super::*;
 use layer2_core::sandbox::agent_io::{
-    AgentCommand, CommandAdmissionError, CommandLedgerError, CommandSubmission,
-    CommandSubmissionSource,
+    CommandAdmissionError, CommandLedgerError, CommandSubmission, CommandSubmissionSource,
 };
 use layer2_core::sandbox::{Agent, AgentOperationDelivery, Sandbox};
 
@@ -15,6 +14,12 @@ impl AgentAccessWorker {
         sandbox: &Sandbox,
     ) -> Result<(), AgentAccessError> {
         let lease = record.lease.as_ref().ok_or(AgentAccessError::Conflict)?;
+        if record.progress.hot_update.is_some() {
+            let prepared = self.store.prepare_access_notification(lease).await?;
+            if prepared.progress != record.progress {
+                return Ok(());
+            }
+        }
         let status = if let Some(id) = &record.progress.notification_command_id {
             self.commands
                 .command_status(context, Some(credential), id)
@@ -28,9 +33,15 @@ impl AgentAccessWorker {
             // revision, so normal Agent progress cannot create a second turn.
             let submission = CommandSubmission {
                 agent_id: record.requester.agent_id.clone(),
-                command: AgentCommand::message(notification(record)?),
-                idempotency_key: format!("agent-access:{}:ready", record.id),
-                expected_agent_revision: Some(agent.revision),
+                command: record.notification_command()?,
+                idempotency_key: record.notification_key(),
+                expected_agent_revision: Some(
+                    record
+                        .progress
+                        .notification_intent
+                        .as_ref()
+                        .map_or(agent.revision, |intent| intent.agent_revision),
+                ),
                 requested_model: None,
             };
             // Recover an admission whose reply was lost even if the runtime has
@@ -57,7 +68,16 @@ impl AgentAccessWorker {
                         // fresh notification command's implicit revival.
                         return Err(AgentAccessError::Invalid);
                     }
-                    if !notification_ready(record, agent, sandbox)? {
+                    if record
+                        .progress
+                        .notification_intent
+                        .as_ref()
+                        .is_some_and(|intent| {
+                            intent.agent_revision != agent.revision
+                                || intent.target_turn != agent.conversation.active_turn
+                        })
+                        || !notification_ready(record, agent, sandbox)?
+                    {
                         return Err(AgentAccessError::Conflict);
                     }
                     self.commands
@@ -115,10 +135,35 @@ fn notification_ready(
         layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339())
             .is_some_and(|now| expiry > now)
     });
-    let same_hot_runtime = record.progress.hot_update.as_ref().is_none_or(|hot| {
+    let same_hot_runtime = if let Some(hot) = &record.progress.hot_update {
+        let expected_scope = record
+            .expected_scope_revision
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or(AgentAccessError::Invalid)?;
+        let approved = record.approved_services()?;
         sandbox.runtime.as_ref() == Some(&hot.runtime)
             && sandbox.lifecycle.next_authority == hot.lifecycle_next_authority
-    });
+            && sandbox.credential.revoke_debt.is_empty()
+            && sandbox.credential.effective_reaches() == approved
+            && sandbox
+                .credential
+                .service_scope
+                .as_ref()
+                .is_some_and(|scope| {
+                    scope.revision == expected_scope
+                        && scope.authorized_by == record.requester.owner
+                        && scope.services == approved
+                        && Some(scope.credential_generation_floor)
+                            == record.progress.grant_generation_floor
+                })
+            && record
+                .progress
+                .grant_generation_floor
+                .is_some_and(|floor| current.generation > floor)
+    } else {
+        true
+    };
     Ok(same_hot_runtime
         && sandbox.status == SandboxStatus::Active
         && effects::settled(sandbox)
@@ -144,14 +189,9 @@ fn notification_ready(
 #[path = "notification_tests.rs"]
 mod tests;
 
+#[cfg(test)]
 fn notification(record: &AgentAccessRecord) -> Result<String, AgentAccessError> {
-    let services = record
-        .approved_services()?
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(format!("The owner approved service access request {}. The updated agent key has been delivered to this Sandbox with access to: {}. Continue the original task in this conversation and retry the service operation that needed access. Do not print or reveal credentials.", record.id, services))
+    record.notification_text()
 }
 
 fn command_error(error: CommandAdmissionError) -> AgentAccessError {
