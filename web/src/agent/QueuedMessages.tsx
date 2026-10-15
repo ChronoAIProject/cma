@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import type { UploadAttachment } from './attachments';
@@ -47,7 +47,19 @@ export function QueuedMessages({
 }: QueueActions & { readonly items: readonly QueuedMessageItem[] }) {
   // Keep removed rows for Presence's inert exit frame; stable keys retain other drafts.
   const [stored, setStored] = useState({ source: items, rows: items });
+  const [editingKeys, setEditingKeys] = useState<ReadonlySet<string>>(new Set());
+  const retainEditor = useCallback((key: string, editing: boolean) => {
+    setEditingKeys((previous) => {
+      const next = new Set(previous);
+      if (editing) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
   const current = new Map(items.map((item) => [keyOf(item), item]));
+  const retained = stored.rows.filter(
+    (item) => editingKeys.has(keyOf(item)) && !current.has(keyOf(item)),
+  );
   if (stored.source !== items)
     setStored({
       source: items,
@@ -57,30 +69,51 @@ export function QueuedMessages({
     const timer = window.setTimeout(
       () =>
         setStored((previous) =>
-          previous.rows.some((item) => !items.some((current) => keyOf(current) === keyOf(item)))
-            ? { source: items, rows: items }
+          previous.rows.some(
+            (item) =>
+              !editingKeys.has(keyOf(item)) &&
+              !items.some((current) => keyOf(current) === keyOf(item)),
+          )
+            ? {
+                source: items,
+                rows: previous.rows.filter(
+                  (item) =>
+                    editingKeys.has(keyOf(item)) ||
+                    items.some((current) => keyOf(current) === keyOf(item)),
+                ),
+              }
             : previous,
         ),
       200,
     );
     return () => window.clearTimeout(timer);
-  }, [items]);
+  }, [items, editingKeys]);
   return (
     <Presence>
-      {items.length ? (
-        <section className="queued-messages" aria-label="Queued messages">
+      {items.length || retained.length ? (
+        <section
+          className="queued-messages"
+          aria-label={items.length ? 'Queued messages' : 'Retained drafts'}
+        >
           <h3 className="queued-messages__heading">
-            Queued <span>{items.length}</span>
+            {items.length ? 'Queued' : 'Retained drafts'}{' '}
+            <span>{items.length || retained.length}</span>
           </h3>
           <ol className="queued-messages__list">
             {stored.rows.map((item) => (
               <Presence key={keyOf(item)}>
-                {current.has(keyOf(item)) ? (
+                {current.has(keyOf(item)) || editingKeys.has(keyOf(item)) ? (
                   <li className="queued-messages__item">
                     <QueueRow
                       {...actions}
-                      item={current.get(keyOf(item))!}
-                      position={items.findIndex((entry) => keyOf(entry) === keyOf(item)) + 1}
+                      item={current.get(keyOf(item)) ?? item}
+                      unavailable={!current.has(keyOf(item))}
+                      position={
+                        (current.has(keyOf(item)) ? items : retained).findIndex(
+                          (entry) => keyOf(entry) === keyOf(item),
+                        ) + 1
+                      }
+                      onEditingChange={(editing) => retainEditor(keyOf(item), editing)}
                     />
                   </li>
                 ) : null}
@@ -96,13 +129,20 @@ export function QueuedMessages({
 function QueueRow({
   item,
   position,
+  unavailable,
+  onEditingChange,
   disabled = false,
   onEdit,
   onRemove,
   onRecover,
   uploadAttachment,
   user,
-}: QueueActions & { readonly item: QueuedMessageItem; readonly position: number }) {
+}: QueueActions & {
+  readonly item: QueuedMessageItem;
+  readonly position: number;
+  readonly unavailable: boolean;
+  readonly onEditingChange: (editing: boolean) => void;
+}) {
   const [editing, setEditing] = useState<QueuedMessageItem>();
   const [editSequence, setEditSequence] = useState(0);
   const [working, setWorking] = useState<'remove' | 'recover'>();
@@ -111,11 +151,12 @@ function QueueRow({
   const opener = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef(false);
   const identity = messageIdentity('user', user);
-  const busy = disabled || item.busy === true || working !== undefined;
-  const locked = busy || item.needsRecovery === true;
+  const busy = disabled || (!unavailable && item.busy === true) || working !== undefined;
+  const locked = busy || item.needsRecovery === true || unavailable;
   const close = () => {
     restoreFocus.current = true;
     setEditing(undefined);
+    onEditingChange(false);
   };
   useEffect(() => {
     if (!editing && restoreFocus.current) {
@@ -128,10 +169,11 @@ function QueueRow({
       setError(undefined);
       setEditSequence((sequence) => sequence + 1);
       setEditing(item);
+      onEditingChange(true);
     }
   };
   async function run(kind: 'remove' | 'recover') {
-    if (active.current || busy || (kind === 'remove' && locked)) return;
+    if (unavailable || active.current || busy || (kind === 'remove' && locked)) return;
     const action = kind === 'remove' ? onRemove : onRecover;
     if (!action) return;
     active.current = true;
@@ -148,14 +190,19 @@ function QueueRow({
     }
   }
   return (
-    <article className="queued-message" aria-label={`Queued message ${String(position)}`}>
+    <article
+      className="queued-message"
+      aria-label={`${unavailable ? 'Retained message draft' : 'Queued message'} ${String(position)}`}
+    >
       <span className="queued-message__avatar">
         <MessageAvatar identity={identity} />
       </span>
       <div className="queued-message__body">
         <div className="queued-message__heading">
           <span className="queued-message__author">{identity.name}</span>
-          <span className="queued-message__status">Queued</span>
+          <span className="queued-message__status">
+            {unavailable ? 'Draft retained' : 'Queued'}
+          </span>
         </div>
         <div
           className="queued-message__content"
@@ -181,10 +228,12 @@ function QueueRow({
               <QueuedMessageEditor
                 key={editSequence}
                 input={editing.input}
-                disabled={locked}
+                disabled={busy || (!unavailable && item.needsRecovery === true)}
+                unavailable={unavailable}
                 uploadAttachment={uploadAttachment}
                 onCancel={close}
                 onSave={async (input) => {
+                  if (unavailable) throw new Error('This message is no longer queued.');
                   await onEdit(editing, input);
                   close();
                 }}
@@ -192,25 +241,27 @@ function QueueRow({
             </div>
           ) : null}
         </Presence>
-        <div className="queued-message__actions">
-          {editing ? null : (
-            <Button size="sm" disabled={locked} onClick={edit}>
-              Edit
+        {!unavailable ? (
+          <div className="queued-message__actions">
+            {editing ? null : (
+              <Button size="sm" disabled={locked} onClick={edit}>
+                Edit
+              </Button>
+            )}
+            <Button
+              size="sm"
+              disabled={locked || editing !== undefined}
+              onClick={() => void run('remove')}
+            >
+              {working === 'remove' ? 'Removing…' : 'Remove'}
             </Button>
-          )}
-          <Button
-            size="sm"
-            disabled={locked || editing !== undefined}
-            onClick={() => void run('remove')}
-          >
-            {working === 'remove' ? 'Removing…' : 'Remove'}
-          </Button>
-          {item.needsRecovery && onRecover ? (
-            <Button size="sm" disabled={busy} onClick={() => void run('recover')}>
-              {working === 'recover' ? 'Recovering…' : 'Recover request'}
-            </Button>
-          ) : null}
-        </div>
+            {item.needsRecovery && onRecover ? (
+              <Button size="sm" disabled={busy} onClick={() => void run('recover')}>
+                {working === 'recover' ? 'Recovering…' : 'Recover request'}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {error || item.error ? (
           <p className="queued-messages__error" role="alert">
             {error ?? item.error}
