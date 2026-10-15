@@ -1312,7 +1312,13 @@ and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
-separate facts. A standard Button opens the Sandbox's canonical progress page.
+separate facts. Accepted requests show a concise acknowledgement; the underlying
+wait and the standard Button to the Sandbox's canonical progress page stay in a
+closed **Operation progress** disclosure. Dismissing the acknowledgement keeps
+background observation and the target's busy lock, and a later failure becomes
+visible. Resume verifies the current owner's connections without opening a modal
+when they are ready; missing connections open the existing connection wizard.
+Unverifiable or changed-owner results keep the action held and show the error.
 After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
@@ -2101,3 +2107,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-15 | During an explicit Sandbox revival, permit owner messages through the retained durable Responses v2 transport after fresh matching Agent, parent, owner and Worktree checks. Acknowledge the durable receipt while retaining actual Resuming state and inactive runtime resources; dispatch waits for backend readiness. Stale observations, checkpoints, other lifecycle operations and AG-UI keep input held. |
 
 | 2026-10-15 | Retry an explicit Responses v2 admission conflict up to three times while keeping the exact retained message and request key. Recheck account authority and the retained pending intent before each retry, honor navigation cancellation, and acknowledge only a durable receipt. A received receipt, uncertain network outcome, different refusal or exhausted retry budget retains the existing explicit recovery behavior. |
+
+| 2026-10-15 | Keep accepted Pause/Resume feedback concise and underlying waits in a closed Operation progress disclosure. Dismissal preserves observation and target locking; failures remain visible. Check the exact owner's connections silently before Resume and open connection assistance only when required. |

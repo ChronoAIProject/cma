@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Presence } from './ui/Presence';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
@@ -51,12 +51,14 @@ export function useResourceActions(
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
   const inFlight = useRef(false);
-  const connections = useConnectionGate(enabled);
+  const connectionScope = useMemo(() => ({ client, viewerId }), [client, viewerId]);
+  const connections = useConnectionGate(enabled, connectionScope);
   const execute = async (action: LifecycleAction) => {
     if (!enabled || inFlight.current) return;
     inFlight.current = true;
     setPending(true);
     setError(undefined);
+    connections.clearError();
     const scope = JSON.stringify(action);
     const options = { idempotencyKey: keys.current.for(scope) };
     const sandboxAction =
@@ -155,7 +157,12 @@ export function useResourceActions(
           : { request: retained, restored: true },
       );
     } else if (action.kind === 'revive_sandbox') {
-      connections.run({ type: 'sandbox', id: action.sandboxId }, () => void execute(action));
+      setError(undefined);
+      void connections.checkAndRun(
+        { type: 'sandbox', id: action.sandboxId },
+        viewerId,
+        () => void execute(action),
+      );
     } else {
       void execute(action);
     }
@@ -171,7 +178,7 @@ export function useResourceActions(
         .map((request) => request.action.sandboxId),
     ),
     pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
-    error,
+    error: error ?? connections.error,
     notice: (
       <>
         {sandboxRequests.map((sandboxRequest) => (
