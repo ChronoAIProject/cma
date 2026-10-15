@@ -2,7 +2,7 @@
 
 ## Local production candidates — PR #1027
 
-This is an interim observation at 09:45 SGT on 2026-10-15, not a declaration
+This is an interim observation at 10:35 SGT on 2026-10-15, not a declaration
 that the complete acceptance bar passed. Authorized local builds allow
 production testing while required GitHub checks continue. The PR remains
 unmerged. CMA stays in its original cluster, runtime workloads stay in the
@@ -20,6 +20,17 @@ scans passed. Web asset `index-Bt0dT2fp.js` has the same SHA-256 in the running
 Pod and public response:
 `2a9e09486bc9b5af4e89a1d73e934ea795abcaf89b57b5c043066710e748dda2`.
 The preceding runtime `cad2058` and Event Gateway `0c306813` are retained.
+
+Combined API source `6571e110d443bbb321251313f101702b05942a68` has completed a
+local Linux/amd64 release build and fixed HIGH/CRITICAL vulnerability scan.
+Its local image digest is
+`sha256:99044a2876b0919c680118d55e57883571b208bcffacd69aad689d6a932ea98d`.
+Registry upload and production access are blocked by Google reauthentication;
+this candidate has not been deployed. Branch head `f1b36939` adds only a test
+lint correction. Its CI run
+[38668427088](https://github.com/ChronoAIProject/cma/actions/runs/38668427088)
+passed all 15 jobs, including Backend, Event Gateway latency and all five image
+builds and scans. These checks do not replace pending production acceptance.
 
 | Boundary and evidence | Result | Interpretation |
 | --- | --- | --- |
@@ -41,8 +52,10 @@ occurred before the operation exposed its Agent, then during sequential loading.
 The next Web5c6 sample improved input timing but exposed an execution failure:
 Mongo write conflicts exhausted connection-publication retries after the new
 18-minute worker lease was claimed. First-message delivery remained queued;
-the ordinary command expired. Both acceptance flags remain failed. A repair
-for known-aborted publication and exact-lease retry is under validation. The
+the ordinary command expired. Both acceptance flags remain failed. The repair
+for known-aborted publication and exact-lease retry passed 124 worker/store
+regressions and strict Clippy, including ordinary worker reconnection and
+unknown-commit protection; live verification awaits deployment. The
 new Web47b source only extracts TypeScript declarations to meet the source
 size gate; its emitted controller behavior is unchanged.
 
@@ -63,17 +76,25 @@ request settled with exactly one automatic notification and acknowledgement
 on the preceding API `cd7e5d89`; that result does not prove the newer
 contention repair or a fresh external OAuth journey.
 
-Stop is still under investigation: the observed cancel requests returned
+The latest live Stop verification remains unsuccessful: observed cancel requests returned
 HTTP 409, and the original retained key was ultimately proven not admitted.
 The turn completed naturally. A production-shaped real Mongo test covers
 active-target admission and same-key recovery, and deployed safe stage diagnostics showed that both inspection and admission
 encountered transient Mongo transaction conflicts. Admission exhausted all five
 attempts; no domain revision refusal was observed. The exact original key was
 then definitively resolved as not admitted after natural completion. A bounded
-backoff fix is in progress. No successful live Stop is claimed here.
+backoff fix passed 17 real Mongo and 26 core regressions and strict Clippy, and is
+included in the built candidate. No successful live Stop is claimed here.
 An ordinary second Agent in a prepared Sandbox exposed an MCP authority
-binding defect. The fix and real Mongo regression passed and the fix is deployed in API748;
-its live optional-GitHub retest is pending a fresh successful parent. Exhausted
+binding defect. The fix and real Mongo regression passed and the fix is deployed
+in API748. A subsequent public functional diagnostic created one optional-GitHub
+Agent in an existing paused Sandbox: request acceptance took 366.602 ms, the
+original Sandbox revived automatically, and the exact repository first prompt
+completed. The new Workspace source was `empty`, defaults and mandatory scopes
+matched, and the original Agent's history was unchanged. Completion took
+63,999.656 ms including revival and repository setup; this is not a warm-pool
+performance result. Native identity, browser and final candidate verification
+remain pending. Exhausted
 owner Sandbox quota is now a terminal creation conflict in production, rather than an
 endless transient retry. Future samples must have quota headroom.
 
@@ -85,7 +106,11 @@ Private evidence: `/tmp/cma-api-rollout-74842c4a`,
 `/tmp/cma-source-flow-33f8a5e0-api9d5f3dcc-sample-01`,
 `/tmp/cma-resume-early-input-9d5f3dcc-complete-frozen-20261015-01`,
 `/tmp/cma-model-retest-9d5f3dcc-complete-frozen-20261015-01`, and
-`/tmp/cma-public-delete-74842c4a-source33f-01`. These operator artifacts remain
+`/tmp/cma-public-delete-74842c4a-source33f-01`. New build and diagnostic evidence
+is in `/tmp/cma-api-local-scan-6571e110-final`,
+`/tmp/cma-prepared-connection-recovery-validation-20261015.json`, and
+`/tmp/cma-public-existing-sandbox-api748-diagnostic-20261015-01`.
+These operator artifacts remain
 outside the repository. Existing failed reports are preserved unchanged.
 
 Every API reader and rollback image must include `c8ee3872` or an equivalent
