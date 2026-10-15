@@ -52,7 +52,7 @@ impl AgentWorker {
                 .ok_or_else(|| SandboxStoreError::Corrupt("invalid agent update time".into()))?;
             let observed_at = now + started.elapsed();
             let at = observed_at.max(durable_at);
-            if !same_dispatch_claim(claimed, &current, &self.config.holder, observed_at)
+            if !same_dispatch_claim(claimed, &current, &self.config.holder, at)
                 || !completed_dispatch(&current, outcome)
             {
                 return Err(SandboxStoreError::Conflict);
