@@ -19,12 +19,16 @@ function sources() {
   }
   const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
-  if (digest(installed) === "bcbfa2156e69b630fb3777b275ff739efd6c030159348e9cbae79a56ffa663c5") {
+  const finalCompositions = {
+    bcbfa2156e69b630fb3777b275ff739efd6c030159348e9cbae79a56ffa663c5: "0f751c0500accfbd0bd5e8c11aac6f2d9e2ade3139b8c9fe355116e590879cf6",
+    b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9: "c4158cf17031d559adfc261104775ae04d6c688942fc3b23f6bdc5f1b267ada0",
+  };
+  if (Object.hasOwn(finalCompositions, digest(installed))) {
     // The image includes the reviewed observation and access patches. Compare
     // that exact installed composition with only the model patch removed, so
     // the native regression also covers the final image's other behavior.
     // Title provenance changed the composition, not either model-patch site.
-    assert.equal(digest(base), "0f751c0500accfbd0bd5e8c11aac6f2d9e2ade3139b8c9fe355116e590879cf6");
+    assert.equal(digest(base), finalCompositions[digest(installed)]);
     assert.equal(base.replace(before, after).replace(beforeSelection, afterSelection), installed);
     return { base, patched: installed };
   }
