@@ -47,7 +47,7 @@ impl AgentWorker {
                     &agent,
                     &outcome,
                     now + started.elapsed(),
-                    |current, at| async { self.finish_dispatch_publication(current, at).await },
+                    |current, at| async move { self.finish_dispatch_publication(current, at).await },
                 )
                 .await
             }
