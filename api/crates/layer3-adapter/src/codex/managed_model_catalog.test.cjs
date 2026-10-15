@@ -14,7 +14,15 @@ const { managedModelCatalog, sourceSha256, before, after, beforeSelection, after
 function sources() {
   const installed = readFileSync(process.env.CMA_ACP_MANAGED_BASE_SOURCE ?? bridgePath, "utf8");
   const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
-  assert.equal(createHash("sha256").update(base).digest("hex"), sourceSha256);
+  const digest = (source) => createHash("sha256").update(source).digest("hex");
+  if (digest(installed) === "cfa73e9b6da1ab4b516ab54703d7891ebde8e290762f42456ec036c37b444ff0") {
+    // The image includes the reviewed observation and access patches. Compare
+    // that exact installed composition with only the model patch removed, so
+    // the native regression also covers the final image's other behavior.
+    assert.equal(digest(base), "f9109958d192b161094f501ef8d9d2086a0f2b69acab6471e3ceb610dabc19a9");
+    return { base, patched: installed };
+  }
+  assert.equal(digest(base), sourceSha256);
   return { base, patched: managedModelCatalog(base) };
 }
 
