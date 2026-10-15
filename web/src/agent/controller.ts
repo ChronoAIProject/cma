@@ -460,7 +460,8 @@ export function useAgentController(
       setActionError(undefined);
       setReplayError(undefined);
     },
-    send: (content, onAccepted, onReceiptObserved) => run(content, onAccepted, onReceiptObserved),
+    send: (content, onAccepted, onReceiptObserved, onRefused) =>
+      run(content, onAccepted, onReceiptObserved, onRefused),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
     interrupt: () =>
       command('interrupt', (id, key, signal) =>

@@ -77,7 +77,7 @@ it('skips the per-message catalog wait, retains identity and acknowledgement gat
   expect(bubbles('Immediate local message')).toHaveLength(1);
   expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(h.post).not.toHaveBeenCalled();
-  expect(field).toHaveValue('Immediate local message');
+  expect(field).toHaveValue('');
   expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks);
   click();
   expect(h.post).not.toHaveBeenCalled();
@@ -160,14 +160,14 @@ it('uses observed receipt metadata only to reconcile replay while the acceptance
   await act(async () => response.resolve(accepted()));
   expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
-  expect(field).toHaveValue('Immediate local message');
+  expect(field).toHaveValue('');
   await act(async () => {
     h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding);
     h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
     h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
   });
   expect(bubbles('Immediate local message')).toHaveLength(1);
-  expect(field).toHaveValue('Immediate local message');
+  expect(field).toHaveValue('');
   await act(async () => identity.resolve('alice'));
   await waitFor(() => expect(field).toHaveValue(''));
   expect(bubbles('Immediate local message')).toHaveLength(1);
@@ -245,7 +245,72 @@ it('hides a pending preview on account change without releasing the identity-gat
   expect(screen.queryAllByRole('article', { name: 'You' })).toHaveLength(0);
   await act(async () => identity.resolve('alice'));
   expect(h.post).not.toHaveBeenCalled();
+  expect(field).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+});
+
+it('restores an untouched draft after definite refusal without presenting it as uncertain', async () => {
+  const { h, field } = await setup();
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  expect(field).toHaveValue('');
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  await act(async () =>
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            type: 'invalid_request_error',
+            message: 'Invalid input',
+            code: 'invalid_response_input',
+            param: 'input',
+          },
+        }),
+        { status: 422, headers: { 'content-type': 'application/json' } },
+      ),
+    ),
+  );
+  await waitFor(() => expect(screen.getByText('Not sent')).toBeInTheDocument());
   expect(field).toHaveValue('Immediate local message');
+  expect(screen.queryByRole('button', { name: 'Recover pending request' })).not.toBeInTheDocument();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(h.post).toHaveBeenCalledOnce();
+});
+
+it('keeps a new draft when the outgoing input is refused and retains that input in its failure row', async () => {
+  const { h, field } = await setup();
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  expect(field).toHaveValue('');
+  fireEvent.change(field, { target: { value: 'My next draft' } });
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  await act(async () =>
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            type: 'invalid_request_error',
+            message: 'Invalid input',
+            code: 'invalid_response_input',
+            param: 'input',
+          },
+        }),
+        { status: 422, headers: { 'content-type': 'application/json' } },
+      ),
+    ),
+  );
+  await screen.findByText('Not sent');
+  expect(field).toHaveValue('My next draft');
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(h.post).toHaveBeenCalledOnce();
+  click();
+  await screen.findByText('Sent');
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(within(bubbles('Immediate local message')[0]!).getByText('Not sent')).toBeInTheDocument();
+  expect(bubbles('My next draft')).toHaveLength(1);
+  expect(h.post).toHaveBeenCalledTimes(2);
 });
 
 it('keeps a legacy ambiguous submission unconfirmed with its draft intact and no automatic retry', async () => {

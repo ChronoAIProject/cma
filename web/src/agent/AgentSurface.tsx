@@ -403,36 +403,47 @@ export function AgentSurface({
             historyIncomplete ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
-          onSend={async (content, onAccepted) => {
+          onSend={(content, onAccepted) => {
             if (readOnly || verified === undefined) return;
             const message = optimistic.begin(content);
-            const send = () => {
-              void controller
-                .send(
-                  content,
-                  (receipt) => {
-                    if (message.accepted(receipt)) onAccepted();
-                  },
-                  message.observed,
-                )
-                .then(message.settled, message.settled);
-            };
-            if (
-              state.v2?.owner === (viewerId ?? verified.owner) &&
-              controller.resourceAvailability.state === 'live'
-            ) {
-              // The transport rechecks identity and the backend admits this durable
-              // command. Runtime permission requests use the Agent access dialog.
-              send();
-              return;
-            }
-            await connections.checkAndRun(
-              { type: 'agent', id: agentId },
-              viewerId ?? verified.owner,
-              send,
-              state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-              message.cancelled,
-            );
+            return new Promise<void>((resolve) => {
+              const settled = () => {
+                message.settled();
+                resolve();
+              };
+              const cancelled = () => {
+                message.cancelled();
+                resolve();
+              };
+              const send = () => {
+                void controller
+                  .send(
+                    content,
+                    (receipt) => {
+                      if (message.accepted(receipt)) onAccepted();
+                      resolve();
+                    },
+                    message.observed,
+                    cancelled,
+                  )
+                  .then(settled, settled);
+              };
+              if (
+                state.v2?.owner === (viewerId ?? verified.owner) &&
+                controller.resourceAvailability.state === 'live'
+              ) {
+                // Transport still rechecks identity before admission and acceptance.
+                send();
+              } else {
+                void connections.checkAndRun(
+                  { type: 'agent', id: agentId },
+                  viewerId ?? verified.owner,
+                  send,
+                  state.v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
+                  cancelled,
+                );
+              }
+            });
           }}
           onStop={controller.interrupt}
         />

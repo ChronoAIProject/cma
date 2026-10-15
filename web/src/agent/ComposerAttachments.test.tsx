@@ -33,7 +33,7 @@ function surface(upload: UploadAttachment, onSend = vi.fn(), allowed = true) {
   );
 }
 
-it('pastes an image, blocks sending until persisted, and clears only after message acceptance', async () => {
+it('pastes an image, blocks sending until persisted, and hands its preview to the outgoing message immediately', async () => {
   const create = vi.fn(() => 'blob:image');
   const revoke = vi.fn();
   vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke }));
@@ -62,7 +62,8 @@ it('pastes an image, blocks sending until persisted, and clears only after messa
   fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
   expect(send.mock.calls[0]![0]).toContain('Explain this image');
   expect(send.mock.calls[0]![0]).toContain(receipt(file).path);
-  expect(screen.getByText('pasted.png')).toBeInTheDocument();
+  expect(screen.queryByText('pasted.png')).not.toBeInTheDocument();
+  expect(field).toHaveValue('');
   act(() => accept());
   expect(field).toHaveValue('');
   expect(screen.queryByRole('list', { name: 'Attachments' })).not.toBeInTheDocument();
