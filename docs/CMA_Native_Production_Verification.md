@@ -1,13 +1,13 @@
 # CMA native Sandbox production verification
 
-## Current production — 15 October, 18:51 SGT
+## Current production — 15 October, 20:01 SGT
 
 The latest deployed images supersede the dated release below:
 
 | Component | Image source | Generation | Immutable image digest |
 |---|---|---|---|
-| Agent Manager | `edaeca82962d0c5704089740aed09a4c6140bdee` | 38 | `sha256:cb39ccf585c48b28a9bcae81ea563d0763078c17f7df2ad27a6744efa9b11fda` |
-| Web | `fa1e3f13a2583723aadc9c1412b0f21177e58f06` | 116 | `sha256:b65f7001b95edd3b9eaad46f30344f5be363199ab860b233f0409fca92f07ab6` |
+| Agent Manager | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 39 | `sha256:1c357007e22520ab27d673cc2bd7f14053cf2801149bae03abfb75f74df5b132` |
+| Web | `a03cfc51b5c735892ed06e37aeebd73643f54bca` | 117 | `sha256:369c448ed9c44037021546c2885c7f3b155e2a2457c14ab9e2e1379797af9904` |
 | Event Gateway | `477bf8015892f9fe2a71f416e90e3e5dcb12c24f` | 7 | `sha256:57f12f1f4159e024c36f990f96126c2206e375c2ea39d0837ec319a331ea362f` |
 | Default runtime | `ff9834c43ca3b4468c5755277af5ff7e4c543cdd` | — | `sha256:b75343d07995b93adb792857fb6a6cc43dff4e3a94b8468becfe41e4a7c11eae` |
 
@@ -1020,3 +1020,78 @@ seconds respectively; those model-response times are not callback-delivery
 times. The busy callback stayed in the original active turn. These are API
 approval measurements, not browser-click or fresh external OAuth timing.
 Evidence: `/tmp/cma-hot-scope-live-edaeca82-20261015-01`.
+
+## 2026-10-15 real compaction and small-viewport modal verification
+
+PR #1032 merged into `develop` as `4f9a70b6` after all 15 checks on its exact
+head `2cc5b8d0` passed. The merged tree matched that tested head. The follow-up
+Web image from `a03cfc51` was built locally from an immutable source archive,
+scanned without fixable HIGH/CRITICAL findings, deployed as generation 117 and
+verified against the served asset bytes. Its JavaScript asset is
+`index-nlO1I9Vk.js`, SHA-256
+`89cc886aab19883e5ac36d35ee82bd7201e30a063a6ca08676d5f331a0de1b0c`.
+
+The small-viewport correction makes the entire modal card scroll when either
+viewport dimension is at most 480 pixels. The repository input also permits
+shrinking within the card. Production browser checks at 1440×900, 800×600,
+390×844, 320×480, 320×240 and 900×240 passed centered positioning, at least 20%
+page-edge margins, nonzero body height and no horizontal overflow. The repository
+input, Close and Cancel were exercised at every size. Create was checked for
+actionability without submitting. The harness made zero API mutations and saw
+zero browser errors. This covers modal dialogs, not anchored menus, tooltips or
+the Agent details drawer. Evidence:
+`/tmp/cma-tiny-modal-prod-a03cfc51-20261015/summary.json` and the accompanying
+asset binding, geometry, screenshots and cleanup receipt.
+
+A fresh owned Agent `agt_721244ec64924a00839bb867c16121d9` on Agent Manager
+`edaeca82` and runtime `ff9834c4` remembered a unique marker and color, executed
+a real native `/compact`, and correctly recalled both in the next turn without
+being given the answer again. The transcript recorded the native Compact
+conversation operation and its completion. The conversation identity and all
+previous completed turns were retained.
+
+| Observation | Cumulative input | Cumulative output | Context used |
+|---|---|---|---|
+| Before compact | 42,146 | 112 | 14,165 |
+| After compact | 48,349 | 323 | 5,880 |
+| After recall | 62,666 | 340 | 14,334 |
+
+The context reduction therefore did not reset cumulative usage. These are
+provider-reported counters, separate from the explicitly approximate visible
+output animation. Evidence:
+`/tmp/cma-metadata-live-20261015/compaction-summary.json` and its before/after
+public snapshots.
+
+On the new production Web image, the same Agent showed Context and Total tokens
+without RAM/CPU/Network labels in the conversation; those three metrics appeared
+on its Sandbox details page. The read-only harness blocked two automatic
+connection-check POSTs and made no resource writes. An earlier separate check
+measured 125 scope rows at a fixed 64-pixel height with ellipsis and no wrapping;
+that Agent's empty skills list did not prove populated skill-row geometry.
+Evidence: `metrics-production-a03cfc51.json` and `row-and-metrics-proof.json`
+under the same fixture directory.
+
+## 2026-10-15 GitHub OAuth guidance deployment and retained conversation
+
+Agent Manager `a03cfc51` became Ready as generation 39 at 20:01 SGT, with
+Pod `cma-agent-manager-787f7f85f7-jjmgb`, UID
+`4d5e928c-c627-4b75-81f5-f517c704ec94`, zero restarts and the scanned image
+listed above. The new first-prompt and MCP guidance identifies the runtime's
+`api-github` OAuth service; granting the independent `api-github-pat` service
+does not configure this `gh` route. It explicitly distinguishes GitHub API
+access from currently unconfigured native Git clone/fetch/push authentication.
+Already admitted first prompts retain their original durable text.
+
+The owned compaction fixture had paused from inactivity before this rollout.
+Its explicit public revive completed in 22.029 seconds, before the deployment
+measurement. Fresh before/after observations then proved the same running
+runtime Pod UID, zero restarts, native Sandbox and Claim, original PVC/PV,
+conversation identity and four identical prior turns across the Agent Manager
+upgrade. No turn was active during this particular rollout. A subsequent
+public input was durably accepted in 340 ms and completed in the original
+conversation. This verifies idle runtime and conversation continuity; it is
+not a new browser-click or active-turn interruption measurement.
+
+Evidence: `/tmp/cma-final-audit-release-20261015/cma-agent-manager` and
+`/tmp/cma-metadata-live-20261015/rollout-identity-proof.json`, together with the
+single input intent, receipt and completed transcript in that fixture directory.
