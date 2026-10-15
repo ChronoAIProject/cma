@@ -156,54 +156,56 @@ async fn official_text_request_forms_and_presence_aware_field_refusals_are_prese
 
 async fn completed() -> (crate::AgentConversationState, layer2_core::sandbox::Agent) {
     let (state, store) = conversation_fixture().await;
-    let agent = seeded_agent("agt_response", AgentStatus::Ready, 10, None);
-    insert_agent(
-        &store,
-        agent.clone(),
-        vec![
-            AgentLogKind::TurnStarted {
-                model: None,
-                turn_sequence: 3,
-                origin_key: None,
-            },
-            AgentLogKind::OwnerMessage {
-                content: "Question".into(),
-            },
-            AgentLogKind::TurnMetadataSet {
-                turn_sequence: 3,
-                metadata: [("project".into(), "proof".into())].into(),
-            },
-            AgentLogKind::AgentMessage {
-                content: "First answer".into(),
-            },
-            AgentLogKind::ToolCallStarted {
-                call_id: "call-proof".into(),
-                title: "Read proof".into(),
-                kind: "read".into(),
-                status: "in_progress".into(),
-            },
-            AgentLogKind::AgentMessage {
-                content: "Second answer".into(),
-            },
-            AgentLogKind::Usage {
-                input_tokens: 10,
-                output_tokens: 7,
-                context_used: 17,
-                context_window: Some(200_000),
-            },
-            AgentLogKind::UsageUpdated {
-                input_tokens: 999,
-                output_tokens: 500,
-                context_used: 17,
-                context_window: Some(200_000),
-                turn_sequence: Some(3),
-                turn_input_tokens: 10,
-                turn_output_tokens: 7,
-            },
-            AgentLogKind::TurnCompleted { turn_sequence: 3 },
-        ],
-    )
-    .await;
+    let kinds = vec![
+        AgentLogKind::TurnStarted {
+            model: None,
+            turn_sequence: 3,
+            origin_key: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "Question".into(),
+        },
+        AgentLogKind::TurnMetadataSet {
+            turn_sequence: 3,
+            metadata: [("project".into(), "proof".into())].into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: "First answer".into(),
+        },
+        AgentLogKind::ToolCallStarted {
+            call_id: "call-proof".into(),
+            title: "Read proof".into(),
+            kind: "read".into(),
+            status: "in_progress".into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: "Second answer".into(),
+        },
+        AgentLogKind::Usage {
+            input_tokens: 10,
+            output_tokens: 7,
+            context_used: 17,
+            context_window: Some(200_000),
+        },
+        AgentLogKind::UsageUpdated {
+            input_tokens: 999,
+            output_tokens: 500,
+            context_used: 17,
+            context_window: Some(200_000),
+            turn_sequence: Some(3),
+            turn_input_tokens: 10,
+            turn_output_tokens: 7,
+        },
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+    ];
+    // insert_agent prepends creation and conversation-opened records.
+    let agent = seeded_agent(
+        "agt_response",
+        AgentStatus::Ready,
+        kinds.len() as u64 + 2,
+        None,
+    );
+    insert_agent(&store, agent.clone(), kinds).await;
     (state, agent)
 }
 
