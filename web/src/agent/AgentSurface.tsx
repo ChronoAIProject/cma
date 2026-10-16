@@ -28,6 +28,7 @@ import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
+import { queuePresentation } from './queuePresentation';
 import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
@@ -185,6 +186,11 @@ export function AgentSurface({
   }
 
   const { detail, conversation } = state;
+  const messageQueue = queuePresentation(
+    conversation,
+    optimistic.messages,
+    controller.queuedInputs,
+  );
   const status = detail.status;
   const title = agentDisplayTitle(detail);
   const pausedNotice =
@@ -340,12 +346,7 @@ export function AgentSurface({
           user={user}
           viewPosition={viewPosition}
           conversation={conversation}
-          optimisticMessages={optimistic.messages.filter(
-            (message) =>
-              message.receipt === undefined ||
-              !('commandId' in message.receipt) ||
-              !controller.queuedInputs?.managedCommandIds.has(message.receipt.commandId),
-          )}
+          optimisticMessages={messageQueue.messages}
           arrivalsEnabled={!historyIncomplete && !accessUncertain}
           approvalBusy={approvalBusy}
           approvalReadOnly={readOnly}
@@ -353,7 +354,7 @@ export function AgentSurface({
         >
           {controller.queuedInputs === undefined ? null : (
             <QueuedMessages
-              items={controller.queuedInputs.items}
+              items={messageQueue.items}
               disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
               onEdit={controller.queuedInputs.edit}
               onRemove={controller.queuedInputs.remove}
@@ -415,11 +416,7 @@ export function AgentSurface({
                     : 'Only the owner can send messages to this agent.',
                 }
               : verified === undefined
-                ? {
-                    ...controller.inputAvailability,
-                    allowed: false,
-                    notice: 'Verify the required connections to continue.',
-                  }
+                ? { ...controller.inputAvailability, allowed: false }
                 : controller.inputAvailability
           }
           busy={
@@ -432,6 +429,7 @@ export function AgentSurface({
             const message = optimistic.begin(
               content,
               running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
+              controller.queuedInputs?.items.map((item) => item.commandId),
             );
             return new Promise<void>((resolve) => {
               const settled = () => {
