@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { V2AgentCursor, V2AgentEventKind } from '@chronoai/cma-sdk';
-import { ActiveThinking } from './ActiveThinking';
+import { MessageStream } from './MessageStream';
 import { UsageFooter } from './UsageFooter';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { foldV2Item } from './transport/projection';
@@ -27,7 +27,7 @@ const usage: V2AgentEventKind = {
 };
 const draw = (conversation: ConversationState) => (
   <>
-    <ActiveThinking conversation={conversation} />
+    <MessageStream conversation={conversation} onApproval={vi.fn()} />
     <UsageFooter usage={conversation.usage} />
   </>
 );
