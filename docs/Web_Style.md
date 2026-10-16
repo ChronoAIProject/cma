@@ -735,9 +735,12 @@ so intentional identical messages remain separate. Account, Agent and access
 changes invalidate both local rows and late draft-clearing callbacks. Retained
 pending requests keep the existing explicit same-request recovery action.
 
-One active Thinking disclosure sits outside the conversation scrollport, on the
-same reading axis directly above the composer and its quick messages. Incoming
-text and manual history scrolling cannot move it out of view. Its 44px control
+One active Thinking disclosure follows the current Agent reply and settled turn
+activity inside the conversation scrollport, before queued follow-up messages.
+Its left edge aligns with the Agent message content: 32px avatar plus 12px gap
+from the message row's left edge. Before the first reply, it uses the same inset.
+It is transient turn status, never a persisted message or an extra transcript row.
+Its 44px control
 places the existing compact, rotating running CMA character before Thinking,
 followed by elapsed seconds and a single-line current-activity preview. Clicking
 or keyboard activation opens the existing 120px capped body, containing current
@@ -746,8 +749,17 @@ the shared visibility, static fallback and reduced-motion behavior in §23.
 The elapsed figure comes from the recorded active turn's start timestamp, so
 navigation, reload and reconnect do not reset it. A new turn uses its own start;
 an unavailable timestamp leaves the duration unstated rather than inventing zero.
-Thinking leaves the dock when the turn finishes, fails or stops. Reasoning is
-live-only and never presented as recovered history.
+Thinking leaves the conversation when the turn finishes, fails or stops. Reasoning
+is live-only and never presented as recovered history. Appearance and disappearance
+fade and expand/collapse over the shared 200ms duration; the exit is immediately
+inert and leaves no spacer after removal. Recorded reply growth may ease the status
+row's measured vertical movement over the same duration without animating message
+text. Reduced motion skips these transitions and cancels active motion. The
+existing follow-output behavior remains authoritative: reviewing older history
+never forces the reader back to the status row. Elapsed time, current activity and
+turn token reporting retain their existing sources and do not reset on relocation.
+On narrow screens the token line wraps within the message content width so actual
+counts and explicitly labelled estimates remain readable.
 
 Each settled tool call has its own neutral, 8px-radius bordered container in the
 message timeline, inserted at its completion position and retained on reload.
@@ -1999,7 +2011,7 @@ gap, full-width 16/24 textarea growing to fourteen lines, and a separate lower r
 The 34px circular Send control becomes a neutral circular Stop control in the
 same seat. On narrow screens its visible circle remains 34px inside a transparent
 44px hit area contained by the existing 44px grid seat. The Thinking disclosure
-retains its 120px capped body, with the active dock, compact rotating character,
+retains its 120px capped body, with the inline status, compact rotating character,
 restored elapsed time and separate completed tool containers specified in §13.
 Tool output is disclosed only when actually supplied; live reasoning
 is never fabricated on reload. The character stops when the turn ends.
@@ -2468,3 +2480,4 @@ exit; retain the existing 44px mobile touch target.
   actionable verification failures with Retry.
 | 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |
 | 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
+| 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |

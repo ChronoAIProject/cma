@@ -9,6 +9,7 @@ import type { AgentViewPosition } from './viewPosition';
 import { UserMessage } from './UserMessage';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 import { useMessageArrival } from './messageArrival';
+import { ActiveThinking } from './ActiveThinking';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -140,6 +141,7 @@ export function MessageStream({
           }
         />
       ))}
+      <ActiveThinking conversation={conversation} />
       {optimisticMessages?.map((message) => (
         <article
           className={`message message--user${message.queued ? ' message--queued' : ''}`}

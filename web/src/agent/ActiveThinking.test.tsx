@@ -1,6 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ActiveThinking } from './ActiveThinking';
 import { MessageStream } from './MessageStream';
 import {
   conversationFromTranscript,
@@ -30,7 +29,6 @@ const draw = (conversation: ConversationState) => (
     <div data-testid="history">
       <MessageStream conversation={conversation} onApproval={vi.fn()} />
     </div>
-    <ActiveThinking conversation={conversation} />
   </>
 );
 afterEach(() => vi.useRealTimers());
@@ -50,7 +48,8 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   const dock = screen.getByRole('region', { name: 'What the agent is working through' });
   expect(within(dock).getByText('Inspecting dependencies')).toBeInTheDocument();
   expect(within(dock).getAllByRole('listitem')).toHaveLength(2);
-  expect(within(screen.getByTestId('history')).queryByText(/Run tests/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('article', { name: 'Tool call: Run tests' })).not.toBeInTheDocument();
+  expect(screen.getByTestId('history')).toContainElement(dock);
 
   state = live(state, 'TEXT_MESSAGE_CONTENT', {
     messageId: 'update',
@@ -59,6 +58,7 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   });
   state = live(state, 'TOOL_CALL_END', { toolCallId: 'fast', result: 'package.json read' });
   rerender(draw(state));
+  expect(screen.getByRole('button', { name: /^Thinking/ })).toBe(toggle);
   expect(within(dock).getAllByRole('listitem')).toHaveLength(1);
   expect(within(dock).queryByText(/Read package/)).not.toBeInTheDocument();
   expect(screen.getByRole('article', { name: 'Tool call: Read package' })).toHaveTextContent(
@@ -86,10 +86,34 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   expect(within(dock).queryByRole('list')).not.toBeInTheDocument();
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
+  vi.useFakeTimers();
   rerender(draw(live(state, 'RUN_FINISHED')));
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(200));
   expect(screen.getAllByRole('article', { name: /^Tool call:/ })).toHaveLength(2);
   expect(screen.queryByText('Inspecting dependencies')).not.toBeInTheDocument();
+});
+
+it('shows exactly one transient row before the first reply and before queued follow-up messages', () => {
+  const state = start();
+  const { container } = render(
+    <MessageStream
+      conversation={state}
+      onApproval={vi.fn()}
+      optimisticMessages={[
+        { id: 'queued', content: 'Next question', state: 'accepted', queued: true },
+      ]}
+    />,
+  );
+  const thinking = screen.getByRole('region', { name: 'What the agent is working through' });
+  expect(thinking.closest('.message-stream')).not.toBeNull();
+  expect(thinking.closest('article')).toBeNull();
+  expect(container.querySelectorAll('.active-thinking')).toHaveLength(1);
+  expect(
+    thinking.compareDocumentPosition(screen.getByText('Next question')) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(container.querySelector('.agent-surface__input .thinking')).toBeNull();
 });
 
 it('restores elapsed time on navigation and replay, and resets it only for a new turn', () => {
@@ -113,7 +137,7 @@ it('restores elapsed time on navigation and replay, and resets it only for a new
 });
 
 it.each(['RUN_FINISHED', 'RUN_ERROR'])(
-  'removes the dock on %s without inventing a pending tool outcome',
+  'removes inline Thinking on %s without inventing a pending tool outcome',
   (end) => {
     const pending = live(start(), 'TOOL_CALL_START', {
       toolCallId: 'pending',
