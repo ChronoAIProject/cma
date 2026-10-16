@@ -64,9 +64,51 @@ it.each(['runtime_restarted', 'runtime_unavailable'] as const)(
     expect(screen.queryByText(/ran out of memory/)).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Recovering your sandbox');
     if (cause === 'runtime_unavailable')
-      expect(screen.getByText(/cause has not been confirmed/)).toBeInTheDocument();
+      expect(
+        screen.getByText('The sandbox stopped because of an internal error.'),
+      ).toBeInTheDocument();
   },
 );
+
+it('keeps internal error history factual after recovery has finished', () => {
+  const sandbox = activated();
+  render(
+    <SandboxRecoveryNotice
+      sandbox={{
+        ...sandbox,
+        lifecycle: {
+          ...sandbox.lifecycle!,
+          interruption: recovering('runtime_unavailable').lifecycle!.interruption,
+        },
+      }}
+      showHistory
+    />,
+  );
+  expect(screen.getByText('The sandbox stopped because of an internal error.')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Sandbox recovery' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Recovering|Resuming/)).not.toBeInTheDocument();
+});
+
+it('reports when internal error recovery could not finish', () => {
+  const sandbox = recovering('runtime_unavailable');
+  render(
+    <SandboxRecoveryNotice
+      sandbox={{
+        ...sandbox,
+        status: 'failed',
+        lifecycle: { ...sandbox.lifecycle!, operation: undefined },
+        failure: { class: 'restore_failed', detail: 'Home verification failed.' },
+      }}
+    />,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('Sandbox recovery needs attention');
+  expect(screen.getByRole('alert')).toHaveTextContent('Recovery could not finish.');
+  expect(
+    screen.getByText(
+      /Last recorded interruption: The sandbox stopped because of an internal error/,
+    ),
+  ).toBeInTheDocument();
+});
 
 it('does not reuse a historical OOM as the cause of a later manual resume', () => {
   const sandbox = recovering();
