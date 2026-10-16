@@ -25,7 +25,11 @@ export function SteeringModePicker({
       label="Steering mode"
       selectedId={value}
       items={[
-        { id: 'interrupt', label: 'Interrupt', reason: 'Send new input into the active turn.' },
+        {
+          id: 'interrupt',
+          label: 'Interrupt',
+          reason: 'Stop the current turn and start a new turn with this message.',
+        },
         { id: 'queue', label: 'Queue', reason: 'Wait until the current turn finishes.' },
       ]}
       onClose={() => setOpen(false)}
@@ -43,7 +47,7 @@ export function SteeringModePicker({
           title={
             value === 'queue'
               ? 'Queue new messages until the turn finishes'
-              : 'Steer the active turn with new input'
+              : 'Stop the current turn and send this message in a new turn'
           }
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}

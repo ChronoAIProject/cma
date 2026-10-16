@@ -2,7 +2,12 @@ import { vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
-import { commandStatus, controlReceipt, observation } from './controls.fixture';
+import {
+  commandStatus,
+  controlReceipt,
+  interruptionReceipt,
+  observation,
+} from './controls.fixture';
 import { queuedObservation, queuedReceipt } from './queued.fixture';
 
 export const incarnation = 'a'.repeat(64);
@@ -52,7 +57,7 @@ export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
     ],
   };
 }
-export function harness() {
+export function harness(storage: Storage = sessionStorage) {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const post = vi.fn<(init?: RequestInit) => Promise<Response>>().mockResolvedValue(accepted());
   const snapshot = vi
@@ -73,11 +78,17 @@ export function harness() {
   const control = vi.fn(async (responseId: string, init?: RequestInit) =>
     json(controlReceipt(responseId, JSON.parse(String(init?.body))), 202),
   );
+  const interrupt = vi.fn(async (responseId: string, init?: RequestInit) =>
+    json(interruptionReceipt(responseId, JSON.parse(String(init?.body))), 202),
+  );
   const command = vi.fn(async () =>
     json(
       commandStatus(
         null,
-        Number(JSON.parse(String(control.mock.lastCall?.[1]?.body)).turn_sequence),
+        Number(
+          JSON.parse(String(control.mock.lastCall?.[1]?.body ?? interrupt.mock.lastCall?.[1]?.body))
+            .turn_sequence,
+        ),
         true,
       ),
     ),
@@ -104,6 +115,8 @@ export function harness() {
     if (url === '/api/v2/ui/transport') return eligibility();
     if (url === '/api/v2/agents/agt_1/queued-inputs') return listQueued();
     if (url === '/api/v2/commands/cmd_control') return command();
+    const interruption = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/interrupt$/.exec(url);
+    if (interruption) return interrupt(interruption[1]!, init);
     const queued = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/queued-cancellation$/.exec(url);
     if (queued)
       return init?.method === 'POST' ? cancelQueued(queued[1]!, init) : observeQueued(queued[1]!);
@@ -125,7 +138,7 @@ export function harness() {
   });
   const sdk = createClient({ fetch });
   const client = agentClient({
-    agentTransport: createAgentTransport(sdk, { storage: sessionStorage, currentUser }),
+    agentTransport: createAgentTransport(sdk, { storage, currentUser }),
     runAgent: vi.fn(),
     interruptAgent: vi.fn(),
     replayAgent: vi.fn(),
@@ -153,6 +166,7 @@ export function harness() {
     cancelQueued,
     observe,
     control,
+    interrupt,
     command,
     eligibility,
     end() {

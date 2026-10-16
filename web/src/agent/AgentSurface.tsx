@@ -403,6 +403,7 @@ export function AgentSurface({
           }
           acceptedMessage={controller.acceptedMessage}
           acceptedSteeringMessage={controller.acceptedSteeringMessage}
+          acceptedInterruptionMessage={controller.acceptedInterruptionMessage}
           uploadAttachment={uploadAttachment}
           inputAvailability={
             readOnly
@@ -430,7 +431,7 @@ export function AgentSurface({
             if (readOnly || verified === undefined) return;
             const message = optimistic.begin(
               content,
-              running ? (steeringMode === 'queue' ? 'queue' : 'steer') : undefined,
+              running ? (steeringMode === 'queue' ? 'queue' : 'interrupt') : undefined,
             );
             return new Promise<void>((resolve) => {
               const settled = () => {
@@ -443,10 +444,14 @@ export function AgentSurface({
               };
               const send = () => {
                 const submit =
-                  running && steeringMode === 'interrupt' && controller.steer !== undefined
-                    ? controller.steer
+                  running && steeringMode === 'interrupt'
+                    ? controller.interruptWithMessage
                     : controller.send;
-                void submit(
+                if (submit === undefined) {
+                  cancelled();
+                  return;
+                }
+                const args: Parameters<AgentController['send']> = [
                   content,
                   (receipt) => {
                     if (message.accepted(receipt)) onAccepted();
@@ -454,7 +459,12 @@ export function AgentSurface({
                   },
                   message.observed,
                   cancelled,
-                ).then(settled, settled);
+                ];
+                const request =
+                  running && steeringMode === 'interrupt'
+                    ? submit(...args, message.ordinaryInput)
+                    : submit(...args);
+                void request.then(settled, settled);
               };
               if (
                 state.v2?.owner === (viewerId ?? verified.owner) &&

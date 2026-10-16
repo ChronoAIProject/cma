@@ -3,6 +3,7 @@ import type { ControlRecord } from './controlRecord';
 import { IdentityChangedError } from './identity';
 import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
+import { InterruptionJournal } from './interruptionJournal';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -77,6 +78,7 @@ export class AgentTransportJournal {
   private invalidated = false;
   readonly queuedCancellation: QueuedCancellationJournal;
   readonly queuedInputs: QueuedInputJournal;
+  readonly interruption: InterruptionJournal;
 
   constructor(
     private readonly storage: BrowserStorage,
@@ -85,6 +87,14 @@ export class AgentTransportJournal {
     private readonly makeKey: () => string,
   ) {
     this.key = `${PREFIX}${encodeURIComponent(identity.user)}:${encodeURIComponent(agent)}`;
+    this.interruption = new InterruptionJournal(
+      storage,
+      `${this.key}:interruption:${identity.epoch}`,
+      () => {
+        if (this.current()?.transport !== 'responses_v2')
+          throw new Error('This Agent has not selected the Responses transport.');
+      },
+    );
     this.queuedInputs = new QueuedInputJournal(
       storage,
       `${this.key}:queued-inputs:${identity.epoch}`,
@@ -165,6 +175,8 @@ export class AgentTransportJournal {
   }
 
   retainControl(control: ControlRecord): ControlRecord {
+    if (this.interruption.read()?.receipt === null)
+      throw new Error('Recover your pending interruption before requesting another action.');
     const current = this.current();
     if (current?.transport !== 'responses_v2')
       throw new Error('This Agent has not selected the Responses transport.');
@@ -204,6 +216,8 @@ export class AgentTransportJournal {
 
   /** Reuse the pending exact intent. A different message cannot replace uncertainty. */
   retain(input: string): InputRecord {
+    if (this.interruption.read()?.receipt === null)
+      throw new Error('Recover your pending interruption before sending another input.');
     const current = this.current();
     if (current?.transport !== 'responses_v2')
       throw new Error('This Agent has not selected the Responses transport.');

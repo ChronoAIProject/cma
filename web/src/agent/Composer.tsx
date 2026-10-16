@@ -37,6 +37,7 @@ interface ComposerProps {
   readonly requestPending?: boolean;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;
+  readonly acceptedInterruptionMessage?: string;
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
@@ -84,6 +85,7 @@ export function Composer({
   requestPending = false,
   acceptedMessage,
   acceptedSteeringMessage,
+  acceptedInterruptionMessage,
   inputAvailability,
   busy,
   quickMessages = [],
@@ -96,6 +98,7 @@ export function Composer({
   const setContent = draft?.setContent ?? setLocalContent;
   const previousAccepted = useRef(acceptedMessage);
   const previousSteering = useRef(acceptedSteeringMessage);
+  const previousInterruption = useRef(acceptedInterruptionMessage);
   const [submitting, setSubmitting] = useState(false);
   const [commandError, setCommandError] = useState<string>();
   const [handoff, setHandoff] = useState<{ attachments: readonly DraftAttachment[] }>();
@@ -141,9 +144,13 @@ export function Composer({
     const changed = [
       acceptedMessage === previousAccepted.current ? undefined : acceptedMessage,
       acceptedSteeringMessage === previousSteering.current ? undefined : acceptedSteeringMessage,
+      acceptedInterruptionMessage === previousInterruption.current
+        ? undefined
+        : acceptedInterruptionMessage,
     ].filter((value) => value !== undefined);
     previousAccepted.current = acceptedMessage;
     previousSteering.current = acceptedSteeringMessage;
+    previousInterruption.current = acceptedInterruptionMessage;
     // A receipt from an earlier visit cannot own text newly typed on this visit.
     if (submitted.current === undefined && editVersion.current !== 0) return;
     for (const accepted of changed) {
@@ -158,7 +165,14 @@ export function Composer({
         attachments.accept(attachments.items);
       }
     }
-  }, [acceptedMessage, acceptedSteeringMessage, content, setContent, attachments]);
+  }, [
+    acceptedMessage,
+    acceptedSteeringMessage,
+    acceptedInterruptionMessage,
+    content,
+    setContent,
+    attachments,
+  ]);
 
   useEffect(() => {
     if (usable) inputRef.current?.focus();
