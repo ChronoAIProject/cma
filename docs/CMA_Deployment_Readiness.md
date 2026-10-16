@@ -1299,9 +1299,12 @@ select commands concurrently with the new reader. The runtime still receives its
 existing Cancel and RecoverablePrompt messages; retained runtime images and native
 conversations require no rotation.
 
-Do not roll the API back across this reader floor while interruption pairs or
-new lifecycle admissions remain pending. Complete/cancel those records with a
-compatible API first. Browser interruption recovery retains the original source,
+After new interruption or lifecycle records have been written, retain a compatible
+API reader even when those records have completed or been cancelled. Completion
+does not remove their persisted fields, ordering variants or recovery receipts.
+Rolling web back is supported while keeping the compatible API; an older API
+cannot safely read this history. Never delete or rewrite user records to permit
+an incompatible binary rollback. Browser interruption recovery retains the original source,
 turn, revision, input (including attachment references) and idempotency key. A lost
 HTTP reply must recover both original receipts rather than issue another message.
 Verify Stop-only cancellation, replacement-message priority with an existing queue,
