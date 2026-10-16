@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
 import { statusLabel } from '../vocabulary/status';
 export type NavigationView = 'agent' | 'sandbox';
@@ -9,11 +10,13 @@ export const navigationStatuses = (view: NavigationView) => [
   ).map((value) => ({ value, label: statusLabel(value) })),
 ];
 export function NavigationFilters({
+  scope,
   view,
   status,
   onView,
   onStatus,
 }: {
+  readonly scope?: ReactNode;
   readonly view: NavigationView;
   readonly status: string;
   readonly onView: (view: NavigationView) => void;
@@ -39,12 +42,16 @@ export function NavigationFilters({
           </button>
         ))}
       </div>
-      <Picker
-        label={view === 'agent' ? 'Agent status filter' : 'Sandbox status filter'}
-        value={status}
-        options={navigationStatuses(view)}
-        onChange={onStatus}
-      />
+      <div className="navigation-filters__pickers" role="group" aria-label="Navigation filters">
+        {scope}
+        <Picker
+          label={view === 'agent' ? 'Agent status filter' : 'Sandbox status filter'}
+          placement="navigation-filters__picker"
+          value={status}
+          options={navigationStatuses(view)}
+          onChange={onStatus}
+        />
+      </div>
     </div>
   );
 }

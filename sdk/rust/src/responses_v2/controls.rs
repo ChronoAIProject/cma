@@ -1,4 +1,5 @@
 use super::*;
+mod interruption;
 mod queued_cancellation;
 mod queued_input;
 mod validation;

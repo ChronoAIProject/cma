@@ -57,6 +57,10 @@ pub(crate) struct LifecycleInput {
     /// New admissions pin deployment capacity; legacy records used policy minima.
     #[serde(default)]
     pub capacity: Option<layer3_adapter::SandboxCapacity>,
+    /// Initial inactivity policy for the operation's new private Sandbox Profile.
+    /// Retained admissions without this field preserve their original idle policy.
+    #[serde(default)]
+    pub sandbox_availability: layer2_core::profiles::SandboxProfileAvailability,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
     /// Original authenticated actor; old records retain unknown attribution.

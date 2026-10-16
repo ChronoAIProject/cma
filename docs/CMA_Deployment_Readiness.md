@@ -1287,3 +1287,32 @@ The runtime command-discovery patch applies to new allocations through the defau
 runtime pin. Existing Sandboxes retain their recorded image, home, conversation and
 native command inventory. Verify browser queue edits with attachments, independent
 removal, exact steering message binding, and retained Sandbox identity after rollout.
+
+### Atomic interruption and Agent Manager defaults
+
+Deploy the compatible Agent Manager before the web build that uses
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt`. Its new durable
+`InterruptAfterTurn` ordering admits cancellation and replacement input together,
+waits for the current turn to finish, then runs the replacement ahead of ordinary
+queued messages. Keep the single-replica Recreate rollout so older workers cannot
+select commands concurrently with the new reader. The runtime still receives its
+existing Cancel and RecoverablePrompt messages; retained runtime images and native
+conversations require no rotation.
+
+Do not roll the API back across this reader floor while interruption pairs or
+new lifecycle admissions remain pending. Complete/cancel those records with a
+compatible API first. Browser interruption recovery retains the original source,
+turn, revision, input (including attachment references) and idempotency key. A lost
+HTTP reply must recover both original receipts rather than issue another message.
+Verify Stop-only cancellation, replacement-message priority with an existing queue,
+independent queue edits/removals, and accepted versus actually completed turn status.
+
+New Agent Manager sandbox capacity comes from `CHRONO_AGENT_MANAGER_SANDBOX_CPU`
+(default `2`) and `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` (default `4Gi`). The same
+capacity selects the native warm pool and prepared-sandbox plan. New lifecycle
+admissions persist Always on (`always_keep_alive=true`) before provisioning; their
+private Sandbox Profile records that policy. Retained operations without the new
+field preserve the original false default. Existing Sandbox capacities, availability
+policies and seeded deployment-owned profiles remain authoritative. Validate new
+allocation requests/limits and recorded availability in production; do not infer
+warm-pool readiness merely from the changed configuration.

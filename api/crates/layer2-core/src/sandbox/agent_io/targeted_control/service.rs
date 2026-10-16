@@ -64,7 +64,7 @@ impl AgentCommandService {
         Ok(Some(TargetedControlStatusView::from_record(&result)))
     }
 
-    pub(super) async fn prepare_targeted(
+    pub(in crate::sandbox::agent_io) async fn prepare_targeted(
         &self,
         context: &CallerContext,
         credential: &str,

@@ -199,3 +199,52 @@ it('retains managed source identity after cancellation, reload and access suspen
   expect(second.result.current.items.some((x) => x.commandId === 'cmd_one')).toBe(false);
   second.unmount();
 });
+
+it('does not resurrect an interruption message cancelled before this browser observed the queue', async () => {
+  const retained = journal();
+  retained.interruption.retain({
+    key: 'original-interrupt',
+    responseId: 'resp_old',
+    receipt: null,
+    body: { text: 'New message', turn_sequence: 1, expected_agent_revision: 10 },
+  });
+  retained.interruption.accepted('original-interrupt', {
+    controlId: 'cmd_cancel_old',
+    commandId: 'cmd_new',
+    responseId: 'resp_new',
+  });
+  const fetch = vi.fn<typeof globalThis.fetch>(async (url) => {
+    if (String(url).endsWith('/queued-inputs'))
+      return json({
+        object: 'cma.agent.queued_inputs',
+        agent_id: 'agt_1',
+        data: [],
+        next_after: null,
+      });
+    if (String(url).endsWith('/commands/cmd_new')) {
+      const status = commandStatus('resp_new');
+      return json({
+        ...status,
+        receipt: { ...status.receipt, command_id: 'cmd_new' },
+        status: 'cancelled',
+        turn_sequence: null,
+        observed_cursor: null,
+        delivery: null,
+      });
+    }
+    throw new Error('Unexpected request');
+  });
+  const session = new AgentV2Session(createClient({ fetch }), retained, 'alice', {
+    storage: sessionStorage,
+    currentUser: async () => 'alice',
+  });
+  const first = renderHook(() => useQueuedInputs(session, true, false, '0', identity));
+  await waitFor(() => expect(first.result.current.managedCommandIds.has('cmd_new')).toBe(true));
+  expect(first.result.current.items).toEqual([]);
+  first.unmount();
+  const second = renderHook(() => useQueuedInputs(session, true, false, '0', identity));
+  await waitFor(() => expect(second.result.current.managedCommandIds.has('cmd_new')).toBe(true));
+  expect(retained.queuedInputs.managedCommands().has('cmd_new')).toBe(true);
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  second.unmount();
+});

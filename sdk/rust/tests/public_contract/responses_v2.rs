@@ -22,6 +22,25 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     .await,
             )
         }
+        "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt" => {
+            let key = c
+                .case
+                .request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                .map(|(_, value)| value.as_str())
+                .unwrap_or_default();
+            c.check(
+                api.interrupt_with_input(
+                    c.param("agent_id"),
+                    c.param("response_id"),
+                    &c.body()?,
+                    key,
+                )
+                .await,
+            )
+        }
         "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation" => c.check(
             api.observe_queued_cancellation(c.param("agent_id"), c.param("response_id"))
                 .await,

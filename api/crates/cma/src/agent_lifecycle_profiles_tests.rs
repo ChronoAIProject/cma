@@ -24,7 +24,14 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         setup_message: None,
         request,
         resolved_image: None,
-        capacity: Some(SandboxCapacity::default()),
+        capacity: Some(SandboxCapacity {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+        }),
+        sandbox_availability: layer2_core::profiles::SandboxProfileAvailability {
+            always_keep_alive: true,
+            ..Default::default()
+        },
         capabilities: vec![],
         actor: None,
     };
@@ -37,6 +44,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         input.captured_capacity(bounds()),
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
@@ -50,20 +58,24 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
             materialized.content.cpu_millis,
             materialized.content.memory_mib
         ),
-        (1000, 1024)
+        (2000, 4096)
     );
     assert_eq!(materialized.content.max_workspaces, 16);
     assert_eq!(materialized.content.max_agents_per_workspace, 16);
+    let created = store.sandbox_profile(&first.id).await.unwrap().unwrap();
+    assert!(created.internal);
+    assert!(created.availability.always_keep_alive);
+    assert!(!created.availability.warmup_enabled);
     let resumed: LifecycleInput =
         serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
     let changed_bounds = ProfileCapacityBounds {
-        min_cpu_millis: 2000,
-        min_memory_mib: 4096,
+        min_cpu_millis: 3000,
+        min_memory_mib: 8192,
         ..bounds()
     };
     assert_eq!(
         resumed.captured_capacity(changed_bounds),
-        SandboxCapacity::default()
+        input.capacity.unwrap()
     );
     let (_, _, replayed) = create_profiles(
         &profiles,
@@ -74,10 +86,91 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         resumed.captured_capacity(changed_bounds),
         resumed.captured_limits(),
         resumed.behavior,
+        resumed.sandbox_availability,
     )
     .await
     .unwrap();
     assert_eq!(replayed, first);
+    assert_eq!(
+        store.sandbox_profile(&first.id).await.unwrap().unwrap(),
+        created
+    );
+}
+
+#[tokio::test]
+async fn retained_inline_profile_keeps_its_capacity_and_inactivity_policy_after_new_creation() {
+    let store = Arc::new(InMemoryProfileStore::default());
+    let profiles =
+        PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
+    let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
+    let old: LifecycleInput = serde_json::from_value(json!({
+        "behavior":"prompt_repository",
+        "request":{"name":"Retained Agent"},
+        "resolved_image":null,
+        "capacity":{"cpu_millis":1000,"memory_mib":1024}
+    }))
+    .unwrap();
+    assert!(!old.sandbox_availability.always_keep_alive);
+    let materialize = |key: &'static str, capacity, availability| {
+        create_profiles(
+            &profiles,
+            &caller,
+            &old.request,
+            None,
+            key,
+            capacity,
+            old.captured_limits(),
+            old.behavior,
+            availability,
+        )
+    };
+    let (_, _, original) = materialize(
+        "old",
+        old.captured_capacity(bounds()),
+        old.sandbox_availability,
+    )
+    .await
+    .unwrap();
+    let retained = store.sandbox_profile(&original.id).await.unwrap().unwrap();
+    assert_eq!(
+        (retained.draft.cpu_millis, retained.draft.memory_mib),
+        (1000, 1024)
+    );
+    let (_, _, new) = materialize(
+        "new",
+        SandboxCapacity {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+        },
+        layer2_core::profiles::SandboxProfileAvailability {
+            always_keep_alive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_ne!(original.id, new.id);
+    assert!(
+        store
+            .sandbox_profile(&new.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .availability
+            .always_keep_alive
+    );
+    let (_, _, replayed) = materialize(
+        "old",
+        old.captured_capacity(bounds()),
+        old.sandbox_availability,
+    )
+    .await
+    .unwrap();
+    assert_eq!(original, replayed);
+    assert_eq!(
+        store.sandbox_profile(&original.id).await.unwrap().unwrap(),
+        retained
+    );
 }
 
 #[tokio::test]
@@ -91,6 +184,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
     }))
     .unwrap();
     assert!(input.capacity.is_none());
+    assert!(!input.sandbox_availability.always_keep_alive);
     assert_eq!(input.behavior, LifecycleBehavior::Legacy);
     let (_, workspace, original) = create_profiles(
         &profiles,
@@ -104,6 +198,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         },
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
@@ -126,10 +221,20 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         input.captured_capacity(bounds()),
         input.captured_limits(),
         input.behavior,
+        input.sandbox_availability,
     )
     .await
     .unwrap();
     assert_eq!(original, replayed);
+    assert!(
+        !store
+            .sandbox_profile(&original.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .availability
+            .always_keep_alive
+    );
     let retained = store
         .sandbox_profile_revision(&original.id, original.revision)
         .await
@@ -163,6 +268,7 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
             max_agents_per_workspace: 16,
         },
         LifecycleBehavior::PromptRepository,
+        Default::default(),
     )
     .await
     .unwrap();

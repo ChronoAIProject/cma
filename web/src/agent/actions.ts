@@ -14,6 +14,11 @@ import type { AgentV2Session } from './transport/client';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError } from '@chronoai/cma-sdk';
 import { submitV2Control, recoverV2Control } from './transport/controls';
+import {
+  submitV2Interruption,
+  recoverV2Interruption,
+  InterruptionNotSubmittedError,
+} from './transport/interruption';
 
 interface Options {
   readonly agentId?: string;
@@ -91,7 +96,8 @@ export function useAgentActions({
       onAccepted?: (receipt?: MessageAcceptance) => void,
       onReceiptObserved?: (receipt: MessageAcceptance) => void,
       onRefused?: () => void,
-      steer = false,
+      mode: 'send' | 'steer' | 'interrupt' = 'send',
+      onOrdinaryInput?: () => void,
     ) => {
       if (
         currentContext.current !== context ||
@@ -119,6 +125,20 @@ export function useAgentActions({
       let accepted = false;
       try {
         if (session !== undefined) {
+          const sendInput = (text: string) =>
+            session.send(
+              text,
+              (receipt) => {
+                if (controller.signal.aborted || currentContext.current !== context) return;
+                accepted = true;
+                onAccepted?.(receipt);
+              },
+              controller.signal,
+              (receipt) => {
+                if (!controller.signal.aborted && currentContext.current === context)
+                  onReceiptObserved?.(receipt);
+              },
+            );
           if (approving) {
             const scope = `agent:${agentId}:approval:${approval.id}:${approval.decision}`;
             await submitV2Control(
@@ -129,7 +149,30 @@ export function useAgentActions({
               controller.signal,
             );
             keys.settle(scope);
-          } else if (steer && current.conversation.responseBinding !== undefined) {
+          } else if (mode === 'interrupt') {
+            const result = await submitV2Interruption(
+              session,
+              current.conversation.responseBinding,
+              approval,
+              runId(),
+              controller.signal,
+            );
+            if (result === undefined) {
+              if (controller.signal.aborted || currentContext.current !== context) return;
+              onOrdinaryInput?.();
+              await sendInput(approval);
+              return;
+            }
+            if (!controller.signal.aborted && currentContext.current === context) {
+              const receipt = {
+                commandId: result.response.receipt.command_id,
+                responseId: result.response.receipt.response_id!,
+              };
+              accepted = true;
+              onReceiptObserved?.(receipt);
+              onAccepted?.(receipt);
+            }
+          } else if (mode === 'steer' && current.conversation.responseBinding !== undefined) {
             const result = await submitV2Control(
               session,
               current.conversation.responseBinding,
@@ -146,20 +189,7 @@ export function useAgentActions({
               onReceiptObserved?.(receipt);
               onAccepted?.(receipt);
             }
-          } else
-            await session.send(
-              approval,
-              (receipt) => {
-                if (controller.signal.aborted || currentContext.current !== context) return;
-                accepted = true;
-                onAccepted?.(receipt);
-              },
-              controller.signal,
-              (receipt) => {
-                if (!controller.signal.aborted && currentContext.current === context)
-                  onReceiptObserved?.(receipt);
-              },
-            );
+          } else await sendInput(approval);
           return;
         }
         await client.runAgent(
@@ -197,10 +227,19 @@ export function useAgentActions({
           session !== undefined &&
           !approving &&
           !accepted &&
-          error instanceof ApiError &&
-          ((error.status === 422 &&
-            ['invalid_response_input', 'invalid_control_request'].includes(error.code ?? '')) ||
-            (error.status === 409 && error.code === 'response_control_not_admitted'))
+          (error instanceof InterruptionNotSubmittedError ||
+            (error instanceof ApiError &&
+              ((error.status === 422 &&
+                [
+                  'invalid_response_input',
+                  'invalid_control_request',
+                  'invalid_interrupt_request',
+                  ...(mode === 'interrupt' ? ['capability_unsupported'] : []),
+                ].includes(error.code ?? '')) ||
+                (error.status === 409 &&
+                  ['response_control_not_admitted', 'response_interrupt_not_admitted'].includes(
+                    error.code ?? '',
+                  )))))
         )
           onRefused?.();
         if (!controller.signal.aborted && !onIdentityChange(error))
@@ -326,6 +365,7 @@ export function useAgentActions({
     try {
       await v2.recover(() => {}, controller.signal);
       await recoverV2Control(v2, controller.signal);
+      await recoverV2Interruption(v2, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted && !onIdentityChange(error))
         setActionError(errorMessage(error));

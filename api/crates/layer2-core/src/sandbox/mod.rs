@@ -144,8 +144,8 @@ pub use agent_reads::{
     SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
-    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,
-    AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
+    AgentRuntimeInputSender, AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
     AgentRuntimeTurnStopReason, AgentRuntimeUpdate,
 };
 pub use agent_service::{AgentService, AgentServiceError, CreateAgent};

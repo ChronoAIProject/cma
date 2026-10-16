@@ -120,20 +120,25 @@ export function useQueuedInputs(
         for (const item of items) managed.current.add(item.commandId);
         session.journal.queuedInputs.remember(items.map((item) => item.commandId));
         const last = session.journal.read();
-        if (last?.state === 'accepted' && !managed.current.has(last.receipt.commandId)) {
+        const accepted = [
+          last?.state === 'accepted' ? last.receipt : undefined,
+          session.journal.interruption.read()?.receipt ?? undefined,
+        ].filter((receipt) => receipt !== undefined);
+        for (const receipt of accepted) {
+          if (managed.current.has(receipt.commandId)) continue;
           try {
-            const status = await session.responses.readCommand(last.receipt.commandId, {
+            const status = await session.responses.readCommand(receipt.commandId, {
               signal: request.signal,
             });
             await session.authorize(request.signal);
             if (
               status.receipt.agent_id === session.journal.agentId &&
-              status.receipt.response_id === last.receipt.responseId &&
+              status.receipt.response_id === receipt.responseId &&
               (status.delivery !== null ||
                 ['completed', 'cancelled', 'failed'].includes(status.status))
             ) {
-              managed.current.add(last.receipt.commandId);
-              session.journal.queuedInputs.remember([last.receipt.commandId]);
+              managed.current.add(receipt.commandId);
+              session.journal.queuedInputs.remember([receipt.commandId]);
             }
           } catch (error) {
             if (request.signal.aborted || onIdentityChange(error)) return;

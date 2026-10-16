@@ -123,6 +123,14 @@ impl CommandLedgerError {
 
 #[async_trait]
 pub trait AgentCommandStore: Send + Sync {
+    /// One transaction admits cancellation and its prioritized new response.
+    async fn reserve_interrupting_message(
+        &self,
+        _request: super::InterruptingMessageReservation,
+    ) -> Result<super::AdmittedInterruptingMessage, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomically cancel an exact unbound response and retain its effect receipt.
     /// Older stores cannot claim that a cancellation was applied.
     async fn cancel_queued_response(

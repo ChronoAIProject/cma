@@ -122,6 +122,7 @@ it('settles a definitive no-admission refusal and permits a fresh control for th
   expect(new Headers(second.headers).get('idempotency-key')).not.toBe(
     new Headers(first.headers).get('idempotency-key'),
   );
+  await waitFor(() => expect(result.current.controlNotice).toBeUndefined());
   // Completed means control delivery. The actual response remains active.
   expect(result.current.state).toMatchObject({ conversation: { activeRunId: '3' } });
   unmount();

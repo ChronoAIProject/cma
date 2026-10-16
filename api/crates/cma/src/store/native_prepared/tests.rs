@@ -415,6 +415,7 @@ async fn admission(
                     cpu_millis: 1000,
                     memory_mib: 2048,
                 }),
+                sandbox_availability: Default::default(),
                 capabilities: vec![],
                 actor: None,
             },
