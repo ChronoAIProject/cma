@@ -30,6 +30,7 @@ async fn admission(
             max_agents_per_workspace: 16,
         },
         LifecycleBehavior::PromptRepository,
+        Default::default(),
     )
     .await
     .unwrap();
