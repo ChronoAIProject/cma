@@ -10,6 +10,7 @@ export interface OptimisticMessage {
   readonly receipt?: MessageAcceptance;
   readonly key?: string;
   readonly queued?: boolean;
+  readonly queueBeforeSend?: readonly string[];
   readonly source?: 'steer' | 'interrupt';
 }
 
@@ -73,7 +74,11 @@ export function useOptimisticMessages(
       return undefined;
     }
   };
-  const begin = (content: string, mode?: 'queue' | 'steer' | 'interrupt') => {
+  const begin = (
+    content: string,
+    mode?: 'queue' | 'steer' | 'interrupt',
+    queueBeforeSend?: readonly string[],
+  ) => {
     const id = crypto.randomUUID();
     const previous = retained(mode);
     const source = mode === 'steer' || mode === 'interrupt' ? mode : undefined;
@@ -93,7 +98,7 @@ export function useOptimisticMessages(
             },
           ]
         : []),
-      { id, content, state: 'sending', queued: mode === 'queue', source },
+      { id, content, state: 'sending', queued: mode === 'queue', source, queueBeforeSend },
     ]);
     return {
       ordinaryInput() {
