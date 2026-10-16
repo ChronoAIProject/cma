@@ -27,6 +27,9 @@ pub(super) struct Homes {
 }
 
 impl Homes {
+    pub(super) fn lose_disk(&self) {
+        self.disks.lock().unwrap().clear();
+    }
     pub(super) fn new(harness: &Harness) -> Arc<Self> {
         Self::for_cluster(harness, "local")
     }

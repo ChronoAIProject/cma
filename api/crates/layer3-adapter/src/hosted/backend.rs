@@ -151,6 +151,13 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    async fn runtime_termination(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        Ok(None)
+    }
+
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime inventory is not supported".into(),

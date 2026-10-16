@@ -362,3 +362,10 @@ impl std::fmt::Debug for CredentialFrame {
             .finish()
     }
 }
+
+/// Exact provider evidence from a terminated runtime incarnation, when available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeTermination {
+    pub out_of_memory: bool,
+    pub finished_at: String,
+}

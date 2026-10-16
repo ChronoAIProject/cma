@@ -137,7 +137,7 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
     assert_eq!(config.agent_manager_sandbox_capacity.cpu_millis, 2_000);
-    assert_eq!(config.agent_manager_sandbox_capacity.memory_mib, 4_096);
+    assert_eq!(config.agent_manager_sandbox_capacity.memory_mib, 8_192);
     assert_eq!(
         config
             .baseline_services

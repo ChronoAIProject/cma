@@ -62,10 +62,7 @@ export function LifecycleProgress({
       <section className="lifecycle-progress" aria-label="Sandbox progress">
         <p className="lifecycle-progress__stage">{sandboxLifecycleLabel(sandbox)}</p>
         {hasProviderPersistence ? (
-          <p>
-            Agent Sandbox persists this Sandbox on its attached PV. CMA does not manage snapshots or
-            S3 transfers.
-          </p>
+          <p>Your sandbox keeps its files and installed software on its saved home.</p>
         ) : null}
         <SandboxActivity
           client={client}

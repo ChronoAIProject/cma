@@ -21,8 +21,8 @@ export const lifecycleStageCopy: Readonly<Record<string, { label: string; detail
     detail: 'Keeping your sandbox open and resuming access to your work.',
   },
   checkpoint_verification: {
-    label: 'Checking your saved sandbox',
-    detail: 'Checking that your saved work is available to restore.',
+    label: 'Checking your saved work',
+    detail: 'Verifying the saved home before reopening your sandbox.',
   },
   runtime_provisioning: {
     label: 'Starting your sandbox',
@@ -33,9 +33,8 @@ export const lifecycleStageCopy: Readonly<Record<string, { label: string; detail
     detail: 'Restoring secure access to your connected services.',
   },
   home_restore: {
-    label: 'Restoring your files and installed software',
-    detail:
-      'Downloading, unpacking and checking your saved files. Large sandboxes can take several minutes. File-level progress is not reported yet.',
+    label: 'Reconnecting your saved home',
+    detail: 'Checking your files and installed software before your agents reopen.',
   },
   conversation_reopen: {
     label: 'Reopening your agents',
@@ -59,7 +58,7 @@ export const lifecycleStageCopy: Readonly<Record<string, { label: string; detail
   },
   teardown_runtime: {
     label: 'Stopping the sandbox environment',
-    detail: 'Releasing the environment after your work has been saved.',
+    detail: 'Stopping the running environment while retaining its saved home.',
   },
   publish_paused: {
     label: 'Finishing pause',

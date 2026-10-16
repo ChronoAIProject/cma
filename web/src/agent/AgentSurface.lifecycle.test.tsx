@@ -131,6 +131,14 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
       lifecycle: {
         ...sandboxFixture(status).lifecycle!,
         operation: { purpose, phase, startedAt: '2026-09-08T00:00:00Z' },
+        interruption:
+          status === 'reviving'
+            ? {
+                cause: 'out_of_memory',
+                detectedAt: '2026-09-08T00:00:00Z',
+                memoryLimitMib: 8192,
+              }
+            : undefined,
       },
     };
     await act(() => vi.advanceTimersByTimeAsync(5000));
@@ -143,6 +151,13 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
     fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
     expect(runAgent).not.toHaveBeenCalled();
     expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+    if (status === 'reviving') {
+      expect(screen.getByRole('region', { name: 'Sandbox recovery' })).toHaveTextContent(
+        'Recovering your sandbox',
+      );
+      expect(screen.getByText(/ran out of memory. Configured memory: 8 GiB/)).toBeInTheDocument();
+      expect(screen.getByText('Reconnecting your saved home')).toBeInTheDocument();
+    }
   }
 
   unavailable = true;

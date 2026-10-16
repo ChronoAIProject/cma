@@ -167,6 +167,8 @@ impl SandboxLifecycleOperation {
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<super::SandboxInterruption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<Box<super::SandboxHome>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_recovery: Option<Box<super::SandboxHomeRecovery>>,
@@ -202,6 +204,7 @@ impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            interruption: None,
             home: None,
             home_recovery: None,
             runtime_generation_high_water: 0,
@@ -222,6 +225,9 @@ impl Default for SandboxLifecycleState {
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         sandbox.validate_suspended_runtime()?;
+        if let Some(interruption) = &self.interruption {
+            interruption.validate()?;
+        }
         if let Some(capture) = &self.background_checkpoint {
             capture.validate(sandbox)?;
         }
