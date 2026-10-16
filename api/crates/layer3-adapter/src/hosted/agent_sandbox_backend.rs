@@ -151,6 +151,13 @@ impl HostedBackend for AgentSandboxBackend {
         self.transport.retire(original.handle()).await?;
         self.client.finalize(original, operation_id).await
     }
+    async fn runtime_termination(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        self.client.runtime_termination(handle).await
+    }
+
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
         self.client
             .inventory()

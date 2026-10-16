@@ -145,7 +145,7 @@ fn cooldown_does_not_delay_manual_pause_rotation_retirement_or_runtime_loss_reco
     retired.begin_retirement(RELEASED.into()).unwrap();
     let mut recovered = current.clone();
     recovered
-        .recover_runtime_loss(&[], RELEASED.into())
+        .recover_runtime_loss(&[], false, RELEASED.into())
         .unwrap();
     for next in [paused, rotated, retired, recovered] {
         assert_eq!(

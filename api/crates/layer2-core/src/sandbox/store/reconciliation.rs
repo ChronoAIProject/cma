@@ -17,6 +17,9 @@ pub struct SandboxRuntimeLossRequest {
     pub sandbox_id: SandboxId,
     pub expected_revision: u64,
     pub expected_runtime: Option<RuntimeBinding>,
+    /// Preserve a storage-owning provider object while replacing its process.
+    pub retain_runtime: bool,
+    pub interruption_cause: super::super::SandboxInterruptionCause,
     pub observed_at: String,
 }
 
@@ -194,8 +197,22 @@ pub fn apply_sandbox_runtime_loss(
         .collect::<Vec<_>>();
     let mut sandbox = current.clone();
     sandbox
-        .recover_runtime_loss(&recovered, request.observed_at.clone())
+        .recover_runtime_loss(
+            &recovered,
+            request.retain_runtime,
+            request.observed_at.clone(),
+        )
         .map_err(|error| corrupt(&error.to_string()))?;
+    if current.status != SandboxStatus::Retiring {
+        sandbox.lifecycle.interruption = Some(super::super::SandboxInterruption {
+            cause: request.interruption_cause,
+            detected_at: request.observed_at.clone(),
+            memory_limit_mib: current.profile.content.memory_mib,
+        });
+        sandbox
+            .validate()
+            .map_err(|error| corrupt(&error.to_string()))?;
+    }
     if sandbox.status != current.status {
         events.push(SandboxEventKind::StatusChanged {
             from: current.status,

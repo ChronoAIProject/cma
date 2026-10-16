@@ -30,6 +30,8 @@ fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {
         sandbox_id: sandbox.id.clone(),
         expected_revision: sandbox.revision,
         expected_runtime: sandbox.runtime.clone(),
+        retain_runtime: false,
+        interruption_cause: Default::default(),
         observed_at: OBSERVED.into(),
     }
 }

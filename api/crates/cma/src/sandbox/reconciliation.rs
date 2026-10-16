@@ -19,6 +19,9 @@ use super::runtime_mapping::sandbox_spec;
 
 const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(15);
 
+#[path = "reconciliation_interruption.rs"]
+mod interruption;
+
 #[path = "reconciliation_homes.rs"]
 mod homes;
 
@@ -109,6 +112,18 @@ impl SandboxReconciler {
                         binding.runtime_id == observation.handle.0
                             || binding.provision_generation.is_none()
                     })
+                {
+                    continue;
+                }
+                // Older recovery records can reserve a successor generation
+                // without retaining the original provider binding. Its object
+                // still owns the home; only explicit retirement may delete it.
+                if observation.handle.as_str().starts_with("agent-sandbox:")
+                    && current
+                        .lifecycle
+                        .home
+                        .as_ref()
+                        .is_some_and(|home| !home.released)
                 {
                     continue;
                 }
@@ -305,11 +320,18 @@ impl SandboxReconciler {
         sandbox: &Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let interruption_cause = interruption::observe(self.adapter.as_ref(), sandbox, now).await;
         self.store
             .recover_runtime_loss(SandboxRuntimeLossRequest {
                 sandbox_id: sandbox.id.clone(),
                 expected_revision: sandbox.revision,
                 expected_runtime: sandbox.runtime.clone(),
+                retain_runtime: sandbox.lifecycle.home.is_some()
+                    && sandbox
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
+                interruption_cause,
                 observed_at: rfc3339_at(now),
             })
             .await?;

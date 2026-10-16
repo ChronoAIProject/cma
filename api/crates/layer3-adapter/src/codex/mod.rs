@@ -207,6 +207,13 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.finalize_runtime(original, operation_id).await
     }
 
+    async fn runtime_termination(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<Option<crate::RuntimeTermination>> {
+        self.hosted.runtime_termination(handle).await
+    }
+
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
     }
@@ -486,3 +493,6 @@ mod tests;
 
 #[cfg(test)]
 mod attachments_tests;
+
+#[cfg(test)]
+mod termination_tests;
