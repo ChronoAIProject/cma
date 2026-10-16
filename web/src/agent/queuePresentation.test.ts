@@ -121,3 +121,27 @@ it('retains known queues and recovery while deferring new discovery until an idl
     queuePresentation(conversation, [pending], recovery).items.map((item) => item.commandId),
   ).toEqual(['older', 'recovery']);
 });
+
+it('preserves an unconfirmed input without synthesizing another bubble for its unknown command', () => {
+  const pending: OptimisticMessage = {
+    id: 'local',
+    content: 'Unconfirmed input /home/attachments/local.png',
+    state: 'unconfirmed',
+    queued: false,
+    queueBeforeSend: ['older'],
+  };
+  const control = queue(['older', 'new']);
+  const ownStart = queuePresentation(active('new'), [pending], control);
+  expect(ownStart.messages).toEqual([pending]);
+  expect(ownStart.items).toEqual([row('older')]);
+
+  // An already known queue entry has independent identity and remains visible.
+  const previousStart = queuePresentation(active('older'), [pending], control);
+  expect(previousStart.messages).toHaveLength(2);
+  expect(previousStart.messages[0]).toEqual(pending);
+  expect(previousStart.messages[1]).toMatchObject({
+    content: row('older').input,
+    receipt: { commandId: 'older', responseId: 'resp_older' },
+  });
+  expect(previousStart.items).toEqual([row('new')]);
+});
