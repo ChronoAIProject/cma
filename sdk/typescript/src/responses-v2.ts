@@ -7,6 +7,8 @@ import { eventStream } from './streaming.js';
 import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
 import * as controls from './responses-v2/controls.js';
+import * as interruption from './responses-v2/interruption.js';
+import type { V2ResponseInterruptionRequest } from './responses-v2/interruption.js';
 import * as queuedCancellation from './responses-v2/queued-cancellation.js';
 import * as queuedInput from './responses-v2/queued-input.js';
 import type { V2QueuedInputRequest } from './responses-v2/queued-input-types.js';
@@ -26,6 +28,10 @@ import {
 } from './responses-v2/types.js';
 export type * from './responses-v2/types.js';
 export type * from './responses-v2/controls-types.js';
+export type {
+  V2ResponseInterruptionRequest,
+  V2ResponseInterruption,
+} from './responses-v2/interruption.js';
 export type * from './responses-v2/queued-cancellation-types.js';
 export type * from './responses-v2/queued-input-types.js';
 export { commandIsTerminal } from './responses-v2/controls-types.js';
@@ -61,6 +67,15 @@ export class ResponsesV2 {
     options: CommandOptions,
   ) {
     return controls.submitControl(this.config, agentId, responseId, body, options);
+  }
+  /** Cancel the exact active turn and admit a distinct next response atomically. */
+  interruptWithInput(
+    agentId: string,
+    responseId: string,
+    body: V2ResponseInterruptionRequest,
+    options: CommandOptions,
+  ) {
+    return interruption.interruptWithInput(this.config, agentId, responseId, body, options);
   }
   /** One safe command-status poll. Completed control means delivery; inspect the target outcome separately. */
   readCommand(commandId: string, options: OperationOptions = {}) {

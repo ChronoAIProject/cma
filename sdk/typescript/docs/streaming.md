@@ -238,6 +238,27 @@ extension; older discovery documents remain readable. Standard Responses
 cancellation and verified platform-sender controls are separate contracts.
 Cancellation before turn binding uses the dedicated methods below.
 
+## Interrupt with new input
+
+`interruptWithInput` atomically admits cancellation of an observed active response
+and a distinct new user input. Pass the original Agent and response IDs, a
+`V2ResponseInterruptionRequest` containing `turn_sequence`, `expected_agent_revision`
+and `text`, and one retained idempotency key. Use `observeControls` to obtain the
+current binding and revision before submission.
+
+HTTP 202 returns `control` and `response` command views plus the original
+`target` and `expected_agent_revision`. The control has no response ID; the new
+input has a different response ID from the interrupted response. Its queue
+priority places it before ordinary queued messages while preserving their
+identities and relative order. Admission does not prove cancellation or new-turn
+startup: observe the original response outcome and the new command separately.
+
+After a lost response, retry the exact original IDs, body and key. The SDK never
+retries or retargets automatically. Generic conflicts remain uncertain;
+`response_interrupt_not_admitted` is the definitive proof that the original pair
+was not admitted and its observed target became stale. Keep ordinary Stop on
+`submitControl` with a cancel command; it admits no replacement message.
+
 ## Queued response cancellation
 
 `observeQueuedCancellation(agentId, responseId)` returns the source command,
