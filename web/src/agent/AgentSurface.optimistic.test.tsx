@@ -76,6 +76,9 @@ it('does not flash a queue card when discovery finishes before the idle Send rec
   await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(reads));
   expect(document.querySelector('.queued-messages')).toBeNull();
   expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
   await act(async () => response.resolve(accepted()));
   await screen.findByText('Sent');
   expect(document.querySelector('.queued-messages')).toBeNull();

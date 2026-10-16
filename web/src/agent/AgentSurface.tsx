@@ -416,11 +416,7 @@ export function AgentSurface({
                     : 'Only the owner can send messages to this agent.',
                 }
               : verified === undefined
-                ? {
-                    ...controller.inputAvailability,
-                    allowed: false,
-                    notice: 'Verify the required connections to continue.',
-                  }
+                ? { ...controller.inputAvailability, allowed: false }
                 : controller.inputAvailability
           }
           busy={
