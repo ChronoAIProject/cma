@@ -52,8 +52,16 @@ describe('the retained application shell', () => {
     expect(
       await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show navigation' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
     expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide navigation' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
     expect(window.location.pathname).toBe('/agent-manager');
     expect(signIn).not.toHaveBeenCalled();
   });
@@ -67,6 +75,10 @@ describe('the retained application shell', () => {
     expect(await screen.findByRole('button', { name: 'Get Started' })).toBeEnabled();
     expect(screen.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Show navigation' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
     const services = screen.getByRole('navigation', { name: 'CMA services' });
     expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
     for (const name of ['Agent Manager', 'Event Gateway']) {
