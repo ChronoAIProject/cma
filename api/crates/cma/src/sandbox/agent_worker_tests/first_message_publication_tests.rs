@@ -2,13 +2,19 @@ use super::*;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 
-async fn claimed_dispatch(harness: &Harness, prompt: Option<&str>) -> Agent {
+async fn claimed_dispatch(harness: &mut Harness, prompt: Option<&str>) -> Agent {
+    let initial = harness.now;
+    let started = tokio::time::Instant::now();
     let admitted = harness
         .admit_with_first_message("dispatch-publication", vec![], prompt)
         .await;
     for _ in 0..5 {
+        // Worker publication includes elapsed execution time in ready_at. Carry
+        // the same monotonic clock forward before claiming the following step.
+        harness.now = initial + started.elapsed();
         harness.run(&admitted.id, harness.now).await;
     }
+    harness.now = initial + started.elapsed();
     let mut current = harness.stored(&admitted.id).await;
     if current.work.step == AgentWorkStep::None {
         let revision = current.revision;
@@ -32,11 +38,29 @@ async fn claimed_dispatch(harness: &Harness, prompt: Option<&str>) -> Agent {
 }
 
 #[tokio::test]
+async fn dispatch_fixture_advances_across_a_durable_timestamp_boundary() {
+    let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let seconds = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // Any worker execution time crosses the persisted whole-second boundary.
+    // Reusing this original instant for the next claim would make it too early.
+    harness.now =
+        SystemTime::UNIX_EPOCH + Duration::from_secs(seconds) + Duration::from_nanos(999_999_999);
+    let original = rfc3339_at(harness.now);
+    let claimed = claimed_dispatch(&mut harness, None).await;
+    assert!(claimed.work.ready_at > original);
+    assert_eq!(claimed.work.step, AgentWorkStep::DispatchFirstMessage);
+    assert!(claimed.work.lease.is_some());
+}
+
+#[tokio::test]
 async fn completed_first_dispatch_retries_revision_contention_without_resending() {
     for prompt in [None, Some("Run once")] {
         let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         harness.now = SystemTime::now();
-        let claimed = claimed_dispatch(&harness, prompt).await;
+        let claimed = claimed_dispatch(&mut harness, prompt).await;
         let authority = AgentWorkAuthority::new(
             "agent-worker".into(),
             claimed.work.lease.as_ref().unwrap().fence,
@@ -102,7 +126,7 @@ async fn completed_dispatch_refuses_replaced_authority_and_new_prompt() {
     for changed in ["holder", "fence", "step", "runtime", "stop", "prompt"] {
         let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         harness.now = SystemTime::now();
-        let claimed = claimed_dispatch(&harness, None).await;
+        let claimed = claimed_dispatch(&mut harness, None).await;
         let calls = AtomicUsize::new(0);
         let result = harness
             .worker
@@ -158,7 +182,7 @@ async fn completed_dispatch_bounds_contention_and_respects_lease_expiry() {
     for expire in [false, true] {
         let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         harness.now = SystemTime::now();
-        let claimed = claimed_dispatch(&harness, None).await;
+        let claimed = claimed_dispatch(&mut harness, None).await;
         let calls = AtomicUsize::new(0);
         let result = harness
             .worker
@@ -187,7 +211,7 @@ async fn completed_dispatch_bounds_contention_and_respects_lease_expiry() {
 async fn completed_dispatch_cannot_retire_a_different_prompt_attempt() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
-    let claimed = claimed_dispatch(&harness, Some("Run once")).await;
+    let claimed = claimed_dispatch(&mut harness, Some("Run once")).await;
     let authority = AgentWorkAuthority::new(
         "agent-worker".into(),
         claimed.work.lease.as_ref().unwrap().fence,
