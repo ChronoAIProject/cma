@@ -4,7 +4,11 @@ use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, AgentSlot, WorktreeRequ
 
 #[tokio::test]
 async fn native_prepared_guidance_home_survives_owned_replay_without_identity_conflict() {
-    for prompt in [crate::agent_lifecycle::guidance::GITHUB_API_V1, ""] {
+    for prompt in [
+        crate::agent_lifecycle::guidance::managed_v2(),
+        crate::agent_lifecycle::guidance::GITHUB_API_V1,
+        "",
+    ] {
         let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
         let pools = pools(&harness, &[]);
         let mut initial = reservation(&harness).await;

@@ -38,10 +38,13 @@ impl NativePreparedPlan {
         }
         let agent = AgentProfileSnapshot {
             id: AgentProfileId("agp_native_prepared_default".into()),
-            // Revision 2 materializes the pinned instructions during preparation.
-            // Reconcile unclaimed revision-1 homes instead of replaying different
-            // bytes under their existing home operation identity.
-            revision: 2,
+            // New guidance gets a new preparation identity. Replenish unclaimed
+            // older homes; never replay changed bytes into an owned Agent home.
+            revision: if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v2() {
+                3
+            } else {
+                2
+            },
             digest: digest(&agent)?,
             content: agent,
         };
