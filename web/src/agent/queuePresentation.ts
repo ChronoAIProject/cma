@@ -31,14 +31,15 @@ export function queuePresentation(
   );
   // Discovery may beat the Send receipt. Hold only newly discovered rows until
   // that ordinary request settles; never correlate different inputs by their text.
-  const awaitingReceipt = messages.find(
+  const pendingOrdinary = messages.find(
     (message) =>
       message.queued === false &&
       message.source === undefined &&
-      message.state === 'sending' &&
+      (message.state === 'sending' || message.state === 'unconfirmed') &&
       command(message) === undefined &&
       message.queueBeforeSend !== undefined,
   );
+  const awaitingReceipt = pendingOrdinary?.state === 'sending' ? pendingOrdinary : undefined;
   const items = rows.filter(
     (item) =>
       item.needsRecovery ||
@@ -72,8 +73,8 @@ export function queuePresentation(
   const starting = rows.find((item) => item.commandId === active && !item.needsRecovery);
   if (
     starting &&
-    (awaitingReceipt === undefined ||
-      awaitingReceipt.queueBeforeSend!.includes(starting.commandId)) &&
+    (pendingOrdinary === undefined ||
+      pendingOrdinary.queueBeforeSend!.includes(starting.commandId)) &&
     !delivered.has(active) &&
     !visible.some((message) => command(message) === active)
   )
