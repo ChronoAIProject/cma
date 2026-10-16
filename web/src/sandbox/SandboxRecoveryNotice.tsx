@@ -18,7 +18,7 @@ function interruptionReason(sandbox: SandboxDetail): string | undefined {
     case 'runtime_restarted':
       return 'The sandbox environment restarted unexpectedly.';
     case 'runtime_unavailable':
-      return 'The sandbox environment became unavailable. The cause has not been confirmed.';
+      return 'The sandbox stopped because of an internal error.';
   }
 }
 
