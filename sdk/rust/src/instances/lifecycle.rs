@@ -93,9 +93,29 @@ pub enum SandboxLifecycleOperation {
     },
 }
 
+string_enum! { /// Confirmed cause or unknown cause of the latest interruption.
+    pub enum SandboxInterruptionCause {
+        OutOfMemory => "out_of_memory", RuntimeRestarted => "runtime_restarted",
+        RuntimeUnavailable => "runtime_unavailable"
+    }
+}
+
+/// Latest recorded unexpected runtime interruption, retained after recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxInterruption {
+    /// Only explicit provider evidence can identify memory exhaustion.
+    pub cause: SandboxInterruptionCause,
+    /// Time CMA admitted the corresponding recovery operation.
+    pub detected_at: String,
+    /// Original immutable workload memory limit in MiB.
+    pub memory_limit_mib: u32,
+}
+
 /// Authoritative transition eligibility and recorded lifecycle progress.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxLifecycle {
+    /// Optional latest interruption; older servers may omit this field.
+    pub interruption: Option<SandboxInterruption>,
     /// Eligibility to begin a new pause.
     pub pause: SandboxLifecycleEligibility,
     /// Eligibility to begin a new revival.

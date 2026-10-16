@@ -893,7 +893,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |
 | `CHRONO_AGENT_MANAGER_SANDBOX_CPU` | New Agent Manager Sandbox CPU and native default warm/prepared capacity; default `2`, accepts positive cores or millicores. Independent of retained system Profiles. |
-| `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` | New Agent Manager Sandbox memory and native default warm/prepared capacity; default `4Gi`, accepts positive whole Mi/Gi. Existing Sandbox reservations are unchanged. |
+| `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` | New Agent Manager Sandbox memory and native default warm/prepared capacity; default `8Gi`, accepts positive whole Mi/Gi. Existing Sandbox reservations are unchanged. |
 | `CHRONO_DEFAULT_AGENT_MODEL` | Seed default Agent model; default `gpt-5.6-sol`, nonblank |
 | `CHRONO_DEFAULT_AGENT_EFFORT` | Seed default effort; default `high`, one of `minimal,low,medium,high,x_high` |
 | `CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS` | Per-command bound 1-600; default 600 |
