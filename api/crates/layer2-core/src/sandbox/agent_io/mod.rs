@@ -19,6 +19,8 @@ pub(in crate::sandbox) mod execution_dispatch;
 mod external_event;
 mod external_event_read;
 mod input;
+mod interruption;
+pub use interruption::*;
 mod lane;
 mod ledger;
 mod queued_cancellation;

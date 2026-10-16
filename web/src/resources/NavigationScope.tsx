@@ -48,7 +48,7 @@ export function NavigationScopePicker({
   return (
     <Picker
       label="Navigation scope"
-      placement="sidebar__scope-picker"
+      placement="navigation-filters__picker"
       value={value}
       options={choices.options}
       onChange={onChange}

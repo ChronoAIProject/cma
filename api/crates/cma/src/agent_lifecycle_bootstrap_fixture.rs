@@ -58,6 +58,7 @@ impl Fixture {
             .await
             .unwrap();
         let record = operations.claim(&receipt.id).await.unwrap().unwrap();
+        assert!(record.input.sandbox_availability.always_keep_alive);
         let (_, workspace_profile, sandbox_profile) = profiles::create_profiles(
             service.profiles.as_ref(),
             &owner.caller,
@@ -67,6 +68,7 @@ impl Fixture {
             record.input.captured_capacity(service.bounds),
             record.input.captured_limits(),
             record.input.behavior,
+            record.input.sandbox_availability,
         )
         .await
         .unwrap();
@@ -185,6 +187,7 @@ pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
         runtime_image: record.input.resolved_image.clone(),
         capacity: record.input.capacity.unwrap(),
         limits: record.input.captured_limits(),
+        sandbox_availability: record.input.sandbox_availability,
         key: record.key.clone(),
         lease: record.lease().unwrap(),
         existing_sandbox_id: record.sandbox_id.clone(),

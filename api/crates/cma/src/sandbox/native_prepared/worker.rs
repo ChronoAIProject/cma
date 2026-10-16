@@ -43,8 +43,8 @@ impl NativePreparedWorker {
                 NativePreparedPlan::new(
                     SandboxProfileContent {
                         runtime_image: None,
-                        cpu_millis: config.default_profiles.cpu_millis,
-                        memory_mib: config.default_profiles.memory_mib,
+                        cpu_millis: config.agent_manager_sandbox_capacity.cpu_millis,
+                        memory_mib: config.agent_manager_sandbox_capacity.memory_mib,
                         nyxid_services: services,
                         agent_provider: AgentProvider::Codex,
                         model_access: ModelAccess::ChronoaiManaged,

@@ -435,6 +435,7 @@ export function useAgentController(
     pendingMessage: retained?.input,
     acceptedMessage: retained?.accepted,
     acceptedSteeringMessage: retained?.acceptedSteering,
+    acceptedInterruptionMessage: retained?.acceptedInterruption,
     pendingControl: retained?.control,
     controlNotice,
     controlsUnavailable:
@@ -468,7 +469,12 @@ export function useAgentController(
       v2 === undefined
         ? undefined
         : (content, onAccepted, onReceiptObserved, onRefused) =>
-            run(content, onAccepted, onReceiptObserved, onRefused, true),
+            run(content, onAccepted, onReceiptObserved, onRefused, 'steer'),
+    interruptWithMessage:
+      v2 === undefined
+        ? undefined
+        : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
+            run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
     interrupt: () =>
       command('interrupt', (id, key, signal) =>
