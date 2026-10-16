@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { bot, botClient } from './bots/fixtures.test-support';
 import { CmaClientProvider } from './api/context';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
@@ -115,4 +116,55 @@ it('closes the narrow Gateway drawer after choosing New channel while keeping it
       value: 1440,
     });
   }
+});
+
+it('keeps Consumers under Event Gateway and preserves channel drafts and the Agent when switching sections', async () => {
+  window.history.replaceState({}, '', '/agents/agt_1');
+  const bots = botClient();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.endsWith('/auth/session') ? Response.json(session) : Response.json({ items: [] }),
+    ),
+  );
+  render(
+    <AuthContextProvider
+      provider={createMockAuthProvider({
+        initiallyAuthenticated: true,
+        capabilities: ['use_own_sandboxes', 'manage_own_bots'],
+      })}
+    >
+      <CmaClientProvider client={{ ...agentClient(), botViews: bots }}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  const composer = await screen.findByRole('textbox', { name: 'Message' });
+  fireEvent.change(composer, { target: { value: 'Keep my Agent draft' } });
+  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  const channelDraft = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
+  fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
+  fireEvent.click(screen.getByRole('link', { name: 'Consumers' }));
+  await screen.findByRole('heading', { name: 'Event Gateway consumers' });
+  expect(window.location.pathname).toBe('/bots');
+  expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  expect(screen.getByRole('link', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');
+  fireEvent.click(await screen.findByRole('link', { name: bot.name }));
+  await screen.findByRole('heading', { name: bot.name });
+  expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
+  expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
+  expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(channelDraft);
+  expect(channelDraft).toHaveValue('Retained channel configuration');
+  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  expect(window.location.pathname).toBe('/agents/agt_1');
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  expect(composer).toHaveValue('Keep my Agent draft');
 });

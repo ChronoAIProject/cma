@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import type { ResourceViewsClient } from '../resources/client';
-import type { NavigationScopeChoices } from '../resources/NavigationScope';
+import { NavigationScopePicker, type NavigationScopeChoices } from '../resources/NavigationScope';
 import { ScopedNavigation } from '../resources/ScopedNavigation';
 import { Button } from '../ui/Button';
 import { sameAgent } from '../agent/status';
@@ -22,6 +22,7 @@ export function ManagerNavigation({
   pending,
   busySandboxIds,
   deletingSandboxIds,
+  onScope,
   onViewDeletion,
   onNavigate,
   onAction,
@@ -37,6 +38,7 @@ export function ManagerNavigation({
   readonly pending: boolean;
   readonly busySandboxIds: ReadonlySet<string>;
   readonly deletingSandboxIds: ReadonlySet<string>;
+  readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAction: (action: TreeAction) => void;
@@ -47,6 +49,11 @@ export function ManagerNavigation({
   return (
     <>
       <NavigationFilters
+        scope={
+          client === undefined ? undefined : (
+            <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
+          )
+        }
         view={view}
         status={status}
         onView={setView}

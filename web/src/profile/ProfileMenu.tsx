@@ -6,7 +6,6 @@ import { Menu, type MenuEntry } from '../ui/Menu';
 import {
   IconDarkOutline16,
   IconBrowseOutline16,
-  IconCodeOutline16,
   IconFollowsystemOutline16,
   IconLightOutline16,
   IconRightUpOutline16,
@@ -32,13 +31,10 @@ interface ProfileMenuProps {
   readonly onSignOut: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
-  readonly bots?: boolean;
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
-  bots: { kind: 'bots' },
   docs: { kind: 'docs' },
-  developer: { kind: 'developer' },
   operations: { kind: 'operations' },
 };
 
@@ -58,24 +54,13 @@ function appearanceIcon(appearance: Appearance) {
   return <IconFollowsystemOutline16 />;
 }
 
-export function ProfileMenu({
-  user,
-  onSignOut,
-  onNavigate,
-  collapsed = false,
-  bots = false,
-}: ProfileMenuProps) {
+export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
   const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
-    ...(bots && !user.visitor
-      ? [{ id: 'bots', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
-      : []),
-    { type: 'separator', id: 'before-platform' },
-    { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
