@@ -3,9 +3,9 @@ import { commandIsTerminal, type V2CommandStatus } from '@chronoai/cma-sdk';
 import type { AgentV2Session } from './client';
 import { transientReadFailure } from '../loadAgent';
 
-function notice(command: V2CommandStatus): string {
-  if (command.status === 'completed')
-    return 'Your response action was delivered. The conversation shows the response outcome.';
+function notice(command: V2CommandStatus): string | undefined {
+  // Successful delivery is reflected by the conversation; keep only actionable status.
+  if (command.status === 'completed') return undefined;
   if (command.status === 'failed' || command.status === 'cancelled')
     return 'Your response action could not be delivered. Review the conversation before requesting another action.';
   return command.status === 'queued'
@@ -18,7 +18,7 @@ export function useControlStatus(
   session: AgentV2Session | undefined,
   onIdentityChange: (error: unknown) => boolean,
 ): string | undefined {
-  const [result, setResult] = useState<{ id: string; text: string }>();
+  const [result, setResult] = useState<{ id: string; text: string | undefined }>();
   let commandId: string | undefined;
   try {
     commandId = session?.journal.readControl()?.commandId ?? undefined;

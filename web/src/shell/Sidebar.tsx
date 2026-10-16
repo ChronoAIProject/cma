@@ -12,7 +12,6 @@ interface SidebarProps {
   readonly onToggleCollapsed: () => void;
   readonly account: ReactNode;
   readonly navigation?: ReactNode;
-  readonly scope?: ReactNode;
   readonly canCreateAgent?: boolean;
   readonly canCreateTrigger?: boolean;
   readonly onNewAgent?: () => void;
@@ -27,7 +26,6 @@ export function Sidebar({
   onToggleCollapsed,
   account,
   navigation,
-  scope,
   canCreateAgent = false,
   canCreateTrigger = false,
   onNewAgent,
@@ -109,9 +107,6 @@ export function Sidebar({
             <span>New agent trigger</span>
           </button>
         ) : null}
-      </div>
-      <div className="sidebar__scope" hidden={collapsed}>
-        {scope}
       </div>
       <div className="sidebar__navigation" hidden={collapsed}>
         {navigation}
