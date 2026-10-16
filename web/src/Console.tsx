@@ -1,6 +1,6 @@
 import { Presence } from './ui/Presence';
 import { Operations, TriggerPublisherPage } from './ConsolePages';
-import { BotManagement, isBotRoute, canManageBots } from './BotManagement';
+import { BotManagement, isBotRoute } from './BotManagement';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -34,7 +34,7 @@ import { ArtifactPublicationScope } from './resources/artifactRecovery';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
 import { scopeValue } from './resources/scope';
-import { NavigationScopePicker, useNavigationScope } from './resources/NavigationScope';
+import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 
@@ -410,20 +410,12 @@ function ConsoleContent({
             onSidebarNavigate();
             onNavigate({ kind: 'home' });
           }}
-          scope={
-            scopeClient === undefined ? undefined : (
-              <NavigationScopePicker
-                choices={scopeChoices}
-                value={navigationScope}
-                onChange={setNavigationScope}
-              />
-            )
-          }
           navigation={
             <ManagerNavigation
               client={scopeClient}
               scope={navigationScope}
               choices={scopeChoices}
+              onScope={setNavigationScope}
               route={route}
               viewerId={user.id}
               navigation={navigation}
@@ -443,7 +435,6 @@ function ConsoleContent({
           account={
             <ProfileMenu
               user={user}
-              bots={canManageBots(user, client)}
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={(next) => {

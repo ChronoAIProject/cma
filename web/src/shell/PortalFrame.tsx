@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react';
 import { useAuth } from '../auth/context';
-import { useCmaClient } from '../api/context';
-import { canManageBots } from '../BotManagement';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import type { AppRoute } from '../routing/routes';
 import { AppFrame } from './AppFrame';
@@ -26,7 +24,6 @@ export function PortalFrame({
   readonly onSidebarCollapsedChange: (collapsed: boolean) => void;
 }) {
   const { state, signOut, signIn } = useAuth();
-  const client = useCmaClient();
   return (
     <AppFrame
       detailsOpen={false}
@@ -46,7 +43,6 @@ export function PortalFrame({
             state.status === 'authenticated' ? (
               <ProfileMenu
                 user={state.user}
-                bots={canManageBots(state.user, client)}
                 collapsed={collapsed}
                 onNavigate={(next) => {
                   closeNavigation();
