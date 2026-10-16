@@ -3,6 +3,10 @@
   padding-top: 6px;
 }
 
+.composer-attachments:empty {
+  display: none;
+}
+
 .composer-attachments__list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
@@ -74,16 +78,31 @@
     height: 44px;
   }
 
-  .composer-attachments__picker .button {
+  .composer-attachments__picker .button,
+  .composer-attachments__error .button {
     width: 44px;
     height: 44px;
   }
 }
 
 .composer-attachments__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
   padding: 4px 12px;
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
+}
+
+.composer-attachments__error > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.composer-attachments__error > .button {
+  flex: none;
 }
 
 .message-attachments {

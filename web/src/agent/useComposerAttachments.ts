@@ -16,8 +16,16 @@ export function useComposerAttachments(
   const [local, setLocal] = useState<readonly DraftAttachment[]>([]);
   const items = draft?.attachments ?? local;
   const setItems = draft?.setAttachments ?? setLocal;
-  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<{ readonly message: string }>();
   const active = useRef(new Map<string, AbortController>());
+
+  useEffect(() => {
+    if (notice === undefined) return;
+    const timer = window.setTimeout(() => setNotice(undefined), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  const dismissError = useCallback(() => setNotice(undefined), []);
 
   useEffect(() => {
     const pending = active.current;
@@ -93,18 +101,18 @@ export function useComposerAttachments(
     (files: readonly File[]) => {
       if (files.length === 0) return;
       if (!enabled || upload === undefined) {
-        setError('Attachments are available when this sandbox is ready.');
+        setNotice({ message: 'Attachments are available when this sandbox is ready.' });
         return;
       }
       if (items.length + files.length > attachmentLimit) {
-        setError(`Attach up to ${String(attachmentLimit)} files per message.`);
+        setNotice({ message: `Attach up to ${String(attachmentLimit)} files per message.` });
         return;
       }
       if (files.some((file) => file.size > attachmentSizeLimit)) {
-        setError('Each attachment must be 20 MiB or smaller.');
+        setNotice({ message: 'Each attachment must be 20 MiB or smaller.' });
         return;
       }
-      setError(undefined);
+      setNotice(undefined);
       const added = files.map((file) => ({
         key: crypto.randomUUID(),
         file,
@@ -137,7 +145,8 @@ export function useComposerAttachments(
   };
   return {
     items,
-    error,
+    error: notice?.message,
+    dismissError,
     add,
     remove,
     retry,
