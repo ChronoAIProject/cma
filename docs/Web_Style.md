@@ -2345,8 +2345,8 @@ motion tokens, reverse without jumping and stop under reduced motion.
 Context and cumulative Total tokens share the composer's input column, aligning to
 its left and right edges respectively. The adjacent Send/Stop group has a stable
 seat and a compact steering-mode menu directly below it. Its choices are Interrupt
-and Queue. Queue preserves ordered ordinary input; Interrupt delivers the new input
-as a targeted native steering command during an active turn. Outside an active turn,
+and Queue. Queue preserves ordered ordinary input; Interrupt cancels the active turn and admits the new input as a distinct
+replacement turn ahead of ordinary queued messages, preserving the remaining queue. Outside an active turn,
 both modes send ordinary input. Stop remains a separate cancellation action. Use the
 shared Menu, existing 8px gaps, 32px controls (44px touch targets), caption typography,
 neutral surfaces and motion tokens. Preserve draft content on refusal or uncertainty.
@@ -2411,3 +2411,8 @@ uncertain-request recovery visible without a persistent success banner.
 
 - 2026-10-16 — Clear completed response-action notices automatically, preserving
   failure and recovery controls. Render command-help placeholders as inert text.
+
+
+- 2026-10-16 — Make Interrupt mode stop the current turn and start a distinct new
+  message next, including its attachments; keep Stop as cancellation only. Preserve
+  exact admission recovery, other queued messages and actionable failure states.

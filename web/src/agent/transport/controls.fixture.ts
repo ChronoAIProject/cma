@@ -1,4 +1,4 @@
-import type { V2ResponseControlRequest } from '@chronoai/cma-sdk';
+import type { V2ResponseControlRequest, V2ResponseInterruptionRequest } from '@chronoai/cma-sdk';
 const at = '2026-09-16T00:00:00Z';
 
 export function commandStatus(responseId: string | null, turn = 1, completed = false) {
@@ -36,6 +36,24 @@ export function controlReceipt(responseId: string, request: V2ResponseControlReq
   return {
     object: 'cma.response.control',
     control: commandStatus(null, request.turn_sequence, true),
+    target: { response_id: responseId, turn_sequence: request.turn_sequence },
+    expected_agent_revision: request.expected_agent_revision,
+  };
+}
+
+export function interruptionReceipt(responseId: string, request: V2ResponseInterruptionRequest) {
+  const message = commandStatus('resp_interrupted_next');
+  return {
+    object: 'cma.response.interruption',
+    control: commandStatus(null, request.turn_sequence, true),
+    response: {
+      ...message,
+      receipt: { ...message.receipt, command_id: 'cmd_interrupted_next', agent_order: 2 },
+      status: 'queued',
+      turn_sequence: null,
+      observed_cursor: null,
+      delivery: null,
+    },
     target: { response_id: responseId, turn_sequence: request.turn_sequence },
     expected_agent_revision: request.expected_agent_revision,
   };
