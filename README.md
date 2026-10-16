@@ -14,7 +14,10 @@ four-layer architecture, ownership rules and CI gates are binding.
 ## What You Can Do
 
 - **Work with Agents:** create an Agent, exchange messages, follow its work and
-  respond to approvals through Agent Manager.
+  respond to approvals through Agent Manager. Responses v2 conversations can
+  queue follow-up messages while a turn runs; interrupting or stopping a response
+  remains an explicit action. The composer lists commands and skills reported
+  by the running Agent rather than assuming every provider command is available.
 - **Configure its environment:** use the system image or an authorized Image
   Manager version, with inline model, reasoning, permission, prompt and skill
   settings. Profiles remain private immutable configuration records and
@@ -22,6 +25,10 @@ four-layer architecture, ownership rules and CI gates are binding.
 - **Work on a repository:** optionally supply a GitHub repository. New Agent
   creation starts with an empty workspace and passes the repository in the
   first prompt for the Agent to prepare through the GitHub API workflow.
+- **Manage service access:** an Agent can request missing NyxID services for
+  owner approval. Confirmed scope updates deliver replacement credentials to the
+  existing Sandbox without restarting it or replacing its conversations; the
+  request itself never grants access.
 - **Connect external channels:** use Event Gateway for incoming events, routing
   and reply delivery, separate from Agent execution.
 - **Share a starting point:** publish a Trigger link that lets a visitor
@@ -64,12 +71,19 @@ A Sandbox can contain multiple Workspaces and Agents. Agents work in their
 own Worktrees, not in the Workspace's main checkout. Configuration and skills
 live in per-Agent homes, not globally.
 
+New Agent creation uses the deployment runtime and an empty workspace. Repository
+setup is a separate Agent task: the runtime's `gh api` uses the authorized
+`api-github` service to obtain a pinned source snapshot while preserving existing
+files and Git metadata. That API grant does not authenticate native Git transport,
+and a source checkout does not imply imported history or working `git pull` /
+`git push`.
+
 The backend keeps public interfaces, domain logic, provider integration and
 runtime execution in four layers:
 
 ```text
 Control plane pod
-  layer1-public    REST, AG-UI, Responses; explicit MCP/A2A refusal
+  layer1-public    REST, AG-UI, Responses, limited Agent access-request tool
   layer2-core      Sandbox -> Workspace -> Worktree -> Agent, profiles, events
   layer3-adapter   SandboxAdapter, runtime hosting, Codex conventions
 Sandbox pod
@@ -86,6 +100,13 @@ conversations use AG-UI (`threadId` is the Agent id) or Responses (`conversation
 is the Agent id). The first-party conversation surface uses the same public
 interfaces available to other clients. There is no terminal plane, separate
 Chat model, billing, sponsorship or repository-contribution workflow.
+
+The general public MCP interface remains unsupported. A separate, authenticated
+runtime capability exposes only `agent_key_scope_revision` to request owner
+consent; Agents must wait for CMA's confirmed credential update before retrying
+the service. A2A exposes provider discovery, not executable Agent tasks. See the
+[MCP contract](./docs/API_MCP.md) and [A2A contract](./docs/API_A2A.md) for the
+supported boundaries and explicit refusals.
 
 Start with the [API overview](./docs/API_Overview.md),
 [REST contract](./docs/API_REST.md) and
@@ -115,9 +136,26 @@ remain compatible; stored pointers are not rewritten by the rename.
 
 ## Local Development
 
+These steps are for contributors, not hosted CMA users. Read
+[CLAUDE.md](./CLAUDE.md) before changing code and
+[Web Style](./docs/Web_Style.md) before changing the frontend.
+
+### Prerequisites
+
+- Node.js and npm compatible with the checked-in lockfiles. The main frontend
+  and TypeScript SDK CI jobs use Node.js 26; browser harnesses have their own
+  pinned versions in the workflows.
+- Rust via rustup, using `api/rust-toolchain.toml` for the backend and
+  `sdk/rust/rust-toolchain.toml` for the separate Rust SDK.
+- For backend integration, the documented service configuration and a MongoDB
+  replica set for transactions. NyxID and Sandbox-provider setup are separate
+  prerequisites, not supplied by installing frontend dependencies.
+
+### Frontend
+
 Backend commands run from `api/`; frontend commands run from `web/`. The
 frontend imports the checked-out TypeScript SDK, so install its runtime
-dependencies too:
+dependencies too. Run these commands from the repository root:
 
 ```sh
 npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
@@ -125,10 +163,43 @@ npm ci --prefix web
 npm run dev --prefix web
 ```
 
-The backend requires the documented configuration and a MongoDB replica set for
-transactions. See [CMA Operations](./docs/CMA_Operations.md) before starting a
-production-backed configuration. Tests using local substitutes are not evidence
-that the deployed provider or credentials work.
+The Vite development server runs the frontend only; it does not start the CMA
+services or provide authentication. See [CMA Operations](./docs/CMA_Operations.md)
+and [service isolation](./docs/CMA_Service_Isolation.md) before configuring backend
+connections. Do not use production-backed configuration as an implicit local
+development default.
+
+### Local Checks
+
+After installing frontend dependencies, run the core frontend checks from the
+repository root:
+
+```sh
+npm run format:check --prefix web
+npm run lint --prefix web
+npm run typecheck --prefix web
+npm test --prefix web
+npm run build --prefix web
+```
+
+For the backend, use the pinned Rust toolchain and checked-in lockfile:
+
+```sh
+cd api
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo build --workspace --locked
+cargo test --doc --workspace --locked
+```
+
+Backend integration tests use `cargo-nextest` and additional CI fixtures; the
+workflow runs memory-budget tests separately and provisions disposable MongoDB
+and browser dependencies. The commands above are not the full merge gate.
+[CI](./.github/workflows/ci.yml) also checks SDKs, dependency audits, secret
+scanning, repository contracts, manifests and images. Follow the separate
+[TypeScript SDK](./sdk/typescript/README.md) and [Rust SDK](./sdk/rust/docs/README.md)
+instructions when changing those packages. Tests using local substitutes are
+not evidence that the deployed provider or credentials work.
 
 ## CMA Triggers
 
