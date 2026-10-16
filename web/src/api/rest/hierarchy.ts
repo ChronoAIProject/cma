@@ -64,6 +64,14 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
         : {
             pause: value.lifecycle.pause,
             revive: value.lifecycle.revive,
+            interruption:
+              value.lifecycle.interruption === undefined
+                ? undefined
+                : {
+                    cause: value.lifecycle.interruption.cause,
+                    detectedAt: value.lifecycle.interruption.detected_at,
+                    memoryLimitMib: value.lifecycle.interruption.memory_limit_mib,
+                  },
             backgroundSave:
               value.lifecycle.background_save === undefined
                 ? undefined

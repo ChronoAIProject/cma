@@ -956,6 +956,21 @@ replacement is a quiet status notice, not an automatic failed state. When a
 checkpoint boundary is known, show its recorded time without claiming later work
 was captured. The owner never has to recreate the Agent after a rollout.
 
+An unexpected interruption has a concise recovery notice in the Agent conversation
+and Sandbox page. Only an explicit recorded out-of-memory cause names the memory
+limit; unknown causes remain unconfirmed. Match the interruption time to the
+current operation before attributing a new recovery to an earlier interruption.
+The shared 44px character animates beside the actual recorded stage, with the
+existing visibility and reduced-motion behavior. Use layer-2 fill, a layer-2
+border, 12px radius and padding, a 12px gap and the existing 14px body voice.
+Stage text fades with the existing transition duration; it never advances on a
+timer. Entrance and exit use Presence. Failed recovery shows the recorded
+remediation and keeps history and draft editing available. Only an observed
+recovery-to-active transition shows a dismissible ready notice, which expires
+after eight seconds and is not replayed on navigation. The last interruption and
+its time remain in a closed Sandbox details disclosure. Saved-home stages name
+verification and reconnection, without inventing downloads or file percentages.
+
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
 Returning from a hidden tab requires a new foreground observation; an otherwise
@@ -2448,3 +2463,4 @@ exit; retain the existing 44px mobile touch target.
   conversations. Keep sending gated until verification, preserve actual lifecycle
   notices, and show connection assistance only for confirmed missing services or
   actionable verification failures with Retry.
+| 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |

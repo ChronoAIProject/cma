@@ -80,7 +80,17 @@ impl From<&SandboxLifecycleOperation> for SandboxLifecycleOperationView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SandboxInterruptionView {
+    #[schema(value_type = String)]
+    pub cause: layer2_core::sandbox::SandboxInterruptionCause,
+    pub detected_at: String,
+    pub memory_limit_mib: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxLifecycleView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<SandboxInterruptionView>,
     pub pause: SandboxLifecycleEligibilityView,
     pub revive: SandboxLifecycleEligibilityView,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +104,13 @@ pub struct SandboxLifecycleView {
 impl From<&Sandbox> for SandboxLifecycleView {
     fn from(value: &Sandbox) -> Self {
         Self {
+            interruption: value.lifecycle.interruption.as_ref().map(|interruption| {
+                SandboxInterruptionView {
+                    cause: interruption.cause,
+                    detected_at: interruption.detected_at.clone(),
+                    memory_limit_mib: interruption.memory_limit_mib,
+                }
+            }),
             pause: value.pause_eligibility().into(),
             revive: value.revive_eligibility().into(),
             background_save: value

@@ -93,6 +93,34 @@ describe('Sandbox hierarchy resources', () => {
     }
   });
 
+  it('retains explicit interruption evidence while accepting older lifecycle responses', async () => {
+    const test = transport();
+    const base = {
+      ...sandbox,
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+      workspaces: [],
+    };
+    const lifecycle = { pause: { allowed: true }, revive: { allowed: false } };
+    test.answer({ ...base, lifecycle });
+    expect((await test.client.sandboxes.read(sandbox.id)).lifecycle?.interruption).toBeUndefined();
+    for (const cause of ['out_of_memory', 'runtime_restarted', 'runtime_unavailable']) {
+      const interruption = { cause, detected_at: now, memory_limit_mib: 8192 };
+      test.answer({ ...base, lifecycle: { ...lifecycle, interruption } });
+      expect((await test.client.sandboxes.read(sandbox.id)).lifecycle?.interruption).toEqual(
+        interruption,
+      );
+    }
+    for (const interruption of [
+      { cause: 'exit_137', detected_at: now, memory_limit_mib: 8192 },
+      { cause: 'out_of_memory', detected_at: now, memory_limit_mib: -1 },
+    ]) {
+      test.answer({ ...base, lifecycle: { ...lifecycle, interruption } });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
   it('uses the public owner lists, details and asynchronous lifecycle routes', async () => {
     const test = transport();
     const summary = { ...sandbox, workspace_count: 1, worktree_count: 1, agent_count: 1 };

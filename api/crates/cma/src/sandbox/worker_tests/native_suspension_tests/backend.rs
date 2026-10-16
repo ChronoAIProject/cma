@@ -41,6 +41,14 @@ impl NativeBackend {
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
     }
+    pub async fn restart_process(&self) {
+        let rows = self.row.lock().await;
+        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
+        self.inner.restart_persistent_process(pod).await.unwrap();
+    }
+    pub async fn lose_object(&self) {
+        self.row.lock().await.take();
+    }
     async fn pod(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<RuntimeHandle> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;
