@@ -26,6 +26,7 @@ export interface AgentController {
   readonly pendingMessage?: string;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;
+  readonly acceptedInterruptionMessage?: string;
   readonly pendingControl?: boolean;
   readonly controlNotice?: string;
   readonly controlsUnavailable?: boolean;
@@ -46,6 +47,9 @@ export interface AgentController {
   ) => Promise<void>;
   readonly interrupt: () => Promise<void>;
   readonly steer?: AgentController['send'];
+  readonly interruptWithMessage?: (
+    ...args: [...Parameters<AgentController['send']>, onOrdinaryInput?: () => void]
+  ) => Promise<void>;
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;
   readonly delete: () => Promise<void>;
