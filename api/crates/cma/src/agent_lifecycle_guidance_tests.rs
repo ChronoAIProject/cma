@@ -17,6 +17,7 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
             request,
             resolved_image: None,
             capacity: None,
+            sandbox_availability: Default::default(),
             capabilities: vec![],
             actor: None,
         };
