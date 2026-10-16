@@ -19,17 +19,19 @@ spec:
   template:
     metadata:
       annotations:
-        chrono.ai/goal-build: "goal-20261015-95a61f88"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e"
-        cma.chronoai.dev/build-mode: "local-production-test"
-        cma.chronoai.dev/candidate: "95a61f881bc0963ad983c673661c24ebe88cc6f4"
-        cma.chronoai.dev/image-digest: "sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e"
-        cma.chronoai.dev/image-source: "95a61f881bc0963ad983c673661c24ebe88cc6f4"
-        cma.chronoai.dev/local-build: "goal-20261015-95a61f88"
-        cma.chronoai.dev/observed-image-provenance-sha256: "3cec3e2f3838eadea3434c3e6432448ffef91c302b4f387ab0153a20929edd08"
-        # Reload the environment-bound runtime pin when its ConfigMap changes.
+        cma.chronoai.dev/api-image-digest: "sha256:bed345d8f165fd83115e55992409e06db1e1110d7588484b32e07d1480027791"
+        cma.chronoai.dev/build-mode: "github-ci-artifact"
+        cma.chronoai.dev/candidate: "2db295be6f6c507b9e015135f2970175dbd3ff4c"
+        cma.chronoai.dev/ci-artifact: "12025864241"
+        cma.chronoai.dev/ci-attempt: "1"
+        cma.chronoai.dev/ci-head: "e4246c20a91ad8f6f5bbdad8b7b3b75c92ff4faa"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:e7e0c408a26d41c58649ffb21a8e7dda996de5e3cecdd4455d36b962f426a550"
+        cma.chronoai.dev/ci-run: "38851245336"
+        cma.chronoai.dev/image-digest: "sha256:bed345d8f165fd83115e55992409e06db1e1110d7588484b32e07d1480027791"
+        cma.chronoai.dev/image-source: "23776dd33bd0e1eabc35c075d10c12ef115b4246"
         cma.chronoai.dev/runtime-image: "sha256:e53d4dc7943192d321a26ebde1bd93a0b75c5737946114600e695fd4e826d273"
+        cma.chronoai.dev/source-tree: "56d89ed3a9c347391b08729f10794a5b9e11003a"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -64,7 +66,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:c6bad625e365df7efbbd731682defade4e7bee69d7d1fc079c0ab67b59c7de7e
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:bed345d8f165fd83115e55992409e06db1e1110d7588484b32e07d1480027791
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
