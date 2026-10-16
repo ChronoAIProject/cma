@@ -68,6 +68,7 @@ mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
 mod inactivity;
+mod interruption;
 mod launch_recovery;
 mod launch_service;
 mod lifecycle;
@@ -204,6 +205,7 @@ pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
     SandboxAgentLogActivity,
 };
+pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
     SandboxImageRotationPhase, SandboxLifecycleAuthority, SandboxLifecycleOperation,
     SandboxLifecycleState, SandboxPausePhase,
