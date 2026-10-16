@@ -56,6 +56,7 @@ mod channel_usage;
 mod command_audit;
 mod command_revival;
 mod events;
+mod interrupting_messages;
 mod provenance;
 mod provenance_inventory;
 mod queued_cancellations;

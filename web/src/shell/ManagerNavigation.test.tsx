@@ -25,6 +25,7 @@ const props = {
   pending: false,
   busySandboxIds: new Set<string>(),
   deletingSandboxIds: new Set<string>(),
+  onScope: vi.fn(),
   onViewDeletion: vi.fn(),
   onNavigate: vi.fn(),
   onAction: vi.fn(),

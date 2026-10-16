@@ -1,0 +1,776 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "interruption-v2-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.controls",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "in_progress",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": 4,
+            "observed_cursor": null,
+            "delivery": "dispatch_fenced",
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "agent_revision": 4,
+          "target_active": true,
+          "runtime_support": {
+            "cancel": true,
+            "steer": true,
+            "resolve_approval": true
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "control_revision": "/agent_revision",
+        "control_turn": "/target/turn_sequence"
+      }
+    },
+    {
+      "id": "interruption-v2-admit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.interruption",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_interrupt_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 9
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4,
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_interrupt_message",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_interrupt_message",
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 3,
+              "event_cursor": 9
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "interrupt_control_id": "/control/receipt/command_id",
+        "interrupt_control_at": "/control/receipt/admitted_at",
+        "interrupt_control_deadline": "/control/queue_deadline",
+        "interrupt_message_id": "/response/receipt/command_id",
+        "interrupt_response_id": "/response/receipt/response_id",
+        "interrupt_message_at": "/response/receipt/admitted_at",
+        "interrupt_message_deadline": "/response/queue_deadline"
+      }
+    },
+    {
+      "id": "interruption-v2-replay",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.interruption",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_interrupt_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 9
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4,
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_interrupt_message",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_interrupt_message",
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 3,
+              "event_cursor": 9
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-message-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/$interrupt_message_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.command",
+          "receipt": {
+            "command_id": "cmd_interrupt_message",
+            "agent_id": "agt_fixture",
+            "response_id": "resp_interrupt_message",
+            "admitted_at": "2026-09-16T00:00:00Z",
+            "agent_order": 3,
+            "event_cursor": 9
+          },
+          "status": "queued",
+          "queue_deadline": "2026-09-16T00:05:00Z",
+          "turn_sequence": null,
+          "observed_cursor": null,
+          "delivery": null,
+          "failure": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-foreign",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "foreign",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 4,
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-anonymous",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "anonymous",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 4,
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-missing-key",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_idempotency_key",
+            "message": "Supply exactly one retained idempotency key.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-invalid-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "invalid",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 0,
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_control_observation",
+            "message": "Use a positive signed-64-bit value from the controls observation.",
+            "param": "turn_sequence"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-invalid-json",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "json",
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json",
+            "message": "A JSON interruption request is required.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-missing-source",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_missing/interrupt",
+        "headers": {
+          "Idempotency-Key": "missing-source",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-changed-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "Different text"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-changed-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": 99,
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-changed-target",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 99,
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-empty-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": ""
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_interrupt_request",
+            "message": "Supply bounded nonempty text.",
+            "param": "text"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-whitespace-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": " "
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_interrupt_request",
+            "message": "Supply bounded nonempty text.",
+            "param": "text"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-null-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": null
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_interrupt_request",
+            "message": "Supply only turn_sequence, expected_agent_revision and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-unknown-field",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "valid",
+          "actor": "forged"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_interrupt_request",
+            "message": "Supply only turn_sequence, expected_agent_revision and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-query",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt?unexpected=true",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "controls_field_unsupported",
+            "message": "This control endpoint accepts no query parameters.",
+            "param": "query"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-unsupported",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 4,
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "capability_unsupported",
+            "message": "The observed Agent runtime does not support interruption.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "interruption-v2-stale-not-admitted",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "scenario": "response_controls_v2_stale",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/interrupt",
+        "headers": {
+          "Idempotency-Key": "interrupt-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 1,
+          "text": "New turn input\n<attachment>kept</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_interrupt_not_admitted",
+            "message": "The original interruption was not admitted and its Agent revision is permanently stale. Observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

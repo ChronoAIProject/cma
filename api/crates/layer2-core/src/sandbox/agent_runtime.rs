@@ -1,7 +1,7 @@
 pub use layer3_adapter::{
-    AdapterError as AgentRuntimeInputError, ConversationInputSender as AgentRuntimeInputSender,
-    ConversationUpdate as AgentRuntimeUpdate, PromptResponse as AgentRuntimePromptResponse,
-    TurnStopReason as AgentRuntimeTurnStopReason,
+    AdapterError as AgentRuntimeInputError, ConversationInput as AgentRuntimeInput,
+    ConversationInputSender as AgentRuntimeInputSender, ConversationUpdate as AgentRuntimeUpdate,
+    PromptResponse as AgentRuntimePromptResponse, TurnStopReason as AgentRuntimeTurnStopReason,
 };
 
 use crate::{AgentId, RuntimeCapabilities};

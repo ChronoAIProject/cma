@@ -51,7 +51,7 @@ impl AgentOperationService {
             } => {
                 let text = input.into_text()?;
                 match order {
-                    AgentInputOrder::Append => {
+                    AgentInputOrder::Append | AgentInputOrder::InterruptAfterTurn { .. } => {
                         self.execute_message(caller, id, text, metadata).await
                     }
                     AgentInputOrder::AfterTurn { turn_sequence } => self

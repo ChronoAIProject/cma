@@ -9,6 +9,13 @@ use crate::sandbox::store::InMemorySandboxStore;
 
 #[async_trait]
 impl AgentCommandStore for InMemorySandboxStore {
+    async fn reserve_interrupting_message(
+        &self,
+        request: crate::sandbox::agent_io::InterruptingMessageReservation,
+    ) -> Result<crate::sandbox::agent_io::AdmittedInterruptingMessage, CommandLedgerError> {
+        super::interrupting_messages::reserve(self, request)
+    }
+
     async fn edit_queued_input(
         &self,
         request: crate::sandbox::agent_io::QueuedInputReservation,

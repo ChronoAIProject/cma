@@ -73,6 +73,23 @@ impl CommandLane {
 }
 
 impl AdmittedAgentCommand {
+    /// Stable priority applies only to the message admitted with a targeted
+    /// interruption. Existing ordinary queue positions remain unchanged.
+    pub fn queue_priority(&self) -> (u8, u64) {
+        let priority = if matches!(
+            self.receipt.envelope.command,
+            AgentCommand::Message {
+                order: super::AgentInputOrder::InterruptAfterTurn { .. },
+                ..
+            }
+        ) {
+            0
+        } else {
+            1
+        };
+        (priority, self.receipt.agent_order)
+    }
+
     /// An admitted Channel message retains its normal-message position while
     /// awaiting execution authority. Controls may still address an active turn.
     pub fn holds_message_order(&self) -> bool {

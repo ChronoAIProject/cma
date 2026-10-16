@@ -10,7 +10,7 @@ export interface OptimisticMessage {
   readonly receipt?: MessageAcceptance;
   readonly key?: string;
   readonly queued?: boolean;
-  readonly source?: 'steer';
+  readonly source?: 'steer' | 'interrupt';
 }
 
 /** Local presentation only: it grants no authority and never submits or retries an input. */
@@ -37,8 +37,19 @@ export function useOptimisticMessages(
     if (!enabled || active.current !== scope) return;
     setStored((current) => ({ scope, rows: change(current.scope === scope ? current.rows : []) }));
   };
-  const retained = (mode?: 'queue' | 'steer') => {
+  const retained = (mode?: 'queue' | 'steer' | 'interrupt') => {
     try {
+      if (mode === 'interrupt') {
+        if (!session) return undefined;
+        const intent = session.journal.interruption.read();
+        if (!intent) return null;
+        return {
+          key: intent.key,
+          input: intent.body.text,
+          state: intent.receipt === null ? ('pending' as const) : ('accepted' as const),
+          receipt: intent.receipt ?? undefined,
+        };
+      }
       if (mode === 'steer') {
         // A temporarily unavailable session is different from a successful
         // recovery that explicitly removed the control intent. Preserve the
@@ -62,11 +73,11 @@ export function useOptimisticMessages(
       return undefined;
     }
   };
-  const begin = (content: string, mode?: 'queue' | 'steer') => {
+  const begin = (content: string, mode?: 'queue' | 'steer' | 'interrupt') => {
     const id = crypto.randomUUID();
     const previous = retained(mode);
-    const source = mode === 'steer' ? ('steer' as const) : undefined;
-    const previousKey = previous?.key;
+    const source = mode === 'steer' || mode === 'interrupt' ? mode : undefined;
+    let previousKey = previous?.key;
     update((current) => [
       // A different next draft must not discard a refused message's text/files.
       ...current.filter((row) => row.state !== 'not_sent' || row.content !== content),
@@ -85,6 +96,15 @@ export function useOptimisticMessages(
       { id, content, state: 'sending', queued: mode === 'queue', source },
     ]);
     return {
+      ordinaryInput() {
+        // Only a conclusive inactive-target read can switch before submission.
+        // Future receipt/recovery callbacks must now read the ordinary journal.
+        mode = undefined;
+        previousKey = retained()?.key;
+        update((current) =>
+          current.map((row) => (row.id === id ? { ...row, source: undefined } : row)),
+        );
+      },
       observed(receipt: MessageAcceptance) {
         const input = retained(mode);
         update((current) =>
@@ -127,10 +147,12 @@ export function useOptimisticMessages(
   };
   const input = enabled ? retained() : undefined;
   const steering = enabled ? retained('steer') : undefined;
+  const interruption = enabled ? retained('interrupt') : undefined;
   // The journal survives reload; its exact key owns the recoverable pending presentation.
   const pending = [
     { record: input, source: undefined },
     { record: steering, source: 'steer' as const },
+    { record: interruption, source: 'interrupt' as const },
   ].flatMap(({ record, source }) =>
     record !== null &&
     record !== undefined &&
@@ -151,15 +173,16 @@ export function useOptimisticMessages(
   );
   const visible = [...rows, ...pending]
     .map((row): OptimisticMessage => {
-      const record = row.source === 'steer' ? steering : input;
+      const record =
+        row.source === 'steer' ? steering : row.source === 'interrupt' ? interruption : input;
       if (row.key !== undefined && record?.key === row.key && record.state === 'accepted')
         return { ...row, state: 'accepted', receipt: record.receipt };
       // A pending control can disappear only after a definitive no-admission response.
       if (
-        row.source === 'steer' &&
+        (row.source === 'steer' || row.source === 'interrupt') &&
         row.key !== undefined &&
         row.state === 'unconfirmed' &&
-        steering === null
+        record === null
       )
         return { ...row, state: 'not_sent' };
       return row;

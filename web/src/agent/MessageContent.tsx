@@ -52,7 +52,8 @@ export function MessageContent({
 }) {
   return (
     <div className="agent-content" data-streaming={streaming ? '' : undefined}>
-      <Markdown remarkPlugins={[remarkGfm]} components={components} skipHtml>
+      {/* Default HTML handling preserves placeholders and markup as inert text. */}
+      <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {content}
       </Markdown>
     </div>

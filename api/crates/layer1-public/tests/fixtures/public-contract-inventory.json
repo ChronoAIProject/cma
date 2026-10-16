@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 194,
+  "openapi_operations": 195,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2807,6 +2807,22 @@
         "invalid_queued_input_request",
         "queued_input_conflict",
         "queued_input_not_admitted",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/interruption.rs# Cancellation and a distinct priority replacement response are admitted atomically with immutable target and retained idempotency.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "capability_unsupported",
+        "controls_field_unsupported",
+        "invalid_control_observation",
+        "invalid_idempotency_key",
+        "invalid_interrupt_request",
+        "invalid_json",
+        "response_interrupt_not_admitted",
         "response_not_found"
       ]
     }
