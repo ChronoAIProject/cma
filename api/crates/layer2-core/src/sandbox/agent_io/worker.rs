@@ -90,21 +90,34 @@ impl AgentCommandWorker {
     }
 
     pub async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
+        let delay = self.run_scheduled(id).await?;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+        Ok(())
+    }
+
+    /// Drive one attempt without occupying a scheduler slot during retry pacing.
+    /// The returned cooldown carries no lease or saved authorization; a later
+    /// attempt must reread and reauthorize the durable command.
+    pub async fn run_scheduled(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
         let Some(candidate) = bounded(self.store.get_command(id)).await? else {
-            return Ok(());
+            return Ok(Duration::ZERO);
         };
         candidate.validate()?;
         if &candidate.receipt.envelope.command_id != id {
             return Err(CommandLedgerError::Corrupt);
         }
         if candidate.status.is_terminal() {
-            return Ok(());
+            return Ok(Duration::ZERO);
         }
         if candidate.work.dispatch.is_some() {
-            return bounded(self.store.reconcile_command(id)).await.map(|_| ());
+            return bounded(self.store.reconcile_command(id))
+                .await
+                .map(|_| Duration::ZERO);
         }
         if !candidate.awaiting_claim(&now_rfc3339()) {
-            return Ok(());
+            return Ok(Duration::ZERO);
         }
         let checked_at = tokio::time::Instant::now();
         let mut readiness_timed_out = false;
@@ -134,8 +147,7 @@ impl AgentCommandWorker {
                         "Channel readiness will be checked again"
                     );
                 }
-                pace_unclaimed(&candidate, delay).await;
-                return Ok(());
+                return Ok(unclaimed_cooldown(&candidate, delay));
             }
             CommandReadiness::Reject(code) => {
                 return bounded(self.store.reject_unclaimed_command(
@@ -144,7 +156,8 @@ impl AgentCommandWorker {
                     code,
                     now_rfc3339(),
                 ))
-                .await;
+                .await
+                .map(|()| Duration::ZERO);
             }
         }
         let now = SystemTime::now();
@@ -170,14 +183,15 @@ impl AgentCommandWorker {
                 || !current.awaiting_claim(&now_rfc3339())
                 || current.queue_expired(&now_rfc3339())
             {
-                return Ok(());
+                return Ok(Duration::ZERO);
             }
             let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
-            // Channel preparation may have just interrupted the active turn.
-            // Revisit its replacement promptly, retaining normal backoff for
-            // failed authority checks and non-channel lifecycle preparation.
-            let delay = if matches!(current.receipt.envelope.actor, AgentActor::Channel { .. })
-                && current.receipt.envelope.source.kind == AgentSourceKind::Channel
+            // Channel preparation or an explicit interruption may have just
+            // cancelled the active turn. Revisit its replacement promptly,
+            // still reacquiring authority and the lane on the next attempt.
+            let delay = if (matches!(current.receipt.envelope.actor, AgentActor::Channel { .. })
+                && current.receipt.envelope.source.kind == AgentSourceKind::Channel)
+                || current.queue_priority().0 == 0
             {
                 Duration::from_millis(250)
             } else {
@@ -188,8 +202,7 @@ impl AgentCommandWorker {
                     &now_rfc3339(),
                 )
             };
-            pace_unclaimed(&current, delay).await;
-            return Ok(());
+            return Ok(unclaimed_cooldown(&current, delay));
         };
         command.validate()?;
         let claim = command
@@ -221,10 +234,13 @@ impl AgentCommandWorker {
                     &claim,
                     CommandAttempt::Reject(CommandFailureCode::QueueTimeout),
                 )
-                .await;
+                .await
+                .map(|()| Duration::ZERO);
         }
         let attempt = self.drive(&command, &claim).await;
-        self.settle(&command, &claim, attempt).await
+        self.settle(&command, &claim, attempt)
+            .await
+            .map(|()| Duration::ZERO)
     }
 
     async fn drive(&self, command: &AdmittedAgentCommand, claim: &CommandClaim) -> CommandAttempt {
@@ -354,16 +370,15 @@ fn api_message_recheck_delay(
 #[path = "worker_pacing_tests.rs"]
 mod pacing_tests;
 
-/// The durable queued record and its deadline remain unchanged. The scheduler
-/// retains this task in its per-process in-flight set while waiting, without
-/// an execution lane lease or saved authorization. Cancellation/restart may
-/// shorten pacing; the next sweep must still reread and reauthorize the command.
-async fn pace_unclaimed(command: &AdmittedAgentCommand, delay: Duration) {
+/// Preserve the durable deadline while allowing a bounded scheduler to keep
+/// scanning past blocked messages. A restart may shorten this process-local
+/// cooldown; every attempt still rereads and reauthorizes the command.
+fn unclaimed_cooldown(command: &AdmittedAgentCommand, delay: Duration) -> Duration {
     let remaining = crate::seconds_from_rfc3339(&command.queue_deadline)
         .zip(crate::seconds_from_rfc3339(&now_rfc3339()))
         .map(|(deadline, now)| Duration::from_secs(deadline.saturating_sub(now)))
         .unwrap_or_default();
-    tokio::time::sleep(delay.min(remaining)).await;
+    delay.min(remaining)
 }
 
 async fn bounded<T>(
