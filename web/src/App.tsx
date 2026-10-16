@@ -44,9 +44,15 @@ export function App() {
   if (service && lastGatewayRoute !== router.route) setLastGatewayRoute(router.route);
   const [visitedGateway, setVisitedGateway] = useState(service !== undefined);
   if (service && !visitedGateway) setVisitedGateway(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const sidebar = { sidebarCollapsed, onSidebarCollapsedChange: setSidebarCollapsed };
   const home = router.route.kind === 'home';
+  const [sidebarState, setSidebarState] = useState({ home, collapsed: home });
+  // Reset only when crossing the home boundary, including browser history.
+  // Navigation within a service or between services retains the manual choice.
+  if (sidebarState.home !== home) setSidebarState({ home, collapsed: home });
+  const sidebar = {
+    sidebarCollapsed: sidebarState.collapsed,
+    onSidebarCollapsedChange: (collapsed: boolean) => setSidebarState({ home, collapsed }),
+  };
   const agentVisible = service === undefined && !home;
   const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(
     agentVisible ? router.route : { kind: 'agent_manager' },
