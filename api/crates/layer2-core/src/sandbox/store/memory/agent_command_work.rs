@@ -318,7 +318,7 @@ fn claim_next(
         .values()
         .filter(|command| command.receipt.envelope.agent_id == request.agent_id)
         .collect();
-    waiting.sort_by_key(|command| command.receipt.agent_order);
+    waiting.sort_by_key(|command| command.queue_priority());
     let mut selected = None;
     let mut message_held = false;
     for command in waiting {
