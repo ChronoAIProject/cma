@@ -20,6 +20,19 @@ enum Mode {
     Inspect,
 }
 
+/// Compose targeted admission with another command without committing either
+/// half independently. All existing target, authority and resource fences apply.
+pub(super) async fn reserve_in_session(
+    store: &MongoSandboxStore,
+    request: &TargetedControlReservation,
+    session: &mut mongodb::ClientSession,
+) -> Result<AdmittedTargetedControl, ApplyError> {
+    match apply::apply(store, request, Mode::Reserve, session).await? {
+        TargetedControlInspection::Existing(value) => Ok(*value),
+        _ => Err(CommandLedgerError::Corrupt.into()),
+    }
+}
+
 pub(super) async fn run(
     store: &MongoSandboxStore,
     request: TargetedControlReservation,

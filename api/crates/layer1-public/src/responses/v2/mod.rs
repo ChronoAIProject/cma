@@ -20,6 +20,7 @@ mod event_context;
 mod event_context_tests;
 #[cfg(test)]
 mod existing_binding_tests;
+pub(crate) mod interruption;
 #[cfg(test)]
 mod model_tests;
 mod output;
@@ -86,6 +87,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
             post(queued_input::submit),
         )
+        .route(
+            "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+            post(interruption::submit),
+        )
         .route("/api/v2/responses/{response_id}", get(routes::retrieve))
         .route("/api/v2/commands/{command_id}", get(controls::status))
         .route(
@@ -127,6 +132,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::replay,
             controls::observe,
             controls::submit,
+            interruption::submit,
             controls::status,
             queued_cancellation::observe,
             queued_cancellation::submit,
