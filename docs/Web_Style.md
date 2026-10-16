@@ -2425,3 +2425,21 @@ uncertain-request recovery visible without a persistent success banner.
 - 2026-10-16 — Start each home visit with collapsed navigation and expand it when
   entering an app or service. Preserve manual toggles across service navigation
   and keep the narrow-screen automatic collapse rule.
+
+
+An ordinary Send while the Agent is idle remains a normal message while dispatch
+is prepared. Queue discovery does not turn that message into a queue card. Keep
+known waiting messages and uncertain queue edits/removals visible; match accepted
+messages by command identity, never by matching text. A starting queued message
+moves into the ordinary conversation without a duplicate or empty gap.
+
+Attachment selection notices use the existing compact caption/error seat and a
+labeled Close button. Dismiss after five seconds, restart that interval for each
+invalid selection, and clear after a valid selection. Use the existing presence
+fade and reduced-motion behavior. Dismissal never removes attachments or conceals
+per-file upload failure and Retry controls. The notice leaves no empty space after
+exit; retain the existing 44px mobile touch target.
+
+- 2026-10-16 — Keep idle Send dispatch preparation in its ordinary message bubble,
+  retain genuine queue/recovery cards, and make attachment selection notices
+  dismissible with a five-second lifetime.

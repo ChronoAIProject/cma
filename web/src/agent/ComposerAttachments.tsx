@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
+import { Presence } from '../ui/Presence';
 import { IconCloseOutline16, IconPaperclipOutline16 } from '../ui/icons';
 import type { DraftAttachment } from './attachments';
 import './ComposerAttachments.css';
@@ -19,6 +20,7 @@ function Preview({ file }: { readonly file: File }) {
 export function ComposerAttachments({
   items,
   error,
+  dismissError,
   enabled,
   locked,
   remove,
@@ -26,12 +28,12 @@ export function ComposerAttachments({
 }: {
   readonly items: readonly DraftAttachment[];
   readonly error?: string;
+  readonly dismissError: () => void;
   readonly enabled: boolean;
   readonly locked: boolean;
   readonly remove: (key: string) => void;
   readonly retry: (key: string) => void;
 }) {
-  if (items.length === 0 && error === undefined) return null;
   return (
     <div className="composer-attachments">
       {items.length === 0 ? null : (
@@ -69,11 +71,20 @@ export function ComposerAttachments({
           ))}
         </ul>
       )}
-      {error === undefined ? null : (
-        <p className="composer-attachments__error" role="alert">
-          {error}
-        </p>
-      )}
+      <Presence>
+        {error === undefined ? null : (
+          <p className="composer-attachments__error" role="alert">
+            <span>{error}</span>
+            <Button
+              size="sm"
+              icon={<IconCloseOutline16 />}
+              aria-label="Dismiss attachment notice"
+              title="Dismiss attachment notice"
+              onClick={dismissError}
+            />
+          </p>
+        )}
+      </Presence>
     </div>
   );
 }
