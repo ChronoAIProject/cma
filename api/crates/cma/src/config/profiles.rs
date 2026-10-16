@@ -43,7 +43,7 @@ pub(super) fn agent_manager_capacity(
     const MEMORY: &str = "CHRONO_AGENT_MANAGER_SANDBOX_MEMORY";
     Ok(layer3_adapter::SandboxCapacity {
         cpu_millis: cpu_millis(&value_or(lookup, CPU, "2")?, CPU)?,
-        memory_mib: memory_mib(&value_or(lookup, MEMORY, "4Gi")?, MEMORY)?,
+        memory_mib: memory_mib(&value_or(lookup, MEMORY, "8Gi")?, MEMORY)?,
     })
 }
 
@@ -154,7 +154,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(defaults.cpu_millis, 2_000);
-        assert_eq!(defaults.memory_mib, 4_096);
+        assert_eq!(defaults.memory_mib, 8_192);
         let custom = capacity(&[
             ("CHRONO_AGENT_MANAGER_SANDBOX_CPU", "3000m"),
             ("CHRONO_AGENT_MANAGER_SANDBOX_MEMORY", "8192Mi"),
