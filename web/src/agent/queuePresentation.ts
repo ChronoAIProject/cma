@@ -70,7 +70,13 @@ export function queuePresentation(
     );
   // A restored queue entry can start before its durable user-message frame arrives.
   const starting = rows.find((item) => item.commandId === active && !item.needsRecovery);
-  if (starting && !delivered.has(active) && !visible.some((message) => command(message) === active))
+  if (
+    starting &&
+    (awaitingReceipt === undefined ||
+      awaitingReceipt.queueBeforeSend!.includes(starting.commandId)) &&
+    !delivered.has(active) &&
+    !visible.some((message) => command(message) === active)
+  )
     visible.push({
       id: `starting:${starting.commandId}`,
       content: starting.input,
