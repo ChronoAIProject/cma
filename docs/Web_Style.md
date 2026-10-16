@@ -957,8 +957,11 @@ checkpoint boundary is known, show its recorded time without claiming later work
 was captured. The owner never has to recreate the Agent after a rollout.
 
 An unexpected interruption has a concise recovery notice in the Agent conversation
-and Sandbox page. Only an explicit recorded out-of-memory cause names the memory
-limit; unknown causes remain unconfirmed. Match the interruption time to the
+and Sandbox page. Only an explicit recorded out-of-memory cause names the configured
+memory. Unknown causes display **Internal error** without inventing a more specific
+diagnosis; the current recorded stage separately shows recovery progress.
+Historical interruption text never claims recovery is still running.
+Match the interruption time to the
 current operation before attributing a new recovery to an earlier interruption.
 The shared 44px character animates beside the actual recorded stage, with the
 existing visibility and reduced-motion behavior. Use layer-2 fill, a layer-2
@@ -2464,3 +2467,4 @@ exit; retain the existing 44px mobile touch target.
   notices, and show connection assistance only for confirmed missing services or
   actionable verification failures with Retry.
 | 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |
+| 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
