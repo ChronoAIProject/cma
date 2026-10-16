@@ -24,7 +24,7 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
 | Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
-| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from the account menu. |
+| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from Consumers in Event Gateway navigation. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -2312,8 +2312,8 @@ top service bar or duplicate current-service label. Account controls remain at t
 across services. Collapsed and mobile navigation retain a reachable brand, service switch and
 account control. Existing motion easing/duration and live reduced-motion preference apply.
 
-Agent Manager begins with labeled New agent and New agent trigger rows, then permission scope,
-Sandbox/Agent view, and status filters. Organization choices append `(Organization)`. Agent view
+Agent Manager begins with labeled New agent and New agent trigger rows, then the
+Sandbox/Agent view switch and grouped permission-scope/status filters. Organization choices append `(Organization)`. Agent view
 starts at Personal and All statuses. Tree groups retain their existing machine/workspace/Agent
 structure. Ready Agents use neutral indicators; only actively Working Agents use a green light.
 Live Sandbox indicators remain green. Event Gateway lists channels in this same navigation area,
@@ -2384,3 +2384,30 @@ groups remain whole rather than wrapping digit by digit. The action column reser
 
 - 2026-10-16 — Retain unsaved queued-message edits and attachments after dispatch or
   cancellation, with explicit local copy/dismiss recovery and no stale queue actions.
+
+
+## 27. Grouped filters and Gateway consumers (2026-10-16)
+
+Agent Manager places the permission-scope and status dropdowns in one horizontal
+filter group below the Agent/Sandbox switch. Both controls share equal space,
+existing sidebar typography and an 8px gap. Long labels truncate inside their
+control while the menu exposes the full value. Keep 44px touch targets on mobile.
+
+Event Gateway navigation begins with Channels and, for authorized owners, Consumers.
+Use existing sidebar selected fills, focus rings, spacing and 44px navigation rows.
+Consumer list, detail and creation routes select Event Gateway in the service switch.
+Channel editors and consumer forms retain their DOM and in-flight work when switching
+sections. Account preferences no longer contain Consumers or Developer; Docs remains.
+Existing hover/presence motion and reduced-motion behavior apply.
+
+- 2026-10-16 — Group permission/status dropdowns on one row, place Consumers in
+  Event Gateway navigation with retained section state, and remove Developer from
+  the account menu.
+
+
+Successful response-action delivery clears its temporary status automatically;
+the conversation shows the resulting turn state. Keep actionable failure and
+uncertain-request recovery visible without a persistent success banner.
+
+- 2026-10-16 — Clear completed response-action notices automatically, preserving
+  failure and recovery controls. Render command-help placeholders as inert text.

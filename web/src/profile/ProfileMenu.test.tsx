@@ -13,22 +13,22 @@ const user = {
 } as const;
 
 describe('account menu', () => {
-  it('navigates to daily product surfaces and keeps appearance and sign out', async () => {
+  it('keeps Docs, appearance and sign out without service or developer actions', async () => {
     const onSignOut = vi.fn();
     const onNavigate = vi.fn();
     const actor = userEvent.setup();
-    render(<ProfileMenu user={user} bots onSignOut={onSignOut} onNavigate={onNavigate} />);
+    render(<ProfileMenu user={user} onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     for (const name of ['Event Gateway consumers', 'Developer']) {
-      expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();
 
-    await actor.click(screen.getByRole('menuitem', { name: 'Event Gateway consumers' }));
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
+    await actor.click(screen.getByRole('menuitem', { name: 'Docs' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'docs' });
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     await actor.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalledOnce();
@@ -45,38 +45,6 @@ describe('account menu', () => {
     );
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.getByRole('menuitem', { name: 'Operations' })).toBeInTheDocument();
-  });
-
-  it('keeps Event Gateway consumers in the owner account menu and routes there', async () => {
-    const onNavigate = vi.fn();
-    const actor = userEvent.setup();
-    render(
-      <ProfileMenu
-        user={{ ...user, capabilities: ['use_own_sandboxes'] }}
-        onSignOut={vi.fn()}
-        onNavigate={onNavigate}
-        bots
-      />,
-    );
-    await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    await actor.click(screen.getByRole('menuitem', { name: 'Event Gateway consumers' }));
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
-  });
-
-  it('does not expose Event Gateway consumers to visitors', async () => {
-    const actor = userEvent.setup();
-    render(
-      <ProfileMenu
-        user={{ ...user, visitor: true }}
-        onSignOut={vi.fn()}
-        onNavigate={vi.fn()}
-        bots
-      />,
-    );
-    await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(
-      screen.queryByRole('menuitem', { name: 'Event Gateway consumers' }),
-    ).not.toBeInTheDocument();
   });
 });
 

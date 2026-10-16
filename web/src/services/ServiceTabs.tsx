@@ -1,3 +1,4 @@
+import { isBotRoute } from '../BotManagement';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { IconAgentPresetOutline16, IconCodeOutline16, IconBrowseOutline16 } from '../ui/icons';
@@ -13,7 +14,7 @@ export function ServiceTabs({
   readonly onNavigate: (route: AppRoute) => void;
   readonly collapsed?: boolean;
 }) {
-  const gateway = route.kind === 'event_gateway';
+  const gateway = route.kind === 'event_gateway' || isBotRoute(route);
   const indicator = useServiceIndicator(collapsed);
   return (
     <nav
