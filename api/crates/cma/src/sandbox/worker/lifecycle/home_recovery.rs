@@ -47,6 +47,13 @@ impl SandboxWorker {
             .as_ref()
             .and_then(|home| home.attachment())
             .ok_or_else(missing_source)?;
+        if attachment.request.policy.is_native_vct()
+            && sandbox.lifecycle.suspended_runtime.is_none()
+        {
+            return Err(WorkerFailure::terminal_security(
+                "retained home recovery has no original runtime authority; storage was preserved",
+            ));
+        }
         let volumes = self
             .dependencies
             .adapter
@@ -80,6 +87,13 @@ impl SandboxWorker {
             .iter()
             .filter(|observation| old(observation))
         {
+            // Older recovery records can lack a retained binding. Their original
+            // storage-owning object must never become process cleanup.
+            if observation.handle.as_str().starts_with("agent-sandbox:") {
+                return Err(WorkerFailure::terminal_security(
+                    "retained runtime authority is unavailable; storage was preserved",
+                ));
+            }
             self.dependencies
                 .adapter
                 .reclaim_runtime(observation)
@@ -109,7 +123,9 @@ impl SandboxWorker {
                 .map_err(adapter_failure)?;
                 self.dependencies
                     .adapter
-                    .verify_suspended_runtime(&request)
+                    // A lost process does not imply a suspended provider object.
+                    // Repeating suspension is safe after a lost acknowledgement.
+                    .suspend_runtime(&request)
                     .await
                     .map_err(adapter_failure)?;
             }

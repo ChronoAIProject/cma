@@ -141,6 +141,14 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Optional exact termination evidence. Queried only after runtime loss is confirmed.
+    async fn runtime_termination(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        Ok(None)
+    }
+
     /// Observe the complete provider inventory or refuse the whole result.
     async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
         Err(crate::AdapterError::Unsupported(

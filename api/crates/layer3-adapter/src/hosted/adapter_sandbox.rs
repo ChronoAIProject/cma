@@ -129,6 +129,13 @@ impl SandboxAdapter for HostedAdapter {
             .await
     }
 
+    async fn runtime_termination(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<Option<crate::RuntimeTermination>> {
+        self.backend.runtime_termination(handle).await
+    }
+
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.inventory_exact().await
     }

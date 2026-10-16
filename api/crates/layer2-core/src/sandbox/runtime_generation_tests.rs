@@ -67,7 +67,9 @@ fn high_water_outlives_lost_runtime_and_absent_high_generation_agents() {
         .record_adopted_runtime_generation(&runtime, 101, LATER.into())
         .unwrap();
     value.lifecycle.checkpoints.latest = Some(checkpoint(1, NOW));
-    value.recover_runtime_loss(&[], LATER.into()).unwrap();
+    value
+        .recover_runtime_loss(&[], false, LATER.into())
+        .unwrap();
     assert!(value.runtime.is_none());
     assert_eq!(value.lifecycle.runtime_generation_high_water, 101);
     claim(&mut value);

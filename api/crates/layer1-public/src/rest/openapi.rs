@@ -395,6 +395,7 @@ use super::trigger_openapi_shapes::*;
         FailureView,
         SandboxLimitsView,
         super::instances_openapi_shapes::SandboxLifecycleView,
+        super::instances_openapi_shapes::SandboxInterruptionView,
         super::instances_openapi_shapes::SandboxLifecycleEligibilityView,
         super::instances_openapi_shapes::SandboxCheckpointView,
         super::instances_openapi_shapes::SandboxBackgroundSaveView,

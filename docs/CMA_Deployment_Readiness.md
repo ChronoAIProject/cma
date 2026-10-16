@@ -1311,7 +1311,7 @@ Verify Stop-only cancellation, replacement-message priority with an existing que
 independent queue edits/removals, and accepted versus actually completed turn status.
 
 New Agent Manager sandbox capacity comes from `CHRONO_AGENT_MANAGER_SANDBOX_CPU`
-(default `2`) and `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` (default `4Gi`). The same
+(default `2`) and `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` (default `8Gi`). The same
 capacity selects the native warm pool and prepared-sandbox plan. New lifecycle
 admissions persist Always on (`always_keep_alive=true`) before provisioning; their
 private Sandbox Profile records that policy. Retained operations without the new
@@ -1319,3 +1319,32 @@ field preserve the original false default. Existing Sandbox capacities, availabi
 policies and seeded deployment-owned profiles remain authoritative. Validate new
 allocation requests/limits and recorded availability in production; do not infer
 warm-pool readiness merely from the changed configuration.
+
+### Native runtime interruption recovery
+
+Automatic recovery retains the original storage-owning runtime identity before
+clearing process authority. The worker idempotently suspends that retained object,
+verifies the original home, and resumes the same object with a new process
+incarnation. It does not delete the Claim, Sandbox or PVC to recover a process.
+An older recovery record without retained authority fails closed; neither the
+inventory sweep nor recovery worker may reclaim its unreleased native home.
+Explicit owner retirement remains the path that releases these resources.
+
+The optional persisted lifecycle `interruption` record exposes a bounded cause,
+detection time and original workload memory limit through public Sandbox reads.
+It survives recovery to explain the interruption in details. An `out_of_memory`
+cause requires explicit `OOMKilled` evidence from the exact owned runtime
+container with a termination time at or after its binding. Diagnostic reads run
+only after failed adoption, have a two-second bound, and do not block safe recovery
+when evidence is unavailable. Generic exit codes, readiness loss and API errors
+are not OOM evidence. In particular, a Kata hypervisor cgroup OOM may surface as
+exit 255 without an `OOMKilled` Pod reason; without an infra-provided attributable
+signal, that case displays a runtime interruption rather than an unproved cause.
+
+Roll forward when reverting a release that has persisted interruption metadata:
+older strict lifecycle decoders do not accept the additive persisted field.
+A compatibility rollback must retain this decoder and the native home safeguards.
+Do not deploy an older binary over records written by this release. Existing
+owned runtime images, immutable capacities and PVCs remain pinned; the 2 CPU /
+8 GiB default applies to newly created capacity, including matching warm/prepared
+members, and does not resize running users implicitly.

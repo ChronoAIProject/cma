@@ -132,7 +132,7 @@ data:
   # New Agent Manager environments and their native warm pool. Retained system
   # Profiles above and existing Sandbox reservations keep their recorded values.
   CHRONO_AGENT_MANAGER_SANDBOX_CPU: "2"
-  CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "4Gi"
+  CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "8Gi"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-6"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # Read-only Secret Manager projection, resolved once at startup.
