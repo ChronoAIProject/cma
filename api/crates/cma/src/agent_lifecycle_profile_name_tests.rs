@@ -37,6 +37,7 @@ async fn materialize(
             max_agents_per_workspace: 16,
         },
         LifecycleBehavior::PromptRepository,
+        Default::default(),
     )
     .await
 }

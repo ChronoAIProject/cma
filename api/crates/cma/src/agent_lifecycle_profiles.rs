@@ -11,6 +11,7 @@ pub(super) async fn create_profiles(
     capacity: layer3_adapter::SandboxCapacity,
     limits: layer2_core::sandbox::SandboxLimits,
     behavior: LifecycleBehavior,
+    availability: layer2_core::profiles::SandboxProfileAvailability,
 ) -> Result<
     (AgentProfileRevision, WorkspaceProfileRef, SandboxProfileRef),
     AgentLifecycleProvisioningError,
@@ -74,12 +75,15 @@ pub(super) async fn create_profiles(
                 environment_variables: Vec::new(),
             };
             let sandbox_revision = profiles
-                .create_sandbox_for_owner(
+                .create_sandbox_configured_for_owner(
                     &caller.subject,
                     &format!("agent-manager:{key}:sandbox"),
-                    display_name(&request.name, " sandbox"),
-                    "Inline Agent Manager sandbox configuration".into(),
-                    sandbox_content,
+                    layer2_core::profiles::PrivateSandboxProfileInput {
+                        name: display_name(&request.name, " sandbox"),
+                        description: "Inline Agent Manager sandbox configuration".into(),
+                        content: sandbox_content,
+                        availability,
+                    },
                 )
                 .await
                 .map_err(validation::profile_error)?;

@@ -188,7 +188,7 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             image_resolver.clone(),
             authoring_bounds,
-            default_capacity,
+            config.agent_manager_sandbox_capacity,
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
@@ -214,7 +214,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
             config.runtime.sandbox_image.clone(),
             config.runtime.agent_sandbox_home_policy.clone(),
-            default_capacity,
+            config.agent_manager_sandbox_capacity,
             config.runtime.native_warm_pool_target,
         );
         let admin = layer1_public::rest::admin::AdminState::new(
