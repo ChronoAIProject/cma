@@ -2,7 +2,7 @@ use super::*;
 use layer3_adapter::wire::RequestFrame;
 
 async fn prepared() -> (Harness, Agent) {
-    prepared_with_prompt(crate::agent_lifecycle::guidance::GITHUB_API_V1).await
+    prepared_with_prompt(crate::agent_lifecycle::guidance::managed_v2()).await
 }
 
 async fn prepared_with_prompt(prompt: &str) -> (Harness, Agent) {
@@ -100,21 +100,23 @@ async fn claim(harness: &Harness, agent: &Agent, now: SystemTime) -> Agent {
 }
 
 #[tokio::test]
-async fn prepared_pair_retains_legacy_empty_instructions() {
-    let (harness, agent) = prepared_with_prompt("").await;
-    let claimed = claim(&harness, &agent, harness.now).await;
-    harness
-        .worker
-        .replay_prepared_for_test(claimed, harness.now)
-        .await
-        .unwrap();
-    let after = harness.stored(&agent.id).await;
-    assert!(after.profile.content.system_prompt.is_empty());
-    assert_eq!(after.work.step, AgentWorkStep::OpenConversation);
-    assert_eq!(
-        after.work.warm_conversation_id,
-        agent.work.warm_conversation_id
-    );
+async fn prepared_pair_retains_each_legacy_prompt_and_conversation() {
+    for prompt in ["", crate::agent_lifecycle::guidance::GITHUB_API_V1] {
+        let (harness, agent) = prepared_with_prompt(prompt).await;
+        let claimed = claim(&harness, &agent, harness.now).await;
+        harness
+            .worker
+            .replay_prepared_for_test(claimed, harness.now)
+            .await
+            .unwrap();
+        let after = harness.stored(&agent.id).await;
+        assert_eq!(after.profile, agent.profile);
+        assert_eq!(after.work.step, AgentWorkStep::OpenConversation);
+        assert_eq!(
+            after.work.warm_conversation_id,
+            agent.work.warm_conversation_id
+        );
+    }
 }
 
 #[tokio::test]
