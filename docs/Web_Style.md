@@ -427,6 +427,11 @@ The global service bar owns the sole CMA logo and home link. Clicking it opens
 `/`, the same landing screen before and after sign-in; its signed-in Get Started
 control enters `/agent-manager`. The Agent Manager tab uses that path while
 existing Agent, Workspace and Sandbox links retain their canonical paths.
+The home landing starts with the sidebar collapsed on every visit. Entering an
+app or service from home expands it; direct service links also start expanded.
+Manual toggles remain available everywhere. Within and between services, the
+manual choice persists until the next visit home. Browser history follows the
+same defaults. Below 1024px the existing automatic collapse still applies.
 The build/version appears immediately to the right of CMA as an 11px code
 subscript, 18px line height, capped to 11ch with its full identity on hover.
 The sidebar header contains only the scope Picker, New agent and collapse
@@ -2416,3 +2421,7 @@ uncertain-request recovery visible without a persistent success banner.
 - 2026-10-16 — Make Interrupt mode stop the current turn and start a distinct new
   message next, including its attachments; keep Stop as cancellation only. Preserve
   exact admission recovery, other queued messages and actionable failure states.
+
+- 2026-10-16 — Start each home visit with collapsed navigation and expand it when
+  entering an app or service. Preserve manual toggles across service navigation
+  and keep the narrow-screen automatic collapse rule.
