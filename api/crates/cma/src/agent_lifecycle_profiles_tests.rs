@@ -346,7 +346,7 @@ fn empty_workspace_setup_waits_for_user_tasks_without_optional_access_requests()
         assert!(!prompt.contains("agent_key_scope_revision"));
         assert!(!prompt.contains("The user selected this GitHub repository"));
         // Later user-requested GitHub work still has the fixed API/MCP guidance.
-        let profile = guidance::provisioning_request(&request, Some(guidance::GITHUB_API_V1));
+        let profile = guidance::provisioning_request(&request, Some(guidance::managed_v2()));
         let instructions = profile.profile.unwrap().system_prompt.unwrap();
         assert!(instructions.contains("POST /user/repos or /orgs/{org}/repos"));
         assert!(instructions.contains("agent_key_scope_revision"));
@@ -360,7 +360,11 @@ fn admitted_setup_replays_exact_captured_message_and_legacy_fallback() {
         json!(null),
         json!({"url":"https://github.com/org/project","ref":"feature/setup"}),
     ] {
-        for instructions in [None, Some(guidance::GITHUB_API_V1)] {
+        for instructions in [
+            None,
+            Some(guidance::GITHUB_API_V1),
+            Some(guidance::managed_v2()),
+        ] {
             let mut old: LifecycleInput = serde_json::from_value(json!({
                 "behavior":"prompt_repository", "managed_agent_instructions":instructions,
                 "request":{"name":"Admitted", "repository":repository}, "resolved_image":null

@@ -46,7 +46,8 @@ pub(in crate::store) async fn verify(db: &Database) {
     changed.capabilities.clear();
     changed.actor = None;
     changed.behavior = LifecycleBehavior::Legacy;
-    changed.managed_agent_instructions = Some("A later deployment's instructions".into());
+    changed.managed_agent_instructions =
+        Some(crate::agent_lifecycle::guidance::managed_v2().into());
     changed.setup_message = Some("A later deployment's setup message".into());
     let CreateResult::Existing(replayed) =
         store.create(&owner, "exact-intent", changed).await.unwrap()

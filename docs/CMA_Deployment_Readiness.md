@@ -18,7 +18,13 @@ repository workflow is authenticated `gh api` source download plus a local Git
 workspace, independently verified on a new production testing Agent.
 Image Manager remains deferred.
 
-Rollback readers must retain the native-title fields, captured V1 guidance,
+New admission now captures the unchanged GitHub V1 guidance plus memory V1
+guidance as managed instructions V2. New prepared homes use Agent profile
+revision 3; earlier empty and GitHub-only homes retain their original bytes for
+owned replay. Changing this default replenishes only unclaimed prepared capacity,
+without restarting existing Agents or changing their Sandbox reservations.
+
+Rollback readers must retain the native-title fields, captured V1/V2 guidance,
 prepared-home revision handling and optional `LifecycleInput.setup_message`,
 in addition to the earlier scope, callback and attachment schemas described
 below. New operations store their exact setup prompt; historical operations
@@ -1338,8 +1344,13 @@ container with a termination time at or after its binding. Diagnostic reads run
 only after failed adoption, have a two-second bound, and do not block safe recovery
 when evidence is unavailable. Generic exit codes, readiness loss and API errors
 are not OOM evidence. In particular, a Kata hypervisor cgroup OOM may surface as
-exit 255 without an `OOMKilled` Pod reason; without an infra-provided attributable
-signal, that case displays a runtime interruption rather than an unproved cause.
+exit 255 without an `OOMKilled` Pod reason. When existing evidence does not identify
+the specific cause, CMA displays **Internal error** and uses its existing recovery
+flow to resume the owned Sandbox with its original home. The recovery stage and
+any failure to finish remain visible separately from the recorded interruption.
+This behavior does not require new infrastructure development or a new diagnostic
+signal; the evidence limit only prevents CMA from incorrectly labelling a failure
+as out of memory.
 
 Roll forward when reverting a release that has persisted interruption metadata:
 older strict lifecycle decoders do not accept the additive persisted field.

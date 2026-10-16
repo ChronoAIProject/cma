@@ -1,11 +1,35 @@
-/* Active Thinking occupies a stable seat above the composer, outside history. */
+/* The composer keeps its seat; ephemeral Thinking belongs to the message stream. */
 .agent-surface__input {
   grid-row: 4;
   min-width: 0;
 }
 
-.agent-surface__thinking {
-  padding: 0 max(16px, calc((100% - var(--read-column)) / 2 + 24px));
+.active-thinking {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-left: 44px;
+  transition:
+    grid-template-rows var(--ds-transition-duration) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.active-thinking__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: 4px;
+}
+.active-thinking[data-presence='exiting'] {
+  grid-template-rows: 0fr;
+}
+@starting-style {
+  .active-thinking[data-presence='visible'] {
+    grid-template-rows: 0fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .active-thinking {
+    transition: none;
+  }
 }
 
 .thinking {
@@ -142,7 +166,11 @@
   .thinking__usage {
     order: 1;
     flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
     padding-bottom: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 

@@ -66,7 +66,7 @@ pub(crate) fn prepared_default_agent_profile(
 ) -> Result<layer2_core::profiles::AgentProfileContent, String> {
     validation::agent_content(&guidance::profile_with_instructions(
         layer1_public::rest::AgentLifecycleProfile::default(),
-        Some(guidance::GITHUB_API_V1),
+        Some(guidance::managed_v2()),
     ))
     .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
 }
@@ -397,7 +397,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         let profile = request.profile.clone().unwrap_or_default();
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
-            Some(guidance::GITHUB_API_V1),
+            Some(guidance::managed_v2()),
         ))?;
         services(&profile.permissions)?;
         // Resolve the delegated Image Manager reference before persisting the
@@ -412,7 +412,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         };
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(guidance::GITHUB_API_V1.into()),
+            managed_agent_instructions: Some(guidance::managed_v2().into()),
             setup_message: Some(validation::setup_message(&request)),
             request,
             resolved_image,
