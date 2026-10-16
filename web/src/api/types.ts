@@ -59,6 +59,11 @@ export interface SandboxLifecycleEligibility {
 export interface SandboxLifecycle {
   readonly pause: SandboxLifecycleEligibility;
   readonly revive: SandboxLifecycleEligibility;
+  readonly interruption?: {
+    readonly cause: 'out_of_memory' | 'runtime_restarted' | 'runtime_unavailable';
+    readonly detectedAt: string;
+    readonly memoryLimitMib: number;
+  };
   readonly checkpoint?: {
     readonly phase: 'capture' | 'resume_writers';
     readonly startedAt: string;

@@ -26,12 +26,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('shows server stages, a ticking elapsed time and honest missing file telemetry', async () => {
+it('shows server stages and a ticking elapsed time without inventing file transfers', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(observation);
   render(<LifecycleProgress sandbox={restoring()} observedAt={observation} />);
   expect(screen.getByText('Elapsed: 3m 0s')).toBeInTheDocument();
-  expect(screen.getByText(/File-level progress is not reported yet/)).toBeInTheDocument();
+  expect(screen.getByText(/Checking your files and installed software/)).toBeInTheDocument();
+  expect(screen.queryByText(/Downloading|unpacking|S3/)).not.toBeInTheDocument();
   expect(screen.getByText(/Last checked/).querySelector('time')).toHaveAttribute(
     'datetime',
     observation,
@@ -183,6 +184,8 @@ it('shows sandbox progress inside the preparing row of the actual Launch journey
   const region = await screen.findByRole('region', { name: 'Sandbox progress' });
   const row = screen.getByRole('heading', { name: 'Sandbox ready' }).closest('li')!;
   expect(row).toContainElement(region);
-  expect(within(region).getByText(/Downloading, unpacking/)).toBeInTheDocument();
+  expect(
+    within(region).getByText(/Checking your files and installed software/),
+  ).toBeInTheDocument();
   expect(client.requests.start).not.toHaveBeenCalled();
 });
