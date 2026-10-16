@@ -2443,3 +2443,8 @@ exit; retain the existing 44px mobile touch target.
 - 2026-10-16 — Keep idle Send dispatch preparation in its ordinary message bubble,
   retain genuine queue/recovery cards, and make attachment selection notices
   dismissible with a five-second lifetime.
+
+- 2026-10-16 — Check Agent connections quietly while opening or switching
+  conversations. Keep sending gated until verification, preserve actual lifecycle
+  notices, and show connection assistance only for confirmed missing services or
+  actionable verification failures with Retry.
