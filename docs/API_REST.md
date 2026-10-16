@@ -1367,6 +1367,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | V2ResponseControlRequest / required Idempotency-Key | - | 202 V2ResponseControl |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | V2InterruptRequest / required Idempotency-Key | - | 202 V2Interruption; atomic cancellation and distinct replacement response |
 | `GET /api/v2/agents/{agent_id}/queued-inputs` | - | after, limit (1–4; default 4) | 200 V2QueuedInputPage |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` | V2QueuedInputRequest / required Idempotency-Key | - | 200 V2QueuedInput |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | - | - | 200 V2QueuedCancellationObservation |

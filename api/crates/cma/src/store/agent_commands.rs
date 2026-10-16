@@ -15,6 +15,7 @@ use super::sandbox_mongo::{
 
 pub(super) mod audit;
 pub(super) mod binding;
+mod interrupting_message;
 mod lane_records;
 mod queued_cancellation;
 mod queued_input;
@@ -50,6 +51,14 @@ impl From<mongodb::error::Error> for ApplyError {
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
+    async fn reserve_interrupting_message(
+        &self,
+        request: layer2_core::sandbox::agent_io::InterruptingMessageReservation,
+    ) -> Result<layer2_core::sandbox::agent_io::AdmittedInterruptingMessage, CommandLedgerError>
+    {
+        interrupting_message::run(self, request).await
+    }
+
     async fn edit_queued_input(
         &self,
         request: layer2_core::sandbox::agent_io::QueuedInputReservation,
