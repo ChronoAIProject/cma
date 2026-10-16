@@ -110,10 +110,80 @@ it('waits for the early check when Agent loading finishes first without launchin
   const view = setup({ controller: { ...ready, state: { status: 'loading' } } });
   view.rerender(<AgentSurface {...view.props} controller={ready} />);
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Wait' } });
+  expect(
+    screen.queryByText('Verify the required connections to continue.'),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(ready.send).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Wait');
   await act(async () => pending.resolve(connected));
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   expect(connectionClient.check).toHaveBeenCalledOnce();
+});
+
+it('preserves actual lifecycle notices while connection readiness is checked in the background', () => {
+  vi.mocked(connectionClient.check).mockReturnValueOnce(new Promise(() => undefined));
+  setup({
+    controller: {
+      ...controller(),
+      inputAvailability: { allowed: false, notice: 'This sandbox is resuming.' },
+    },
+  });
+  expect(screen.getByText('This sandbox is resuming.')).toBeInTheDocument();
+  expect(
+    screen.queryByText('Verify the required connections to continue.'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+});
+
+it('keeps connection failures actionable and retries without flashing a generic verification notice', async () => {
+  vi.mocked(connectionClient.check).mockRejectedValueOnce(new Error('Connection check failed.'));
+  const view = setup();
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Keep my draft' } });
+  expect(await screen.findByText('Connection check failed.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  const retry = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValueOnce(retry.promise);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry connections' }));
+  expect(
+    screen.queryByText('Verify the required connections to continue.'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(field).toHaveValue('Keep my draft');
+  expect(view.props.controller.send).not.toHaveBeenCalled();
+  await act(async () => retry.resolve(connected));
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  expect(field).toHaveValue('Keep my draft');
+});
+
+it('still prompts for confirmed missing services while leaving the draft unsent', async () => {
+  vi.mocked(connectionClient.check).mockResolvedValue({
+    ...connected,
+    ready: false,
+    services: [
+      {
+        service: 'provider',
+        display_name: 'Provider',
+        kind: 'codex',
+        state: 'missing',
+        connection_mode: 'hosted',
+      },
+    ],
+  });
+  const view = setup();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Keep my draft' },
+  });
+  expect(
+    await screen.findByRole('dialog', { name: 'Connect required services' }),
+  ).toBeInTheDocument();
+  expect(await screen.findByText('Connection needed')).toBeInTheDocument();
+  expect(view.props.controller.send).not.toHaveBeenCalled();
+  expect(
+    screen.queryByText('Verify the required connections to continue.'),
+  ).not.toBeInTheDocument();
 });
 
 it.each(['not authorized', 'uncertain', 'load refusal', 'wrong parent owner'] as const)(
