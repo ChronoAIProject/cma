@@ -212,6 +212,13 @@ impl HostedBackend for RuntimeBackends {
             .finalize_runtime(original, op)
             .await
     }
+    async fn runtime_termination(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        self.for_handle(handle)?.runtime_termination(handle).await
+    }
+
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
         let mut all = Vec::new();
         for backend in [&self.agent_sandbox, &self.opensandbox]
