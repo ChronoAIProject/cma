@@ -18,7 +18,7 @@ import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
 import { BrandLoading } from '../landing/LandingCharacter';
-import { LifecycleProgress } from '../sandbox/LifecycleProgress';
+import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessages } from './QueuedMessages';
@@ -371,10 +371,10 @@ export function AgentSurface({
               </Button>
             </p>
           ) : null}
-          {controller.progressObservation !== undefined &&
-          ['provisioning', 'installing'].includes(controller.progressObservation.sandbox.status) ? (
-            <LifecycleProgress {...controller.progressObservation} />
-          ) : null}
+          <AgentSandboxStatus
+            observation={controller.progressObservation}
+            onNavigate={onNavigate}
+          />
         </MessageStream>
       </div>
       <div className="agent-surface__input">

@@ -120,12 +120,14 @@ describe('public REST web binding', () => {
         revive: { allowed: false, reason: 'not_paused' },
         checkpoint: { phase, started_at: NOW, epoch: 7 },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', started_at: NOW },
+        interruption: { cause: 'out_of_memory', detected_at: NOW, memory_limit_mib: 8192 },
       };
       const expected = {
         pause: lifecycle.pause,
         revive: lifecycle.revive,
         checkpoint: { phase, startedAt: NOW, epoch: 7 },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', startedAt: NOW },
+        interruption: { cause: 'out_of_memory', detectedAt: NOW, memoryLimitMib: 8192 },
       };
       test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, lifecycle }] });
       expect(await client.listSandboxes()).toMatchObject({ items: [{ lifecycle: expected }] });

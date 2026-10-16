@@ -23,6 +23,7 @@ import {
 import { SandboxOverview } from './SandboxOverview';
 import { SandboxAdvanced } from './SandboxAdvanced';
 import { LifecycleProgress } from './LifecycleProgress';
+import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryNotice';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { SharingButton } from '../resources/SharingButton';
@@ -307,6 +308,7 @@ export function SandboxPage({
         />
       ) : null}
       {notice === undefined ? null : <p>{notice}</p>}
+      <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
@@ -322,7 +324,7 @@ export function SandboxPage({
         progress
       )}
       <Presence>
-        {sandbox.status === 'failed' ? (
+        {sandbox.status === 'failed' && !sandboxRecoveryFailed(sandbox) ? (
           <p role="alert">
             Your sandbox needs attention.{' '}
             {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}

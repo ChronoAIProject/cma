@@ -72,9 +72,9 @@ it('explains provider persistence while workspace, pause and delete actions rema
     },
   }));
   expect(
-    await screen.findByText(/Agent Sandbox persists this Sandbox on its attached PV/),
+    await screen.findByText(/keeps its files and installed software on its saved home/),
   ).toBeInTheDocument();
-  expect(screen.queryByText(/S3 transfers/)).toBeInTheDocument();
+  expect(screen.queryByText(/S3 transfers/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
