@@ -15,6 +15,7 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         runtime_image: None,
         capacity: layer3_adapter::SandboxCapacity::default(),
         limits: record.input.captured_limits(),
+        sandbox_availability: record.input.sandbox_availability,
         key: record.key.clone(),
         lease: record.lease().unwrap(),
         existing_sandbox_id: existing.then(|| record.sandbox_id.clone()).flatten(),

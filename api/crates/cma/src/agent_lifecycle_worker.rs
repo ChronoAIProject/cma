@@ -106,6 +106,7 @@ impl InlineAgentLifecycle {
                 runtime_image: record.input.resolved_image,
                 capacity,
                 limits,
+                sandbox_availability: record.input.sandbox_availability,
                 key: record.key,
                 lease: lease.clone(),
                 existing_sandbox_id: record.sandbox_id,

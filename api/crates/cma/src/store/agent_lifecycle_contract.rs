@@ -25,6 +25,7 @@ pub(in crate::store) async fn verify(db: &Database) {
         request: request.clone(),
         resolved_image: Some("pinned-first".into()),
         capacity: Some(layer3_adapter::SandboxCapacity::default()),
+        sandbox_availability: Default::default(),
         capabilities: vec![Capability::UseOwnSandboxes],
     };
     let CreateResult::Created(id) = store

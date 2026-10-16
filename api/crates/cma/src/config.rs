@@ -154,6 +154,7 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub default_profiles: DefaultProfileConfig,
+    pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
@@ -181,6 +182,10 @@ impl std::fmt::Debug for Config {
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
             .field("default_profiles", &self.default_profiles)
+            .field(
+                "agent_manager_sandbox_capacity",
+                &self.agent_manager_sandbox_capacity,
+            )
             .field("auth_mode", &self.auth_mode)
             .field("features", &self.features)
             .finish()
@@ -279,6 +284,7 @@ impl Config {
                 .expect("the validated day count fits in seconds"),
         );
         let default_profiles = DefaultProfileConfig::from_lookup(&mut lookup)?;
+        let agent_manager_sandbox_capacity = profiles::agent_manager_capacity(&mut lookup)?;
 
         let (auth_mode, nyxid_public_url) =
             match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
@@ -336,6 +342,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             default_profiles,
+            agent_manager_sandbox_capacity,
             auth_mode,
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,

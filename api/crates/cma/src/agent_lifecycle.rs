@@ -92,6 +92,7 @@ struct ProvisionInput {
     runtime_image: Option<String>,
     capacity: layer3_adapter::SandboxCapacity,
     limits: layer2_core::sandbox::SandboxLimits,
+    sandbox_availability: layer2_core::profiles::SandboxProfileAvailability,
     key: String,
     lease: LifecycleLease,
     existing_sandbox_id: Option<String>,
@@ -167,6 +168,7 @@ impl InlineAgentLifecycle {
             runtime_image,
             capacity,
             limits,
+            sandbox_availability,
             key,
             lease,
             existing_sandbox_id,
@@ -183,6 +185,7 @@ impl InlineAgentLifecycle {
             capacity,
             limits,
             behavior,
+            sandbox_availability,
         )
         .await;
         tracing::info!(
@@ -414,6 +417,10 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             request,
             resolved_image,
             capacity: Some(self.capacity),
+            sandbox_availability: layer2_core::profiles::SandboxProfileAvailability {
+                always_keep_alive: true,
+                ..Default::default()
+            },
             capabilities: caller.authorization.iter().collect(),
             actor: context.map(|context| context.actor.clone()),
         };
