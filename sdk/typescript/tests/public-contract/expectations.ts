@@ -3,6 +3,11 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['interruption-v2-invalid-revision', 'invalid_control_observation'],
+  ['interruption-v2-empty-text', 'invalid_interrupt_request'],
+  ['interruption-v2-whitespace-text', 'invalid_interrupt_request'],
+  ['interruption-v2-null-text', 'invalid_interrupt_request'],
+  ['interruption-v2-unknown-field', 'invalid_interrupt_request'],
   ['attachment-invalid-name', 'invalid_attachment'],
   ['agent-skills-install-invalid-id', 'invalid_agent_request'],
   ['agent-skills-install-invalid-version', 'invalid_agent_request'],
@@ -90,6 +95,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['interruption-v2-query', ['unexpected']],
   ['queued-cancellation-v2-query-observe', ['unexpected']],
   ['queued-cancellation-v2-query-submit', ['unexpected']],
   ['queued-input-v2-query-list', ['unexpected']],

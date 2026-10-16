@@ -26,18 +26,22 @@ const PublicJourney = lazy(() =>
 );
 
 import type { AppRouter, AppRoute } from './routing/routes';
-import { ServicePage } from './services/ServicePage';
-import { EventGateway } from './services/EventGateway';
+import { EventGatewayPortal } from './services/EventGatewayPortal';
+import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
 import { ServiceSwitchMotion } from './services/ServiceSwitchMotion';
 import { PortalFrame } from './shell/PortalFrame';
-import { SIDEBAR_AUTO_COLLAPSE } from './shell/columns';
 
 export function App() {
   const router = useAppRouter();
   const { state: identity } = useAuth();
   const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
-  const service = router.route.kind === 'event_gateway' ? 'event-gateway' : undefined;
+  const service =
+    router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;
+  const [lastGatewayRoute, setLastGatewayRoute] = useState<AppRoute>(
+    service ? router.route : { kind: 'event_gateway' },
+  );
+  if (service && lastGatewayRoute !== router.route) setLastGatewayRoute(router.route);
   const [visitedGateway, setVisitedGateway] = useState(service !== undefined);
   if (service && !visitedGateway) setVisitedGateway(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -76,43 +80,13 @@ export function App() {
           </ServiceBody>
         ) : null}
         {visitedGateway ? (
-          <ServiceBody visible={service === 'event-gateway'}>
-            <ServicePage
-              key={`event-gateway:${identityKey}`}
-              service="event-gateway"
-              renderStatus={(content) => (
-                <PortalFrame
-                  route={{ kind: 'event_gateway' }}
-                  onNavigate={navigateService}
-                  {...sidebar}
-                >
-                  {content}
-                </PortalFrame>
-              )}
-            >
-              {(session, denied, notice) => (
-                <EventGateway
-                  session={session}
-                  denied={denied}
-                  onNavigate={() => {
-                    if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE) setSidebarCollapsed(true);
-                  }}
-                >
-                  {({ sidebar: navigation, content }) => (
-                    <PortalFrame
-                      route={{ kind: 'event_gateway' }}
-                      onNavigate={navigateService}
-                      navigation={navigation}
-                      {...sidebar}
-                    >
-                      {notice}
-                      {content}
-                    </PortalFrame>
-                  )}
-                </EventGateway>
-              )}
-            </ServicePage>
-          </ServiceBody>
+          <EventGatewayPortal
+            key={`event-gateway:${identityKey}`}
+            visible={service === 'event-gateway'}
+            route={service ? router.route : lastGatewayRoute}
+            onNavigate={navigateService}
+            {...sidebar}
+          />
         ) : null}
       </div>
     </ServiceSwitchMotion>

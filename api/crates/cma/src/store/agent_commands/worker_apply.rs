@@ -120,9 +120,13 @@ async fn claim_next(
         .sort(doc! { "agent_order": 1 })
         .session(&mut *session)
         .await?;
-    let mut message_held = false;
+    let mut ordered = Vec::new();
     while let Some(document) = candidates.next(&mut *session).await {
-        let mut command = records::read(&document?)?;
+        ordered.push(records::read(&document?)?);
+    }
+    ordered.sort_by_key(AdmittedAgentCommand::queue_priority);
+    let mut message_held = false;
+    for mut command in ordered {
         message_held |= command.holds_message_order();
         if message_held
             && matches!(

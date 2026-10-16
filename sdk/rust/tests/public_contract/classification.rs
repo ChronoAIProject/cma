@@ -110,6 +110,14 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "queued-cancellation-v2-query-submit",
         Classification::QueryShape,
     ),
+    ("interruption-v2-missing-key", Classification::Local),
+    ("interruption-v2-invalid-revision", Classification::Local),
+    ("interruption-v2-empty-text", Classification::Local),
+    ("interruption-v2-whitespace-text", Classification::Local),
+    ("interruption-v2-null-text", Classification::TypedShape),
+    ("interruption-v2-unknown-field", Classification::TypedShape),
+    ("interruption-v2-invalid-json", Classification::RawJson),
+    ("interruption-v2-query", Classification::QueryShape),
     ("queued-input-v2-missing-key", Classification::Local),
     ("queued-input-v2-invalid-revision", Classification::Local),
     ("queued-input-v2-empty-text", Classification::Local),
@@ -1017,7 +1025,8 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 | "GET /api/v2/commands/{command_id}"
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
                 | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
-                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input" => &[],
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt" => &[],
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

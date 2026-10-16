@@ -11,6 +11,8 @@ use fixtures::*;
 mod contention;
 #[path = "targeted_control_inspection_tests.rs"]
 mod inspection;
+#[path = "interrupting_message_tests.rs"]
+mod interrupting_message;
 #[path = "targeted_control_public_tests.rs"]
 mod public;
 
