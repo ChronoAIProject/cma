@@ -405,7 +405,10 @@ async fn admission(
             crate::store::LifecycleInput {
                 behavior: crate::store::LifecycleBehavior::PromptRepository,
                 managed_agent_instructions: Some(
-                    crate::agent_lifecycle::guidance::GITHUB_API_V1.into(),
+                    plan.warm.workspaces[0].agents[0]
+                        .content
+                        .system_prompt
+                        .clone(),
                 ),
                 setup_message: None,
                 request: serde_json::from_value(serde_json::json!({"name":"Prepared test"}))

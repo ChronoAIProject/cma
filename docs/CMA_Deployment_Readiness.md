@@ -18,7 +18,13 @@ repository workflow is authenticated `gh api` source download plus a local Git
 workspace, independently verified on a new production testing Agent.
 Image Manager remains deferred.
 
-Rollback readers must retain the native-title fields, captured V1 guidance,
+New admission now captures the unchanged GitHub V1 guidance plus memory V1
+guidance as managed instructions V2. New prepared homes use Agent profile
+revision 3; earlier empty and GitHub-only homes retain their original bytes for
+owned replay. Changing this default replenishes only unclaimed prepared capacity,
+without restarting existing Agents or changing their Sandbox reservations.
+
+Rollback readers must retain the native-title fields, captured V1/V2 guidance,
 prepared-home revision handling and optional `LifecycleInput.setup_message`,
 in addition to the earlier scope, callback and attachment schemas described
 below. New operations store their exact setup prompt; historical operations

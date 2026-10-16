@@ -918,6 +918,22 @@ Workspaces inside an existing Sandbox never changes that Sandbox's reservation
 or availability. The deployment-owned system Profile defaults remain independent
 so a new inline default cannot rewrite old Profiles or fail their startup checks.
 
+New Agent admissions, including Agents added to existing Sandboxes, capture the
+versioned GitHub workflow and memory-management guidance together. Prepared
+capacity uses the same instructions under Agent profile revision 3. Only unclaimed
+capacity with older instructions is replenished; admitted operations, owned homes
+and active Agents retain their exact prompt, profile, conversation and runtime.
+Older empty prompts and GitHub-only revision 2 remain valid for replay.
+
+The memory guidance asks the Agent to check effective limits and shared usage
+before expensive tasks, preserve headroom, limit concurrency, stream or batch
+large inputs, and check periodically only during such active work. It may stop
+its own unnecessary jobs or remove its own disposable caches; it must preserve
+other Agents, the runtime and user files. A workload that cannot fit requires a
+smaller method or an explained capacity constraint. This is Agent guidance, not a
+background monitor or a guarantee against OOM. It adds no monitoring service and
+does not alter the Sandbox's existing memory reservation.
+
 CMA no longer reads checkpoint bucket or storage machine credentials. Production
 startup installs a retired archive store that refuses upload, download and delete;
 old environment variables cannot reactivate storage access. Historical manifest

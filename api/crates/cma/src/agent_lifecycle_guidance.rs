@@ -1,5 +1,6 @@
 //! Versioned instructions captured at admission, never recomputed for old profiles.
 use layer1_public::rest::{AgentLifecycleCreateRequest, AgentLifecycleProfile};
+use std::sync::OnceLock;
 
 // Retain these exact bytes while any admitted operation or prepared home uses them.
 pub(crate) const GITHUB_API_V1: &str = "CMA GitHub workflow:\n\
@@ -7,6 +8,18 @@ For a GitHub clone or source-setup request, use gh api through the existing api-
 Inspect every archive member before extraction, strip only its common top-level directory, bound expanded size and reject absolute paths, traversal, .git entries, special files and link escapes. Stage source first, preserve executable modes, and handle safe symlinks without following them during file writes. Preserve existing files, local changes and .git metadata; reconcile conflicts before replacing files. Report unavailable submodule or LFS content without inventing it. If the destination is not already inside a Git repository, initialize a local repository there; never reinitialize, reset or replace an existing worktree. An empty remote needs only an empty local workspace. Record the source commit separately; describe this as a source checkout, without claiming imported history or working native pull/push. Local source setup does not require remote history.\n\
 For user-requested repository creation use gh api --method POST /user/repos or /orgs/{org}/repos with the intended owner and visibility. For requested publication use Contents or Git Data APIs: retain the observed parent/base tree, create blobs/tree/commit and update the intended ref without force. Re-read and reconcile concurrent changes; never silently replace another commit. Do not publish or create repositories merely to prepare local source.\n\
 Use gh api instead of gh repo clone or native git clone/fetch/push for this workflow. Keep gh's existing configuration; never extract credentials, request pasted secrets, or run gh auth login/setup-git. If api-github access is missing, call agent_key_scope_revision and wait for CMA's confirmed update before retrying; no Sandbox restart is needed. Respect repository permissions and API size/rate limits; report incomplete downloads accurately.";
+
+// Versioned bytes also become part of persisted profile and Agent home identities.
+pub(crate) const MEMORY_V1: &str = "CMA memory management (v1):\n\
+During active work, manage memory within the Sandbox's actual effective limit. Before memory-intensive installs, builds, tests, model loading or data processing, use inexpensive local observations to check effective memory limits, total usage and available headroom. Inspect applicable cgroup limits/usage when available and machine memory availability (for example /proc/meminfo); ignore unlimited sentinels and respect the tightest applicable bound rather than assuming the host's total RAM is your allowance. If the effective limit cannot be established, use conservative settings and state the uncertainty when it affects the task. The Sandbox's memory is shared by its runtime, other Agents and processes; your process RSS alone is not the total budget.\n\
+Reserve headroom for the runtime, concurrent work and temporary peaks. Prefer bounded worker/job concurrency, smaller batches, streaming or out-of-core algorithms and incremental processing. Before launching parallel tasks, account for their combined peak memory. During long memory-intensive work, make low-cost checks at sensible intervals or between stages, without constant high-frequency polling or a new background monitoring service. If headroom becomes low, reduce concurrency or stop only your own unnecessary jobs before reaching the limit. Release your own idle resources and large in-memory objects; remove only clearly disposable caches you created when useful. Deleting disk caches does not by itself prove that RAM has been freed.\n\
+Never kill another Agent, the Sandbox runtime or an unowned process, delete user files or workspace state, or use privileged kernel cache-drop operations to reclaim memory. If a workload cannot safely fit, use a smaller or more memory-efficient method, or explain the constraint and ask for the necessary capacity or task adjustment. Do not blindly retry a workload that ran out of memory with the same settings. These checks apply while you are actively working; do not claim continuous monitoring outside active turns or guarantee that memory exhaustion is impossible.";
+
+/// New admission pins this composition; older operations retain their captured bytes.
+pub(crate) fn managed_v2() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{GITHUB_API_V1}\n\n{MEMORY_V1}"))
+}
 
 pub(crate) fn profile_with_instructions(
     mut profile: AgentLifecycleProfile,
@@ -37,7 +50,7 @@ pub(super) fn provisioning_request(
 
 /// Historical preparation had no instructions; new preparation pins this revision.
 pub(crate) fn is_prepared_prompt(prompt: &str) -> bool {
-    prompt.is_empty() || prompt == GITHUB_API_V1
+    prompt.is_empty() || prompt == GITHUB_API_V1 || prompt == managed_v2()
 }
 
 #[cfg(test)]
