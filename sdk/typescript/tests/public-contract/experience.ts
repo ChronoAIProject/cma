@@ -12,6 +12,18 @@ async function captureLegacyStream(prefix: boolean | undefined, run: () => Promi
 }
 
 export const experienceDispatch: Record<string, Dispatch> = {
+  'POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt': ({
+    client,
+    param,
+    body,
+    fixture,
+  }) =>
+    client.responsesV2.interruptWithInput(param('agent_id'), param('response_id'), body, {
+      idempotencyKey:
+        Object.entries(fixture.request.headers).find(
+          ([name]) => name.toLowerCase() === 'idempotency-key',
+        )?.[1] ?? '',
+    }),
   'GET /api/v2/agents/{agent_id}/responses/{response_id}/controls': ({ client, param }) =>
     client.responsesV2.observeControls(param('agent_id'), param('response_id')),
   'POST /api/v2/agents/{agent_id}/responses/{response_id}/controls': ({
