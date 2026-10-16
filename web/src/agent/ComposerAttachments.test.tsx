@@ -1,11 +1,15 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 import { useAgentDraft } from './draft';
 import { agentClient } from '../test/agent';
 import type { UploadAttachment, UploadedAttachment } from './attachments';
+import { useComposerAttachments } from './useComposerAttachments';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function receipt(file: File): UploadedAttachment {
   return {
@@ -193,6 +197,92 @@ it('enforces file/count bounds and refuses uploads without current input authori
   fireEvent.paste(field, { clipboardData: { files: [new File(['a'], 'file.txt')] } });
   expect(screen.getByRole('alert')).toHaveTextContent('sandbox is ready');
   expect(upload).not.toHaveBeenCalled();
+});
+
+it('dismisses a rejected oversized selection while preserving the draft and ready attachments', async () => {
+  const file = new File(['notes'], 'notes.txt');
+  const huge = new File(['a'], 'huge.bin');
+  Object.defineProperty(huge, 'size', { value: 20 * 1024 * 1024 + 1 });
+  const upload = vi.fn<UploadAttachment>().mockResolvedValue(receipt(file));
+  render(surface(upload));
+  const field = screen.getByRole('textbox');
+  fireEvent.change(field, { target: { value: 'Keep my message' } });
+  fireEvent.drop(field, { dataTransfer: { files: [file] } });
+  await screen.findByText('Ready');
+  fireEvent.drop(field, { dataTransfer: { files: [huge] } });
+  expect(screen.getByRole('alert')).toHaveTextContent('20 MiB');
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss attachment notice' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(field).toHaveValue('Keep my message');
+  expect(screen.getByText('notes.txt')).toBeInTheDocument();
+  expect(screen.getByText('Ready')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  expect(upload).toHaveBeenCalledExactlyOnceWith(file, expect.any(Object));
+  fireEvent.drop(field, { dataTransfer: { files: [huge] } });
+  expect(screen.getByRole('alert')).toHaveTextContent('20 MiB');
+});
+
+it('expires selection notices after five seconds and gives repeated rejections a fresh interval', () => {
+  vi.useFakeTimers();
+  const upload = vi.fn<UploadAttachment>();
+  const huge = new File(['a'], 'huge.bin');
+  Object.defineProperty(huge, 'size', { value: 20 * 1024 * 1024 + 1 });
+  render(surface(upload));
+  const field = screen.getByRole('textbox');
+  fireEvent.drop(field, { dataTransfer: { files: [huge] } });
+  act(() => vi.advanceTimersByTime(4000));
+  fireEvent.drop(field, { dataTransfer: { files: [huge] } });
+  act(() => vi.advanceTimersByTime(1000));
+  expect(screen.getByRole('alert')).toHaveTextContent('20 MiB');
+  act(() => vi.advanceTimersByTime(3999));
+  expect(screen.getByRole('alert')).toHaveTextContent('20 MiB');
+  act(() => vi.advanceTimersByTime(1));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  act(() => vi.advanceTimersByTime(200));
+  expect(screen.queryByText('Each attachment must be 20 MiB or smaller.')).not.toBeInTheDocument();
+  expect(upload).not.toHaveBeenCalled();
+});
+
+it('keeps failed uploads and their retry actions after a selection notice expires', async () => {
+  const file = new File(['notes'], 'notes.txt');
+  const upload = vi
+    .fn<UploadAttachment>()
+    .mockRejectedValue(new Error('Upload failed. Try again.'));
+  render(surface(upload));
+  const field = screen.getByRole('textbox');
+  fireEvent.drop(field, { dataTransfer: { files: [file] } });
+  await screen.findByText('Upload failed. Try again.');
+  vi.useFakeTimers();
+  fireEvent.drop(field, {
+    dataTransfer: { files: Array.from({ length: 10 }, () => new File(['a'], 'extra.txt')) },
+  });
+  expect(screen.getByRole('alert')).toHaveTextContent('10 files');
+  act(() => vi.advanceTimersByTime(5000));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByText('notes.txt')).toBeInTheDocument();
+  expect(screen.getByText('Upload failed. Try again.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(upload).toHaveBeenCalledOnce();
+});
+
+it('clears a selection notice on a valid add and cancels its dismissal timer on unmount', async () => {
+  vi.useFakeTimers();
+  const file = new File(['notes'], 'notes.txt');
+  const upload = vi.fn<UploadAttachment>().mockResolvedValue(receipt(file));
+  const { result, unmount } = renderHook(() => useComposerAttachments(undefined, upload, true));
+  const tooMany = Array.from({ length: 11 }, () => file);
+  act(() => result.current.add(tooMany));
+  expect(result.current.error).toContain('10 files');
+  expect(vi.getTimerCount()).toBe(1);
+  await act(async () => result.current.add([file]));
+  expect(result.current.error).toBeUndefined();
+  expect(vi.getTimerCount()).toBe(0);
+  expect(result.current.items[0]?.status).toBe('ready');
+  act(() => result.current.add(tooMany));
+  expect(vi.getTimerCount()).toBe(1);
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it('retains ready attachments and text across visits, aborts pending uploads, and isolates viewers', async () => {

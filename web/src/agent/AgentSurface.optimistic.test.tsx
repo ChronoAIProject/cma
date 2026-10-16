@@ -5,7 +5,7 @@ import { connectionClient, type ConnectionReport } from '../connections/client';
 import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
-import { accepted, binding, harness } from './transport/controller.fixture';
+import { accepted, binding, harness, json, queuedPage } from './transport/controller.fixture';
 import { agentClient } from '../test/agent';
 
 const connected: ConnectionReport = {
@@ -63,6 +63,53 @@ const bubbles = (text: string) =>
   screen
     .getAllByRole('article', { name: 'You' })
     .filter((article) => within(article).queryByText(text) !== null);
+
+it('does not flash a queue card when discovery finishes before the idle Send receipt', async () => {
+  const { h } = await setup();
+  const response = deferred<Response>();
+  h.post.mockReturnValueOnce(response.promise);
+  click();
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  h.listQueued.mockImplementation(async () => json(queuedPage('Immediate local message')));
+  const reads = h.listQueued.mock.calls.length;
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(reads));
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => response.resolve(accepted()));
+  await screen.findByText('Sent');
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+});
+
+it('keeps idle input in one ordinary bubble through queued discovery and its own turn startup', async () => {
+  const { h, field } = await setup();
+  h.listQueued.mockImplementation(async () => json(queuedPage('Immediate local message')));
+  const reads = h.listQueued.mock.calls.length;
+  click();
+  await waitFor(() => expect(field).toHaveValue(''));
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(reads));
+  expect(screen.queryByRole('region', { name: 'Queued messages' })).not.toBeInTheDocument();
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(screen.getByText('Sent')).toBeInTheDocument();
+
+  await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => {
+    h.durable(2, { type: 'message', role: 'user', content: 'Immediate local message' });
+    h.durable(3, { type: 'turn_completed', turn_sequence: 1 });
+  });
+  const nextReads = h.listQueued.mock.calls.length;
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(nextReads));
+  expect(document.querySelector('.queued-messages')).toBeNull();
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(h.post).toHaveBeenCalledOnce();
+});
 
 it('skips the per-message catalog wait, retains identity and acknowledgement gates, and merges exactly once', async () => {
   const { h, field } = await setup();
