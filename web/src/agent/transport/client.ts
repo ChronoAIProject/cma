@@ -49,11 +49,13 @@ export class AgentV2Session {
     readonly input?: string;
     readonly accepted?: string;
     readonly acceptedSteering?: string;
+    readonly acceptedInterruption?: string;
     readonly control?: boolean;
   } {
     try {
       const input = this.journal.read();
       const control = this.journal.readControl();
+      const interruption = this.journal.interruption.read();
       return {
         accepted: input?.state === 'accepted' ? input.input : undefined,
         acceptedSteering:
@@ -61,7 +63,8 @@ export class AgentV2Session {
             ? control.body.command.text
             : undefined,
         input: input?.state === 'pending' ? input.input : undefined,
-        control: control?.commandId === null,
+        acceptedInterruption: interruption?.receipt != null ? interruption.body.text : undefined,
+        control: control?.commandId === null || interruption?.receipt === null,
       };
     } catch {
       // A stale view may finish rendering while sign-out invalidates its journal.
