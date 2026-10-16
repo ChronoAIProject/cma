@@ -4,48 +4,58 @@ use layer2_core::profiles::content_digest;
 
 #[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
-    for context in [None, Some("workspace-owned")] {
-        let request = serde_json::from_value(serde_json::json!({
-            "name":"Source work", "workspace_id":context,
-            "profile":{"system_prompt":"Keep the user's exact instructions.\n"}
-        }))
-        .unwrap();
-        let input = LifecycleInput {
-            behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(GITHUB_API_V1.into()),
-            setup_message: None,
-            request,
-            resolved_image: None,
-            capacity: None,
-            sandbox_availability: Default::default(),
-            capabilities: vec![],
-            actor: None,
-        };
-        let submitted = serde_json::to_value(&input.request).unwrap();
-        let effective =
-            provisioning_request(&input.request, input.managed_agent_instructions.as_deref());
-        assert_eq!(serde_json::to_value(&input.request).unwrap(), submitted);
-        assert_eq!(effective.workspace_id, input.request.workspace_id);
-        let prompt = effective
-            .profile
-            .as_ref()
-            .unwrap()
-            .system_prompt
-            .as_ref()
+    for instructions in [GITHUB_API_V1, managed_v2()] {
+        for (sandbox, workspace) in [
+            (None, None),
+            (Some("sandbox-owned"), None),
+            (None, Some("workspace-owned")),
+        ] {
+            let request = serde_json::from_value(serde_json::json!({
+                "name":"Source work", "workspace_id":workspace, "sandbox_id":sandbox,
+                "profile":{"system_prompt":"Keep the user's exact instructions.\n"}
+            }))
             .unwrap();
-        assert!(prompt.starts_with(GITHUB_API_V1));
-        assert!(prompt.ends_with("Keep the user's exact instructions.\n"));
-        assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
-        let restored: LifecycleInput =
-            serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
-        assert_eq!(
-            serde_json::to_value(provisioning_request(
-                &restored.request,
-                restored.managed_agent_instructions.as_deref(),
-            ))
-            .unwrap(),
-            serde_json::to_value(effective).unwrap()
-        );
+            let input = LifecycleInput {
+                behavior: LifecycleBehavior::PromptRepository,
+                managed_agent_instructions: Some(instructions.into()),
+                setup_message: None,
+                request,
+                resolved_image: None,
+                capacity: None,
+                sandbox_availability: Default::default(),
+                capabilities: vec![],
+                actor: None,
+            };
+            let submitted = serde_json::to_value(&input.request).unwrap();
+            let effective =
+                provisioning_request(&input.request, input.managed_agent_instructions.as_deref());
+            assert_eq!(serde_json::to_value(&input.request).unwrap(), submitted);
+            assert_eq!(effective.workspace_id, input.request.workspace_id);
+            assert_eq!(effective.sandbox_id, input.request.sandbox_id);
+            let prompt = effective
+                .profile
+                .as_ref()
+                .unwrap()
+                .system_prompt
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                prompt,
+                &format!("{instructions}\n\nKeep the user's exact instructions.\n")
+            );
+            assert_eq!(prompt.contains(MEMORY_V1), instructions == managed_v2());
+            assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
+            let restored: LifecycleInput =
+                serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_value(provisioning_request(
+                    &restored.request,
+                    restored.managed_agent_instructions.as_deref(),
+                ))
+                .unwrap(),
+                serde_json::to_value(effective).unwrap()
+            );
+        }
     }
 }
 
@@ -99,7 +109,7 @@ fn retained_operations_preserve_their_original_profile_and_home_payload() {
 #[test]
 fn new_default_profile_matches_preparation_and_rejects_custom_prepared_instructions() {
     let request = serde_json::from_value(serde_json::json!({"name":"Default"})).unwrap();
-    let effective = provisioning_request(&request, Some(GITHUB_API_V1));
+    let effective = provisioning_request(&request, Some(managed_v2()));
     let profile = crate::agent_lifecycle::validation::agent_content_for(
         effective.profile.as_ref().unwrap(),
         LifecycleBehavior::PromptRepository,
@@ -111,6 +121,8 @@ fn new_default_profile_matches_preparation_and_rejects_custom_prepared_instructi
     );
     assert!(is_prepared_prompt(&profile.system_prompt));
     assert!(is_prepared_prompt(""));
+    assert!(is_prepared_prompt(GITHUB_API_V1));
+    assert_eq!(profile.system_prompt, managed_v2());
     assert!(!is_prepared_prompt(&format!(
         "{}\nUser-specific text",
         profile.system_prompt
@@ -126,4 +138,38 @@ fn new_default_profile_matches_preparation_and_rejects_custom_prepared_instructi
     assert!(profile
         .system_prompt
         .contains("POST /user/repos or /orgs/{org}/repos"));
+}
+
+#[test]
+fn current_guidance_preserves_github_bytes_and_bounds_memory_management() {
+    use sha2::{Digest, Sha256};
+    // This revision is already persisted in live profiles and home receipts.
+    assert_eq!(
+        format!("{:x}", Sha256::digest(GITHUB_API_V1)),
+        "51ed3e4469377a625715bc15a4fb0273b4dbe6a3942570bdffe80fa0a002bd25"
+    );
+    assert_eq!(
+        managed_v2().strip_prefix(GITHUB_API_V1),
+        Some(format!("\n\n{MEMORY_V1}").as_str())
+    );
+    for required in [
+        "effective memory limits, total usage",
+        "cgroup limits/usage",
+        "shared by its runtime, other Agents and processes",
+        "Reserve headroom",
+        "bounded worker/job concurrency",
+        "streaming or out-of-core",
+        "sensible intervals or between stages",
+        "stop only your own unnecessary jobs",
+        "Never kill another Agent",
+        "delete user files or workspace state",
+        "privileged kernel cache-drop",
+        "Do not blindly retry",
+        "do not claim continuous monitoring outside active turns",
+    ] {
+        assert!(
+            MEMORY_V1.contains(required),
+            "missing constraint: {required}"
+        );
+    }
 }
