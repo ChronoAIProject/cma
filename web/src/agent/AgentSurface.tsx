@@ -11,7 +11,6 @@ import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
-import { ActiveThinking } from './ActiveThinking';
 import './Agent.css';
 import { AgentHeader } from './AgentHeader';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
@@ -378,7 +377,6 @@ export function AgentSurface({
         </MessageStream>
       </div>
       <div className="agent-surface__input">
-        <ActiveThinking key={agentId} conversation={conversation} />
         <Composer
           showUsage
           usage={conversation.usage}

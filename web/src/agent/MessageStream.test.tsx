@@ -62,7 +62,7 @@ it('restores the reader position for a revisited Agent instead of jumping to its
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);
-  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /^Thinking/ })).toHaveLength(1);
   const ordered = ['Find the issue', 'Write package', 'The issue is fixed', 'Read package'].map(
     (name) => screen.getByText(name),
   );
