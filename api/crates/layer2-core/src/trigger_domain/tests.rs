@@ -460,50 +460,6 @@ async fn immutable_profile_reader_ignores_current_retirement_state() {
 }
 
 #[tokio::test]
-async fn deletion_is_owner_scoped_and_permitted_only_before_first_publication() {
-    let seed = seed_profiles(Visibilities::default(), true).await;
-    let store = trigger_store(&seed);
-    let draft = trigger(seed.owner.clone(), seed.target.clone());
-    let draft_id = draft.id.clone();
-    store.create_trigger(draft).await.unwrap();
-
-    assert_eq!(
-        store
-            .delete_unpublished_trigger(&draft_id, &SubjectId::new("somebody-else"))
-            .await,
-        Err(TriggerStoreError::NotFound)
-    );
-    store
-        .delete_unpublished_trigger(&draft_id, &seed.owner)
-        .await
-        .expect("owned unpublished Trigger can be deleted");
-    assert!(store
-        .trigger(&draft_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_none());
-
-    let published = trigger(seed.owner.clone(), seed.target);
-    let published_id = published.id.clone();
-    store.create_trigger(published).await.unwrap();
-    store
-        .publish_trigger(&published_id, &seed.owner, 1, PUBLISHED.into())
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .delete_unpublished_trigger(&published_id, &seed.owner)
-            .await,
-        Err(TriggerStoreError::AlreadyPublished)
-    );
-    assert!(store
-        .trigger(&published_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_some());
-}
-
-#[tokio::test]
 async fn publication_refuses_private_missing_and_retired_profile_references() {
     for (visibility, field) in [
         (

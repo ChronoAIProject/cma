@@ -1531,6 +1531,11 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/triggers/{id}/revisions` | - | - | 200 array<TriggerRevisionView> |
 | `GET /api/v1/triggers/{id}/stats` | - | - | 200 TriggerStatisticsView |
 
+Trigger deletion removes unpublished drafts and archives previously published
+Triggers. Archived records disappear from owner reads/listing and refuse new
+Launches; already-admitted Launches retain their frozen revisions and resources.
+The exact successful deletion command remains replayable with its original key.
+
 ### Trigger placements
 
 | Operation | Body / Key | Query | Response |
