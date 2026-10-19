@@ -37,6 +37,7 @@ pub(super) fn trigger_document(
         "public_id": optional_id(trigger.public_id.as_ref().map(PublicTriggerId::as_str)),
         "updated_at": &trigger.updated_at,
         "retired_at": optional_id(trigger.retired_at.as_deref()),
+        "archived_at": optional_id(trigger.archived_at.as_deref()),
         "latest_revision": storage_integer(trigger.revisions.len() as u64, "latest Trigger revision")?,
         "latest_sandbox_profile_id": optional_id(latest.map(|row| {
             row.content.target.sandbox_profile.id.as_str()
@@ -80,6 +81,8 @@ pub(super) fn read_trigger(document: &Document) -> Result<StoredTrigger, Trigger
             ))
         || !string_field_matches(document, "updated_at", &trigger.updated_at)
         || document.get("retired_at") != Some(&optional_id(trigger.retired_at.as_deref()))
+        || document.get("archived_at").unwrap_or(&Bson::Null)
+            != &optional_id(trigger.archived_at.as_deref())
         || !i64_field_matches(
             document,
             "latest_revision",
