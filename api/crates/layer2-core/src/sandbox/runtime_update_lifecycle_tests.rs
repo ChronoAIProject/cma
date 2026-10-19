@@ -23,6 +23,10 @@ fn step(value: &mut Sandbox, f: impl FnOnce(&mut Sandbox, u64) -> Result<(), San
                     | SandboxImageRotationPhase::ConversationReopen
                     | SandboxImageRotationPhase::QueuedMessageDelivery,
                 ..
+            } | SandboxLifecycleOperation::Revive {
+                phase: SandboxRevivePhase::ConversationReopen
+                    | SandboxRevivePhase::QueuedMessageDelivery,
+                ..
             }
         )
     );
@@ -35,8 +39,12 @@ fn step(value: &mut Sandbox, f: impl FnOnce(&mut Sandbox, u64) -> Result<(), San
             to: value.status,
         }];
         if value.status == SandboxStatus::Active {
-            events.push(SandboxEventKind::Rotated {
-                runtime_version: "image-v2".into(),
+            events.push(if previous.status == SandboxStatus::Reviving {
+                SandboxEventKind::Revived
+            } else {
+                SandboxEventKind::Rotated {
+                    runtime_version: "image-v2".into(),
+                }
             });
         }
     }
@@ -260,4 +268,82 @@ fn runtime_update_process_loss_retains_same_home_and_explicit_target() {
         .unwrap()
         .completed_at
         .is_none());
+}
+
+#[test]
+fn runtime_update_on_resume_binds_latest_and_completes_the_original_home() {
+    let mut value = native();
+    pause(&mut value);
+    let original = value.clone();
+    value
+        .begin_revive_with_managed_runtime(
+            SandboxReviveCause::ExplicitRequest,
+            Some("image-v2"),
+            NOW.into(),
+        )
+        .unwrap();
+    assert_eq!(value.admitted_runtime_update_target(), Some("image-v2"));
+    provision(&mut value);
+    finish(&mut value);
+    assert_eq!(value.status, SandboxStatus::Active);
+    assert_eq!(value.lifecycle.home, original.lifecycle.home);
+    assert_eq!(
+        value.runtime.as_ref().unwrap().runtime_id,
+        original.retained_runtime_binding().unwrap().runtime_id
+    );
+    assert!(value
+        .runtime_update_request()
+        .unwrap()
+        .completed_at
+        .is_some());
+}
+
+#[test]
+fn runtime_update_on_resume_failure_retries_exact_phase_after_deploy_changes() {
+    let mut value = native();
+    pause(&mut value);
+    value
+        .begin_revive_with_managed_runtime(
+            SandboxReviveCause::ExplicitRequest,
+            Some("image-v2"),
+            NOW.into(),
+        )
+        .unwrap();
+    provision(&mut value);
+    let operation = value.lifecycle.operation.clone();
+    let fence = value.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    let before = value.clone();
+    let failure = TypedFailure {
+        class: "runtime_update_failed".into(),
+        detail: "Fixture failure".into(),
+    };
+    value
+        .park_failed_runtime_update(failure.clone(), HOLDER, fence, NOW.into())
+        .unwrap();
+    validate_lifecycle_mutation(
+        &before,
+        &[],
+        &SandboxLifecycleMutation {
+            guard: SandboxMutationGuard::capture(&before),
+            sandbox: value.clone(),
+            agents: vec![],
+            agent_scope: SandboxLifecycleAgentScope::Touched,
+            appended_at: NOW.into(),
+            events: vec![SandboxEventKind::WorkStepFailed {
+                step: SandboxWorkStep::RunLifecycleOperation,
+                failure,
+            }],
+        },
+    )
+    .unwrap();
+    assert!(value
+        .request_runtime_update("image-v3".into(), false, NOW.into())
+        .is_err());
+    assert!(value
+        .request_runtime_update("image-v2".into(), false, NOW.into())
+        .unwrap());
+    assert_eq!(value.lifecycle.operation, operation);
+    finish(&mut value);
+    assert_eq!(value.status, SandboxStatus::Active);
+    assert_eq!(value.runtime.unwrap().runtime_version, "image-v2");
 }

@@ -80,6 +80,22 @@ impl Sandbox {
             .and_then(|state| state.request.as_ref())
     }
 
+    /// Only an admitted lifecycle operation can change the retained image.
+    /// Ordinary recovery keeps the prior image unless an owner update was pinned.
+    pub fn admitted_runtime_update_target(&self) -> Option<&str> {
+        match self.lifecycle.operation.as_ref()? {
+            SandboxLifecycleOperation::ImageRotation {
+                target_runtime_version,
+                ..
+            } => Some(target_runtime_version),
+            SandboxLifecycleOperation::Revive { .. } => self
+                .runtime_update_request()
+                .filter(|request| request.started_at.is_some() && request.completed_at.is_none())
+                .map(|request| request.target_version.as_str()),
+            _ => None,
+        }
+    }
+
     /// Queueing does not stop a turn or alter runtime authority.
     pub fn request_runtime_update(
         &mut self,
@@ -102,8 +118,7 @@ impl Sandbox {
                 return Ok(false);
             }
             if self.work.lease.is_some()
-                || !matches!(&self.lifecycle.operation,
-                Some(SandboxLifecycleOperation::ImageRotation { target_runtime_version, .. }) if target_runtime_version == &target)
+                || self.admitted_runtime_update_target() != Some(target.as_str())
             {
                 return Err(invalid());
             }
@@ -221,10 +236,7 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if !matches!(
-            self.lifecycle.operation,
-            Some(SandboxLifecycleOperation::ImageRotation { .. })
-        ) {
+        if self.admitted_runtime_update_target().is_none() {
             return Err(invalid());
         }
         self.apply_claimed_with_step(

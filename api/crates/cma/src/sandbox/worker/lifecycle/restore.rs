@@ -90,12 +90,8 @@ impl SandboxWorker {
             }
         }
         let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id);
-        if let Some(SandboxLifecycleOperation::ImageRotation {
-            target_runtime_version,
-            ..
-        }) = &sandbox.lifecycle.operation
-        {
-            spec.runtime_image = Some(target_runtime_version.clone());
+        if let Some(target) = sandbox.admitted_runtime_update_target() {
+            spec.runtime_image = Some(target.into());
         }
         let request = RuntimeProvisionRequest::new(generation, spec);
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
@@ -104,7 +100,11 @@ impl SandboxWorker {
                 binding,
                 &self.config.deployment_id,
             ) {
-                Ok(retained) if matches!(&sandbox.lifecycle.operation, Some(SandboxLifecycleOperation::ImageRotation { target_runtime_version, .. }) if target_runtime_version != &binding.runtime_version) => {
+                Ok(retained)
+                    if sandbox
+                        .admitted_runtime_update_target()
+                        .is_some_and(|target| target != binding.runtime_version) =>
+                {
                     self.dependencies
                         .adapter
                         .upgrade_runtime(&retained, &request)
@@ -471,17 +471,16 @@ pub(super) fn replacement_runtime_generation(
 }
 
 fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
-    match sandbox.lifecycle.operation.as_ref() {
-        Some(SandboxLifecycleOperation::ImageRotation {
-            target_runtime_version,
-            ..
-        }) => target_runtime_version.clone(),
-        _ => sandbox
-            .lifecycle
-            .suspended_runtime
-            .as_ref()
-            .map(|binding| binding.runtime_version.clone())
-            .or_else(|| sandbox.profile.content.runtime_image.clone())
-            .unwrap_or_else(|| deployed.to_owned()),
-    }
+    sandbox
+        .admitted_runtime_update_target()
+        .map(str::to_owned)
+        .or_else(|| {
+            sandbox
+                .lifecycle
+                .suspended_runtime
+                .as_ref()
+                .map(|binding| binding.runtime_version.clone())
+        })
+        .or_else(|| sandbox.profile.content.runtime_image.clone())
+        .unwrap_or_else(|| deployed.to_owned())
 }

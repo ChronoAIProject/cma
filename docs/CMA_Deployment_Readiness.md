@@ -1371,3 +1371,42 @@ Do not deploy an older binary over records written by this release. Existing
 owned runtime images, immutable capacities and PVCs remain pinned; the 2 CPU /
 8 GiB default applies to newly created capacity, including matching warm/prepared
 members, and does not resize running users implicitly.
+
+
+## Managed runtime updates
+
+`CHRONO_SANDBOX_IMAGE` is the canonical latest formally deployed managed runtime,
+pinned to a verified GitHub CI image by explicit release promotion. Publishing a
+CI image or tag alone grants no deployment or migration authority. New default allocations, native warm capacity,
+owner-admitted resume and the managed update service use that same reference.
+An explicit custom image remains custom and is never migrated by this policy.
+
+Eligible native persistent-home Sandboxes expose `runtime_update` on owner
+Sandbox Details. `POST /api/v1/sandboxes/{id}/runtime-update` takes an
+`Idempotency-Key` and `{ "target_version": "<exact latest_version>" }`. The server
+accepts only its current released target or the unchanged target of an already
+accepted request. The metadata records queued/updating/failed progress and
+same-home preservation. The existing Details refresh observes it.
+
+The daily check runs at 02:00 Asia/Singapore. First observation of a release waits
+for the next boundary; a restart with an existing watermark catches up a missed
+boundary. Work waits until every Agent has no active turn, approval, queued input,
+work lease, pending cleanup or stop intent and every Workspace is idle. Admission
+fences the Sandbox and complete child set in the same transaction. New runtime
+writers cannot cross the admitted rotation. No active user turn is interrupted.
+
+The worker suspends the original native Sandbox and replaces only its image and
+generation, retaining its CRD UID, claim, PVC UID, home and all domain/conversation
+IDs. It reopens the original native conversations. An originally paused Sandbox
+returns to paused unless owner work supersedes that intent. A requested resume
+from Paused pins the current managed runtime in the same CAS as revival; a plain
+runtime-loss recovery retains the existing image unless an update was already
+admitted. Terminal failures park the exact phase and accept only exact-target
+retry, including across later releases. A lost provider response does not admit
+a fresh home or duplicate upgrade.
+
+Once `lifecycle.runtime_update` is persisted, every rollback reader must understand
+that optional field, pinned targets and paused-return behavior. Restoring an older
+binary with deny-unknown-fields readers is unsafe even when no update is active.
+A compatible rollback may change the configured default; accepted update targets
+and immutable original home authority remain intact.

@@ -417,7 +417,7 @@ impl Sandbox {
                     next.lifecycle.rotation.account(&checkpoint)?;
                 }
             }
-            if rotation {
+            if next.admitted_runtime_update_target().is_some() {
                 if let Some(request) = next
                     .lifecycle
                     .runtime_update

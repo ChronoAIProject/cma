@@ -83,14 +83,9 @@ impl Sandbox {
         };
         if binding.runtime_id != previous.runtime_id
             || binding.runtime_version
-                != match &self.lifecycle.operation {
-                    Some(SandboxLifecycleOperation::ImageRotation {
-                        target_runtime_version,
-                        ..
-                    }) => target_runtime_version,
-                    _ => &previous.runtime_version,
-                }
-                .as_str()
+                != self
+                    .admitted_runtime_update_target()
+                    .unwrap_or(&previous.runtime_version)
             || binding.provision_generation <= previous.provision_generation
             || binding.boot_id.is_none()
             || binding.boot_id == previous.boot_id

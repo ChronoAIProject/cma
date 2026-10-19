@@ -156,3 +156,49 @@ async fn runtime_update_worker_retains_paused_intent_and_allows_exact_failed_ret
         .completed_at
         .is_some());
 }
+
+#[tokio::test]
+async fn runtime_update_worker_resume_uses_admitted_target_on_original_home() {
+    let (f, active, mut now) = active().await;
+    let agent = lifecycle_recovery_tests::prepare_agent(&f.harness, &active, now, 1).await;
+    let paused = f.pause(&active, &mut now).await;
+    let target = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let mut admitted = paused.clone();
+    admitted
+        .begin_revive_with_managed_runtime(
+            SandboxReviveCause::ExplicitRequest,
+            Some(target),
+            rfc3339_at(now),
+        )
+        .unwrap();
+    f.harness
+        .store
+        .save_sandbox(paused.revision, admitted)
+        .await
+        .unwrap();
+    // A newer deployment cannot replace the exact target already admitted.
+    let updated = f.drive(&paused.id, &mut now, SandboxStatus::Active, "registry.example/runtime@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc").await;
+    assert_eq!(updated.runtime.as_ref().unwrap().runtime_version, target);
+    assert_eq!(
+        updated.runtime.as_ref().unwrap().runtime_id,
+        active.runtime.unwrap().runtime_id
+    );
+    assert_eq!(updated.lifecycle.home, active.lifecycle.home);
+    assert!(updated
+        .runtime_update_request()
+        .unwrap()
+        .completed_at
+        .is_some());
+    assert_eq!(
+        f.harness
+            .store
+            .get_agent(&agent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .conversation
+            .conversation_id,
+        agent.conversation.conversation_id
+    );
+    assert!(f.backend.calls.snapshot().contains(&"upgrade".into()));
+}

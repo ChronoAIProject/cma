@@ -2836,7 +2836,8 @@
         "missing_idempotency_key",
         "runtime_update_target_changed",
         "idempotency_key_reused",
-        "hierarchy_service_unavailable"
+        "hierarchy_service_unavailable",
+        "runtime_update_not_available"
       ]
     }
   }
