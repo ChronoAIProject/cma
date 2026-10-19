@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
 import { Operations, canOpenOperations } from './Operations';
-import { detail, now, operatorClient, profileRow, sandboxRow } from './testFixtures';
+import { detail, now, operatorClient, sandboxRow } from './testFixtures';
 
 describe('operator capabilities and record views', () => {
   it("shows people by name and keeps another owner's Agents under the right Workspace", async () => {
@@ -92,17 +92,21 @@ describe('operator capabilities and record views', () => {
     await screen.findByText('Research Sandbox');
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Sandboxes',
-      'Profiles',
       'Activity',
     ]);
     expect(screen.queryByRole('tab', { name: 'Platform settings' })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Sandboxes' }), { key: 'ArrowRight' });
-    expect(screen.getByRole('tab', { name: 'Profiles' })).toHaveFocus();
-    await screen.findByText('Research Agent');
+    expect(screen.getByRole('tab', { name: 'Activity' })).toHaveFocus();
+    await screen.findByText('Actor Morgan Park');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Activity' }), { key: 'ArrowLeft' });
+    expect(screen.getByRole('tab', { name: 'Sandboxes' })).toHaveFocus();
+    await screen.findByText('Research Sandbox');
     rerender(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByText('Actor Morgan Park');
     expect(screen.getAllByRole('tab')).toHaveLength(1);
     expect(client.admin.readSettings).not.toHaveBeenCalled();
+    expect(client.admin.listProfiles).not.toHaveBeenCalled();
+    expect(client.admin.retireProfile).not.toHaveBeenCalled();
     expect(screen.queryByText('must not render')).not.toBeInTheDocument();
   });
 
@@ -210,61 +214,6 @@ describe('operator capabilities and record views', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(client.admin.retireSandbox).toHaveBeenCalledTimes(1);
     expect(client.admin.readSandbox).toHaveBeenCalledTimes(1);
-  });
-
-  it('filters profiles, marks protected defaults, and keeps typed refusal in confirmation', async () => {
-    const client = operatorClient();
-    const user = userEvent.setup();
-    client.admin.listProfiles.mockResolvedValue({
-      items: [{ ...profileRow, id: 'agp_default', name: 'Default Agent' }, profileRow],
-      next: null,
-    });
-    client.admin.retireProfile.mockRejectedValue(new ApiError(403, 'Refused', 'not_an_operator'));
-    render(
-      <Operations client={client} capabilities={['read_all_sandboxes', 'control_any_sandbox']} />,
-    );
-    await user.click(screen.getByRole('tab', { name: 'Profiles' }));
-    await screen.findByText('Default Agent');
-    expect(screen.getAllByRole('button', { name: 'Retire' })[0]).toBeDisabled();
-    expect(screen.getByText('Deployment-owned default.')).toBeInTheDocument();
-    await chooseOptionValue(user, screen.getByLabelText('Profile kind'), 'agent');
-    await chooseOptionValue(user, screen.getByLabelText('Profile visibility'), 'public');
-    await user.type(screen.getByLabelText('Profile owner'), 'owner-1');
-    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
-    await waitFor(() =>
-      expect(client.admin.listProfiles).toHaveBeenLastCalledWith(
-        expect.objectContaining({ kind: 'agent', visibility: 'public', owner: 'owner-1' }),
-      ),
-    );
-    await user.click(screen.getAllByRole('button', { name: 'Retire' })[1]!);
-    await user.click(screen.getByRole('checkbox'));
-    await user.click(screen.getByRole('button', { name: 'Retire profile' }));
-    await screen.findByText(/required operator capability/);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(client.admin.retireProfile).toHaveBeenCalledWith('agent', 'agp-1');
-  });
-
-  it('offers a read after ambiguous profile retirement and leaves Cancel functional', async () => {
-    const client = operatorClient();
-    const user = userEvent.setup();
-    client.admin.retireProfile.mockRejectedValue(new Error('Disconnected'));
-    render(
-      <Operations client={client} capabilities={['read_all_sandboxes', 'control_any_sandbox']} />,
-    );
-    await user.click(screen.getByRole('tab', { name: 'Profiles' }));
-    await user.click(await screen.findByRole('button', { name: 'Retire' }));
-    await user.click(screen.getByRole('checkbox'));
-    await user.click(screen.getByRole('button', { name: 'Retire profile' }));
-    const check = await screen.findByRole('button', { name: 'Check current state' });
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
-    client.admin.listProfiles.mockResolvedValue({
-      items: [{ ...profileRow, retired_at: now }],
-      next: null,
-    });
-    await user.click(screen.getByRole('checkbox'));
-    await user.click(check);
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(client.admin.retireProfile).toHaveBeenCalledTimes(1);
   });
 
   it('filters and pages activity without exposing raw detail', async () => {

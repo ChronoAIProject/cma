@@ -14,6 +14,8 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod current;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
     #[serde(rename = "_id")]
@@ -184,8 +186,9 @@ impl NativeWarmPools {
         if self.store.find(&target.id).await?.is_some() {
             return Ok(());
         }
-        // A prior image/policy remains independently owned and may still back
-        // retained Sandboxes. It is deliberately not resized or deleted here.
+        // Original pool identities remain available for retained Sandboxes.
+        // Obsolete pools are removed only after pending allocations and
+        // running old control-plane processes have been ruled out.
         // Lost insert acknowledgements are resolved by the store's idempotent
         // identity lookup. A duplicate exact plan is safe to leave untouched.
         self.store.insert(target).await.map(|_| ())
@@ -347,6 +350,12 @@ impl WarmPoolAdministration for NativeWarmPools {
             || body.expected_revision >= i64::MAX as u64
         {
             return Err(WarmPoolError::Invalid);
+        }
+        if body.target_replicas > 0 {
+            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+            if !self.current_plan(&target)? {
+                return Err(WarmPoolError::Conflict);
+            }
         }
         let target = self.store.resize(id, &body).await?;
         Ok(target.view(None, true))
