@@ -137,6 +137,32 @@ if mode == "release"
     end
     raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
   end
+  %w[portal-capture wrong-protocol-target stripped-connect removed-legacy-host wrong-openapi-target].each do |mutation|
+    candidate = GatewaySourceContract.expected
+    routes = candidate.fetch("infra/cmaeg/httproute.yaml")
+    public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public" }
+    case mutation
+    when "portal-capture"
+      public_route["spec"]["rules"][0]["matches"][0]["path"]["value"] = "/event-gateway"
+    when "wrong-protocol-target"
+      public_route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-agent-manager")
+    when "stripped-connect"
+      public_route["spec"]["rules"][-1]["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
+    when "removed-legacy-host"
+      routes.delete_at(0)
+    when "wrong-openapi-target"
+      api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web" }
+      discovery = api_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/agent-manager/openapi.json" } }
+      discovery["backendRefs"] = GatewaySourceContract.backend("cma-web")
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted incompatible service routing: #{mutation}"
+  end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
   %w[http://example-host-03.example-namespace.svc https://example-host-01.example-namespace.svc http://example-host-01.example-namespace.svc:8080 missing duplicate].each do |origin|
