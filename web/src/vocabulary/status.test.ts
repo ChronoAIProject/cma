@@ -6,7 +6,7 @@ it.each([
   ['provisioning', 'Starting'],
   ['installing', 'Starting'],
   ['reviving', 'Resuming'],
-  ['rotating', 'Resuming'],
+  ['rotating', 'Updating runtime'],
   ['credential_rotating', 'Updating access'],
   ['pausing', 'Pausing'],
   ['paused', 'Paused'],

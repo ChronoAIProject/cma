@@ -278,7 +278,7 @@ it.each(['active'] as const)(
   },
 );
 
-it.each(['paused', 'reviving', 'provisioning', 'pausing', 'retiring'] as const)(
+it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'] as const)(
   'keeps child creation disabled for a %s parent',
   async (status) => {
     render(
@@ -293,7 +293,7 @@ it.each(['paused', 'reviving', 'provisioning', 'pausing', 'retiring'] as const)(
       />,
     );
     expect(await screen.findByRole('button', { name: 'New workspace' })).toBeDisabled();
-    if (['paused', 'pausing', 'reviving'].includes(status)) {
+    if (['paused', 'pausing', 'reviving', 'rotating'].includes(status)) {
       expect(await screen.findByRole('link', { name: 'Agent one' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'New agent' })).toBeDisabled();
       expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument();
