@@ -185,8 +185,9 @@ impl InMemorySandboxStore {
                 );
                 let mut next_sandbox = sandbox.clone();
                 let revival = next_sandbox
-                    .record_creation_admission(
+                    .record_creation_admission_with_managed_runtime(
                         SandboxReviveCause::TriggerLaunch,
+                        self.managed_runtime_version(),
                         admission.event_at.clone(),
                     )
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -287,7 +288,12 @@ impl InMemorySandboxStore {
             | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
             AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
         };
-        let revival = admission.record_parent_admission(&mut next_sandbox, &workspace, cause)?;
+        let revival = admission.record_parent_admission(
+            &mut next_sandbox,
+            &workspace,
+            cause,
+            self.managed_runtime_version(),
+        )?;
         candidate
             .sandboxes
             .insert(next_sandbox.id.clone(), next_sandbox);

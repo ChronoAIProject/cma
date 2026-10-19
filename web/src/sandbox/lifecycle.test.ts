@@ -10,6 +10,13 @@ import {
 } from './lifecycle';
 
 describe('public Sandbox lifecycle presentation', () => {
+  it('keeps history readable and labels runtime rotation without pretending it is a resume', () => {
+    const sandbox = sandboxFixture('rotating');
+    expect(sandboxChildrenReadable(sandbox)).toBe(true);
+    expect(sandboxLifecycleLabel(sandbox)).toBe('Updating runtime');
+    expect(sandboxUnavailableNotice(sandbox)).toContain('history remain available');
+    expect(sandboxRefreshDelay(sandbox)).toBe(1500);
+  });
   it('keeps existing Agents readable and working while their service key updates', () => {
     const sandbox = sandboxFixture('credential_rotating');
     expect(sandboxChildrenReadable(sandbox)).toBe(true);

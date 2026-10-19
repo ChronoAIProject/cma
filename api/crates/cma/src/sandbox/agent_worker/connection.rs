@@ -2,8 +2,7 @@ use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
-    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, Sandbox, SandboxImageRotationPhase,
-    SandboxLifecycleOperation, SandboxRevivePhase, SandboxStatus, WorkspaceStatus,
+    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
 };
 
 use super::startup_support::{live_target, registry_failure};
@@ -76,7 +75,7 @@ impl AgentWorker {
         }
         let context = self.context(agent).await?;
         if (context.sandbox.status != SandboxStatus::Active
-            && !restored_connection_is_ready(&context.sandbox, agent))
+            && !context.sandbox.restored_connection_is_ready(agent))
             || context.workspace.status != WorkspaceStatus::Ready
             || context.worktree.status != layer2_core::sandbox::WorktreeStatus::Ready
         {
@@ -142,47 +141,4 @@ impl AgentWorker {
         }
         Err(SandboxStoreError::Conflict)
     }
-}
-
-pub(super) fn restored_connection_is_ready(sandbox: &Sandbox, agent: &Agent) -> bool {
-    let Some(operation) = sandbox.lifecycle.operation.as_ref() else {
-        return false;
-    };
-    // Reconnection must settle before final activation, but grants no message admission.
-    matches!(
-        agent.work.step,
-        AgentWorkStep::PublishConnection | AgentWorkStep::InstallSkill
-    ) && sandbox.status == operation.expected_status()
-        && matches!(
-            operation,
-            SandboxLifecycleOperation::Revive {
-                phase: SandboxRevivePhase::QueuedMessageDelivery
-                    | SandboxRevivePhase::PublishActive,
-                ..
-            } | SandboxLifecycleOperation::ImageRotation {
-                phase: SandboxImageRotationPhase::QueuedMessageDelivery
-                    | SandboxImageRotationPhase::PublishActive,
-                ..
-            }
-        )
-        && sandbox.credential.delivered
-        && sandbox.runtime.as_ref().is_some_and(|runtime| {
-            runtime.provision_generation.is_some_and(|generation| {
-                generation > 0 && agent.conversation.runtime_generation == Some(generation)
-            })
-        })
-        && ((sandbox.retained_home_recovery().is_some() && sandbox.restores_agent(agent))
-            || sandbox
-                .lifecycle
-                .checkpoints
-                .latest
-                .as_ref()
-                .is_some_and(|checkpoint| {
-                    operation.checkpoint_epoch() == Some(checkpoint.epoch)
-                        && checkpoint.conversations.iter().any(|conversation| {
-                            conversation.agent_id == agent.id
-                                && agent.conversation.conversation_id.as_deref()
-                                    == Some(conversation.conversation_id.as_str())
-                        })
-                }))
 }

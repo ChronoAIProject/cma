@@ -89,12 +89,14 @@ impl AgentSandboxClient {
             )
         };
         before.data["spec"]["operatingMode"] = json!("Suspended");
-        self.verify_explicit_runtime_policy(&desired).await?;
         timing.completed("generation_proof_render");
         let actual = self
             .get(runtime)
             .await?
             .ok_or_else(|| unavailable("Suspended Sandbox is absent"))?;
+        if home.is_none() {
+            self.verify_explicit_runtime_policy(&actual).await?;
+        }
         // A lost acknowledgement may leave the admitted next generation Running.
         // This does not authorize another generation or another creation.
         if self.matches(&actual, &desired).is_ok() {
@@ -144,14 +146,15 @@ impl AgentSandboxClient {
         // Both generations retain this persisted attachment. Acquire its complete
         // Claim/Sandbox/PVC authority once, then render without additional reads.
         // This proof is local to this call; suspension and final CAS still reread.
-        self.pools.prove_native_home(home).await?;
+        let member = self.pools.prove_native_home(home).await?;
+        self.verify_explicit_runtime_policy(&member).await?;
         let before = self
             .pools
-            .runtime_desired_for_home(origin, home, previous, name)?;
+            .runtime_desired_for_member(origin, home, previous, name, &member)?;
         model::desired_at(&self.config, next, &self.control_token(name), name)?;
         let desired = self
             .pools
-            .runtime_desired_for_home(origin, home, next, name)?;
+            .runtime_desired_for_member(origin, home, next, name, &member)?;
         Ok((before, desired))
     }
 
@@ -167,7 +170,11 @@ impl AgentSandboxClient {
         self.wait_suspended(runtime, &desired).await
     }
 
-    async fn wait_suspended(&self, runtime: &RuntimeHandle, desired: &DynamicObject) -> Result<()> {
+    pub(super) async fn wait_suspended(
+        &self,
+        runtime: &RuntimeHandle,
+        desired: &DynamicObject,
+    ) -> Result<()> {
         let (name, uid) = parse_handle(runtime)?;
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
@@ -210,7 +217,7 @@ impl AgentSandboxClient {
     }
 }
 
-fn validate_successor(
+pub(super) fn validate_successor(
     previous: &ProviderSandboxRequest,
     next: &ProviderSandboxRequest,
 ) -> Result<()> {

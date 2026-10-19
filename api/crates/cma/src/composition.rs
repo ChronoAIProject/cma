@@ -8,6 +8,7 @@ mod credentials;
 mod event_routing;
 mod profiles;
 mod routes;
+mod runtime;
 use crate::auth::service_portal;
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
@@ -209,14 +210,8 @@ impl ControlPlaneComposition {
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_resource_access(resource_access.clone());
-        let native_warm_pools = crate::warm_pools::NativeWarmPools::new(
-            stores.native_warm_pools.clone(),
-            adapter.clone(),
-            config.runtime.sandbox_image.clone(),
-            config.runtime.agent_sandbox_home_policy.clone(),
-            config.agent_manager_sandbox_capacity,
-            config.runtime.native_warm_pool_target,
-        );
+        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
+        let native_warm_pools = runtime.warm_pools;
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
             sandbox_operators,
@@ -237,6 +232,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_runtime_updates(runtime.updates)
         .with_user_directory(Arc::clone(&users));
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
         let profile_authoring = ProfileAuthoringService::new(

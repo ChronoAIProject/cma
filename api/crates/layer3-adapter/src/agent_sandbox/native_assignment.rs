@@ -40,10 +40,17 @@ impl AgentSandboxClient {
                     self.native_runtime_proof(runtime, request, &home).await
                 },
             );
-            // Policy keeps its original precedence. No bootstrap bytes leave
-            // until both fresh, operation-local read branches have succeeded.
-            policy?;
-            let before = before?;
+            // Original admissions preserve policy error precedence. A proven
+            // upgraded member can carry its own retained Pod policy after retirement;
+            // neither path delivers bootstrap before complete fresh authority.
+            let before = match before {
+                Ok(before) => before,
+                Err(error) => {
+                    policy?;
+                    return Err(error);
+                }
+            };
+            self.complete_native_runtime_policy(&home, before.member(), policy)?;
             if before.pod() != expected {
                 return Err(rejected("Sandbox Pod changed before runtime assignment"));
             }

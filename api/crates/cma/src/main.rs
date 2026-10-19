@@ -96,13 +96,18 @@ async fn serve() -> Result<(), String> {
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
-    // Persist the deployment-owned default native pool target before serving
-    // Agent creation. Resource reconciliation remains asynchronous and CRD-only.
+    // Do not admit allocations against a newly promoted runtime until its
+    // exact default pool has ready capacity (unless an operator disabled it).
     composition
         .native_warm_pools
         .ensure_default()
         .await
         .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    composition
+        .native_warm_pools
+        .await_default_ready()
+        .await
+        .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await

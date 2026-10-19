@@ -24,21 +24,21 @@ impl Sandbox {
         at: String,
     ) -> Result<(), SandboxModelError> {
         self.apply_claimed(holder, fence, at.clone(), at, |next| {
-            if next.lifecycle.home_recovery.is_none()
-                || !matches!(
-                    next.lifecycle.operation,
-                    Some(SandboxLifecycleOperation::Pause {
-                        phase: SandboxPausePhase::CaptureAndPublishCheckpoint,
-                        ..
-                    })
-                )
-            {
+            if next.lifecycle.home_recovery.is_none() {
                 return Err(invalid_execution());
             }
-            if let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
-                next.lifecycle.operation.as_mut()
-            {
-                *phase = SandboxPausePhase::PauseAgents;
+            match next.lifecycle.operation.as_mut() {
+                Some(SandboxLifecycleOperation::Pause { phase, .. })
+                    if *phase == SandboxPausePhase::CaptureAndPublishCheckpoint =>
+                {
+                    *phase = SandboxPausePhase::PauseAgents
+                }
+                Some(SandboxLifecycleOperation::ImageRotation { phase, .. })
+                    if *phase == SandboxImageRotationPhase::CaptureAndPublishCheckpoint =>
+                {
+                    *phase = SandboxImageRotationPhase::PauseAgents
+                }
+                _ => return Err(invalid_execution()),
             }
             Ok(())
         })
@@ -415,6 +415,24 @@ impl Sandbox {
                         .clone()
                         .ok_or_else(invalid_execution)?;
                     next.lifecycle.rotation.account(&checkpoint)?;
+                }
+            }
+            if next.admitted_runtime_update_target().is_some() {
+                if let Some(request) = next
+                    .lifecycle
+                    .runtime_update
+                    .as_mut()
+                    .and_then(|state| state.request.as_mut())
+                {
+                    if next
+                        .runtime
+                        .as_ref()
+                        .is_none_or(|binding| binding.runtime_version != request.target_version)
+                    {
+                        return Err(invalid_execution());
+                    }
+                    request.completed_at = Some(at.clone());
+                    request.failure = None;
                 }
             }
             next.lifecycle.operation = None;

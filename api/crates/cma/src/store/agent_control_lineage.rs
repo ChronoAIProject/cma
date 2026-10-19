@@ -26,7 +26,7 @@ pub(super) struct ControlSnapshot {
     pub(super) receipts: StoredControlReceipts,
     worktree: Worktree,
     workspace: Workspace,
-    sandbox: Sandbox,
+    pub(super) sandbox: Sandbox,
 }
 
 pub(super) async fn load_control_snapshot(

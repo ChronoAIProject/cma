@@ -32,6 +32,10 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 
 #[path = "availability_integration_tests.rs"]
 mod availability;
+#[path = "restored_connection_integration_tests.rs"]
+mod restored_connection_integration_tests;
+#[path = "runtime_update_integration_tests.rs"]
+mod runtime_update_integration_tests;
 
 pub(in crate::store) async fn database() -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -345,7 +349,10 @@ async fn maintenance_rotation_captures_live_identity_and_replays_only_exact_targ
         .await
         .unwrap()
         .unwrap();
-    assert!(!terminal_row.contains_key("sandbox_maintenance_fence"));
+    assert_eq!(
+        terminal_row.get_i64("sandbox_maintenance_fence").unwrap(),
+        1
+    );
     client.database(&name).drop().await.unwrap();
 }
 
