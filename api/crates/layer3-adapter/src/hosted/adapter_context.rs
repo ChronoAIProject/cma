@@ -28,11 +28,9 @@ impl HostedAdapter {
                     "native home belongs to another authority".into(),
                 ));
             }
-            let mut deployment = self.deployment.clone();
-            if let Some(image) = &adoption.expected_image {
-                deployment.image.uri = image.clone();
-            }
-            let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
+            let request = self
+                .deployment
+                .render_adoption(adoption, adoption.generation)?;
             let expected = crate::hosted::deployment::provider_request_identity(&request)?;
             if let Some(inspection) = self
                 .backend

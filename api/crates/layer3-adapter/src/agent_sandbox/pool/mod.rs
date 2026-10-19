@@ -17,6 +17,7 @@ pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
 mod runtime;
+pub(crate) mod runtime_upgrade;
 
 use kube::{
     api::{DynamicObject, PostParams},
