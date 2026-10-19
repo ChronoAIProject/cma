@@ -397,6 +397,8 @@ dependencies = [
  "base64 0.22.1",
  "cma-service-auth",
  "futures-util",
+ "meteroid-utoipa",
+ "meteroid-utoipa-axum",
  "mongodb",
  "reqwest",
  "serde",

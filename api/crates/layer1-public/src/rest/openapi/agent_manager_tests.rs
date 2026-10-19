@@ -164,7 +164,6 @@ fn pruning_removes_all_unreachable_components_and_tags_without_dangling_referenc
         .values()
         .flat_map(|item| METHODS.iter().filter_map(move |method| item.get(*method)))
         .flat_map(|operation| operation["tags"].as_array().unwrap())
-        .cloned()
         .map(|name| name.as_str().unwrap().to_owned())
         .collect();
     let declared_tags: BTreeSet<_> = focused["tags"]
