@@ -73,7 +73,11 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
                 _ => SandboxReviveCause::WorkspaceCreation,
             };
             let event = next_sandbox
-                .record_creation_admission(cause, admission.event_at.clone())
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    self.managed_runtime_version(),
+                    admission.event_at.clone(),
+                )
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             candidate
                 .sandboxes

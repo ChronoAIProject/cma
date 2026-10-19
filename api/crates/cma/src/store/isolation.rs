@@ -317,6 +317,10 @@ mod tests {
             stores.ping().await.unwrap();
             assert!(stores.sandbox_model.warm_runtime_version.is_none());
             assert!(stores.sandbox_model.warm_home_policy.is_none());
+            assert_eq!(
+                stores.sandbox_model.managed_runtime_version.as_deref(),
+                Some("runtime-isolation-contract")
+            );
         }
         use layer3_adapter::hosted::RuntimeRoutingStore;
         let routing =

@@ -86,6 +86,7 @@ mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
 mod runtime_update;
+mod runtime_update_resume;
 pub use runtime_update::{
     runtime_update_agents_are_idle, SandboxRuntimeUpdateRequest, SandboxRuntimeUpdateState,
 };
@@ -322,3 +323,6 @@ mod runtime_update_lifecycle_tests;
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
+
+#[cfg(test)]
+mod runtime_update_resume_tests;

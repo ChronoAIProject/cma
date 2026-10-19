@@ -92,6 +92,10 @@ mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
+    fn managed_runtime_version(&self) -> Option<&str> {
+        self.managed_runtime_version.as_deref()
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
         if !sandbox.credential.service_grants.is_empty()
             || sandbox.credential.service_scope.is_some()
@@ -410,5 +414,12 @@ impl AgentLogStore for InMemorySandboxStore {
             limit,
             |event| event.seq,
         )
+    }
+}
+
+impl InMemorySandboxStore {
+    pub fn with_managed_runtime_version(mut self, version: String) -> Self {
+        self.managed_runtime_version = Some(version);
+        self
     }
 }
