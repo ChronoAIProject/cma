@@ -213,7 +213,7 @@ impl TriggerService {
 
     pub async fn delete(&self, caller: &Caller, id: &TriggerId) -> Result<(), TriggerServiceError> {
         self.definitions
-            .delete_unpublished_trigger(id, &caller.subject)
+            .delete_trigger(id, &caller.subject, now_rfc3339())
             .await
             .map_err(TriggerServiceError::from)
     }

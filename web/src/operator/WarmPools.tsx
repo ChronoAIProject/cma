@@ -55,6 +55,15 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
           },
     );
   };
+  const current = data?.items.filter((pool) => pool.image === data.default_image) ?? [];
+  const previous = data?.items.filter((pool) => pool.image !== data.default_image) ?? [];
+  const previousNeedsAttention = previous.some(
+    (pool) =>
+      pool.target_replicas > 0 ||
+      (pool.ready_replicas ?? 0) > 0 ||
+      !pool.observed ||
+      pool.error !== null,
+  );
   return (
     <section className="warm-pools" aria-label="Warm pools">
       <header className="warm-pool-header">
@@ -85,6 +94,10 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
               runtime service is ready.
             </p>
           ) : null}
+          <div className="warm-pool-image">
+            <span>Current runtime image</span>
+            <code>{data.default_image || 'No runtime image configured'}</code>
+          </div>
           <WarmPoolCreate
             client={client}
             image={data.default_image}
@@ -92,16 +105,51 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
             memoryMib={data.default_memory_mib}
             onChanged={changed}
           />
-          {data.items.length === 0 ? (
+          {current.length === 0 ? (
             <p className="operator-empty">
-              No warm pools configured. New Agents can start without reserved capacity.
+              No warm pools configured for the current runtime. New Agents can start without
+              reserved capacity.
             </p>
           ) : null}
           <div className="warm-pool-list">
-            {data.items.map((pool) => (
-              <WarmPoolCard key={pool.id} client={client} pool={pool} onChanged={changed} />
+            {current.map((pool) => (
+              <WarmPoolCard
+                key={pool.id}
+                client={client}
+                pool={pool}
+                currentDefault={
+                  !!data.default_config_sha256 && pool.config_sha256 === data.default_config_sha256
+                }
+                onChanged={changed}
+              />
             ))}
           </div>
+          {previousNeedsAttention ? (
+            <p className="operator-notice" role="status">
+              Previous runtime pools still have spare capacity or need attention. Review them below;
+              disable any remaining targets. Claimed Sandboxes keep running.
+            </p>
+          ) : null}
+          {previous.length > 0 ? (
+            <details className="warm-pool-create" open={previousNeedsAttention}>
+              <summary>Previous runtime pools ({previous.length})</summary>
+              <div className="warm-pool-list">
+                <p className="operator-notice">
+                  Previous runtime images are no longer prewarmed. These records remain available
+                  for capacity and cleanup checks.
+                </p>
+                {previous.map((pool) => (
+                  <WarmPoolCard
+                    key={pool.id}
+                    client={client}
+                    pool={pool}
+                    previousRuntime
+                    onChanged={changed}
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
         </>
       ) : null}
     </section>
