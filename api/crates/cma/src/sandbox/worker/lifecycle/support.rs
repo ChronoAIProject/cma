@@ -153,6 +153,23 @@ impl SandboxWorker {
             )
             .map_err(model_error)?;
             failure.typed()
+        } else if sandbox
+            .runtime_update_request()
+            .is_some_and(|request| request.completed_at.is_none())
+            && matches!(
+                sandbox.lifecycle.operation,
+                Some(layer2_core::sandbox::SandboxLifecycleOperation::ImageRotation { .. })
+            )
+        {
+            let typed = failure.typed();
+            next.park_failed_runtime_update(
+                typed.clone(),
+                &lease.holder,
+                lease.fence,
+                stamp.clone(),
+            )
+            .map_err(model_error)?;
+            typed
         } else {
             next.fail_lifecycle(
                 failure.detail().into(),

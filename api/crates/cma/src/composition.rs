@@ -237,6 +237,12 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_runtime_updates(Arc::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                stores.sandbox_model.clone(),
+                config.runtime.sandbox_image.clone(),
+            ),
+        ))
         .with_user_directory(Arc::clone(&users));
         let recorder = ActivityRecorder::new(Arc::clone(&activity));
         let profile_authoring = ProfileAuthoringService::new(

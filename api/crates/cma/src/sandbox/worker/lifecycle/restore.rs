@@ -89,16 +89,27 @@ impl SandboxWorker {
                 return self.handle_lifecycle_failure(sandbox, failure, now).await;
             }
         }
-        let request = RuntimeProvisionRequest::new(
-            generation,
-            sandbox_spec(&sandbox, &self.config.deployment_id),
-        );
+        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        if let Some(SandboxLifecycleOperation::ImageRotation {
+            target_runtime_version,
+            ..
+        }) = &sandbox.lifecycle.operation
+        {
+            spec.runtime_image = Some(target_runtime_version.clone());
+        }
+        let request = RuntimeProvisionRequest::new(generation, spec);
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             match crate::sandbox::runtime_attachment::retained_runtime_request(
                 &sandbox,
                 binding,
                 &self.config.deployment_id,
             ) {
+                Ok(retained) if matches!(&sandbox.lifecycle.operation, Some(SandboxLifecycleOperation::ImageRotation { target_runtime_version, .. }) if target_runtime_version != &binding.runtime_version) => {
+                    self.dependencies
+                        .adapter
+                        .upgrade_runtime(&retained, &request)
+                        .await
+                }
                 Ok(retained) => {
                     self.dependencies
                         .adapter
@@ -460,19 +471,17 @@ pub(super) fn replacement_runtime_generation(
 }
 
 fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
-    if let Some(binding) = &sandbox.lifecycle.suspended_runtime {
-        return binding.runtime_version.clone();
-    }
     match sandbox.lifecycle.operation.as_ref() {
         Some(SandboxLifecycleOperation::ImageRotation {
             target_runtime_version,
             ..
         }) => target_runtime_version.clone(),
         _ => sandbox
-            .profile
-            .content
-            .runtime_image
-            .clone()
+            .lifecycle
+            .suspended_runtime
+            .as_ref()
+            .map(|binding| binding.runtime_version.clone())
+            .or_else(|| sandbox.profile.content.runtime_image.clone())
             .unwrap_or_else(|| deployed.to_owned()),
     }
 }

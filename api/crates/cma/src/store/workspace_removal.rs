@@ -48,7 +48,10 @@ pub(super) async fn apply_removal(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::SandboxNotReady))?;
-    if parent.owner != *owner || parent.lifecycle.checkpoint_capture.is_some() {
+    if parent.owner != *owner
+        || parent.lifecycle.checkpoint_capture.is_some()
+        || parent.status == layer2_core::sandbox::SandboxStatus::Rotating
+    {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
 
