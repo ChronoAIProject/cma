@@ -91,7 +91,7 @@ async fn publish_once(
 ) -> Result<PublicTrigger, AttemptError> {
     let document = store
         .definitions
-        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str() })
+        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str(), "archived_at": mongodb::bson::Bson::Null })
         .session(&mut *session)
         .await
         .map_err(AttemptError::Driver)?

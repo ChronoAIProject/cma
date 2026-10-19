@@ -44,7 +44,7 @@ impl InMemoryTriggerStore {
         let stored = state
             .triggers
             .get(id)
-            .filter(|trigger| &trigger.owner == owner)
+            .filter(|trigger| &trigger.owner == owner && trigger.archived_at.is_none())
             .ok_or(TriggerStoreError::NotFound)?;
         let mut changed = stored.clone();
         let result = change(&mut changed)?;
@@ -169,20 +169,21 @@ impl TriggerStore for InMemoryTriggerStore {
             .lock()
             .triggers
             .get(id)
-            .filter(|trigger| &trigger.owner == owner)
+            .filter(|trigger| &trigger.owner == owner && trigger.archived_at.is_none())
             .cloned())
     }
 
-    async fn delete_unpublished_trigger(
+    async fn delete_trigger(
         &self,
         id: &TriggerId,
         owner: &SubjectId,
+        archived_at: String,
     ) -> Result<(), TriggerStoreError> {
         let mut state = self.lock();
         let trigger = state
             .triggers
             .get(id)
-            .filter(|trigger| &trigger.owner == owner)
+            .filter(|trigger| &trigger.owner == owner && trigger.archived_at.is_none())
             .ok_or(TriggerStoreError::NotFound)?;
         trigger
             .validate()
@@ -191,9 +192,13 @@ impl TriggerStore for InMemoryTriggerStore {
             || trigger.public_id.is_some()
             || !trigger.revisions.is_empty()
         {
-            return Err(TriggerStoreError::AlreadyPublished);
+            let mut archived = trigger.clone();
+            archived.archive(archived_at)?;
+            archived.validate()?;
+            state.triggers.insert(id.clone(), archived);
+        } else {
+            state.triggers.remove(id);
         }
-        state.triggers.remove(id);
         Ok(())
     }
 
@@ -269,7 +274,7 @@ impl TriggerStore for InMemoryTriggerStore {
         let stored = state
             .triggers
             .get(id)
-            .filter(|trigger| &trigger.owner == owner)
+            .filter(|trigger| &trigger.owner == owner && trigger.archived_at.is_none())
             .ok_or(TriggerStoreError::NotFound)?;
         if stored.draft_version != expected || stored.draft != before.draft {
             return Err(TriggerStoreError::Conflict {
@@ -339,7 +344,7 @@ impl TriggerStore for InMemoryTriggerStore {
             .lock()
             .triggers
             .values()
-            .filter(|trigger| &trigger.owner == owner)
+            .filter(|trigger| &trigger.owner == owner && trigger.archived_at.is_none())
             .cloned()
             .collect();
         triggers.sort_by(|left, right| left.id.cmp(&right.id));
@@ -452,16 +457,17 @@ impl TriggerStore for InMemoryTriggerStore {
     }
 
     async fn record_agent_ready(&self, id: &TriggerId) -> Result<TriggerStats, TriggerStoreError> {
-        let owner = self
-            .lock()
+        let mut state = self.lock();
+        let mut trigger = state
             .triggers
             .get(id)
-            .map(|trigger| trigger.owner.clone())
+            .cloned()
             .ok_or(TriggerStoreError::NotFound)?;
-        self.mutate_owned(id, &owner, |trigger| {
-            trigger.record_agent_ready()?;
-            Ok(trigger.stats.clone())
-        })
+        trigger.record_agent_ready()?;
+        trigger.validate()?;
+        let stats = trigger.stats.clone();
+        state.triggers.insert(id.clone(), trigger);
+        Ok(stats)
     }
 
     async fn guard_sandbox_profile_retirement(

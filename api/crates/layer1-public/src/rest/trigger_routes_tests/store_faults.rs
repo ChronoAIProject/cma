@@ -103,7 +103,7 @@ macro_rules! forward {
 forward!(FaultTriggerStore, TriggerStore, TriggerStoreError, {
     fn create_trigger(trigger: Trigger) -> ();
     fn trigger(id: &TriggerId, owner: &SubjectId) -> Option<Trigger>;
-    fn delete_unpublished_trigger(id: &TriggerId, owner: &SubjectId) -> ();
+    fn delete_trigger(id: &TriggerId, owner: &SubjectId, archived_at: String) -> ();
     fn trigger_revision(id: &TriggerId, digest: &str) -> Option<TriggerRevision>;
     fn save_draft(
         id: &TriggerId,

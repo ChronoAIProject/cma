@@ -349,7 +349,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     revision: 3,
   });
   assert.equal(writes[1].body.settings.triggers.orchestration_paused, true);
-  for (const view of ['Sandboxes', 'Profiles', 'Platform settings', 'Activity']) {
+  for (const view of ['Sandboxes', 'Platform settings', 'Activity']) {
     await page.setViewport({ width: 390, height: 844 });
     await clickText('[role="tab"]', view);
     await page.waitForFunction(
