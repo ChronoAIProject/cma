@@ -66,12 +66,6 @@ impl Sandbox {
             if retain_runtime {
                 // Preserve storage-owning provider authority after process loss.
                 // Its worker must quiesce the old incarnation before replacement.
-                if matches!(
-                    self.lifecycle.operation,
-                    Some(SandboxLifecycleOperation::ImageRotation { .. })
-                ) {
-                    return Err(invalid_recovery());
-                }
                 next.lifecycle.suspended_runtime =
                     Some(Box::new(self.runtime.clone().ok_or_else(invalid_recovery)?));
             }
@@ -174,6 +168,9 @@ impl Sandbox {
                 ..
             }) => {
                 let identity = SandboxRotationIdentity::capture(self, agents)?;
+                let resume_pause = previous
+                    .retained_home_recovery()
+                    .and_then(|source| source.resume_pause.clone());
                 self.lifecycle.start_image_rotation(
                     &self.id,
                     at.into(),
@@ -193,6 +190,9 @@ impl Sandbox {
                         .latest
                         .as_ref()
                         .map(|checkpoint| checkpoint.epoch);
+                }
+                if let Some(source) = &mut self.lifecycle.home_recovery {
+                    source.resume_pause = resume_pause;
                 }
             }
             _ => {

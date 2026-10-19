@@ -47,6 +47,8 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 mod lifecycle_view_tests;
 #[path = "sandbox_provider_view_tests.rs"]
 mod provider_view_tests;
+#[path = "sandbox_runtime_update_tests.rs"]
+pub(super) mod runtime_update_tests;
 #[path = "sandbox_service_access_tests.rs"]
 mod service_access_tests;
 type OperationKey = (String, String, String);

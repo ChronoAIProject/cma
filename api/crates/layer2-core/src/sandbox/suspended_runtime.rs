@@ -1,8 +1,8 @@
 //! A paused provider object remains durable authority until resumed or deleted.
 use super::lifecycle_execution_support::{invalid_execution, valid_runtime_binding};
 use super::{
-    RuntimeBinding, Sandbox, SandboxLifecycleOperation, SandboxModelError, SandboxPausePhase,
-    SandboxStatus,
+    RuntimeBinding, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation,
+    SandboxModelError, SandboxPausePhase, SandboxStatus,
 };
 
 impl Sandbox {
@@ -21,6 +21,11 @@ impl Sandbox {
                     if *phase == SandboxPausePhase::TeardownRuntime =>
                 {
                     *phase = SandboxPausePhase::PublishPaused;
+                }
+                Some(SandboxLifecycleOperation::ImageRotation { phase, .. })
+                    if *phase == SandboxImageRotationPhase::TeardownRuntime =>
+                {
+                    *phase = SandboxImageRotationPhase::CheckpointVerification;
                 }
                 _ => return Err(invalid_execution()),
             }
@@ -48,6 +53,7 @@ impl Sandbox {
                 SandboxStatus::Pausing
                     | SandboxStatus::Paused
                     | SandboxStatus::Reviving
+                    | SandboxStatus::Rotating
                     | SandboxStatus::Failed
                     | SandboxStatus::Retiring
             )
@@ -76,7 +82,15 @@ impl Sandbox {
             return Ok(());
         };
         if binding.runtime_id != previous.runtime_id
-            || binding.runtime_version != previous.runtime_version
+            || binding.runtime_version
+                != match &self.lifecycle.operation {
+                    Some(SandboxLifecycleOperation::ImageRotation {
+                        target_runtime_version,
+                        ..
+                    }) => target_runtime_version,
+                    _ => &previous.runtime_version,
+                }
+                .as_str()
             || binding.provision_generation <= previous.provision_generation
             || binding.boot_id.is_none()
             || binding.boot_id == previous.boot_id

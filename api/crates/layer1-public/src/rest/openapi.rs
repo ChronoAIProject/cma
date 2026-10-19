@@ -165,6 +165,7 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::remove,
         super::sandboxes::pause,
         super::sandboxes::revive,
+        super::sandbox_runtime_update::update,
         super::sandbox_commands::create,
         super::sandbox_commands::read,
         super::sandbox_service_access::grant,

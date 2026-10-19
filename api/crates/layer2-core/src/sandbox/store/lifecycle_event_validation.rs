@@ -62,6 +62,20 @@ fn sandbox_only_events(
             key_generation: next.credential.key_generation,
         }]);
     }
+    if let Some(failure) = next
+        .runtime_update_request()
+        .and_then(|request| request.failure.as_ref())
+        .filter(|_| {
+            current
+                .runtime_update_request()
+                .is_some_and(|request| request.failure.is_none())
+        })
+    {
+        return Ok(vec![SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            failure: failure.clone(),
+        }]);
+    }
     if next.status == SandboxStatus::Failed {
         let failure = next
             .failure

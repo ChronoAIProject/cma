@@ -85,6 +85,12 @@ mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+mod runtime_update;
+pub use runtime_update::{
+    runtime_update_agents_are_idle, SandboxRuntimeUpdateRequest, SandboxRuntimeUpdateState,
+};
+mod runtime_update_service;
+pub use runtime_update_service::{SandboxRuntimeUpdateError, SandboxRuntimeUpdateService};
 mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]
 mod sandbox;
@@ -309,3 +315,10 @@ mod workspace_service_tests;
 pub mod agent_access;
 pub mod agent_access_tool;
 mod suspended_runtime;
+
+#[cfg(test)]
+mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_test_support;
+#[cfg(test)]
+mod runtime_update_tests;
