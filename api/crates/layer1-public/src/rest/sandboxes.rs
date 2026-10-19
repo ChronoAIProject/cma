@@ -55,6 +55,10 @@ pub(super) fn routes() -> Router<HierarchyState> {
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))
         .route(
+            "/api/v1/sandboxes/{id}/runtime-update",
+            post(super::sandbox_runtime_update::update),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/service-access",
             post(super::sandbox_service_access::grant),
         )
@@ -253,8 +257,22 @@ pub(super) async fn read(
             .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
     }
     .map_err(HierarchyProblem::sandbox_read)?;
+    let runtime_update = match (&reading, &state.runtime_updates) {
+        (SandboxHierarchyReading::Personal(personal), Some(service))
+            if personal.sandbox.owner == caller.subject =>
+        {
+            Some(
+                super::sandbox_runtime_update::SandboxRuntimeUpdateView::new(
+                    &personal.sandbox,
+                    service,
+                ),
+            )
+        }
+        _ => None,
+    };
     let mut view = AccessibleSandboxDetailView::from(reading);
     if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
+        personal.sandbox.runtime_update = runtime_update;
         let names = super::public_names::resolve(
             &state.users,
             &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],

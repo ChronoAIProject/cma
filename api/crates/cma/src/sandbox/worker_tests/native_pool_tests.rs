@@ -9,7 +9,7 @@ use layer3_adapter::{
 #[path = "native_prepared_tests.rs"]
 mod native_prepared_tests;
 
-struct Pools {
+pub(super) struct Pools {
     store: Arc<InMemorySandboxStore>,
     claim: Mutex<Option<NativePoolClaim>>,
     disk: Mutex<Option<HomeVolumeAttachment>>,
@@ -51,7 +51,7 @@ impl Pools {
             Ok(())
         }
     }
-    fn binding(home: &HomeVolumeRequest) -> NativePoolBinding {
+    pub(super) fn binding(home: &HomeVolumeRequest) -> NativePoolBinding {
         NativePoolBinding {
             spec: NativePoolSpec {
                 image: layer3_adapter::RuntimeImage {
@@ -426,7 +426,7 @@ fn worker(harness: &Harness, pools: Arc<Pools>) -> Arc<SandboxWorker> {
     )
 }
 
-fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> {
+pub(super) fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> {
     Arc::new(Pools {
         store: harness.store.clone(),
         claim: Mutex::new(None),

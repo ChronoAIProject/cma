@@ -15,6 +15,7 @@ struct Row {
 #[derive(Clone, Default)]
 pub(super) struct NativeBackend {
     inner: InMemoryHostedBackend,
+    pub pools: Option<Arc<super::super::native_pool_tests::Pools>>,
     row: Arc<tokio::sync::Mutex<Option<Row>>>,
     pub lose_suspend: Arc<AtomicBool>,
     pub lose_resume: Arc<AtomicBool>,
@@ -62,6 +63,35 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    fn native_pools(&self) -> Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl> {
+        self.pools
+            .as_deref()
+            .map(|pool| pool as &dyn layer3_adapter::agent_sandbox::NativePoolControl)
+    }
+    async fn select_native_pool(
+        &self,
+        _: &ProviderSandboxRequest,
+        _: &layer3_adapter::RuntimeImage,
+        home: &layer3_adapter::HomeVolumeRequest,
+    ) -> layer3_adapter::Result<Option<layer3_adapter::agent_sandbox::NativePoolBinding>> {
+        Ok(self
+            .pools
+            .as_ref()
+            .map(|_| super::super::native_pool_tests::Pools::binding(home)))
+    }
+    async fn upgrade_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+    ) -> layer3_adapter::Result<()> {
+        assert!(home.request.policy.is_native_vct());
+        assert_ne!(previous.image.uri, next.image.uri);
+        self.calls.push("upgrade");
+        self.resume(handle, previous, next).await
+    }
+
     async fn provision(
         &self,
         request: ProviderSandboxRequest,

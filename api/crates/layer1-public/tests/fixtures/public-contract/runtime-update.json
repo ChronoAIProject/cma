@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "runtime-update-noop",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "noop"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-replay",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "noop"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "anonymous"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-forbidden",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "forbidden"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-foreign",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "foreign"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-stale-target",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "stale"
+        },
+        "body": {
+          "target_version": "runtime-v1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-reused-key",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "noop"
+        },
+        "body": {
+          "target_version": "runtime-v1"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-update-unconfigured",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_unconfigured",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "unconfigured"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {},
+        "body": {},
+        "bodyKind": "json"
+      }
+    }
+  ]
+}
