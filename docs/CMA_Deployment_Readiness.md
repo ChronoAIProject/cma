@@ -652,14 +652,17 @@ configuration and must not determine the target. The private API endpoint was
 unreachable from CMA. No static token handoff is needed for metadata auth.
 The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatically.
 
-Only the current deployment runtime image and home/Pod policy receive native
-spare capacity. At control-plane startup, the warm-pool worker durably resizes
-superseded targets to zero using their current revision and lease fence; held
-leases or concurrent edits retry on the next worker tick. The original pool and
-template identities remain available for claimed Sandboxes and historical
-recovery. This retires unclaimed spares without rotating live user runtimes or
-changing their homes. An operator cannot raise an obsolete target above zero;
-multiple resource sizes using the current runtime and policy remain supported.
+New native spare capacity uses the current deployment runtime image and home/Pod
+policy. An operator cannot raise an obsolete target above zero; multiple resource
+sizes using the current runtime and policy remain supported. Release cleanup must
+first prove the old control-plane generation is gone and no pending Claim, durable
+home allocation or prepared reservation references an obsolete pool. It then
+drains the durable target using its revision and lease fence, verifies member/Pod
+finality and removes unreferenced original pool/template identities and target
+records. Preserve all claimed Sandboxes and their homes. Do not infer safe
+scale-down from startup or a single empty Claim list: reservations can be persisted
+before their Claim exists, and controller v1.0.2 does not fence cached excess-member
+deletion against concurrent adoption.
 Its ownership, immutable runtime contract and retained-home policy have not
 been verified as a CMA pool binding.
 
