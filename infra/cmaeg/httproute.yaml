@@ -102,16 +102,17 @@ spec:
           name: cma-event-gateway
           port: 80
           weight: 1
+    # GKE supports prefix rewrites only, including the discovery document.
     - matches:
         - path:
-            type: Exact
+            type: PathPrefix
             value: /event-gateway/openapi.json
       filters:
         - type: URLRewrite
           urlRewrite:
             path:
-              type: ReplaceFullPath
-              replaceFullPath: /openapi.json
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /openapi.json
       backendRefs:
         - group: ""
           kind: Service

@@ -106,7 +106,7 @@ module GatewaySourceContract
         "rules" => [
           gateway_public_route("PathPrefix", "v1", "/v1"),
           gateway_public_route("PathPrefix", "mcp", "/mcp"),
-          gateway_public_route("Exact", "openapi.json", "/openapi.json"),
+          gateway_public_route("PathPrefix", "openapi.json", "/openapi.json"),
           gateway_public_route("PathPrefix", "docs", "/docs"),
           { "matches" => [path("PathPrefix", "/event-gateway/connect"), path("PathPrefix", "/event-gateway/legacy-console")], "backendRefs" => backend("cma-event-gateway") },
         ],
