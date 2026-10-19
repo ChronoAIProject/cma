@@ -141,7 +141,7 @@ export function ChannelEditor({
         Supply name, profile, provider, sources, partition and reply using the{' '}
         <a
           className="service-link"
-          href="/api/event-gateway/openapi.json"
+          href="/event-gateway/openapi.json"
           target="_blank"
           rel="noreferrer"
         >

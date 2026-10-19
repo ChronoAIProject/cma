@@ -50,3 +50,100 @@ spec:
           requestRedirect:
             scheme: https
             statusCode: 301
+---
+# Public Gateway APIs share the portal origin. Keep the exact /event-gateway
+# page with the web SPA and the existing /api/event-gateway login bridge with
+# Agent Manager. Old-host routes remain valid for retained webhook addresses.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cma-event-gateway-public
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-event-gateway
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: https
+  hostnames:
+    - bot.chrono-ai.fun
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/v1
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /v1
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/mcp
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /mcp
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: Exact
+            value: /event-gateway/openapi.json
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /openapi.json
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/docs
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /docs
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /event-gateway/connect
+        - path:
+            type: PathPrefix
+            value: /event-gateway/legacy-console
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
