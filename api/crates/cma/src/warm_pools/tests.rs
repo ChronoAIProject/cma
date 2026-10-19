@@ -8,7 +8,7 @@ use std::sync::{
     Mutex,
 };
 
-pub(super) fn target() -> PoolTarget {
+pub(crate) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
@@ -35,6 +35,9 @@ pub(super) fn target() -> PoolTarget {
     };
     PoolTarget {
         id: "wp_test".into(),
+        activated_at: None,
+        retiring: false,
+        retired: false,
         document_schema_version: 1,
         revision: 1,
         actor: "operator".into(),
@@ -69,10 +72,42 @@ pub(super) fn target() -> PoolTarget {
 struct Memory {
     target: Mutex<PoolTarget>,
     bind_response_loss: AtomicBool,
+    retirement_block: Mutex<std::collections::VecDeque<bool>>,
     calls: Arc<Mutex<Vec<String>>>,
 }
 #[async_trait]
 impl PoolTargetStore for Memory {
+    async fn retirement_homes(
+        &self,
+        _: &PoolTarget,
+        _: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        self.calls.lock().unwrap().push("scan".into());
+        Ok((!self
+            .retirement_block
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(false))
+        .then_some(vec![]))
+    }
+    async fn begin_retirement(&self, _: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
+        self.calls.lock().unwrap().push("persist-retiring".into());
+        let mut target = self.target.lock().unwrap();
+        if !target.retiring {
+            target.retiring = true;
+            target.target_replicas = 0;
+            target.revision += 1;
+        }
+        Ok(target.clone())
+    }
+    async fn remove_retired(&self, _: &PoolTarget) -> Result<(), WarmPoolError> {
+        self.calls.lock().unwrap().push("remove-target".into());
+        Ok(())
+    }
+    async fn activate(&self, _: &str) -> Result<(), WarmPoolError> {
+        Ok(())
+    }
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError> {
         Ok(vec![self.target.lock().unwrap().clone()])
     }
@@ -122,6 +157,7 @@ struct Provider {
     calls: Arc<Mutex<Vec<String>>>,
     original: NativePoolConfiguration,
     refuse_replaced_uid: AtomicBool,
+    retired: AtomicBool,
 }
 impl Provider {
     fn binding(&self) -> NativePoolBinding {
@@ -138,6 +174,18 @@ impl Provider {
 }
 #[async_trait]
 impl NativePoolControl for Provider {
+    async fn begin_retirement(&self, _: &NativePoolBinding) -> layer3_adapter::Result<()> {
+        self.calls.lock().unwrap().push("mark-provider".into());
+        Ok(())
+    }
+    async fn retire_pool(
+        &self,
+        _: &NativePoolBinding,
+        _: &[layer3_adapter::HomeVolumeAttachment],
+    ) -> layer3_adapter::Result<bool> {
+        self.calls.lock().unwrap().push("prove-retirement".into());
+        Ok(self.retired.load(Ordering::SeqCst))
+    }
     fn plan(&self, spec: &NativePoolSpec) -> layer3_adapter::Result<NativePoolConfiguration> {
         assert_eq!(spec, &self.original.spec);
         Ok(self.original.clone())
@@ -213,10 +261,12 @@ async fn binding_is_durable_before_capacity_and_lost_ack_replays_original_uid() 
         calls: calls.clone(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
     };
     let store = Memory {
         target: Mutex::new(original),
         bind_response_loss: AtomicBool::new(true),
+        retirement_block: Mutex::new(std::collections::VecDeque::new()),
         calls: calls.clone(),
     };
     assert!(reconcile_one(&store, &provider).await.unwrap());
@@ -287,6 +337,7 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
         calls: Arc::default(),
         original: current.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
     };
     let spec = &current.plan.spec;
     let capacity = layer3_adapter::SandboxCapacity {
@@ -340,6 +391,7 @@ fn readiness_requires_original_binding_and_observed_current_target() {
         calls: Arc::default(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
     };
     let mut live = NativePoolStatus {
         binding: provider.binding(),
@@ -413,3 +465,6 @@ fn deployment_owned_image_admits_native_cold_and_warm_contracts() {
 
 #[path = "resize_tests.rs"]
 mod resize;
+
+#[path = "retirement_tests.rs"]
+mod retirement_tests;

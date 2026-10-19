@@ -43,6 +43,7 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         calls: Arc::default(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
     };
     let binding = provider.binding();
     store.bind(&leased, &binding).await.unwrap();
