@@ -1,7 +1,23 @@
 # CMA Image Manager API
 
-Local implementation, 2026-10-12; cloud execution and deployment remain to be verified. Independent service, root `/v1`, NyxID resource
-`cma-image-manager`. No Agent or Sandbox database access.
+Image Manager remains **disabled and undeployed in production**; cloud execution
+and deployment acceptance remain to be verified. It is an independent service,
+root `/v1`, NyxID resource `cma-image-manager`, with no Agent or Sandbox database access.
+
+The service now implements anonymous code-derived `GET /openapi.json` and
+`GET /image-manager/openapi.json` discovery endpoints. Both return the same
+contract from the actual HTTP handler registry and public request/response DTOs.
+The canonical same-origin discovery path is `/image-manager/openapi.json`;
+it becomes available only when this service is enabled. Its OpenAPI server is
+`/api/image-manager`, so documented `/v1` operations use the existing same-origin
+proxy. This source implementation does not enable or deploy Image Manager.
+
+For programmatic calls, use `Authorization: Bearer <NyxID user access token>`
+authorized for the `cma-image-manager` resource and relevant `cma-im:*`
+permissions. Service permissions and resource ownership/sharing are both checked.
+The service's own browser session is an alternative; backend bearer calls do
+not require its cookie. The discovery endpoints require neither authentication
+nor a database operation.
 
 ## Resources and operations
 
