@@ -21,6 +21,7 @@ import {
   sandboxRefreshDelay,
 } from './lifecycle';
 import { SandboxOverview } from './SandboxOverview';
+import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
 import { LifecycleProgress } from './LifecycleProgress';
 import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryNotice';
@@ -118,10 +119,19 @@ export function SandboxPage({
             views?.client === client &&
             sandbox.owner === views.viewerId &&
             !['retiring', 'retired'].includes(sandbox.status)
-          )
-            views.sandboxes.put(sandboxId, value);
-          else views?.forgetSandbox(sandboxId);
-          setStored({ request, state: { status: 'ready', ...value }, pollError: false });
+          ) {
+            const cached = views.sandboxes.get(sandboxId);
+            if (cached === undefined || cached.sandbox.revision <= sandbox.revision)
+              views.sandboxes.put(sandboxId, value);
+          } else views?.forgetSandbox(sandboxId);
+          setStored((previous) =>
+            previous?.request === request &&
+            previous.state.status === 'ready' &&
+            previous.state.sandbox.owner === sandbox.owner &&
+            previous.state.sandbox.revision > sandbox.revision
+              ? { ...previous, pollError: false }
+              : { request, state: { status: 'ready', ...value }, pollError: false },
+          );
           timer = setTimeout(
             poll,
             sandbox.workspaces.some(
@@ -337,6 +347,40 @@ export function SandboxPage({
           <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
         </div>
       </dl>
+      {sandbox.runtimeUpdate !== undefined &&
+      viewerId !== undefined &&
+      sandbox.owner === viewerId ? (
+        <SandboxRuntimeUpdate
+          client={client}
+          sandboxId={sandboxId}
+          ownerId={viewerId}
+          revision={sandbox.revision}
+          update={sandbox.runtimeUpdate}
+          stale={stale}
+          busy={busy}
+          onAccepted={(receipt) => {
+            const cached = views?.sandboxes.get(sandboxId);
+            if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
+              views?.sandboxes.put(sandboxId, {
+                ...cached,
+                sandbox: { ...cached.sandbox, ...receipt },
+              });
+            setStored((previous) => {
+              if (
+                previous?.request !== request ||
+                previous.state.status !== 'ready' ||
+                previous.state.sandbox.owner !== viewerId ||
+                previous.state.sandbox.revision > receipt.revision
+              )
+                return previous;
+              return {
+                ...previous,
+                state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
+              };
+            });
+          }}
+        />
+      ) : null}
       <SandboxOverview
         key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
         stale={stale}

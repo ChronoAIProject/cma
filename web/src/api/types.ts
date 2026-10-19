@@ -96,6 +96,7 @@ export interface SandboxSummary {
   readonly name: string;
   readonly status: SandboxStatus;
   readonly lifecycle?: SandboxLifecycle;
+  readonly runtimeUpdate?: SandboxRuntimeUpdate;
   readonly profile: ProfileReference;
   readonly lastActivityAt: string;
   readonly createdAt: string;
@@ -103,6 +104,22 @@ export interface SandboxSummary {
   readonly workspaceCount: number;
   readonly worktreeCount: number;
   readonly agentCount: number;
+}
+
+export interface SandboxRuntimeUpdate {
+  readonly currentVersion: string | null;
+  readonly latestVersion: string;
+  readonly updateAvailable: boolean;
+  readonly state: 'up_to_date' | 'available' | 'queued' | 'updating' | 'failed';
+  readonly canUpdate: boolean;
+  readonly blockedReason?: string;
+  readonly targetVersion?: string;
+  readonly requestedAt?: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failure?: { readonly code: string; readonly message: string };
+  readonly schedule: { readonly timezone: 'Asia/Singapore'; readonly localTime: '02:00' };
+  readonly preservesHome: boolean;
 }
 
 export interface WorkspaceSummary {
