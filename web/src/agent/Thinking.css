@@ -7,7 +7,6 @@
 .active-thinking {
   display: grid;
   grid-template-rows: 1fr;
-  margin-left: 44px;
   transition:
     grid-template-rows var(--ds-transition-duration) var(--ds-ease-in-out),
     opacity var(--ds-transition-duration) var(--ds-ease-in-out);
