@@ -8,6 +8,7 @@ import { join } from 'node:path';
 const requiredPrefixes = [
   'agent_lifecycle::workspace::tests::mongo::',
   'warm_pools::tests::mongo::',
+  'store::native_warm_pools::retirement::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',

@@ -70,6 +70,15 @@ fn read(document: &Document) -> Result<Record, SandboxStoreError> {
     Ok(record)
 }
 
+/// Consumed reservations retain historical payloads; ownership now lives in the
+/// Sandbox aggregate. Retirement only considers still-unowned preparation work.
+pub(super) fn unowned_for_retirement(
+    document: &Document,
+) -> Result<Option<WarmSandbox>, SandboxStoreError> {
+    let record = read(document)?;
+    Ok(record.ownership.is_none().then_some(record.payload))
+}
+
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())
 }

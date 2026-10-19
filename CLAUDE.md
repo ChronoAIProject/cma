@@ -291,6 +291,11 @@ multiple resource sizes for the current image. Release cleanup drains and remove
 obsolete pools only after the old control-plane generation is gone and no pending
 allocations or retained homes depend on them. Pool cleanup never rotates or
 deletes a claimed Sandbox; startup alone is not proof of allocation finality.
+Upgraded homes may outlive their original definitions only after exact retained
+Claim/Sandbox/PVC and policy verification proves they can recover independently.
+Retired target records preserve immutable release order and cannot be activated
+again by an older process. API/Web rollback retains the latest released runtime
+default; it does not downgrade `CHRONO_SANDBOX_IMAGE`.
 
 #### Capabilities must be proved
 
