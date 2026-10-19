@@ -1,6 +1,8 @@
 import { modelAccess, profileReference } from '../profiles/types.js';
 import { sandboxLifecycle } from './lifecycle.js';
+import { sandboxRuntimeUpdate } from './runtime-update.js';
 export type * from './lifecycle.js';
+export type * from './runtime-update.js';
 import {
   array,
   boolean,
@@ -59,6 +61,7 @@ const sandboxFields = {
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   lifecycle: optional(sandboxLifecycle),
   runtime_version: optional(text),
+  runtime_update: optional(sandboxRuntimeUpdate),
   failure: optional(failure),
   last_activity_at: text,
   created_at: text,

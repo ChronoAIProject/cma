@@ -136,6 +136,45 @@ without exposing their parents. `shared: true` and `organization` are mutually
 exclusive. Discovery refuses an incomplete result if organization authority is
 unavailable; each page revalidates all original membership evidence and grants.
 
+## Runtime updates
+
+Owner Sandbox reads may include `runtime_update`. Its `current_version` (nullable)
+and `latest_version` are exact runtime image references, not semantic versions.
+Use `can_update` for manual action eligibility and display `blocked_reason` when
+present. Shared projections omit this owner configuration.
+
+```ts
+import { Cma } from '@chronoai/cma-sdk';
+
+async function requestRuntimeUpdate(cma: Cma, id: string) {
+  const detail = await cma.sandboxes.read(id);
+  const update = detail.runtime_update;
+  if (!update?.can_update) return;
+  const body = {
+    target_version:
+      update.state === 'failed'
+        ? (update.target_version ?? update.latest_version)
+        : update.latest_version,
+  };
+  const key = crypto.randomUUID();
+  // Keep this exact body and key if the result is uncertain; do not retarget a retry.
+  return cma.sandboxes.updateRuntime(id, body, { idempotencyKey: key });
+}
+```
+
+`updateRuntime` uses `POST /api/v1/sandboxes/{id}/runtime-update`. A 202 response
+acknowledges scheduling; a 200 response may report an already-current runtime.
+Both return a base Sandbox view with `runtime_update`. Continue reading the
+existing detail to observe `queued`, `updating`, `failed` or `up_to_date` with a
+recorded `completed_at`. Acceptance does not mean rotation has finished.
+
+Automatic updates run daily at 02:00 Asia/Singapore. Active Agent turns, pending
+work and approvals defer rotation until idle. When `preserves_home` is true the
+same persistent home and retained conversations survive the update. A stale target
+is rejected with 409 rather than silently updating to a different runtime. A
+failed accepted update retains `target_version`; retry that target even if a
+newer deployment has become available.
+
 ## Shared lifecycle commands
 
 `submitCommand(id, { command, expected_revision }, { idempotencyKey })` admits an
