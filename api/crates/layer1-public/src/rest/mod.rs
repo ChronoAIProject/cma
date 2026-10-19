@@ -100,7 +100,9 @@ mod trigger_assets_test_support;
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
-pub use bindings::{binding_router, binding_router_with_native_tools};
+pub use bindings::{
+    binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
+};
 mod gateway_connections;
 mod gateway_interactions;
 mod gateway_records;
