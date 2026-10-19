@@ -1,4 +1,5 @@
 .agent-surface {
+  container: agent-conversation / inline-size;
   flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -141,16 +142,15 @@
 }
 
 .agent-surface__conversation > section {
-  width: min(100%, 748px);
-  padding: 24px;
+  width: 100%;
+  padding: 24px 15%;
   margin: 0 auto;
 }
 
 .message-stream {
   width: 100%;
-  max-width: var(--read-column);
   min-height: 100%;
-  padding: 28px 24px 40px;
+  padding: 28px 15% 40px;
   margin: 0 auto;
 }
 
@@ -457,7 +457,7 @@
 
 .agent-composer {
   grid-row: 4;
-  padding: 10px max(16px, calc((100% - var(--read-column)) / 2 + 20px)) 16px;
+  padding: 10px 15% 16px;
   background: var(--dsw-alias-bg-base);
 }
 
@@ -768,4 +768,21 @@
   --cma-system-font-scale: 1;
   font-size: var(--text-ui);
   line-height: 1.5;
+}
+
+/* Use the space left by the sidebar, not only the browser viewport. */
+@container agent-conversation (max-width: 48rem) {
+  .agent-surface__conversation > section,
+  .message-stream,
+  .agent-composer {
+    padding-inline: 24px;
+  }
+}
+
+@container agent-conversation (max-width: 30rem) {
+  .agent-surface__conversation > section,
+  .message-stream,
+  .agent-composer {
+    padding-inline: 14px;
+  }
 }
