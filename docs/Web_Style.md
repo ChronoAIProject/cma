@@ -2499,3 +2499,31 @@ exit; retain the existing 44px mobile touch target.
 | 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |
 | 2026-10-19 | Align Thinking with the Agent avatar and widen the conversation and composer to 70% of the available Agent panel, with matching 24px/14px gutters in narrow containers. Preserve the existing transient-status animation and message behavior. |
 | 2026-10-19 | Add the owner Runtime band with exact current/latest image references, idle daily updates at 02:00 SGT, safe manual retries, recorded update states and existing character animation; keep history readable through runtime rotation. |
+
+
+### Operations profile inventory retirement (2026-10-19)
+
+Operations offers Sandboxes, Warm pools, Platform settings and Activity, with
+their existing capability gates and keyboard navigation. It has no Profiles tab,
+inventory or retirement action. This supersedes the Profiles inventory in §19.
+Immutable profile records and historical public APIs remain available to runtime
+recovery and compatibility; this navigation change does not modify them. Native
+warm-pool controls and current platform settings remain in their own views.
+
+| 2026-10-19 | Remove the obsolete Profiles inventory and retirement panel from Operations while retaining internal immutable profiles, historical APIs and current configuration controls. |
+
+### Current runtime warm pools (2026-10-19)
+
+Warm pools shows the current runtime image and its pools first. An exact match to
+its published default configuration hash receives a Current default configuration
+label; other resource sizes for the current image remain configurable. The full
+recorded configuration hash is available through Pool configuration disclosure.
+
+Previous runtime pools use the existing bordered disclosure style and start
+collapsed only when their targets and observed ready capacity are zero with no
+error. Positive targets, remaining ready capacity, failed observation or errors
+keep the previous-pool disclosure open and show a notice outside it. Older images
+are no longer prewarmed: their controls allow Disable and conflict recovery reads,
+never an increase. Disabling spare capacity does not interrupt claimed Sandboxes.
+
+| 2026-10-19 | Prioritize current-runtime warm pools, mark the exact default configuration, and collapse drained historical images while keeping unresolved capacity visible with disable-only controls. |

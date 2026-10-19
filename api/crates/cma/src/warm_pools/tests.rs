@@ -8,7 +8,7 @@ use std::sync::{
     Mutex,
 };
 
-fn target() -> PoolTarget {
+pub(super) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
@@ -82,8 +82,23 @@ impl PoolTargetStore for Memory {
     async fn insert(&self, _: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         unreachable!()
     }
-    async fn resize(&self, _: &str, _: &ResizeWarmPoolBody) -> Result<PoolTarget, WarmPoolError> {
-        unreachable!()
+    async fn resize(
+        &self,
+        id: &str,
+        body: &ResizeWarmPoolBody,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        self.calls.lock().unwrap().push(format!(
+            "store-resize:{id}:{}:{}",
+            body.expected_revision, body.target_replicas,
+        ));
+        let mut target = self.target.lock().unwrap();
+        assert_eq!(id, target.id);
+        if body.expected_revision != target.revision as u64 {
+            return Err(WarmPoolError::Conflict);
+        }
+        target.target_replicas = body.target_replicas;
+        target.revision += 1;
+        Ok(target.clone())
     }
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
         Ok(Some(self.target.lock().unwrap().clone()))
@@ -279,6 +294,14 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
         memory_mib: spec.memory_mib,
     };
     let default = default_config_sha256(Some(&provider), &spec.image, Some(&spec.home), &capacity);
+    assert!(!current::current_plan(&provider, &spec.image, &spec.home, &original).unwrap());
+    assert!(current::current_plan(&provider, &spec.image, &spec.home, &current).unwrap());
+    let mut next_image = spec.image.clone();
+    next_image.uri = format!("registry.example/runtime@sha256:{}", "c".repeat(64));
+    assert!(!current::current_plan(&provider, &next_image, &spec.home, &current).unwrap());
+    let mut next_home = spec.home.clone();
+    next_home.capacity_gib += 1;
+    assert!(!current::current_plan(&provider, &spec.image, &next_home, &current).unwrap());
     assert_eq!(
         original.view(None, true).image,
         current.view(None, true).image
@@ -387,3 +410,6 @@ fn deployment_owned_image_admits_native_cold_and_warm_contracts() {
     };
     deployment.contract().unwrap();
 }
+
+#[path = "resize_tests.rs"]
+mod resize;

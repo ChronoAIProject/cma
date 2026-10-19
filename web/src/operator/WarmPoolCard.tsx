@@ -9,10 +9,14 @@ import { validPoolNumber, WarmPoolNumber } from './WarmPoolFields';
 export function WarmPoolCard({
   client,
   pool,
+  previousRuntime = false,
+  currentDefault = false,
   onChanged,
 }: {
   readonly client: OperatorClient;
   readonly pool: WarmPoolView;
+  readonly previousRuntime?: boolean;
+  readonly currentDefault?: boolean;
   readonly onChanged: (pool: WarmPoolView) => void;
 }) {
   const [target, setTarget] = useState(String(pool.target_replicas));
@@ -24,7 +28,7 @@ export function WarmPoolCard({
   const submitting = useRef(false);
   const needsReview = review || revision !== pool.revision;
   async function save(replicas: number) {
-    if (submitting.current || needsReview) return;
+    if (submitting.current || needsReview || (previousRuntime && replicas !== 0)) return;
     submitting.current = true;
     setBusy(true);
     setFailure(undefined);
@@ -77,6 +81,13 @@ export function WarmPoolCard({
         <span className="operator-state">{pool.status}</span>
       </header>
       <code className="warm-pool-reference">{pool.image}</code>
+      {currentDefault ? <p className="operator-notice">Current default configuration</p> : null}
+      {pool.config_sha256 ? (
+        <details>
+          <summary>Pool configuration</summary>
+          <code className="warm-pool-reference">{pool.config_sha256}</code>
+        </details>
+      ) : null}
       <dl className="warm-pool-counts">
         <div>
           <dt>Desired</dt>
@@ -102,21 +113,24 @@ export function WarmPoolCard({
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (validPoolNumber(target)) void save(Number(target));
+          if (!previousRuntime && validPoolNumber(target)) void save(Number(target));
         }}
       >
-        <WarmPoolNumber
-          label="Ready Sandbox target"
-          value={target}
-          onChange={(value) => {
-            setTarget(value);
-            setSaved(false);
-          }}
-          disabled={busy || needsReview}
-        />
+        {previousRuntime ? null : (
+          <WarmPoolNumber
+            label="Ready Sandbox target"
+            value={target}
+            onChange={(value) => {
+              setTarget(value);
+              setSaved(false);
+            }}
+            disabled={busy || needsReview}
+          />
+        )}
         <p className="operator-notice">
-          Set to 0 to disable spare capacity. Agents that have already claimed a Sandbox keep
-          running.
+          {previousRuntime
+            ? 'Only disabling is available for a previous runtime. Claimed Sandboxes keep running.'
+            : 'Set to 0 to disable spare capacity. Agents that have already claimed a Sandbox keep running.'}
         </p>
         <FailureNotice failure={failure} />
         {needsReview ? (
@@ -125,17 +139,19 @@ export function WarmPoolCard({
           </p>
         ) : null}
         <div className="operator-actions">
-          <Button
-            type="submit"
-            disabled={
-              busy ||
-              needsReview ||
-              !validPoolNumber(target) ||
-              Number(target) === pool.target_replicas
-            }
-          >
-            {busy ? 'Updating…' : 'Update target'}
-          </Button>
+          {previousRuntime ? null : (
+            <Button
+              type="submit"
+              disabled={
+                busy ||
+                needsReview ||
+                !validPoolNumber(target) ||
+                Number(target) === pool.target_replicas
+              }
+            >
+              {busy ? 'Updating…' : 'Update target'}
+            </Button>
+          )}
           <Button
             disabled={busy || needsReview || pool.target_replicas === 0}
             onClick={() => void save(0)}

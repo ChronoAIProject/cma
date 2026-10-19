@@ -187,10 +187,11 @@ impl TriggerStore for ReadOnlyTriggerStore {
         Ok((&self.trigger.id == id && &self.trigger.owner == owner).then(|| self.trigger.clone()))
     }
 
-    async fn delete_unpublished_trigger(
+    async fn delete_trigger(
         &self,
         _id: &TriggerId,
         _owner: &SubjectId,
+        _archived_at: String,
     ) -> Result<(), TriggerStoreError> {
         Err(TriggerStoreError::NotFound)
     }

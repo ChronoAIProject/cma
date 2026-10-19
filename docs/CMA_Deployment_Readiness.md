@@ -651,6 +651,18 @@ namespace is `example-registry-01`; the older last-applied annotation is not cur
 configuration and must not determine the target. The private API endpoint was
 unreachable from CMA. No static token handoff is needed for metadata auth.
 The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatically.
+
+New native spare capacity uses the current deployment runtime image and home/Pod
+policy. An operator cannot raise an obsolete target above zero; multiple resource
+sizes using the current runtime and policy remain supported. Release cleanup must
+first prove the old control-plane generation is gone and no pending Claim, durable
+home allocation or prepared reservation references an obsolete pool. It then
+drains the durable target using its revision and lease fence, verifies member/Pod
+finality and removes unreferenced original pool/template identities and target
+records. Preserve all claimed Sandboxes and their homes. Do not infer safe
+scale-down from startup or a single empty Claim list: reservations can be persisted
+before their Claim exists, and controller v1.0.2 does not fence cached excess-member
+deletion against concurrent adoption.
 Its ownership, immutable runtime contract and retained-home policy have not
 been verified as a CMA pool binding.
 
