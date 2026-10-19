@@ -6,6 +6,7 @@ import type {
   FirstMessageState,
   SandboxDetail,
   SandboxSummary,
+  SandboxRuntimeUpdate,
   WorkspaceDetail,
   WorkspaceSummary,
   Worktree,
@@ -58,6 +59,8 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
     ownerName: value.owner_name ?? undefined,
     name: value.name,
     status: value.status,
+    runtimeUpdate:
+      value.runtime_update === undefined ? undefined : runtimeUpdate(value.runtime_update),
     lifecycle:
       value.lifecycle === undefined
         ? undefined
@@ -105,6 +108,24 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
     workspaceCount: value.workspace_count,
     worktreeCount: value.worktree_count,
     agentCount: value.agent_count,
+  };
+}
+
+export function runtimeUpdate(value: Wire.SandboxRuntimeUpdate): SandboxRuntimeUpdate {
+  return {
+    currentVersion: value.current_version,
+    latestVersion: value.latest_version,
+    updateAvailable: value.update_available,
+    state: value.state,
+    canUpdate: value.can_update,
+    blockedReason: value.blocked_reason,
+    targetVersion: value.target_version,
+    requestedAt: value.requested_at,
+    startedAt: value.started_at,
+    completedAt: value.completed_at,
+    failure: value.failure,
+    schedule: { timezone: value.schedule.timezone, localTime: value.schedule.local_time },
+    preservesHome: value.preserves_home,
   };
 }
 

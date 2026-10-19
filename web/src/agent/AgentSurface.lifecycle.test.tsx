@@ -124,7 +124,7 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
     ['pausing', 'pause', 'capture_and_publish_checkpoint', 'Pausing'],
     ['pausing', 'pause', 'teardown_runtime', 'Pausing'],
     ['reviving', 'revive', 'home_restore', 'Resuming'],
-    ['rotating', 'image_rotation', 'publish_active', 'Resuming'],
+    ['rotating', 'image_rotation', 'publish_active', 'Updating runtime'],
   ] as const) {
     sandbox = {
       ...sandboxFixture(status),
