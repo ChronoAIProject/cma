@@ -18,10 +18,55 @@
       },
       "response": {
         "status": 202,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_update",
+          "owner": "owner",
+          "owner_name": null,
+          "name": "sandbox-sbx_update",
+          "status": "active",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v2",
+          "runtime_update": {
+            "current_version": "runtime-v2",
+            "latest_version": "runtime-v2",
+            "update_available": false,
+            "state": "up_to_date",
+            "can_update": false,
+            "preserves_home": false,
+            "schedule": {
+              "timezone": "Asia/Singapore",
+              "local_time": "02:00"
+            },
+            "blocked_reason": "Runtime updates require a retained managed home and its original runtime identity."
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-replay",
@@ -40,10 +85,55 @@
       },
       "response": {
         "status": 202,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_update",
+          "owner": "owner",
+          "owner_name": null,
+          "name": "sandbox-sbx_update",
+          "status": "active",
+          "profile": {
+            "id": "sbp_stored",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v2",
+          "runtime_update": {
+            "current_version": "runtime-v2",
+            "latest_version": "runtime-v2",
+            "update_available": false,
+            "state": "up_to_date",
+            "can_update": false,
+            "preserves_home": false,
+            "schedule": {
+              "timezone": "Asia/Singapore",
+              "local_time": "02:00"
+            },
+            "blocked_reason": "Runtime updates require a retained managed home and its original runtime identity."
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-anonymous",
@@ -62,10 +152,19 @@
       },
       "response": {
         "status": 401,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-forbidden",
@@ -84,10 +183,19 @@
       },
       "response": {
         "status": 403,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-foreign",
@@ -106,10 +214,19 @@
       },
       "response": {
         "status": 404,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-missing-key",
@@ -127,10 +244,19 @@
       },
       "response": {
         "status": 400,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-stale-target",
@@ -149,10 +275,19 @@
       },
       "response": {
         "status": 409,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_update_target_changed"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-reused-key",
@@ -171,10 +306,19 @@
       },
       "response": {
         "status": 422,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
     },
     {
       "id": "runtime-update-unconfigured",
@@ -193,10 +337,50 @@
       },
       "response": {
         "status": 503,
-        "headers": {},
-        "body": {},
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
+    },
+    {
+      "id": "runtime-update-unavailable",
+      "operation": "POST /api/v1/sandboxes/{id}/runtime-update",
+      "scenario": "runtime_update_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "unavailable"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_update_not_available"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

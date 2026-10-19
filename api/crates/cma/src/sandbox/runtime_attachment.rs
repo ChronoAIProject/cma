@@ -36,7 +36,9 @@ pub(crate) fn retained_runtime_request(
         .filter(|generation| *generation > 0)
         .ok_or_else(|| AdapterError::Rejected("retained runtime generation is absent".into()))?;
     let mut spec = sandbox_spec(sandbox, deployment);
-    spec.runtime_image = Some(binding.runtime_version.clone());
+    if spec.runtime_image.is_some() {
+        spec.runtime_image = Some(binding.runtime_version.clone());
+    }
     if sandbox.lifecycle.suspended_runtime.as_deref() == Some(binding) {
         // Grants are append-only and reserve a credential generation above the
         // previous authority. While this binding is suspended, managed custody
