@@ -43,6 +43,8 @@ pub const CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: &str = "CMAEG_PROVIDER_CONNECT_TIME
 pub const CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: &str = "CMAEG_PROVIDER_REQUEST_TIMEOUT_MS";
 pub const CMAEG_PROVIDER_MAX_INFLIGHT: &str = "CMAEG_PROVIDER_MAX_INFLIGHT";
 pub const CMAEG_PUBLIC_URL: &str = "CMAEG_PUBLIC_URL";
+pub const CMAEG_PUBLIC_API_URL: &str = "CMAEG_PUBLIC_API_URL";
+pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL";
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
@@ -153,7 +155,12 @@ pub struct Config {
 /// Secrets and origins used by the channel management plane.
 #[derive(Debug, Clone)]
 pub struct ManagementConfig {
+    /// Legacy browser console authority; remains an origin.
     pub public_url: String,
+    /// Canonical externally reachable API base, optionally with a path prefix.
+    pub public_api_url: String,
+    /// Disable only while old replicas still lack the canonical browser routes.
+    pub advertise_public_api_url: bool,
     pub master_keys: Arc<MasterKeyRing>,
     pub cma_base_url: String,
     pub cma_service_token: Secret,
@@ -236,6 +243,15 @@ impl Config {
 impl ManagementConfig {
     fn from_env() -> Result<Self, ConfigError> {
         let public_url = required_origin(CMAEG_PUBLIC_URL)?;
+        let public_api_url = env::var(CMAEG_PUBLIC_API_URL)
+            .map(|value| validate_public_api_url(&value))
+            .unwrap_or_else(|_| Ok(public_url.clone()))?;
+        let advertisement = env::var(CMAEG_ADVERTISE_PUBLIC_API_URL);
+        let advertise_public_api_url = parse_api_advertisement(match &advertisement {
+            Ok(value) => Some(value.as_str()),
+            Err(env::VarError::NotPresent) => None,
+            Err(_) => Some("invalid"),
+        })?;
         let cma_base_url = required_origin(CMAEG_CMA_BASE_URL)?;
         let nyxid_base_url = required_origin(CMAEG_NYXID_BASE_URL)?;
         let key_spec = secrets::read(CMAEG_MASTER_KEYS, CMAEG_MASTER_KEYS_FILE)?;
@@ -267,6 +283,8 @@ impl ManagementConfig {
         }
         Ok(Self {
             public_url,
+            public_api_url,
+            advertise_public_api_url,
             master_keys: Arc::new(master_keys),
             cma_base_url,
             cma_service_token: Secret::new(cma_service_token),
@@ -274,6 +292,49 @@ impl ManagementConfig {
             tools_nyxid_slug,
         })
     }
+}
+
+fn parse_api_advertisement(value: Option<&str>) -> Result<bool, ConfigError> {
+    match value {
+        None | Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_ADVERTISE_PUBLIC_API_URL} must be true or false"),
+        }),
+    }
+}
+
+/// A trusted base used for generated links and routing, never taken from Host.
+fn validate_public_api_url(value: &str) -> Result<String, ConfigError> {
+    let url = Url::parse(value).map_err(|_| ConfigError::InvalidManagement {
+        detail: format!("{CMAEG_PUBLIC_API_URL} must be a public API base URL"),
+    })?;
+    validate_origin(CMAEG_PUBLIC_URL, &url.origin().ascii_serialization())?;
+    let path = url.path();
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || value.ends_with('/')
+        || value.len() > 2048
+        || value != url.as_str().trim_end_matches('/')
+        || (path != "/"
+            && path
+                .strip_prefix('/')
+                .unwrap_or_default()
+                .split('/')
+                .any(|part| {
+                    part.is_empty()
+                        || !part
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                }))
+    {
+        return Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_PUBLIC_API_URL} must be a canonical HTTPS base with clean path segments and no credentials, query, fragment or trailing slash"),
+        });
+    }
+    Ok(value.to_owned())
 }
 
 fn required_origin(name: &'static str) -> Result<String, ConfigError> {
@@ -379,5 +440,42 @@ mod tests {
             validate_origin(CMAEG_CMA_BASE_URL, "https://CMA.EXAMPLE:443").unwrap(),
             "https://cma.example"
         );
+    }
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    use super::*;
+    #[test]
+    fn advertisement_is_enabled_by_default_and_explicitly_staged() {
+        assert!(parse_api_advertisement(None).unwrap());
+        assert!(parse_api_advertisement(Some("true")).unwrap());
+        assert!(!parse_api_advertisement(Some("false")).unwrap());
+        for value in ["", "1", "yes", "True", "FALSE", "false "] {
+            assert!(parse_api_advertisement(Some(value)).is_err());
+        }
+    }
+
+    #[test]
+    fn public_api_base_requires_a_clean_canonical_namespace() {
+        for valid in [
+            "https://bot.example/event-gateway",
+            "https://gateway.example",
+            "http://localhost:8090/event-gateway",
+        ] {
+            assert_eq!(validate_public_api_url(valid).unwrap(), valid);
+        }
+        for invalid in [
+            "https://bot.example/event-gateway/",
+            "https://bot.example/a/../event-gateway",
+            "https://bot.example//event-gateway",
+            "https://bot.example/%2e%2e/event-gateway",
+            "https://user@bot.example/event-gateway",
+            "https://bot.example/event-gateway?q=1",
+            "https://bot.example/event-gateway#fragment",
+            "http://bot.example/event-gateway",
+        ] {
+            assert!(validate_public_api_url(invalid).is_err(), "{invalid}");
+        }
     }
 }

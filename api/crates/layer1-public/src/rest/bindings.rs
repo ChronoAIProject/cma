@@ -85,12 +85,14 @@ pub struct BindingConversationView {
 struct BindingRouteState {
     service: Arc<BindingService>,
     native_endpoint: Option<String>,
+    native_advertisement_alias: Option<String>,
 }
 
 pub fn binding_router(service: Arc<BindingService>) -> Router {
     routes(BindingRouteState {
         service,
         native_endpoint: None,
+        native_advertisement_alias: None,
     })
 }
 
@@ -100,6 +102,27 @@ pub fn binding_router_with_native_tools(
     service: Arc<BindingService>,
     endpoint: &str,
 ) -> Result<Router, String> {
+    binding_router_with_native_tools_alias(service, endpoint, endpoint)
+}
+
+/// Accept one exact deployment-owned advertisement alias while retaining the
+/// configured destination as immutable binding and runtime proxy authority.
+pub fn binding_router_with_native_tools_alias(
+    service: Arc<BindingService>,
+    endpoint: &str,
+    advertisement_alias: &str,
+) -> Result<Router, String> {
+    validate_native_endpoint(endpoint)?;
+    validate_native_endpoint(advertisement_alias)?;
+    Ok(routes(BindingRouteState {
+        service,
+        native_endpoint: Some(endpoint.into()),
+        native_advertisement_alias: (advertisement_alias != endpoint)
+            .then(|| advertisement_alias.into()),
+    }))
+}
+
+fn validate_native_endpoint(endpoint: &str) -> Result<(), String> {
     let url = url::Url::parse(endpoint).map_err(|_| "invalid native tools endpoint")?;
     let loopback = url.host_str().is_some_and(|host| {
         host.trim_matches(['[', ']'])
@@ -118,10 +141,7 @@ pub fn binding_router_with_native_tools(
     {
         return Err("invalid native tools endpoint".into());
     }
-    Ok(routes(BindingRouteState {
-        service,
-        native_endpoint: Some(endpoint.into()),
-    }))
+    Ok(())
 }
 
 fn routes(state: BindingRouteState) -> Router {
@@ -176,11 +196,10 @@ async fn put_binding(
             "invalid binding schema or tools advertisement".into(),
         ));
     }
-    if state
-        .native_endpoint
-        .as_ref()
-        .is_some_and(|expected| expected != &body.tools.native_mcp_url)
-    {
+    if state.native_endpoint.as_ref().is_some_and(|expected| {
+        expected != &body.tools.native_mcp_url
+            && state.native_advertisement_alias.as_ref() != Some(&body.tools.native_mcp_url)
+    }) {
         return error(BindingError::InvalidRequest(
             "tools advertisement differs from the configured gateway".into(),
         ));

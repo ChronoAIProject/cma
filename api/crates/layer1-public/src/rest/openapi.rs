@@ -1,5 +1,6 @@
 use utoipa::OpenApi;
 pub mod agent_delegations;
+mod agent_manager;
 mod identity;
 mod projections;
 use self::projections::{
@@ -472,6 +473,10 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::agent_v2::document());
     identity::secure_operations(&mut document);
     document
+}
+/// Focused lifecycle and Responses v2 contract, derived from the full public API.
+pub fn agent_manager_document() -> serde_json::Value {
+    agent_manager::document()
 }
 #[cfg(test)]
 mod tests;

@@ -75,11 +75,21 @@ function documentPlugin(section: string) {
 }
 export function gatewayDocLink(target: string, section: string): string | undefined {
   if (Object.values(diagrams).includes(target)) return target;
-  if (target === '/openapi.json' || target === 'https://bot-gateway.chrono-ai.fun/openapi.json')
-    return '/api/event-gateway/openapi.json';
+  if (
+    target === '/openapi.json' ||
+    target === '/event-gateway/openapi.json' ||
+    target === 'https://bot.chrono-ai.fun/event-gateway/openapi.json' ||
+    target === 'https://bot-gateway.chrono-ai.fun/openapi.json'
+  )
+    return '/event-gateway/openapi.json';
   if (/^https?:\/\//.test(target)) {
-    if (target.startsWith('https://bot-gateway.chrono-ai.fun/docs')) {
-      const url = new URL(target);
+    const url = new URL(target);
+    if (
+      (url.origin === 'https://bot-gateway.chrono-ai.fun' &&
+        /^\/docs(?:\/|$)/.test(url.pathname)) ||
+      (url.origin === 'https://bot.chrono-ai.fun' &&
+        /^\/(?:event-gateway\/docs|docs\/event-gateway)(?:\/|$)/.test(url.pathname))
+    ) {
       const page = url.pathname.split('/').at(-1);
       return page === 'architecture' || page === 'protocol'
         ? `#${page}${url.hash ? `-${url.hash.slice(1)}` : ''}`
@@ -243,7 +253,7 @@ export function EventGatewayDocs() {
           Download document
         </a>
         {' · '}
-        <a className="service-link" href="/api/event-gateway/openapi.json">
+        <a className="service-link" href="/event-gateway/openapi.json">
           OpenAPI JSON
         </a>
       </header>

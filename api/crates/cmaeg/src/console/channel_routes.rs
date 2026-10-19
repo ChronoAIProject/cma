@@ -172,7 +172,7 @@ pub(crate) fn overview_tab(
     let csrf = signed_in.csrf(overview::LINK_PATH, view.record.as_str());
     overview::render(&OverviewView {
         view,
-        public_url: console.public_url(),
+        public_url: console.public_api_url(),
         sources: console.source_changes().availability(),
         multi_consumer: console.multi_consumer(),
         unknown_id: &overview::paste_form(&view.record, &csrf, link_error),

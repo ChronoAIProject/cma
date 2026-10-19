@@ -1,10 +1,15 @@
 # CMA public API inventory
 
+The focused Agent Manager contract is served at `/agent-manager/openapi.json`;
+see [Agent Manager API](API_Agent_Manager.md) for one Agent lifecycle and Responses v2 flow.
+The full `/openapi.json` compatibility contract and existing API paths remain available.
+
 This inventory describes the implemented CMA control-plane surface after legacy
 Bridge retirement. `GET /openapi.json` is the authoritative machine-readable
 contract; [REST](API_REST.md), [AG-UI](API_AGUI.md), and the Responses documents
-provide request, replay and error semantics. CMAEG has a separate origin and
-[protocol](CMAEG_Protocol.md); its endpoints are not CMA endpoints.
+provide request, replay and error semantics. CMAEG remains a separate service,
+exposed under `/event-gateway` on the same origin with its own
+[protocol](CMAEG_Protocol.md) and `/event-gateway/openapi.json` contract.
 
 ## Interface families
 

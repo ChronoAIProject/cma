@@ -35,14 +35,14 @@ pub use config::{
     ChannelCacheConfig, Config, ConfigError, ConsoleConfig, ConsoleMemoryConfig, DeliveryConfig,
     IngressConfig, ManagementConfig, MediaConfig, MediaToolProviders, RoutingConfig,
     ServiceAccountConfig, SttConfig, SttEndpoint, TransformerConfig, TurnConfig,
-    CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
-    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
-    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_CONSOLE_ACTIVITY_MAX_BYTES,
-    CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL, CMAEG_CONSOLE_CHANNEL_IDS_MAX, CMAEG_CONSOLE_CLIENT_ID,
-    CMAEG_CONSOLE_CLIENT_SECRET, CMAEG_CONSOLE_ENABLED, CMAEG_CONSOLE_INDEX_MAX_RECORDS,
-    CMAEG_CONSOLE_INDEX_RESYNC_MS, CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE,
-    CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, CMAEG_CONSOLE_SESSIONS_MAX,
-    CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, CMAEG_CONSOLE_SESSION_IDLE_MS,
+    CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_ADVERTISE_PUBLIC_API_URL,
+    CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
+    CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
+    CMAEG_CONSOLE_ACTIVITY_MAX_BYTES, CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL,
+    CMAEG_CONSOLE_CHANNEL_IDS_MAX, CMAEG_CONSOLE_CLIENT_ID, CMAEG_CONSOLE_CLIENT_SECRET,
+    CMAEG_CONSOLE_ENABLED, CMAEG_CONSOLE_INDEX_MAX_RECORDS, CMAEG_CONSOLE_INDEX_RESYNC_MS,
+    CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE, CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL,
+    CMAEG_CONSOLE_SESSIONS_MAX, CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, CMAEG_CONSOLE_SESSION_IDLE_MS,
     CMAEG_CONSOLE_SESSION_TTL_MS, CMAEG_CONSOLE_SUMMARY_CACHE_MAX, CMAEG_COOKIE_KEY_FILE,
     CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
     CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
@@ -54,9 +54,9 @@ pub use config::{
     CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI, CMAEG_NON_HUMAN_PROVIDERS, CMAEG_NYXID_BASE_URL,
     CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET, CMAEG_NYXID_COMPLETE_REPLIES,
     CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL,
+    CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
+    CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -91,6 +91,13 @@ pub fn router() -> Router {
 /// Build the complete stateful router used by the running service.
 pub fn router_with_state(state: http::ManagementState) -> Router {
     let readiness = state.readiness.clone();
+    let public_api_url = state.advertised_api_url().to_owned();
+    let public_docs = http::docs::router_with_base(&public_api_url, state.advertise_public_api_url);
+    let public_discovery = http::public_urls::router(&state);
+    let mut document = ApiDoc::openapi();
+    document.servers = Some(vec![utoipa::openapi::Server::new(format!(
+        "{public_api_url}/v1"
+    ))]);
     telemetry::http::instrument(
         http::management::management_router(state)
             .route("/healthz", get(healthz))
@@ -98,8 +105,15 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
                 "/readyz",
                 get(http::readiness::readyz).with_state(readiness),
             )
-            .route("/openapi.json", get(openapi))
-            .merge(http::docs::router())
+            .route(
+                "/openapi.json",
+                get(move || {
+                    let document = document.clone();
+                    async move { Json(document) }
+                }),
+            )
+            .merge(public_docs)
+            .merge(public_discovery)
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )

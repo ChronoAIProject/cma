@@ -190,7 +190,7 @@ impl ConnectionService {
                 let token = self.capability(record, "start", &record.setup_nonce)?;
                 Ok::<_, Error>(format!(
                     "{}/connect/start/{token}",
-                    self.management.public_url
+                    self.management.advertised_api_url()
                 ))
             })
             .transpose()?;

@@ -36,6 +36,7 @@ pub(super) fn external_at(server: &Server, base: &str, public: &str) -> Arc<Gate
             &GatewayConfig {
                 base_url: base.into(),
                 public_url: public.into(),
+                public_api_url: public.into(),
             },
             "https://nyx.example".into(),
         )
