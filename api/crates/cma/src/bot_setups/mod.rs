@@ -100,7 +100,8 @@ impl SetupDependencies {
                     .map_err(|_| "connection HTTP client configuration failed")?,
                 &gateway.base_url,
                 &gateway.public_url,
-            )?,
+            )?
+            .with_public_api(&gateway.public_api_url)?,
             required_services,
         });
         Ok(dependencies)

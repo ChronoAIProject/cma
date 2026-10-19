@@ -27,6 +27,7 @@ pub struct ToolsState {
     pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
+    pub public_api_url: String,
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.
     pub media: Option<Arc<MediaService>>,

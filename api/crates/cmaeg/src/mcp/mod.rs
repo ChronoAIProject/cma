@@ -62,7 +62,16 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         let mut values = request.headers().get_all(name).iter();
         let value = values.next();
         if values.next().is_some()
-            || value.is_some_and(|value| value.to_str().ok() != Some(expected))
+            || value.is_some_and(|value| {
+                value.to_str().ok() != Some(expected)
+                    && !(name == "origin"
+                        && reqwest::Url::parse(&state.public_api_url)
+                            .ok()
+                            .is_some_and(|url| {
+                                value.to_str().ok()
+                                    == Some(url.origin().ascii_serialization().as_str())
+                            }))
+            })
         {
             return problem(
                 if name == "origin" {
