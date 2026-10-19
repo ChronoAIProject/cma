@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 195,
+  "openapi_operations": 196,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2824,6 +2824,19 @@
         "invalid_json",
         "response_interrupt_not_admitted",
         "response_not_found"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-update": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_runtime_update.rs# Owner runtime update uses durable idempotent admission and exact pinned target.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "runtime_update_target_changed",
+        "idempotency_key_reused",
+        "hierarchy_service_unavailable"
       ]
     }
   }

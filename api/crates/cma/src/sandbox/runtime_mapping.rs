@@ -84,7 +84,9 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         .as_ref()
         .and_then(|home| home.attachment())
         .map(Box::new);
-    if spec.runtime_image.is_none() {
+    if let Some(binding) = sandbox.retained_runtime_binding() {
+        spec.runtime_image = Some(binding.runtime_version.clone());
+    } else if spec.runtime_image.is_none() {
         spec.runtime_image = sandbox
             .lifecycle
             .home

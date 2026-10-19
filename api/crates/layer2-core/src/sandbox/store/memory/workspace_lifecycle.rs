@@ -123,7 +123,8 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if parent.lifecycle.checkpoint_capture.is_some() {
+        if parent.lifecycle.checkpoint_capture.is_some() || parent.status == SandboxStatus::Rotating
+        {
             return Err(SandboxStoreError::Conflict);
         }
         if state.agents.values().any(|agent| {
@@ -183,6 +184,7 @@ impl WorkspaceWorkerStore for InMemorySandboxStore {
         if !current.work.is_due(&now)
             || parent.lifecycle.checkpoint_capture.is_some()
             || parent.defers_lifecycle_workspace(current)
+            || parent.status == SandboxStatus::Rotating
         {
             return Ok(None);
         }

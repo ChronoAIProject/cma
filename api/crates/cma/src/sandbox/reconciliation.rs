@@ -25,6 +25,9 @@ mod interruption;
 #[path = "reconciliation_homes.rs"]
 mod homes;
 
+#[path = "reconciliation_updates.rs"]
+mod updates;
+
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
 {
@@ -41,6 +44,7 @@ pub(crate) struct SandboxReconciler {
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
     profile_agents: Option<Arc<AgentService>>,
+    runtime_version: Option<String>,
 }
 
 impl SandboxReconciler {
@@ -56,11 +60,17 @@ impl SandboxReconciler {
             policy,
             deployment_id,
             profile_agents: None,
+            runtime_version: None,
         }
     }
 
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
         self.profile_agents = Some(agents);
+        self
+    }
+
+    pub(crate) fn with_runtime_version(mut self, runtime_version: String) -> Self {
+        self.runtime_version = Some(runtime_version);
         self
     }
 
@@ -359,11 +369,9 @@ impl SandboxReconciler {
                         tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
                     }
                 }
-                // A deployment's image is a default for new allocations, not
-                // permission to replace a user's live runtime. Adoption above
-                // validates the image recorded on each retained binding. Keep
-                // previously admitted lifecycle operations recoverable, but
-                // never create rotation work from configuration drift.
+                if self.reconcile_runtime_update(&sandbox_id, now).await? {
+                    continue;
+                }
                 self.store
                     .schedule_inactivity_pause(SandboxInactivityPauseRequest {
                         sandbox_id,

@@ -264,7 +264,9 @@ impl Sandbox {
         identity: SandboxRotationIdentity,
         at: String,
     ) -> Result<(), SandboxModelError> {
-        if self.status != SandboxStatus::Active
+        let was_paused = self.status == SandboxStatus::Paused;
+        if !matches!(self.status, SandboxStatus::Active | SandboxStatus::Paused)
+            || (was_paused && self.lifecycle.suspended_runtime.is_none())
             || self.lifecycle.checkpoint_capture.is_some()
             || self.work.lease.is_some()
             || !matches!(
@@ -278,9 +280,37 @@ impl Sandbox {
         next.lifecycle.start_image_rotation(
             &next.id,
             at.clone(),
-            target_runtime_version,
+            target_runtime_version.clone(),
             identity,
         )?;
+        if was_paused {
+            if let Some(super::SandboxLifecycleOperation::ImageRotation { phase, .. }) =
+                &mut next.lifecycle.operation
+            {
+                *phase = super::SandboxImageRotationPhase::CheckpointVerification;
+            }
+            next.lifecycle
+                .home_recovery
+                .as_mut()
+                .ok_or_else(|| SandboxModelError::invalid_value("sandbox.runtime_update.home"))?
+                .resume_pause = Some(super::SandboxRecoveryPause {
+                notice: self.lifecycle.paused_notice.clone(),
+            });
+        }
+        if let Some(request) = next
+            .lifecycle
+            .runtime_update
+            .as_mut()
+            .and_then(|state| state.request.as_mut())
+            .filter(|r| r.completed_at.is_none())
+        {
+            if request.target_version != target_runtime_version {
+                return Err(SandboxModelError::invalid_value(
+                    "sandbox.runtime_update.target",
+                ));
+            }
+            request.started_at = Some(at.clone());
+        }
         next.transition(SandboxStatus::Rotating, at.clone(), None)?;
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at);

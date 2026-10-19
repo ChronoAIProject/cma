@@ -76,7 +76,8 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
-        .with_profile_agents(Arc::clone(&dependencies.agents));
+        .with_profile_agents(Arc::clone(&dependencies.agents))
+        .with_runtime_version(config.runtime_version.clone());
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(

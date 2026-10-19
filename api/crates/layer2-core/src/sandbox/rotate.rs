@@ -11,9 +11,11 @@ use super::{Agent, Sandbox, SandboxCheckpointRef, SandboxModelError, SandboxStat
 
 /// Select only a live, bound sandbox whose actual image differs from deployment intent.
 pub fn image_rotation_required(sandbox: &Sandbox, expected_runtime_version: &str) -> bool {
-    sandbox.status == SandboxStatus::Active
-        && !expected_runtime_version.trim().is_empty()
-        && sandbox.runtime.as_ref().is_some_and(|runtime| {
+    matches!(
+        sandbox.status,
+        SandboxStatus::Active | SandboxStatus::Paused
+    ) && !expected_runtime_version.trim().is_empty()
+        && sandbox.retained_runtime_binding().is_some_and(|runtime| {
             !runtime.runtime_id.trim().is_empty()
                 && !runtime.runtime_version.trim().is_empty()
                 && seconds_from_rfc3339(&runtime.bound_at).is_some()

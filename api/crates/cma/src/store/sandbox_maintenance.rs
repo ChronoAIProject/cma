@@ -32,7 +32,7 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let mut filter = doc! { "status": "active" };
+        let mut filter = doc! { "status": { "$in": ["active", "paused"] } };
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
