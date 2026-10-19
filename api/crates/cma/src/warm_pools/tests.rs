@@ -8,7 +8,7 @@ use std::sync::{
     Mutex,
 };
 
-fn target() -> PoolTarget {
+pub(super) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
@@ -279,6 +279,14 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
         memory_mib: spec.memory_mib,
     };
     let default = default_config_sha256(Some(&provider), &spec.image, Some(&spec.home), &capacity);
+    assert!(!current::current_plan(&provider, &spec.image, &spec.home, &original).unwrap());
+    assert!(current::current_plan(&provider, &spec.image, &spec.home, &current).unwrap());
+    let mut next_image = spec.image.clone();
+    next_image.uri = format!("registry.example/runtime@sha256:{}", "c".repeat(64));
+    assert!(!current::current_plan(&provider, &next_image, &spec.home, &current).unwrap());
+    let mut next_home = spec.home.clone();
+    next_home.capacity_gib += 1;
+    assert!(!current::current_plan(&provider, &spec.image, &next_home, &current).unwrap());
     assert_eq!(
         original.view(None, true).image,
         current.view(None, true).image
