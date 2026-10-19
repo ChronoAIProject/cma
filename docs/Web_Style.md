@@ -2493,3 +2493,19 @@ recovery and compatibility; this navigation change does not modify them. Native
 warm-pool controls and current platform settings remain in their own views.
 
 | 2026-10-19 | Remove the obsolete Profiles inventory and retirement panel from Operations while retaining internal immutable profiles, historical APIs and current configuration controls. |
+
+### Current runtime warm pools (2026-10-19)
+
+Warm pools shows the current runtime image and its pools first. An exact match to
+its published default configuration hash receives a Current default configuration
+label; other resource sizes for the current image remain configurable. The full
+recorded configuration hash is available through Pool configuration disclosure.
+
+Previous runtime pools use the existing bordered disclosure style and start
+collapsed only when their targets and observed ready capacity are zero with no
+error. Positive targets, remaining ready capacity, failed observation or errors
+keep the previous-pool disclosure open and show a notice outside it. Older images
+are no longer prewarmed: their controls allow Disable and conflict recovery reads,
+never an increase. Disabling spare capacity does not interrupt claimed Sandboxes.
+
+| 2026-10-19 | Prioritize current-runtime warm pools, mark the exact default configuration, and collapse drained historical images while keeping unresolved capacity visible with disable-only controls. |
