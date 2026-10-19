@@ -196,6 +196,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
         public_api_url: "https://gateway.example".into(),
+        advertise_public_api_url: true,
         media: None,
         downloads: Default::default(),
     }

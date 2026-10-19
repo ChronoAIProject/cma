@@ -709,3 +709,26 @@ async fn canonical_migration_installs_new_webhook_and_rejects_other_channel_urls
         format!("https://bot.example/event-gateway/v1/telegram/{channel_id}")
     );
 }
+
+#[tokio::test]
+async fn phase_one_advertisement_installs_legacy_but_preserves_existing_canonical_webhook() {
+    let mut app = Native::new().await;
+    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
+    app.service.management.advertise_public_api_url = false;
+    let (definition, channel_id) = app.reserve_child().await;
+    let canonical = format!("https://bot.example/event-gateway/v1/telegram/{channel_id}");
+    *app.peer.webhook.lock().unwrap() = canonical.clone();
+    binding::activate(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert_eq!(*app.peer.webhook.lock().unwrap(), canonical);
+    assert!(!app.methods().contains(&"setWebhook".into()));
+    app.peer.webhook.lock().unwrap().clear();
+    binding::activate(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.peer.webhook.lock().unwrap(),
+        format!("https://gateway.example/v1/telegram/{channel_id}")
+    );
+}

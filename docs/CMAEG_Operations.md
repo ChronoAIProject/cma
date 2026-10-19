@@ -142,6 +142,7 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained console OAuth/CSRF origin and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
+| `CMAEG_ADVERTISE_PUBLIC_API_URL` | `true` or `false` | `true` | First-rollout switch: `false` keeps generated URLs and discovery on the legacy public origin while canonical routes, exact Origin checks and MCP compatibility remain available. Set `true` only after every serving replica supports the canonical namespace and the public routes have been verified. |
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
 | `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
@@ -458,11 +459,25 @@ at exactly `/event-gateway` remains on web; `/api/event-gateway` remains CMA's
 cookie-custody bridge. The old `bot-gateway.chrono-ai.fun` route stays installed.
 DNS, certificates, Gateway listeners and NyxID registrations are unchanged.
 
-Deploy CMA's dual-base validation first, then install the additive public routes
-and deploy the Gateway backend that generates canonical URLs. Both services'
-configmaps set the same canonical public API base. CMA accepts only exact canonical or legacy
-callbacks for the observed channel, including mixed-version deployment. A
-returned callback/custom-events pair must use one coherent base. Existing signed
+Deploy CMA's dual-base validation first. For the first Gateway upgrade, keep the
+canonical `CMAEG_PUBLIC_API_URL` but temporarily override
+`CMAEG_ADVERTISE_PUBLIC_API_URL=false`. Roll out the final verified image with
+that value and wait for all old Pods (including terminating/draining Pods) and
+Service endpoints to disappear. Install and verify the canonical public routes,
+including `/event-gateway/connect` and the fixed legacy-console entry. Then set
+the advertisement flag to `true` and roll the same immutable image again.
+During the second rolling update, both generations accept the canonical paths;
+only newly issued links differ. The checked-in configmap describes the final
+`true` state. A ConfigMap change alone does not update existing process
+environments: each phase needs an explicit Pod-template change.
+
+Do not advertise canonical setup links during the first image overlap: a new
+Pod could issue a link that a still-serving old Pod cannot route. Keep the
+existing Service selectors, replica policy, ingress paths and NyxID registration
+unchanged. Both services' configmaps set the same canonical public API base.
+CMA accepts only exact canonical or legacy callbacks for the observed channel,
+including mixed-version deployment. A returned callback/custom-events pair must
+use one coherent base. Existing signed
 callbacks, channel IDs, keys and cookies are not rewritten. Existing Telegram
 webhooks on the exact legacy channel URL stay installed until authorized cleanup;
 new webhooks use the canonical base. An unrelated URL is always refused.
@@ -471,8 +486,10 @@ new webhooks use the canonical base. An unrelated URL is always refused.
 legacy-console entry uses a fixed redirect to that origin; it cannot accept a
 caller-supplied destination. `/connect` capability tabs continue to work on the
 old host, and new setup links use the prefixed canonical routes. The HTTP OpenAPI
-response advertises `{CMAEG_PUBLIC_API_URL}/v1`; the reviewed exported protocol
-snapshot retains its relative `/v1` server and unchanged operations/security.
+response advertises `{CMAEG_PUBLIC_API_URL}/v1` after phase two (the retained
+`{CMAEG_PUBLIC_URL}/v1` while the advertisement flag is false); the reviewed
+exported protocol snapshot retains its relative `/v1` server and unchanged
+operations/security.
 Rollback must retain the additive routes, legacy host and CMA's dual-base
 validator once canonical callbacks have been issued. Reverting URL generation
 is safe within that compatibility floor; reverting to an older CMA binary that

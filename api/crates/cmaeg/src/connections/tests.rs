@@ -120,6 +120,7 @@ impl Fixture {
             ManagementConfig {
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
+                advertise_public_api_url: true,
                 master_keys: self.keys.clone(),
                 cma_base_url: self.base.clone(),
                 cma_service_token: Secret::new(SERVICE_TOKEN),
@@ -137,6 +138,7 @@ impl Fixture {
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
             public_api_url: management.public_url.clone(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };
@@ -1327,15 +1329,18 @@ async fn provisional_browser_reads_do_not_claim_a_link_and_first_cas_claim_exclu
 
 #[tokio::test]
 async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_csrf_before_claim() {
-    browser_http_exchange("", "https://gateway.example").await;
-    browser_http_exchange("/event-gateway", "https://bot.example").await;
+    for advertise in [false, true] {
+        browser_http_exchange("", "https://gateway.example", advertise).await;
+        browser_http_exchange("/event-gateway", "https://bot.example", advertise).await;
+    }
 }
 
-async fn browser_http_exchange(prefix: &str, origin: &str) {
+async fn browser_http_exchange(prefix: &str, origin: &str, advertise: bool) {
     use axum::http::header;
     let fixture = Fixture::new().await;
     let mut service = fixture.service();
     service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.advertise_public_api_url = advertise;
     let mut record = connection("alice", false);
     record.browser_nonce = None;
     record.browser_claimed = false;
@@ -1711,18 +1716,29 @@ async fn external_native_bot_capability_is_omitted_until_writes_enabled() {
 
 #[tokio::test]
 async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fixed_authority() {
+    public_discovery(false).await;
+    public_discovery(true).await;
+}
+
+async fn public_discovery(advertise: bool) {
     use axum::http::header;
     use utoipa::OpenApi;
     let fixture = Fixture::new().await;
     let mut service = fixture.service();
     service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.advertise_public_api_url = advertise;
+    let advertised = if advertise {
+        "https://bot.example/event-gateway"
+    } else {
+        "https://gateway.example"
+    };
     let record = connection("alice", false);
     assert!(service
         .view(&record)
         .unwrap()
         .setup_url
         .unwrap()
-        .starts_with("https://bot.example/event-gateway/connect/start/"));
+        .starts_with(&format!("{advertised}/connect/start/")));
     let app = crate::router_with_state(service.management);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1741,7 +1757,7 @@ async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fi
         .unwrap();
     assert_eq!(
         document["servers"],
-        json!([{"url":"https://bot.example/event-gateway/v1"}])
+        json!([{"url":format!("{advertised}/v1")}])
     );
     let static_document = serde_json::to_value(crate::ApiDoc::openapi()).unwrap();
     assert_eq!(document["paths"], static_document["paths"]);
@@ -1750,7 +1766,11 @@ async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fi
     assert!(docs.headers()[header::CONTENT_SECURITY_POLICY]
         .to_str()
         .unwrap()
-        .contains("img-src 'self' https://bot.example"));
+        .contains(if advertise {
+            "img-src 'self' https://bot.example"
+        } else {
+            "img-src 'self' https://gateway.example"
+        }));
     let html = docs.text().await.unwrap();
     for path in [
         "/docs/style.css",
@@ -1758,17 +1778,16 @@ async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fi
         "/openapi.json",
         "/docs/diagrams/",
     ] {
-        assert!(
-            html.contains(&format!("https://bot.example/event-gateway{path}")),
-            "{path}"
-        );
+        assert!(html.contains(&format!("{advertised}{path}")), "{path}");
     }
     assert!(!html.contains("href=\"/docs"));
+    if !advertise {
+        assert!(!html.contains("https://bot.chrono-ai.fun/event-gateway"));
+        assert!(html.contains("href=\"https://gateway.example/console\""));
+    }
+    let protocol_destination = format!("{advertised}/docs#protocol");
     for (path, destination) in [
-        (
-            "/docs/protocol",
-            "https://bot.example/event-gateway/docs#protocol",
-        ),
+        ("/docs/protocol", protocol_destination.as_str()),
         (
             "/event-gateway/legacy-console",
             "https://gateway.example/console",
