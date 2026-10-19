@@ -695,8 +695,12 @@ assumes how long somebody will work and presents a number the service will never
 
 An Agent owns one conversation in one Worktree, Workspace, and Sandbox. There is
 no separate Chat surface. The fixed header names the Agent and its Workspace and
-Sandbox ancestry. A 748px reading axis holds the durable history and live turn.
-Rows are neutral flow items; the composer has a stable seat below the scrollport.
+Sandbox ancestry. The conversation uses the available Agent panel width, with
+15% empty space on each side of the history and composer. The axis grows with
+the screen instead of stopping at 748px. Container queries measure the space
+remaining beside the sidebar: at 48rem or less, use 24px side gutters; at 30rem
+or less, use 14px. History, lifecycle sections and the composer share these
+gutters. Rows are neutral flow items; the composer has a stable seat below the scrollport.
 
 The owner's message is right-aligned on the existing accent wash, capped at the
 smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
@@ -737,8 +741,8 @@ pending requests keep the existing explicit same-request recovery action.
 
 One active Thinking disclosure follows the current Agent reply and settled turn
 activity inside the conversation scrollport, before queued follow-up messages.
-Its left edge aligns with the Agent message content: 32px avatar plus 12px gap
-from the message row's left edge. Before the first reply, it uses the same inset.
+Its left edge aligns with the Agent avatar and message row's left edge, without
+the message body's avatar-and-gap inset. Before the first reply, it uses the same alignment.
 It is transient turn status, never a persisted message or an extra transcript row.
 Its 44px control
 places the existing compact, rotating running CMA character before Thinking,
@@ -2481,6 +2485,7 @@ exit; retain the existing 44px mobile touch target.
 | 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |
 | 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
 | 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |
+| 2026-10-19 | Align Thinking with the Agent avatar and widen the conversation and composer to 70% of the available Agent panel, with matching 24px/14px gutters in narrow containers. Preserve the existing transient-status animation and message behavior. |
 
 
 ### Operations profile inventory retirement (2026-10-19)
