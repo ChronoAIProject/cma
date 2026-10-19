@@ -117,7 +117,7 @@ data:
   # manual/daily updates. Prewarm this exact image before release promotion.
   # Active work finishes before an admitted update; deployment never rotates it.
   # API/Web rollback retains this runtime pointer and the original user PVCs.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:e53d4dc7943192d321a26ebde1bd93a0b75c5737946114600e695fd4e826d273"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:dfa7cfddb3171ec2e2bc6942adefd7c9d2825d2f164c2b5b34f2d0dc234f719c"
   # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
   # admission. The target is persisted by Agent Manager and reconciled through
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
