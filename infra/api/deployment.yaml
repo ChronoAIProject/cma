@@ -20,18 +20,18 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:232378ffbc5adb8997dabde3bddad3eeec177c308f897206cc9ad678de777ea5"
+        cma.chronoai.dev/api-image-digest: "sha256:c501548e993c36392613d2327ad523b71d36854a76c47f9ba82f029ffaa6933e"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "0922e36fc6401e4a7561b6d00d2013c101566b09"
-        cma.chronoai.dev/ci-artifact: "12178902093"
+        cma.chronoai.dev/candidate: "65c5da162cdab49a82aa967304bd5cebbf01b6ea"
+        cma.chronoai.dev/ci-artifact: "12182548361"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "59e8049117b31795aecb6fa6cbca79b17cdcb88c"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:10faf85a6985349e2805916a9e847b7f87453a106e807d2d338284f5d0f4db5a"
-        cma.chronoai.dev/ci-run: "39230836093"
-        cma.chronoai.dev/image-digest: "sha256:232378ffbc5adb8997dabde3bddad3eeec177c308f897206cc9ad678de777ea5"
-        cma.chronoai.dev/image-source: "45755edf40eab6f8f2ce8253f42eeba873235f6e"
+        cma.chronoai.dev/ci-head: "65c5da162cdab49a82aa967304bd5cebbf01b6ea"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:04733c30a37ce6a553755957fae22c0cd0298a724d7d45ea6e50843f8f11eb7c"
+        cma.chronoai.dev/ci-run: "39240312924"
+        cma.chronoai.dev/image-digest: "sha256:c501548e993c36392613d2327ad523b71d36854a76c47f9ba82f029ffaa6933e"
+        cma.chronoai.dev/image-source: "a59a2e86cb418f1959aa98a540f934d1b806220d"
         cma.chronoai.dev/runtime-image: "sha256:dfa7cfddb3171ec2e2bc6942adefd7c9d2825d2f164c2b5b34f2d0dc234f719c"
-        cma.chronoai.dev/source-tree: "06bc6c0d438a59bca892966c3a40ef0ca83f351f"
+        cma.chronoai.dev/source-tree: "3f84bf93d9017f1800074c02cdb13f77474d2ec8"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -66,7 +66,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:232378ffbc5adb8997dabde3bddad3eeec177c308f897206cc9ad678de777ea5
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:c501548e993c36392613d2327ad523b71d36854a76c47f9ba82f029ffaa6933e
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

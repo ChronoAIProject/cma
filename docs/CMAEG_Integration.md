@@ -15,14 +15,25 @@ for an overview of channel setup, ingress, execution, tools, delivery and recove
 
 | Interface | Production address |
 | --- | --- |
-| Direct REST base | `https://bot-gateway.chrono-ai.fun/v1` |
+| Direct REST base | `https://bot.chrono-ai.fun/event-gateway/v1` |
 | NyxID REST proxy base | `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg` |
-| Native MCP | `https://bot-gateway.chrono-ai.fun/mcp` |
-| OpenAPI | <https://bot-gateway.chrono-ai.fun/openapi.json> |
-| Integration guide | <https://bot-gateway.chrono-ai.fun/docs> |
-| Architecture section | <https://bot-gateway.chrono-ai.fun/docs#architecture> |
-| Complete protocol section | <https://bot-gateway.chrono-ai.fun/docs#protocol> |
-| Download complete document | <https://bot-gateway.chrono-ai.fun/docs/download> |
+| Native MCP | `https://bot.chrono-ai.fun/event-gateway/mcp` |
+| OpenAPI | <https://bot.chrono-ai.fun/event-gateway/openapi.json> |
+| Integration guide | <https://bot.chrono-ai.fun/event-gateway/docs> |
+| Architecture section | <https://bot.chrono-ai.fun/event-gateway/docs#architecture> |
+| Complete protocol section | <https://bot.chrono-ai.fun/event-gateway/docs#protocol> |
+| Download complete document | <https://bot.chrono-ai.fun/event-gateway/docs/download> |
+
+The canonical public API uses the `/event-gateway` namespace on the portal's
+origin. The portal itself remains at `/event-gateway`, and its browser-cookie
+bridge remains at `/api/event-gateway`. External REST and MCP clients use bearer
+or channel credentials directly; the browser-cookie bridge is not a general API
+proxy. The public OpenAPI document advertises the full canonical `/v1` base.
+
+Existing `https://bot-gateway.chrono-ai.fun` API, webhook and setup URLs continue
+to work. Keep retained callback URLs and signatures unchanged during migration;
+an installed Telegram webhook on the old host is preserved. Newly generated
+channel, setup and media links use the canonical namespace.
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in
@@ -483,7 +494,10 @@ Exact bodies, canonical digests, error codes and conformance levels are in the
 
 Channel owners can inspect every channel their NyxID account, or an
 organization they administer, owns at
-<https://bot-gateway.chrono-ai.fun/console>. It is read-only apart from
+<https://bot.chrono-ai.fun/event-gateway/legacy-console>. This compatibility entry
+redirects to the existing console OAuth authority at
+`https://bot-gateway.chrono-ai.fun/console`; its login, callback and existing tabs
+remain valid. It is read-only apart from
 source attach and detach; change consumers and routing through the REST API.
 
 1. **Sign in.** Choose "Sign in with NyxID" and approve the console. Use the

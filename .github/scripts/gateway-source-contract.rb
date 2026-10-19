@@ -40,6 +40,20 @@ module GatewaySourceContract
       "backendRefs" => backend(target) }
   end
 
+  def self.gateway_public_route(type, suffix, replacement)
+    replacement_type = type == "Exact" ? "ReplaceFullPath" : "ReplacePrefixMatch"
+    replacement_key = type == "Exact" ? "replaceFullPath" : "replacePrefixMatch"
+    { "matches" => [path(type, "/event-gateway/#{suffix}")],
+      "filters" => [{ "type" => "URLRewrite", "urlRewrite" => { "path" => { "type" => replacement_type, replacement_key => replacement } } }],
+      "backendRefs" => backend("cma-event-gateway") }
+  end
+
+  def self.gateway_route(name, spec)
+    value = object("HTTPRoute", name, spec)
+    value["metadata"]["labels"]["app.kubernetes.io/name"] = "cma-event-gateway"
+    value
+  end
+
   def self.service(name, workload)
     value = object("Service", name, {
       "type" => "ClusterIP", "selector" => { "app.kubernetes.io/name" => workload },
@@ -63,7 +77,8 @@ module GatewaySourceContract
           { "matches" => [path("PathPrefix", "/api/event-gateway")], "backendRefs" => backend("cma-agent-manager") },
           service_route("image-manager", "cma-image-manager", "/"),
           service_route("agent-manager", "cma-agent-manager", "/api"),
-          { "matches" => [path("PathPrefix", "/api"), path("PathPrefix", "/auth"), path("Exact", "/openapi.json"), path("Exact", "/.well-known/agent-card.json")], "backendRefs" => backend("cma-agent-manager") },
+          { "matches" => [path("PathPrefix", "/api"), path("PathPrefix", "/auth"), path("Exact", "/openapi.json"), path("Exact", "/agent-manager/openapi.json"), path("Exact", "/.well-known/agent-card.json")], "backendRefs" => backend("cma-agent-manager") },
+          { "matches" => [path("Exact", "/image-manager/openapi.json")], "backendRefs" => backend("cma-image-manager") },
           { "matches" => all, "backendRefs" => backend("cma-web") },
         ],
       }),
@@ -77,6 +92,26 @@ module GatewaySourceContract
       "default" => { "config" => { "type" => "HTTP", "httpHealthCheck" => { "port" => 8080, "requestPath" => "/ready" } } },
     })
     values = { "infra/api/httproute.yaml" => routes, "infra/api/healthcheckpolicy.yaml" => [health] }
+    values["infra/cmaeg/httproute.yaml"] = [
+      gateway_route("cma-event-gateway", {
+        "parentRefs" => parent("https"), "hostnames" => ["bot-gateway.chrono-ai.fun"],
+        "rules" => [{ "matches" => all, "backendRefs" => backend("cma-event-gateway") }],
+      }),
+      gateway_route("cma-event-gateway-http-redirect", {
+        "parentRefs" => parent("http"), "hostnames" => ["bot-gateway.chrono-ai.fun"],
+        "rules" => [{ "matches" => all, "filters" => [{ "type" => "RequestRedirect", "requestRedirect" => { "scheme" => "https", "statusCode" => 301 } }] }],
+      }),
+      gateway_route("cma-event-gateway-public", {
+        "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
+        "rules" => [
+          gateway_public_route("PathPrefix", "v1", "/v1"),
+          gateway_public_route("PathPrefix", "mcp", "/mcp"),
+          gateway_public_route("PathPrefix", "openapi.json", "/openapi.json"),
+          gateway_public_route("PathPrefix", "docs", "/docs"),
+          { "matches" => [path("PathPrefix", "/event-gateway/connect"), path("PathPrefix", "/event-gateway/legacy-console")], "backendRefs" => backend("cma-event-gateway") },
+        ],
+      }),
+    ]
     values["infra/api/service.yaml"] = [service("cma-agent-manager", "cma-agent-manager"), service("cma-api", "cma-agent-manager")]
     values["infra/cmaeg/service.yaml"] = [service("cma-event-gateway", "cma-event-gateway"), service("cmaeg", "cma-event-gateway")]
     %w[api web].each do |name|

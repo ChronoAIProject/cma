@@ -86,7 +86,10 @@ forwards its server-held bearer; Event Gateway independently introspects that
 bearer and applies its own permissions and record ownership checks. No service
 reads another service's login collections. Historical `eg_auth_sessions` expire
 normally and are not accepted by the shared portal. See `Shared_Login.md` for
-the bridge's exact-origin checks, token custody, and route contract.
+the bridge's exact-origin checks, token custody, and route contract. The canonical
+`/event-gateway/v1`, `/event-gateway/mcp` and `/event-gateway/openapi.json` namespace
+routes directly to Event Gateway with its own API credentials. It neither bypasses
+the cookie bridge nor grants another service's permissions.
 
 Image Manager retains its independent `/api/image-manager/auth/callback`, client,
 resource, encryption key and `__Host-` HttpOnly cookie for its later rollout.

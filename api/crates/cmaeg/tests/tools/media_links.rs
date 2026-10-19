@@ -312,3 +312,30 @@ async fn context_reports_downloads_for_autonomous_only() {
         );
     }
 }
+
+#[tokio::test]
+async fn media_links_use_the_advertised_base_in_both_rollout_phases() {
+    let app = App::with_media(photo_app(autonomous)).await;
+    let mut state = app.state.clone();
+    state.public_api_url = "https://bot.example/event-gateway".into();
+    let event = app.event_ref.open(&state.keys, now()).unwrap().payload;
+    let channel = state
+        .resolver
+        .resolve(event.channel_id.as_str())
+        .await
+        .unwrap();
+    let cmaeg_core::activity::ActivityKind::Message { attachments, .. } = &app.activity.kind else {
+        panic!("fixture is a message")
+    };
+    for (advertise, base) in [
+        (false, "https://gateway.example"),
+        (true, "https://bot.example/event-gateway"),
+    ] {
+        state.advertise_public_api_url = advertise;
+        let link = state
+            .mint_link(&channel, &event, &attachments[0], 0)
+            .unwrap();
+        assert_eq!(link.url, format!("{base}/v1/media/content"));
+        assert!(link.curl.ends_with(&format!("'{base}/v1/media/content'")));
+    }
+}

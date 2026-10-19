@@ -93,14 +93,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
     axum::serve(
         listener,
-        browser.protect(
-            http::router(Arc::new(App {
-                store,
-                auth,
-                executor,
-            }))
-            .merge(browser.routes()),
-        ),
+        browser
+            .protect(
+                http::router(Arc::new(App {
+                    store,
+                    auth,
+                    executor,
+                }))
+                .merge(browser.routes()),
+            )
+            .merge(cma_image_manager::openapi::router()),
     )
     .with_graceful_shutdown(shutdown())
     .await?;

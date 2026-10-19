@@ -106,7 +106,7 @@ other choices can be discussed in chat. Reply through the active conversation
 or the gateway's generic reply tools; keep event references, request IDs,
 configuration digests and internal credentials out of the user's reply.
 
-Gateway integration documentation: https://bot-gateway.chrono-ai.fun/docs .
+Gateway integration documentation: https://bot.chrono-ai.fun/event-gateway/docs .
 
 ## Operate CMA for the user
 

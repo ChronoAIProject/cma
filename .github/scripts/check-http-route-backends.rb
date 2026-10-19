@@ -49,6 +49,8 @@ expected_web = {
   ["PathPrefix", "/api"] => api_backend,
   ["PathPrefix", "/auth"] => api_backend,
   ["Exact", "/openapi.json"] => api_backend,
+  ["Exact", "/agent-manager/openapi.json"] => api_backend,
+  ["Exact", "/image-manager/openapi.json"] => [{ "group" => "", "kind" => "Service", "name" => "cma-image-manager", "port" => 80, "weight" => 1 }],
   ["Exact", "/.well-known/agent-card.json"] => api_backend,
   ["PathPrefix", "/"] => web_backend,
 }

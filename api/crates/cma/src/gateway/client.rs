@@ -9,6 +9,7 @@ pub(super) struct GatewayClient {
     http: Client,
     base: Url,
     public: Url,
+    public_api: Url,
     issuer: String,
 }
 impl GatewayClient {
@@ -17,9 +18,17 @@ impl GatewayClient {
             http,
             base: Url::parse(&config.base_url).map_err(|_| "invalid gateway origin")?,
             public: Url::parse(&config.public_url).map_err(|_| "invalid gateway public origin")?,
+            public_api: Url::parse(&config.public_api_url)
+                .map_err(|_| "invalid gateway public API base")?,
             issuer,
         })
     }
+    pub(super) fn valid_callback(&self, channel: &str, value: &str) -> bool {
+        [&self.public_api, &self.public].into_iter().any(|base| {
+            endpoint(base, "callbacks", Some(channel), None).is_ok_and(|url| value == url.as_str())
+        })
+    }
+
     fn url(&self, collection: &str, id: Option<&str>) -> Result<Url, BotError> {
         endpoint(&self.base, collection, id, None)
     }
@@ -322,17 +331,13 @@ impl GatewayClient {
             }
             (source.key_id, source.route_ids)
         };
-        if channel.endpoints.nyxid_callback_url
-            != endpoint(&self.public, "callbacks", Some(&channel.channel_id), None)?.as_str()
-            || channel.endpoints.custom_event_url
-                != endpoint(
-                    &self.public,
-                    "channels",
-                    Some(&channel.channel_id),
-                    Some("events"),
-                )?
-                .as_str()
-        {
+        let allowed = [&self.public_api, &self.public].into_iter().any(|base| {
+            endpoint(base, "callbacks", Some(&channel.channel_id), None)
+                .is_ok_and(|url| channel.endpoints.nyxid_callback_url == url.as_str())
+                && endpoint(base, "channels", Some(&channel.channel_id), Some("events"))
+                    .is_ok_and(|url| channel.endpoints.custom_event_url == url.as_str())
+        });
+        if !allowed {
             return Err(BotError::Unavailable);
         }
         Ok(BotChannelObservation {
@@ -384,7 +389,7 @@ fn endpoint(
     let mut url = base.clone();
     {
         let mut path = url.path_segments_mut().map_err(|_| BotError::Unavailable)?;
-        path.clear().push("v1").push(collection);
+        path.pop_if_empty().push("v1").push(collection);
         if let Some(id) = id {
             if id == "." || id == ".." {
                 return Err(BotError::Unavailable);
