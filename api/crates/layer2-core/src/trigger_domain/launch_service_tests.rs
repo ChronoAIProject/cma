@@ -24,6 +24,7 @@ use crate::{
 
 use super::*;
 
+mod archive;
 mod credential_prerequisite;
 mod initiation;
 mod input_protocol;
