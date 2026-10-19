@@ -187,6 +187,11 @@ pub enum SandboxStoreError {
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
+    fn managed_runtime_version(&self) -> Option<&str> {
+        None
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError>;
     async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError>;
     async fn save_sandbox(
@@ -399,6 +404,7 @@ pub trait SandboxTransactionStore: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
+    managed_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
 }

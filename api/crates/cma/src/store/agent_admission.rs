@@ -369,7 +369,12 @@ async fn apply_admission(
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
     let revival = admission
-        .record_parent_admission(&mut next_sandbox, &workspace, cause)
+        .record_parent_admission(
+            &mut next_sandbox,
+            &workspace,
+            cause,
+            store.managed_runtime_version.as_deref(),
+        )
         .map_err(ApplyError::Domain)?;
     advance_workspace(store, &workspace, &next_workspace, session).await?;
     advance_sandbox(store, &sandbox, &next_sandbox, session).await?;

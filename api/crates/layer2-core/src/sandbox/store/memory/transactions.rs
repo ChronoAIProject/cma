@@ -31,7 +31,14 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 event,
             } => {
                 if let Some(proof) = &command_revival {
-                    command_revival::validate(&mut candidate, proof, &sandbox, &event_at, &event)?;
+                    command_revival::validate(
+                        &mut candidate,
+                        proof,
+                        &sandbox,
+                        &event_at,
+                        &event,
+                        self.managed_runtime_version(),
+                    )?;
                 }
                 let id = sandbox.id.clone();
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
