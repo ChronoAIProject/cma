@@ -568,3 +568,6 @@ async fn native_upgrade_requires_suspension_and_complete_pod_inventory() {
         assert!(!reads.calls.lock().unwrap().is_empty());
     }
 }
+
+#[path = "native_retired_policy_tests.rs"]
+mod retired_policy_tests;

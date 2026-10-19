@@ -89,12 +89,14 @@ impl AgentSandboxClient {
             )
         };
         before.data["spec"]["operatingMode"] = json!("Suspended");
-        self.verify_explicit_runtime_policy(&desired).await?;
         timing.completed("generation_proof_render");
         let actual = self
             .get(runtime)
             .await?
             .ok_or_else(|| unavailable("Suspended Sandbox is absent"))?;
+        if home.is_none() {
+            self.verify_explicit_runtime_policy(&actual).await?;
+        }
         // A lost acknowledgement may leave the admitted next generation Running.
         // This does not authorize another generation or another creation.
         if self.matches(&actual, &desired).is_ok() {
@@ -145,6 +147,7 @@ impl AgentSandboxClient {
         // Claim/Sandbox/PVC authority once, then render without additional reads.
         // This proof is local to this call; suspension and final CAS still reread.
         let member = self.pools.prove_native_home(home).await?;
+        self.verify_explicit_runtime_policy(&member).await?;
         let before = self
             .pools
             .runtime_desired_for_member(origin, home, previous, name, &member)?;
