@@ -133,7 +133,9 @@ impl NativeStatusInspection<'_> {
             // An initial/replaced process must run the original bootstrap protocol.
             return Ok(None);
         }
-        policy?;
+        backend
+            .client
+            .complete_native_runtime_policy(home, proof.member(), policy)?;
         if !backend.acknowledged_assignment(handle, proof.pod(), request)? {
             return Err(AdapterError::Unavailable(
                 "runtime assignment retired during inspection".into(),

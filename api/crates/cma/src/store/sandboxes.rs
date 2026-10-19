@@ -349,6 +349,10 @@ async fn classify_cas_miss(
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    fn managed_runtime_version(&self) -> Option<&str> {
+        self.managed_runtime_version.as_deref()
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
         if !sandbox.credential.service_grants.is_empty()
             || sandbox.credential.service_scope.is_some()

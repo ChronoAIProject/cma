@@ -92,6 +92,12 @@ async fn schedule_control(
                 .map_err(ApplyError::from)
             {
                 Ok(current) => match operation.request.plan(current.agent.clone()) {
+                    Ok(AgentControlResult::Scheduled(_))
+                        if current.sandbox.status
+                            == layer2_core::sandbox::SandboxStatus::Rotating =>
+                    {
+                        ControlAttempt::ReadOnly(Box::new(Err(AgentControlStoreError::Conflict)))
+                    }
                     Ok(AgentControlResult::Scheduled(next)) => ControlAttempt::Write {
                         current: Box::new(current),
                         next: Box::new(next),

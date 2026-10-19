@@ -113,9 +113,10 @@ data:
   CHRONO_SANDBOX_HOME_CAPACITY_GIB: "64"
   CHRONO_SANDBOX_HOME_TEMPLATE: "cma-home-seed-v1"
   CHRONO_SANDBOX_HOME_TEMPLATE_UID: "e50503f6-9498-4105-a81a-5d9c34ffa810"
-  # Default for new allocations. Existing live Sandboxes retain their recorded
-  # image across API upgrades and rollback; drift never admits rotation work.
-  # Prove retained-runtime compatibility before deploying any new API image.
+  # Single latest released runtime for new allocations, managed resume and
+  # manual/daily updates. Prewarm this exact image before release promotion.
+  # Active work finishes before an admitted update; deployment never rotates it.
+  # API/Web rollback retains this runtime pointer and the original user PVCs.
   CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:e53d4dc7943192d321a26ebde1bd93a0b75c5737946114600e695fd4e826d273"
   # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
   # admission. The target is persisted by Agent Manager and reconciled through

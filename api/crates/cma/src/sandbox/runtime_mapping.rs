@@ -90,7 +90,14 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
             .home
             .as_ref()
             .and_then(|home| home.native_pool.as_ref())
-            .map(|native| native.request.pool.spec.image.uri.clone());
+            .map(|native| {
+                // Original pool authority stays immutable; the current binding
+                // records the actual image after an admitted software update.
+                sandbox
+                    .retained_runtime_binding()
+                    .map(|binding| binding.runtime_version.clone())
+                    .unwrap_or_else(|| native.request.pool.spec.image.uri.clone())
+            });
     }
     spec
 }

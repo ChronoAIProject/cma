@@ -36,6 +36,7 @@ mod queued_input_cases;
 mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
+mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
 mod share_cases;
@@ -146,6 +147,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = runtime_update_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = attachment_cases::scenario(name).await {
         return scenario;
     }

@@ -183,6 +183,7 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "shared-sandbox-inventory-invalid-shared",
         Classification::TypedShape,
     ),
+    ("runtime-update-missing-key", Classification::Local),
     ("sandbox-command-missing-key", Classification::Local),
     ("sandbox-command-invalid-key", Classification::Local),
     ("sandbox-command-invalid-revision", Classification::Local),

@@ -97,6 +97,18 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Explicitly replace only the image of an idle, suspended native runtime.
+    /// The successor pins its image and retains the original provider and home.
+    async fn upgrade_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _next: &RuntimeProvisionRequest,
+    ) -> Result<RuntimeHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "native runtime upgrades are unavailable".into(),
+        ))
+    }
+
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
         &self,

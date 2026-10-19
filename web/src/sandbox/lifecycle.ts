@@ -14,7 +14,7 @@ export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
 }
 
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
-  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving'].includes(
+  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving', 'rotating'].includes(
     sandbox.status,
   );
 }
@@ -23,7 +23,8 @@ export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus 
   if (['stopped', 'failed', 'deleted', 'removed', 'removing'].includes(status)) return status;
   const purpose = sandbox.lifecycle?.operation?.purpose;
   if (purpose === 'pause') return 'pausing';
-  if (purpose === 'revive' || purpose === 'image_rotation') return 'reviving';
+  if (purpose === 'revive') return 'reviving';
+  if (purpose === 'image_rotation') return 'rotating';
   return ['active', 'credential_rotating'].includes(sandbox.status) ? status : sandbox.status;
 }
 
@@ -31,7 +32,8 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
   if (sandboxChildrenAvailable(sandbox)) return undefined;
   if (
     sandboxChildrenReadable(sandbox) &&
-    (sandbox.lifecycle?.operation !== undefined || ['pausing', 'reviving'].includes(sandbox.status))
+    (sandbox.lifecycle?.operation !== undefined ||
+      ['pausing', 'reviving', 'rotating'].includes(sandbox.status))
   )
     return `${sandboxLifecycleLabel(sandbox)}. Agent conversations and history remain available.`;
   if (sandbox.status === 'paused')
@@ -91,7 +93,7 @@ export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
       case 'revive':
         return 'Resuming';
       case 'image_rotation':
-        return 'Resuming';
+        return 'Updating runtime';
     }
   }
   return statusLabel(sandbox.status);
@@ -99,6 +101,7 @@ export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
 
 export function sandboxRefreshDelay(sandbox: SandboxSummary): number {
   return sandbox.lifecycle?.checkpoint !== undefined ||
+    ['queued', 'updating'].includes(sandbox.runtimeUpdate?.state ?? '') ||
     sandbox.lifecycle?.backgroundSave !== undefined ||
     sandbox.lifecycle?.operation !== undefined ||
     [

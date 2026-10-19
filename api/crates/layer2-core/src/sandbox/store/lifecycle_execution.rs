@@ -430,7 +430,10 @@ fn validate_next_sandbox(
                 == Some(next.lifecycle.next_authority)
                 && matches!(
                     current.lifecycle.operation,
-                    Some(SandboxLifecycleOperation::Revive { .. })
+                    Some(
+                        SandboxLifecycleOperation::Revive { .. }
+                            | SandboxLifecycleOperation::ImageRotation { .. }
+                    )
                 )
                 && matches!(
                     next.lifecycle.operation,

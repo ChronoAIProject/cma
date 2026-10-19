@@ -16,6 +16,7 @@ pub(crate) mod resume_timing;
 mod runtime_stream;
 mod suspension;
 mod termination;
+mod upgrade;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
 use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};

@@ -92,12 +92,14 @@ impl MongoStores {
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
-        _runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
         // Legacy Profile warm records are retained only for cleanup and already
         // claimed runtime recovery. New admissions use the regular Sandbox lifecycle.
         let sandbox_model =
-            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
+            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage)
+                .await?
+                .with_managed_runtime_version(runtime.0.into());
         let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(

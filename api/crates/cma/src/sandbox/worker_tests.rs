@@ -882,12 +882,13 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
         .iter()
         .filter(|(_, request)| matches!(request, RequestFrame::Install(_)))
         .count();
+    let target = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
     let identity = SandboxRotationIdentity::capture(&active, &[]).unwrap();
     let expected_revision = active.revision;
     let rotation_at = now + Duration::from_secs(1);
     let mut rotating = active.clone();
     rotating
-        .begin_image_rotation("runtime-v3".into(), identity, rfc3339_at(rotation_at))
+        .begin_image_rotation(target.clone(), identity, rfc3339_at(rotation_at))
         .unwrap();
     harness
         .store
@@ -896,7 +897,7 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
         .unwrap();
 
     let mut spec = CodexSandboxSpec::default();
-    spec.deployment.image.uri = "runtime-v3".into();
+    spec.deployment.image.uri = target.clone();
     let worker = harness.worker_with_adapter(
         "rotation-worker",
         Arc::new(CodexAdapter::with_backend(harness.backend.clone(), spec)),
@@ -908,10 +909,7 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
     assert_eq!(rotated.status, SandboxStatus::Active);
     assert_eq!(rotated.lifecycle.rotation.rotations, 1);
     assert_ne!(rotated.runtime.as_ref().unwrap().runtime_id, old_runtime);
-    assert_eq!(
-        rotated.runtime.as_ref().unwrap().runtime_version,
-        "runtime-v3"
-    );
+    assert_eq!(rotated.runtime.as_ref().unwrap().runtime_version, target);
     let requests = harness.backend.requests().await;
     assert_eq!(
         requests
@@ -921,6 +919,47 @@ async fn worker_rotates_an_image_through_checkpoint_restore_without_installing_a
         before
     );
     assert!(requests
+        .iter()
+        .any(|(_, request)| matches!(request, RequestFrame::BootstrapRestore(_))));
+}
+
+#[tokio::test]
+async fn worker_rejects_unpinned_rotation_target_before_bootstrap_restore() {
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let created = harness.create().await;
+    let now = start_time(&created);
+    let active = harness.drive_active(&created.id, now).await;
+    let identity = SandboxRotationIdentity::capture(&active, &[]).unwrap();
+    let rotation_at = now + Duration::from_secs(1);
+    let mut rotating = active.clone();
+    rotating
+        .begin_image_rotation("runtime-v3".into(), identity, rfc3339_at(rotation_at))
+        .unwrap();
+    harness
+        .store
+        .save_sandbox(active.revision, rotating)
+        .await
+        .unwrap();
+    let worker = harness.worker_with_adapter(
+        "rotation-worker",
+        Arc::new(CodexAdapter::with_backend(
+            harness.backend.clone(),
+            CodexSandboxSpec::default(),
+        )),
+    );
+    for _ in 0..6 {
+        assert!(worker.run_one(&active.id, rotation_at).await.unwrap());
+    }
+    let failed = harness.stored(&active.id).await;
+    assert_eq!(failed.status, SandboxStatus::Failed);
+    let failure = failed.failure.as_ref().unwrap();
+    assert_eq!(failure.class, "provisioning_failed");
+    assert_eq!(failure.detail, "runtime rejected the lifecycle operation");
+    assert!(failed.runtime.is_none());
+    assert!(!harness
+        .backend
+        .requests()
+        .await
         .iter()
         .any(|(_, request)| matches!(request, RequestFrame::BootstrapRestore(_))));
 }

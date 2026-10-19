@@ -1516,13 +1516,25 @@ Requested profile scope never substitutes for effective reach; unconfirmed
 access is explicitly unconfirmed. Optional metadata
 failures preserve the main status and actions and offer retry.
 
-An Advanced icon-and-text command opens the shared wide Modal. Runtime version,
-IDs, profile revisions, limits, paths, recorded preparation, operation phases,
+An Advanced icon-and-text command opens the shared wide Modal. Runtime version
+also appears in the ordinary owner Runtime band when the public update projection
+is available. IDs, profile revisions, limits, paths, recorded preparation, operation phases,
 technical timestamps and Events appear only there, except for the ordinary
 operation progress, its recorded start time and translated Live activity. Raw
 technical Events load only while that dialog is open and never hold the ordinary
 page hostage. The dialog scrolls its body,
 traps focus, closes with Escape and returns focus to Advanced.
+
+The owner Runtime band uses the existing unframed Sandbox band, definition list,
+buttons and recovery status seat. Show current and latest image references exactly
+as reported, wrapping long references without inventing semantic versions. Display
+the server's daily 02:00 Asia/Singapore schedule and idle deferral. Manual updates
+retain their exact target and command key while an outcome is uncertain, including
+navigation away and back. Queued, updating, completed and failed states reuse the
+44px character, stage fade and reduced-motion behavior. Show same-home preservation
+only when the server confirms it. A rotating Sandbox keeps its Workspaces, Agents
+and conversation history readable. Update progress uses the existing detail refresh;
+it must not reload the page, reset drafts, or add a separate polling loop.
 
 Advanced also shows the latest completed snapshot's recorded timestamp and an
 owner-authenticated download link. The link resolves the actual whole-home archive,
@@ -2486,6 +2498,7 @@ exit; retain the existing 44px mobile touch target.
 | 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
 | 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |
 | 2026-10-19 | Align Thinking with the Agent avatar and widen the conversation and composer to 70% of the available Agent panel, with matching 24px/14px gutters in narrow containers. Preserve the existing transient-status animation and message behavior. |
+| 2026-10-19 | Add the owner Runtime band with exact current/latest image references, idle daily updates at 02:00 SGT, safe manual retries, recorded update states and existing character animation; keep history readable through runtime rotation. |
 
 
 ### Operations profile inventory retirement (2026-10-19)

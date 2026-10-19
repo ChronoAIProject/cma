@@ -1,4 +1,5 @@
 //! Bind logical runtime authority to an adopted pool member without replacing its Pod template.
+use super::runtime_upgrade::{RuntimeUpgradeProof, UPGRADE_ANNOTATION};
 use kube::api::DynamicObject;
 use serde_json::json;
 
@@ -52,7 +53,16 @@ impl AgentSandboxPools {
                 )?,
             }
         };
-        self.runtime_desired_for_home(origin, &home, request, name)
+        if home.request.policy.is_native_vct() {
+            let member = self.members.get(name).await.map_err(api_error)?;
+            self.member_owned(&member, &origin.claim)?;
+            if !self.member_spec(&member, origin, false)? {
+                return Err(rejected("native runtime home authority changed"));
+            }
+            self.runtime_desired_for_member(origin, &home, request, name, &member)
+        } else {
+            self.runtime_desired_for_home(origin, &home, request, name)
+        }
     }
 
     /// Pure rendering after the caller has verified the exact current home graph.
@@ -63,7 +73,37 @@ impl AgentSandboxPools {
         request: &ProviderSandboxRequest,
         name: &str,
     ) -> Result<DynamicObject> {
-        self.validate_runtime_home_request(origin, home, request)?;
+        self.runtime_desired_with_upgrade(origin, home, request, name, None)
+    }
+
+    pub(crate) fn runtime_desired_for_member(
+        &self,
+        origin: &NativePoolHomeOrigin,
+        home: &HomeVolumeAttachment,
+        request: &ProviderSandboxRequest,
+        name: &str,
+        member: &DynamicObject,
+    ) -> Result<DynamicObject> {
+        let proof = RuntimeUpgradeProof::from_member(member, origin)?;
+        self.runtime_desired_with_upgrade(origin, home, request, name, proof.as_ref())
+    }
+
+    pub(crate) fn runtime_desired_with_upgrade(
+        &self,
+        origin: &NativePoolHomeOrigin,
+        home: &HomeVolumeAttachment,
+        request: &ProviderSandboxRequest,
+        name: &str,
+        proof: Option<&RuntimeUpgradeProof>,
+    ) -> Result<DynamicObject> {
+        let image = match proof {
+            Some(proof) => {
+                proof.validate_request(request)?;
+                proof.image()
+            }
+            None => &origin.claim.request.pool.spec.image.uri,
+        };
+        validate_request(&self.config.deployment, origin, home, request, image)?;
         let config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&config, &origin.claim.request.pool.spec)?;
         let mut spec = model::sandbox_spec(&template, &origin.claim.request.pool);
@@ -71,8 +111,14 @@ impl AgentSandboxPools {
             spec["volumeClaimTemplates"] = json!([]);
             spec["podTemplate"]["spec"]["volumes"] = super::home::explicit_volumes(origin)?;
         }
+        if proof.is_some() {
+            super::runtime_upgrade::replace_image(&mut spec, image)?;
+        }
         spec["operatingMode"] = json!("Running");
         let mut annotations = request.metadata.clone();
+        if let Some(proof) = proof {
+            annotations.insert(UPGRADE_ANNOTATION.into(), proof.encode()?);
+        }
         annotations.insert(
             NATIVE_HOME_ANNOTATION.into(),
             serde_json::to_string(origin).map_err(|_| rejected("invalid native home origin"))?,
@@ -98,7 +144,13 @@ impl AgentSandboxPools {
         home: &HomeVolumeAttachment,
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
-        validate_request(&self.config.deployment, origin, home, request)
+        validate_request(
+            &self.config.deployment,
+            origin,
+            home,
+            request,
+            &origin.claim.request.pool.spec.image.uri,
+        )
     }
 }
 
@@ -107,6 +159,7 @@ fn validate_request(
     origin: &NativePoolHomeOrigin,
     home: &HomeVolumeAttachment,
     request: &ProviderSandboxRequest,
+    image: &str,
 ) -> Result<()> {
     let identity = crate::hosted::provider_request_identity(request)?;
     let mut unfingerprinted = request.clone();
@@ -118,7 +171,7 @@ fn validate_request(
         || identity.generation < origin.claim.request.runtime_generation
         || request.metadata.get(OWNER_LABEL).map(String::as_str) != Some(deployment)
         || request.metadata.get("cma/home-identity") != Some(&home.identity()?)
-        || request.image.uri != spec.image.uri
+        || request.image.uri != image
         || request.entrypoint != [crate::DEFAULT_SUPERVISOR_PROGRAM]
         || request.timeout.is_some()
         || request.resource_limits

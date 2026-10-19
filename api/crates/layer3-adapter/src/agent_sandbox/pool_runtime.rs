@@ -309,9 +309,11 @@ impl AgentSandboxClient {
                 &self.config.deployment,
                 &origin.claim.request.home,
             )?;
-            self.pools
-                .verify_explicit_template_policy(&origin.claim.request.pool)
-                .await?;
+            if !self.pools.retained_upgrade_policy(object, &origin)? {
+                self.pools
+                    .verify_explicit_template_policy(&origin.claim.request.pool)
+                    .await?;
+            }
         }
         Ok(())
     }

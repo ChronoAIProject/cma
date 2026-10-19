@@ -108,6 +108,9 @@ pub(super) fn validate_lifecycle_agent_phase(
 fn agent_phase(current: &Sandbox, next: &Sandbox, no_agents: bool) -> AgentPhase {
     if no_agents
         && (next.status == SandboxStatus::Failed
+            || next
+                .runtime_update_request()
+                .is_some_and(|request| request.failure.is_some())
             || next.work.attempts == current.work.attempts.saturating_add(1))
     {
         return AgentPhase::SandboxOnly;
