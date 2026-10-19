@@ -22,8 +22,8 @@ loads local SVG images under the gateway's restrictive content security policy.
 The complete Markdown download retains the Mermaid sources and internal links.
 
 Production catalog display name: **Agent Event Gateway**. NyxID slug: `cmaeg`.
-The catalog REST base is `https://bot-gateway.chrono-ai.fun/v1`, with OpenAPI at
-`https://bot-gateway.chrono-ai.fun/openapi.json`. The `/v1` base is necessary
+The catalog REST base is `https://bot.chrono-ai.fun/event-gateway/v1`, with OpenAPI at
+`https://bot.chrono-ai.fun/event-gateway/openapi.json`. The `/v1` base is necessary
 because the NyxID OpenAPI parser discovers paths but does not apply `servers`.
 The public/internal service is auto-connected and forwards caller bearers;
 channel ownership and credential-specific gateway checks remain authoritative.
@@ -140,7 +140,8 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
-| `CMAEG_PUBLIC_URL` | origin URL | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_PUBLIC_URL` | origin URL | Required | Retained console OAuth/CSRF origin and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://bot.chrono-ai.fun/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
 | `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
@@ -448,9 +449,34 @@ warm replica from service. A public route must never forward the private scrape 
 `chrono-bot`, matching the maintainer's 2026-09-22 deployment decision. CMA API
 also keeps one replica. The gateway listens on 8090; its private metrics listener
 uses 9091 and is not exposed through the public Service. The HTTPRoute attaches
-to `gateway-infra/chronoai-gateway` at `bot-gateway.chrono-ai.fun`; public DNS and
-certificate coverage remain cloud-side prerequisites. The single-label hostname
-fits the existing wildcard certificate.
+to `gateway-infra/chronoai-gateway`. Its canonical route on `bot.chrono-ai.fun`
+rewrites `/event-gateway/v1`, `/event-gateway/mcp`, `/event-gateway/openapi.json`
+and `/event-gateway/docs` to the service's existing endpoints. It forwards
+`/event-gateway/connect` and `/event-gateway/legacy-console` unchanged so the
+backend can preserve each browser flow's paths and exact Origin checks. The SPA
+at exactly `/event-gateway` remains on web; `/api/event-gateway` remains CMA's
+cookie-custody bridge. The old `bot-gateway.chrono-ai.fun` route stays installed.
+DNS, certificates, Gateway listeners and NyxID registrations are unchanged.
+
+Deploy CMA's dual-base validation first, then install the additive public routes
+and deploy the Gateway backend that generates canonical URLs. Both services'
+configmaps set the same canonical public API base. CMA accepts only exact canonical or legacy
+callbacks for the observed channel, including mixed-version deployment. A
+returned callback/custom-events pair must use one coherent base. Existing signed
+callbacks, channel IDs, keys and cookies are not rewritten. Existing Telegram
+webhooks on the exact legacy channel URL stay installed until authorized cleanup;
+new webhooks use the canonical base. An unrelated URL is always refused.
+
+`CMAEG_PUBLIC_URL` remains the registered legacy console origin. The canonical
+legacy-console entry uses a fixed redirect to that origin; it cannot accept a
+caller-supplied destination. `/connect` capability tabs continue to work on the
+old host, and new setup links use the prefixed canonical routes. The HTTP OpenAPI
+response advertises `{CMAEG_PUBLIC_API_URL}/v1`; the reviewed exported protocol
+snapshot retains its relative `/v1` server and unchanged operations/security.
+Rollback must retain the additive routes, legacy host and CMA's dual-base
+validator once canonical callbacks have been issued. Reverting URL generation
+is safe within that compatibility floor; reverting to an older CMA binary that
+recognizes only the legacy base would reject retained canonical callbacks.
 
 Use native Kubernetes Secrets, injected as environment variables through explicit
 `secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and

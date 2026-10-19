@@ -176,13 +176,18 @@ pub async fn activate(
         if telegram.get_me(&token).await.map_err(|_| failed())?.id != material.bot_id {
             return Err(invalid("platform credential identity changed"));
         }
-        let expected = format!("{}/v1/telegram/{channel_id}", state.public_url);
+        let expected = format!("{}/v1/telegram/{channel_id}", state.public_api_url);
         let current = telegram.get_webhook_url(&token).await.map_err(|_| failed())?;
-        if !current.is_empty() && current != expected {
+        let legacy = format!("{}/v1/telegram/{channel_id}", state.public_url);
+        if !current.is_empty() && current != expected && current != legacy {
             return Err(invalid("this bot already has a webhook; disconnect its previous integration before linking it"));
         }
         if !webhook::may_activate(state, id, channel_id.as_str(), &lease).await.map_err(error)? {
             return Err(error(Error::Conflict));
+        }
+        // Existing valid webhook secrets and URLs remain installed across domain migration.
+        if current == legacy && legacy != expected {
+            return Ok(());
         }
         mutation_started = true;
         telegram.set_webhook(&token, &expected, &Secret::new(material.webhook_secret.clone()))

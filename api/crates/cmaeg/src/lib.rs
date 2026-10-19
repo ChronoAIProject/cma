@@ -54,9 +54,9 @@ pub use config::{
     CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI, CMAEG_NON_HUMAN_PROVIDERS, CMAEG_NYXID_BASE_URL,
     CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET, CMAEG_NYXID_COMPLETE_REPLIES,
     CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL,
+    CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
+    CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -91,6 +91,13 @@ pub fn router() -> Router {
 /// Build the complete stateful router used by the running service.
 pub fn router_with_state(state: http::ManagementState) -> Router {
     let readiness = state.readiness.clone();
+    let public_api_url = state.public_api_url.clone();
+    let public_docs = http::docs::router_with_base(&public_api_url);
+    let public_discovery = http::public_urls::router(&state);
+    let mut document = ApiDoc::openapi();
+    document.servers = Some(vec![utoipa::openapi::Server::new(format!(
+        "{public_api_url}/v1"
+    ))]);
     telemetry::http::instrument(
         http::management::management_router(state)
             .route("/healthz", get(healthz))
@@ -98,8 +105,15 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
                 "/readyz",
                 get(http::readiness::readyz).with_state(readiness),
             )
-            .route("/openapi.json", get(openapi))
-            .merge(http::docs::router())
+            .route(
+                "/openapi.json",
+                get(move || {
+                    let document = document.clone();
+                    async move { Json(document) }
+                }),
+            )
+            .merge(public_docs)
+            .merge(public_discovery)
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )

@@ -95,6 +95,7 @@ impl App {
             ManagementConfig {
                 master_keys: keys.clone(),
                 public_url: "http://127.0.0.1:8090".into(),
+                public_api_url: "http://127.0.0.1:8090".into(),
                 cma_base_url: cma.base_url.clone(),
                 tools_nyxid_slug: "cmaeg".into(),
                 cma_service_token: Secret::new("cma-service"),
@@ -153,6 +154,7 @@ impl App {
             delivery,
             tracker: tracker.clone(),
             public_origin: "http://127.0.0.1:8090".into(),
+            public_api_url: "http://127.0.0.1:8090".into(),
             media: None,
             downloads: Default::default(),
         };

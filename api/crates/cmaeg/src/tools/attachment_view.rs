@@ -192,7 +192,7 @@ pub struct AttachmentView {
 pub struct MediaDownload {
     /// Always `GET`.
     pub method: String,
-    /// `<CMAEG_PUBLIC_URL>/v1/media/content`, without the link.
+    /// `<CMAEG_PUBLIC_API_URL>/v1/media/content`, without the link.
     pub url: String,
     /// Unix seconds after which the link is refused.
     pub expires_at: i64,

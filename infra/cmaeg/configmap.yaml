@@ -13,6 +13,7 @@ data:
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  CMAEG_PUBLIC_API_URL: "https://bot.chrono-ai.fun/event-gateway"
   # Existing Nyx ChannelPointers and sealed records bind this exact authority.
   # The cma-api Service aliases canonical Agent Manager Pods without rewriting
   # those identities. Provider dispatch below uses the canonical Service DNS.
