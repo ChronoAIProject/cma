@@ -75,7 +75,11 @@ impl AgentWorkerStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
+        if !current.work.is_due(&now)
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || (parent.status == crate::sandbox::SandboxStatus::Rotating
+                && !parent.restored_connection_is_ready(current))
+        {
             return Ok(None);
         }
         let mut claimed = current.clone();

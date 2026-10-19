@@ -291,6 +291,11 @@ multiple resource sizes for the current image. Release cleanup drains and remove
 obsolete pools only after the old control-plane generation is gone and no pending
 allocations or retained homes depend on them. Pool cleanup never rotates or
 deletes a claimed Sandbox; startup alone is not proof of allocation finality.
+Upgraded homes may outlive their original definitions only after exact retained
+Claim/Sandbox/PVC and policy verification proves they can recover independently.
+Retired target records preserve immutable release order and cannot be activated
+again by an older process. API/Web rollback retains the latest released runtime
+default; it does not downgrade `CHRONO_SANDBOX_IMAGE`.
 
 #### Capabilities must be proved
 
@@ -465,16 +470,30 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime identity and persistent homes
 
-Changing the configured runtime image never rotates existing live Sandboxes.
-Reconciliation adopts each retained runtime using its recorded image; new
-allocations use the configured image. API/web upgrade and rollback must preserve
+Changing the configured runtime image does not immediately replace existing live
+Sandboxes. Reconciliation adopts each retained runtime using its recorded image;
+new allocations use the configured image. API/web upgrade and rollback preserve
 the existing runtime, native conversation, admitted turns, approvals and dirty
-work without user repair. An incompatible feature stays disabled until retained
-runtime coexistence and uninterrupted interaction are proved. Previously admitted
-rotation operations remain readable and recoverable; image drift cannot admit
-new ones. Native pause/resume retains the same Sandbox CRD and PVC, changes
-operating mode, and binds the replacement Pod with a new boot identity. A pooled
-runtime retains its original claim and member authority across that transition.
+work. An incompatible feature stays disabled until retained runtime coexistence
+and uninterrupted interaction are proved.
+
+Managed native homes support two explicit update policies: the owner's Sandbox
+Details update command, and a daily check at 02:00 Asia/Singapore. The first
+observation of a default runtime waits until the next daily boundary; deployment
+or restart does not authorize immediate replacement. A requested update pins
+its exact target and waits for all admitted Agent and Workspace work to settle.
+It suspends the native Sandbox, changes its image and generation, and reopens
+the original conversations on the same PVC/home. IDs and original pool/claim/home
+authority remain unchanged. An initially paused Sandbox returns to paused unless
+new owner work supersedes that intent. Failures retain their exact phase and
+pinned target for retry. Custom-image Sandboxes are excluded.
+
+An owner/control/message/creation revival from Paused uses the latest managed
+runtime on that same retained native Sandbox and home. Already admitted updates
+retain their pinned target; RuntimeLost alone never upgrades an otherwise
+unchanged runtime. Native pause/resume changes operating mode and binds the
+replacement Pod with a new boot identity. A pooled runtime retains its original
+claim and member authority across that transition.
 Deletion waits for the claim, Sandbox and every owned Pod to disappear before
 releasing its PVC and completing database cleanup.
 
@@ -572,9 +591,14 @@ The tag is the version of record. `api/Cargo.toml` and `web/package.json` are no
 
 Publishing is not deploying. `infra/` is untouched by a release, and a new image
 becomes live only when someone changes a manifest to name it.
-`CHRONO_SANDBOX_IMAGE` selects the image for new allocations. Under §5, existing
-live Sandboxes retain their recorded runtime images across control-plane
-upgrades and rollbacks; changing this default never admits image-drift rotation.
+`CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
+managed-runtime updates and owner-requested revival under §5. It is pinned to a
+verified CI artifact by explicit release promotion; publishing a CI tag alone
+never changes that authority, and no registry tag scan chooses a newer image. Existing live
+Sandboxes retain their image until an admitted update reaches idle. Deployment
+alone never starts immediate image-drift rotation. Persisted update requests
+require a compatible reader during rollback; older binaries that reject the new
+lifecycle metadata cannot safely be restored after admission.
 
 Full procedure in `docs/Release.md`.
 

@@ -15,6 +15,7 @@ import type {
   SandboxDetail,
   SandboxEvent,
   SandboxSummary,
+  SandboxRuntimeUpdate,
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
@@ -140,6 +141,11 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly updateSandboxRuntime?: (
+    id: string,
+    targetVersion: string,
+    options: CommandOptions,
+  ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
   readonly uploadAgentAttachment?: (
     id: string,
     file: File,

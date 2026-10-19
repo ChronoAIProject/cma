@@ -320,7 +320,11 @@ async fn apply_admission(
                 _ => SandboxReviveCause::WorkspaceCreation,
             };
             let revival = next
-                .record_creation_admission(cause, admission.event_at.clone())
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    store.managed_runtime_version.as_deref(),
+                    admission.event_at.clone(),
+                )
                 .map_err(|error| {
                     ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
                 })?;

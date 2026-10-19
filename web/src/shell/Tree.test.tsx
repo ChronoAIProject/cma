@@ -332,7 +332,14 @@ describe('Sandbox navigation tree', () => {
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
   });
 
-  it.each(['rotating', 'provisioning'] as const)(
+  it('keeps Agent navigation available during runtime updates', () => {
+    renderTree({ items: navigationFixture('rotating') });
+    expect(screen.getByText('Agent one')).toBeInTheDocument();
+    expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
+    expect(screen.getAllByText('Updating runtime').length).toBeGreaterThan(0);
+  });
+
+  it.each(['provisioning'] as const)(
     'hides child navigation for a %s Sandbox but keeps its status page accessible',
     async (status) => {
       const onNavigate = vi.fn();

@@ -219,6 +219,11 @@ impl AgentSandboxPools {
         let original_config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&original_config, &origin.claim.request.pool.spec)?;
         let mut desired = model::sandbox_spec(&template, &origin.claim.request.pool);
+        if let Some(proof) =
+            super::runtime_upgrade::RuntimeUpgradeProof::from_member(member, origin)?
+        {
+            super::runtime_upgrade::replace_image(&mut desired, proof.image())?;
+        }
         if model::contains(&member.data["spec"], &desired) {
             if member.data["spec"]["podTemplate"]["spec"]
                 .get("volumes")

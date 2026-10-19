@@ -18,6 +18,39 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('maps runtime status and a base-view update receipt without an extra detail request', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    const runtime = {
+      current_version: 'registry.example/runtime@sha256:old',
+      latest_version: 'registry.example/runtime@sha256:new',
+      update_available: true,
+      state: 'queued',
+      can_update: false,
+      target_version: 'registry.example/runtime@sha256:new',
+      requested_at: NOW,
+      schedule: { timezone: 'Asia/Singapore', local_time: '02:00' },
+      preserves_home: true,
+    };
+    test.reply({ ...WIRE_SANDBOX_DETAIL, runtime_update: runtime });
+    const detail = await client.readSandbox(WIRE_SANDBOX.id);
+    expect(detail.runtimeUpdate).toMatchObject({
+      currentVersion: runtime.current_version,
+      latestVersion: runtime.latest_version,
+      state: 'queued',
+      requestedAt: NOW,
+      schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
+      preservesHome: true,
+    });
+    test.reply({ ...WIRE_SANDBOX, runtime_update: runtime }, 202);
+    expect(
+      await client.updateSandboxRuntime!(WIRE_SANDBOX.id, runtime.latest_version, options),
+    ).toEqual({
+      runtimeUpdate: detail.runtimeUpdate,
+      revision: WIRE_SANDBOX.revision,
+    });
+    expect(test.fetch).toHaveBeenCalledTimes(2);
+  });
   it('keeps title provenance and recorded first-message identity in detail and hierarchy reads', async () => {
     const test = restTransport();
     const client = createRestWebClient(test.sdk);

@@ -7,6 +7,7 @@ pub(super) fn validate(
     candidate: &Sandbox,
     at: &str,
     event: &SandboxEventKind,
+    managed_runtime_version: Option<&str>,
 ) -> Result<(), SandboxStoreError> {
     super::bindings::require_conversation_authority(state, proof.binding_authority())?;
     let command = state
@@ -21,7 +22,13 @@ pub(super) fn validate(
     proof
         .validate_snapshot(&snapshot)
         .map_err(|_| SandboxStoreError::Conflict)?;
-    validate_command_revival_transition(&snapshot.lineage.sandbox, candidate, at, event)?;
+    validate_command_revival_transition(
+        &snapshot.lineage.sandbox,
+        candidate,
+        at,
+        event,
+        managed_runtime_version,
+    )?;
     let resources = proof
         .authorization_audits()
         .map_err(|_| SandboxStoreError::Conflict)?;

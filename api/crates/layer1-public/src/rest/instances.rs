@@ -12,6 +12,7 @@ use super::BodyProblem;
 
 #[derive(Clone)]
 pub struct HierarchyState {
+    pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) sandboxes: Arc<SandboxService>,
     pub(super) workspaces: Arc<WorkspaceService>,
@@ -28,11 +29,20 @@ impl HierarchyState {
     ) -> Self {
         Self {
             users: None,
+            runtime_updates: None,
             sandboxes,
             workspaces,
             hierarchy,
             operations,
         }
+    }
+
+    pub fn with_runtime_updates(
+        mut self,
+        service: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
+    ) -> Self {
+        self.runtime_updates = Some(service);
+        self
     }
 
     pub fn with_user_directory(mut self, users: Arc<layer2_core::UserDirectory>) -> Self {
