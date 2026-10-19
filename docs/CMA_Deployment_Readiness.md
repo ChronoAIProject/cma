@@ -1435,7 +1435,15 @@ deleted definitions.
 
 For initial activation, deploy the compatible API with the existing runtime
 first and verify the previous API Pod has exited. Then promote the verified CI
-runtime digest in `CHRONO_SANDBOX_IMAGE` and its source manifest. New allocation,
+runtime digest in `CHRONO_SANDBOX_IMAGE` and its source manifest. Before changing
+that pointer, prewarm at least one member of the new exact runtime/default-capacity
+pool using the current Pod and home policy. The API adopts the exact original
+Pool/Template UIDs under its durable target lease without draining this prepared
+capacity. Before binding HTTP, it waits up to 120 seconds for an observed matching
+pool with at least one ready member; an effective operator target of zero skips
+this check. Failure exits startup without admitting cold allocations. This guard
+does not keep the old API serving during the single-replica Recreate rollout,
+so release preparation must complete before restarting the API. New allocation,
 prepared and native warm capacity, owner resume and the daily update service all
 consume this same release pointer. Existing running users update only after
 their admitted idle update or resume; changing the pointer does not stop work.
