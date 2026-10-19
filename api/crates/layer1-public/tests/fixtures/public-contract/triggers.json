@@ -926,33 +926,6 @@
       }
     },
     {
-      "id": "triggers-delete-published-refused",
-      "operation": "DELETE /api/v1/triggers/{id}",
-      "scenario": "trigger_owner",
-      "request": {
-        "method": "DELETE",
-        "path": "/api/v1/triggers/$trigger_id",
-        "headers": {
-          "idempotency-key": "contract-trigger-delete-refused"
-        }
-      },
-      "response": {
-        "status": 409,
-        "headers": {
-          "content-type": "application/problem+json"
-        },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-already-published",
-          "title": "trigger already published",
-          "status": 409,
-          "detail": "A Trigger that has been published cannot be deleted.",
-          "code": "trigger_already_published"
-        },
-        "bodyKind": "json"
-      },
-      "captures": {}
-    },
-    {
       "id": "triggers-retire",
       "operation": "POST /api/v1/triggers/{id}/retire",
       "scenario": "trigger_owner",
@@ -1274,6 +1247,362 @@
           "status": 409,
           "detail": "An embed descriptor is available only for a published Trigger.",
           "code": "trigger_not_published"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-create-for-published-archive",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-trigger-create-for-archive"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "trg_archive_contract",
+          "draft": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "draft_version": 1,
+          "availability": "draft",
+          "revision_count": 0,
+          "placements": [],
+          "stats": {
+            "launches_total": 0,
+            "agents_ready_total": 0
+          },
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "archive_trigger_id": "/id",
+        "created_at": "/created_at",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "triggers-publish-for-archive",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$archive_trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-trigger-publish-for-archive"
+        },
+        "body": {
+          "draft_version": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "trigger_id": "trg_archive_contract",
+          "public_id": "public_archive_contract",
+          "availability": "published",
+          "revision": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "digest": "c371d5947a81dfa100ea83b8995c81d921dc5ab80d88c776cd0fb942a77139e7",
+          "published_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "archive_public_id": "/public_id",
+        "published_at": "/published_at"
+      }
+    },
+    {
+      "id": "triggers-delete-published",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$archive_trigger_id",
+        "headers": {
+          "idempotency-key": "contract-trigger-delete-published"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-delete-published-replay",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$archive_trigger_id",
+        "headers": {
+          "idempotency-key": "contract-trigger-delete-published"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-read-archived",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$archive_trigger_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-not-found",
+          "title": "trigger not found",
+          "status": 404,
+          "detail": "No Trigger matches this request.",
+          "code": "trigger_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-list-after-archive",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "trg_contract",
+              "draft": {
+                "presentation": {
+                  "title": "Contract Agent",
+                  "description": "Public contract fixture",
+                  "button_label": "try_it",
+                  "theme": "dark"
+                },
+                "target": {
+                  "sandbox_profile": {
+                    "id": "sbp_route_sandbox",
+                    "revision": 1
+                  },
+                  "workspace_profile": {
+                    "id": "wkp_route_workspace",
+                    "revision": 1
+                  },
+                  "agent_profile": {
+                    "id": "agp_route_agent",
+                    "revision": 1
+                  }
+                },
+                "reuse": {
+                  "sandbox": "always_new",
+                  "workspace": "always_new",
+                  "agent": "always_new"
+                },
+                "first_message": "Inspect the project.",
+                "consent": {
+                  "always_review": false
+                }
+              },
+              "draft_version": 2,
+              "public_id": "public_contract",
+              "availability": "retired",
+              "revision_count": 1,
+              "placements": [
+                {
+                  "id": "plc_contract",
+                  "source_url": "https://source.example/docs",
+                  "label": "Documentation",
+                  "retired_at": "2026-09-07T00:00:00Z"
+                }
+              ],
+              "stats": {
+                "launches_total": 0,
+                "agents_ready_total": 0
+              },
+              "created_at": "2026-09-07T00:00:00Z",
+              "updated_at": "2026-09-07T00:00:00Z",
+              "retired_at": "2026-09-07T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "triggers-preview-archived",
+      "operation": "GET /api/v1/triggers/public/{public_id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/$archive_public_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "public, max-age=60",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer"
+        },
+        "body": {
+          "title": "Contract Agent",
+          "description": "Public contract fixture",
+          "button_label": "open_in_cma",
+          "theme": "auto",
+          "always_review": false,
+          "publisher_display_name": "CMA publisher",
+          "what_happens": [
+            "A new Sandbox is created for you.",
+            "A new Workspace is created in that Sandbox.",
+            "A new Agent is created in that Workspace."
+          ],
+          "availability": "retired",
+          "trust": {
+            "disclosures": []
+          },
+          "technical": {
+            "provider": "codex",
+            "effort": "medium",
+            "size": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048
+            },
+            "services": [
+              "github",
+              "chrono-llm-public"
+            ]
+          },
+          "first_message": "Inspect the project."
         },
         "bodyKind": "json"
       },

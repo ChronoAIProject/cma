@@ -43,6 +43,122 @@ describe('native warm pool operations', () => {
     expect(within(waiting!).getAllByText('Unknown')).toHaveLength(2);
   });
 
+  it('shows current-image pools by default and collapses disabled previous runtime records', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    const oldImage = 'registry.example/previous-runtime@sha256:' + 'b'.repeat(64);
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [
+        warmPool,
+        { ...warmPool, id: 'other-size', config_sha256: 'd'.repeat(64), cpu_millis: 2000 },
+        {
+          ...warmPool,
+          id: 'previous',
+          image: oldImage,
+          target_replicas: 0,
+          ready_replicas: 0,
+          status: 'disabled',
+        },
+      ],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_config_sha256: warmPool.config_sha256,
+      default_image: warmPool.image,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
+    await screen.findByText('Current default configuration');
+    const summary = screen.getByText('Previous runtime pools (1)');
+    expect(summary.closest('details')).not.toHaveAttribute('open');
+    const cards = screen.getAllByRole('article');
+    expect(cards[0]).toBeVisible();
+    expect(cards[1]).toBeVisible();
+    expect(cards[2]).not.toBeVisible();
+    expect(screen.queryByText(/Previous runtime pools still/)).not.toBeInTheDocument();
+    await user.click(summary);
+    const previous = screen
+      .getAllByRole('article')
+      .find((row) => row.textContent?.includes(oldImage))!;
+    expect(within(previous).queryByLabelText('Ready Sandbox target')).not.toBeInTheDocument();
+    expect(
+      within(previous).queryByRole('button', { name: 'Update target' }),
+    ).not.toBeInTheDocument();
+    expect(within(previous).getByRole('button', { name: 'Disable pool' })).toBeDisabled();
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+  });
+
+  it('keeps previous capacity visible while draining and only permits disabling its target', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    const previous = { ...warmPool, id: 'previous', image: 'registry.example/previous-runtime' };
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [warmPool, previous],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_config_sha256: warmPool.config_sha256,
+      default_image: warmPool.image,
+      available: true,
+    });
+    client.admin.resizeWarmPool.mockResolvedValue({
+      ...previous,
+      revision: 2,
+      target_replicas: 0,
+      status: 'disabled',
+    });
+    render(<WarmPools client={client} />);
+    await screen.findByText(/Previous runtime pools still have spare capacity/);
+    const history = screen.getByText('Previous runtime pools (1)').closest('details')!;
+    expect(history).toHaveAttribute('open');
+    const card = within(history).getByRole('article');
+    expect(within(card).queryByRole('button', { name: 'Update target' })).not.toBeInTheDocument();
+    await user.click(within(card).getByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('previous', {
+      expected_revision: 1,
+      target_replicas: 0,
+    });
+    await waitFor(() =>
+      expect(within(card).getByRole('button', { name: 'Disable pool' })).toBeDisabled(),
+    );
+    expect(history).toHaveAttribute('open');
+    expect(within(card).getByText('Ready').nextElementSibling).toHaveTextContent('2');
+    expect(
+      screen.getByText(/Previous runtime pools still have spare capacity/),
+    ).toBeInTheDocument();
+    expect(client.admin.configureWarmPool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { error: 'Capacity cleanup failed', observed: true, ready_replicas: 0 },
+    { error: null, observed: false, ready_replicas: null },
+  ])('does not conceal previous pool errors or unconfirmed capacity: %j', async (observation) => {
+    const client = operatorClient();
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [
+        {
+          ...warmPool,
+          ...observation,
+          image: 'registry.example/previous-runtime',
+          target_replicas: 0,
+        },
+      ],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_image: warmPool.image,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
+    await screen.findByText(/Previous runtime pools still have spare capacity/);
+    expect(screen.getByText('Previous runtime pools (1)').closest('details')).toHaveAttribute(
+      'open',
+    );
+    expect(screen.getByRole('article')).toBeVisible();
+    if (observation.error) expect(screen.getByRole('alert')).toHaveTextContent(observation.error);
+    expect(
+      screen.getByText(/No warm pools configured for the current runtime/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Current default configuration')).not.toBeInTheDocument();
+  });
+
   it('stages resources while infrastructure is unavailable and replays an uncertain create exactly', async () => {
     const client = operatorClient();
     const user = userEvent.setup();

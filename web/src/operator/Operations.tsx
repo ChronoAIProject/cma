@@ -2,7 +2,6 @@ import { useId, useState } from 'react';
 import type { Capability } from '../auth/types';
 import type { OperatorClient } from './client';
 import { Sandboxes } from './Sandboxes';
-import { Profiles } from './Profiles';
 import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
@@ -72,9 +71,6 @@ export function Operations({
       >
         {selectedView.id === 'sandboxes' ? (
           <Sandboxes client={client} canControl={canControl} />
-        ) : null}
-        {selectedView.id === 'profiles' ? (
-          <Profiles client={client} canControl={canControl} />
         ) : null}
         {selectedView.id === 'settings' ? <PlatformSettings client={client} /> : null}
         {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
