@@ -39,7 +39,8 @@ pub use checkpoint_store::{
     CheckpointArchiveStoreFactory, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
 };
 pub(crate) use deployment::{
-    provider_request_fingerprint, provider_request_identity, scoped_model_base_url,
+    image_sha256, provider_request_fingerprint, provider_request_identity, scoped_model_base_url,
+    validate_runtime_image,
 };
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,

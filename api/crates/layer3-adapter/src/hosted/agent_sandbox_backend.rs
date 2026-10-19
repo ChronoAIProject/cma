@@ -129,6 +129,18 @@ impl HostedBackend for AgentSandboxBackend {
             .await?;
         self.bind_resumed(handle, next).await
     }
+    async fn upgrade_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client
+            .upgrade_with_home(handle, previous, next, home)
+            .await?;
+        self.bind_resumed(handle, next).await
+    }
     async fn provision_receipted(
         &self,
         request: ProviderSandboxRequest,

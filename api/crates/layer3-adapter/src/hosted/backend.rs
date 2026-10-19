@@ -131,6 +131,17 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<()> {
         self.resume(handle, previous, next).await
     }
+    async fn upgrade_with_home(
+        &self,
+        _handle: &RuntimeHandle,
+        _previous: &ProviderSandboxRequest,
+        _next: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "native runtime upgrades are unavailable".into(),
+        ))
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,

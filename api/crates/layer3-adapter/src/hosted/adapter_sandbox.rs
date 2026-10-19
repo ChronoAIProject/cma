@@ -109,7 +109,13 @@ impl SandboxAdapter for HostedAdapter {
     ) -> crate::Result<RuntimeHandle> {
         self.resume_exact(request, next).await
     }
-
+    async fn upgrade_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        next: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.upgrade_exact(request, next).await
+    }
     async fn inspect_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -461,13 +467,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &CheckpointWriterResumeRequest,
     ) -> crate::Result<CheckpointWriterResumeReceipt> {
-        self.known_state(handle).await?;
-        if !request.has_valid_writer_resume_token() {
-            return Err(AdapterError::Rejected(
-                "checkpoint writer resume token must be 64 lowercase hexadecimal characters".into(),
-            ));
-        }
-        self.resume_checkpoint_writer_hold(handle, request).await
+        self.resume_checkpoint_writers_exact(handle, request).await
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
