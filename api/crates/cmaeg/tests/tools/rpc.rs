@@ -146,9 +146,15 @@ async fn tools_list_matches_the_pre_refactor_golden_document() {
 
 #[tokio::test]
 async fn mcp_migration_accepts_exact_canonical_and_legacy_origins() {
+    mcp_advertisement_origins(false).await;
+    mcp_advertisement_origins(true).await;
+}
+
+async fn mcp_advertisement_origins(advertise: bool) {
     let app = App::new().await;
     let mut state = app.state.clone();
     state.public_api_url = "https://bot.example/event-gateway".into();
+    state.advertise_public_api_url = advertise;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {

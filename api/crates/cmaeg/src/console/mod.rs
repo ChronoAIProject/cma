@@ -399,7 +399,7 @@ pub(crate) fn compose(
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),
-        public_api_url: config.management.public_api_url.clone(),
+        public_api_url: state.advertised_api_url().to_owned(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
         clock: Arc::new(clock::SystemClock),
         keys: state.master_keys.clone(),

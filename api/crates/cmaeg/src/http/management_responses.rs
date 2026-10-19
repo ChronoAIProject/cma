@@ -24,13 +24,21 @@ pub(super) fn channel_response(
         version,
         provider,
         endpoints: EndpointResponse {
-            nyxid_callback_url: format!("{}/v1/callbacks/{}", state.public_api_url, channel_id),
+            nyxid_callback_url: format!(
+                "{}/v1/callbacks/{}",
+                state.advertised_api_url(),
+                channel_id
+            ),
             telegram_webhook_url: definition
                 .sources
                 .iter()
                 .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-                .then(|| format!("{}/v1/telegram/{}", state.public_api_url, channel_id)),
-            custom_event_url: format!("{}/v1/channels/{}/events", state.public_api_url, channel_id),
+                .then(|| format!("{}/v1/telegram/{}", state.advertised_api_url(), channel_id)),
+            custom_event_url: format!(
+                "{}/v1/channels/{}/events",
+                state.advertised_api_url(),
+                channel_id
+            ),
         },
         definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
