@@ -82,8 +82,23 @@ impl PoolTargetStore for Memory {
     async fn insert(&self, _: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         unreachable!()
     }
-    async fn resize(&self, _: &str, _: &ResizeWarmPoolBody) -> Result<PoolTarget, WarmPoolError> {
-        unreachable!()
+    async fn resize(
+        &self,
+        id: &str,
+        body: &ResizeWarmPoolBody,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        self.calls.lock().unwrap().push(format!(
+            "store-resize:{id}:{}:{}",
+            body.expected_revision, body.target_replicas,
+        ));
+        let mut target = self.target.lock().unwrap();
+        assert_eq!(id, target.id);
+        if body.expected_revision != target.revision as u64 {
+            return Err(WarmPoolError::Conflict);
+        }
+        target.target_replicas = body.target_replicas;
+        target.revision += 1;
+        Ok(target.clone())
     }
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
         Ok(Some(self.target.lock().unwrap().clone()))
@@ -395,3 +410,6 @@ fn deployment_owned_image_admits_native_cold_and_warm_contracts() {
     };
     deployment.contract().unwrap();
 }
+
+#[path = "resize_tests.rs"]
+mod resize;
