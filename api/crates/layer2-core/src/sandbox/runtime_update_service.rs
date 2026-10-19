@@ -45,7 +45,8 @@ impl SandboxRuntimeUpdateService {
         {
             return request.failure.is_some()
                 && sandbox.work.lease.is_none()
-                && matches!(&sandbox.lifecycle.operation, Some(super::SandboxLifecycleOperation::ImageRotation { target_runtime_version, .. }) if target_runtime_version == &request.target_version);
+                && sandbox.admitted_runtime_update_target()
+                    == Some(request.target_version.as_str());
         }
         matches!(
             sandbox.status,

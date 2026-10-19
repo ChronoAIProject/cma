@@ -63,6 +63,17 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn reserve_home_request(
+        &self,
+        _: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeRequest,
+    ) -> layer3_adapter::Result<layer3_adapter::HomeVolumeRequest> {
+        let mut home = home.clone();
+        if let Some(pools) = &self.pools {
+            home.scope = layer3_adapter::HomeVolumeStore::allocation_scope(pools.as_ref());
+        }
+        Ok(home)
+    }
     fn native_pools(&self) -> Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl> {
         self.pools
             .as_deref()
