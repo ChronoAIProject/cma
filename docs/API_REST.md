@@ -4,6 +4,9 @@ This is the public HTTP contract for CMA's Sandbox model. The served
 `GET /openapi.json` is OpenAPI 3.1 and supplies exact JSON schemas, parameters,
 security declarations and response media types. The operation inventory below
 is checked against that document, including its AG-UI and Responses projections.
+For the focused Agent lifecycle and Responses v2 workflow, use
+`GET /agent-manager/openapi.json` and [Agent Manager API](API_Agent_Manager.md).
+It preserves existing operations and removes unrelated paths and unreachable schemas.
 [CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
 [CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
 [CMAEG protocol](CMAEG_Protocol.md) defines channel ingress, provider bindings
@@ -343,7 +346,7 @@ Responses use `Cache-Control: no-store`. Named workflow failures are
 `400 invalid_setup`, `403 setup_authority_required`, `404 setup_not_found`,
 `409 setup_changed`, and `503 setup_unavailable`. Authentication failures are
 rejected before the handler. The gateway's independent event/reply integration
-protocol is hosted at https://bot-gateway.chrono-ai.fun/docs .
+protocol is hosted at https://bot.chrono-ai.fun/event-gateway/docs .
 
 ## Provider Bindings
 
