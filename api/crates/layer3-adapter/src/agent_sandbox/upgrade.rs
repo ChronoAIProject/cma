@@ -31,7 +31,7 @@ impl AgentSandboxClient {
                     name,
                     Some(proof),
                 )?;
-                self.verify_explicit_runtime_policy(&desired).await?;
+                self.verify_explicit_runtime_policy(&member).await?;
                 let actual = self
                     .get(runtime)
                     .await?
@@ -48,7 +48,7 @@ impl AgentSandboxClient {
         let desired =
             self.pools
                 .runtime_desired_with_upgrade(origin, home, next, name, Some(&proof))?;
-        self.verify_explicit_runtime_policy(&desired).await?;
+        self.verify_explicit_runtime_policy(&member).await?;
         self.wait_suspended(runtime, &before).await?;
         // Pod removal can take minutes. Reacquire the complete original home
         // graph as well as the stopped generation before the UID/version CAS.

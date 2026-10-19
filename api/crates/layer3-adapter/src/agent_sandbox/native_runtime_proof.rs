@@ -68,6 +68,24 @@ impl AgentSandboxClient {
             .await
     }
 
+    pub(crate) fn complete_native_runtime_policy(
+        &self,
+        home: &HomeVolumeAttachment,
+        member: &DynamicObject,
+        template_policy: Result<()>,
+    ) -> Result<()> {
+        let origin = home
+            .receipt
+            .native_authority
+            .as_deref()
+            .ok_or_else(|| rejected("native home authority missing"))?;
+        if self.pools.retained_upgrade_policy(member, origin)? {
+            Ok(())
+        } else {
+            template_policy
+        }
+    }
+
     pub(crate) async fn native_runtime_proof(
         &self,
         runtime: &RuntimeHandle,
