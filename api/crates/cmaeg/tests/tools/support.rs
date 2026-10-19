@@ -201,6 +201,7 @@ impl App {
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
             media: media.clone(),
             downloads,
         };

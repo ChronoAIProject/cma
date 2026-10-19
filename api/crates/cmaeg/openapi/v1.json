@@ -2884,7 +2884,7 @@
             "type": "string"
           },
           "url": {
-            "description": "`<CMAEG_PUBLIC_URL>/v1/media/content`, without the link.",
+            "description": "`<CMAEG_PUBLIC_API_URL>/v1/media/content`, without the link.",
             "type": "string"
           }
         },

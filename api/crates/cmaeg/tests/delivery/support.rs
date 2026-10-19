@@ -177,6 +177,7 @@ impl App {
             delivery: Arc::new(ShardedScheduler::new(commands.clone())),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
             media: None,
             downloads: Default::default(),
         };
