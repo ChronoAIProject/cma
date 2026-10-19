@@ -146,7 +146,7 @@ fn runtime_update_defers_busy_agent_and_admits_complete_idle_identity() {
     busy.work.step = AgentWorkStep::CloseProcess;
     assert!(!runtime_update_agents_are_idle(&[busy]));
     let SandboxMaintenanceApplication::Persist { sandbox: next, .. } =
-        apply_image_rotation(&sandbox, &[idle.clone()], &request).unwrap()
+        apply_image_rotation(&sandbox, std::slice::from_ref(&idle), &request).unwrap()
     else {
         panic!("idle update not admitted");
     };
