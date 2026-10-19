@@ -78,7 +78,13 @@ impl AgentSandboxClient {
                 return Err(rejected("native Sandbox UID differs from its adopted home"));
             }
         }
-        if actual.name_any() != desired.name_any()
+        if actual
+            .annotations()
+            .get(super::pool::runtime_upgrade::UPGRADE_ANNOTATION)
+            != desired
+                .annotations()
+                .get(super::pool::runtime_upgrade::UPGRADE_ANNOTATION)
+            || actual.name_any() != desired.name_any()
             || actual.metadata.deletion_timestamp.is_some()
             || desired
                 .annotations()

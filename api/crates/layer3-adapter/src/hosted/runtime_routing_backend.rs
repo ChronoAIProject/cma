@@ -192,6 +192,17 @@ impl HostedBackend for RuntimeBackends {
             .resume_with_home(handle, previous, next, home)
             .await
     }
+    async fn upgrade_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .upgrade_with_home(handle, previous, next, home)
+            .await
+    }
     async fn provision_receipted(
         &self,
         request: ProviderSandboxRequest,

@@ -184,7 +184,7 @@ async fn native_proof_context_with_routed_home_accepts_only_configured_authority
 }
 
 #[tokio::test]
-async fn native_proof_context_reduces_twenty_one_reads_to_nine_without_cross_call_reuse() {
+async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_call_reuse() {
     let fixture = inspection_fixture(false).await;
     fixture
         .adapter
@@ -197,7 +197,9 @@ async fn native_proof_context_reduces_twenty_one_reads_to_nine_without_cross_cal
         .runtime_status(&fixture.bound.runtime)
         .await
         .unwrap();
-    assert_eq!(read_count(&fixture), 21);
+    // Generic adoption must observe persisted upgrade proof even when an explicit
+    // rollback returns to the original pool image. The combined path shares that read.
+    assert_eq!(read_count(&fixture), 22);
     fixture.bound.fixture.state.lock().unwrap().calls.clear();
     let inspected = fixture
         .adapter
