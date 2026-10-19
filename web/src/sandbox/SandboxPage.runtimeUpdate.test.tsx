@@ -93,3 +93,41 @@ it('does not expose runtime update controls to a viewer who is not the owner', a
   expect(screen.queryByRole('region', { name: 'Runtime' })).not.toBeInTheDocument();
   expect(updateSandboxRuntime).not.toHaveBeenCalled();
 });
+
+it('allows retry of the retained failed target while the Sandbox remains rotating', async () => {
+  const targetVersion = 'registry.example/runtime:requested';
+  const updateSandboxRuntime = vi.fn(async () => ({
+    revision: 6,
+    runtimeUpdate: { ...update, targetVersion, state: 'updating' as const, canUpdate: false },
+  }));
+  render(
+    <SandboxPage
+      client={agentClient({
+        readSandbox: async () => ({
+          ...sandboxFixture('rotating'),
+          owner: 'owner',
+          runtimeUpdate: { ...update, targetVersion, state: 'failed' },
+        }),
+        updateSandboxRuntime,
+      })}
+      sandboxId="sbx_1"
+      revision={0}
+      permissions={permissions}
+      busy={false}
+      viewerId="owner"
+      onAction={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await act(async () => {});
+  const agent = screen.getByRole('link', { name: 'Agent one' });
+  const retry = screen.getByRole('button', { name: 'Retry runtime update' });
+  expect(retry).toBeEnabled();
+  await act(async () => fireEvent.click(retry));
+  expect(updateSandboxRuntime).toHaveBeenCalledWith('sbx_1', targetVersion, {
+    idempotencyKey: expect.any(String),
+    signal: expect.any(AbortSignal),
+  });
+  expect(screen.getByText('Updating your runtime')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Agent one' })).toBe(agent);
+});
