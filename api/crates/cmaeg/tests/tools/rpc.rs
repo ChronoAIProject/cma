@@ -143,3 +143,55 @@ async fn tools_list_matches_the_pre_refactor_golden_document() {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     assert_eq!(list["result"], golden);
 }
+
+#[tokio::test]
+async fn mcp_migration_accepts_exact_canonical_and_legacy_origins() {
+    mcp_advertisement_origins(false).await;
+    mcp_advertisement_origins(true).await;
+}
+
+async fn mcp_advertisement_origins(advertise: bool) {
+    let app = App::new().await;
+    let mut state = app.state.clone();
+    state.public_api_url = "https://bot.example/event-gateway".into();
+    state.advertise_public_api_url = advertise;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, cmaeg::mcp::router(state))
+            .await
+            .unwrap()
+    });
+    for (origin, status) in [
+        ("https://bot.example", 200),
+        ("https://gateway.example", 200),
+        ("https://bot.example/event-gateway", 403),
+        ("https://bot.example.evil.test", 403),
+        ("null", 403),
+    ] {
+        let response = app
+            .fixture
+            .client
+            .post(&url)
+            .bearer_auth(&app.key)
+            .header("origin", origin)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status, "{origin}");
+    }
+    let response = app
+        .fixture
+        .client
+        .post(&url)
+        .bearer_auth(&app.key)
+        .header("origin", "https://bot.example")
+        .header("origin", "https://gateway.example")
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    server.abort();
+}

@@ -137,6 +137,37 @@ if mode == "release"
     end
     raise "Gateway contract accepted a bypass of the shared login bridge: #{mutation}"
   end
+  %w[portal-capture wrong-protocol-target stripped-connect removed-legacy-host wrong-openapi-target unsupported-full-path-rewrite].each do |mutation|
+    candidate = GatewaySourceContract.expected
+    routes = candidate.fetch("infra/cmaeg/httproute.yaml")
+    public_route = routes.find { |value| value.dig("metadata", "name") == "cma-event-gateway-public" }
+    case mutation
+    when "portal-capture"
+      public_route["spec"]["rules"][0]["matches"][0]["path"]["value"] = "/event-gateway"
+    when "wrong-protocol-target"
+      public_route["spec"]["rules"][0]["backendRefs"] = GatewaySourceContract.backend("cma-agent-manager")
+    when "stripped-connect"
+      public_route["spec"]["rules"][-1]["filters"] = GatewaySourceContract.gateway_public_route("PathPrefix", "connect", "/connect")["filters"]
+    when "removed-legacy-host"
+      routes.delete_at(0)
+    when "wrong-openapi-target"
+      api_route = candidate.fetch("infra/api/httproute.yaml").find { |value| value.dig("metadata", "name") == "cma-web" }
+      discovery = api_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/agent-manager/openapi.json" } }
+      discovery["backendRefs"] = GatewaySourceContract.backend("cma-web")
+    when "unsupported-full-path-rewrite"
+      # This formerly schema-valid rule is rejected by the GKE Gateway controller.
+      discovery = public_route["spec"]["rules"].find { |value| value["matches"].any? { |match| match.dig("path", "value") == "/event-gateway/openapi.json" } }
+      discovery["matches"] = [GatewaySourceContract.path("Exact", "/event-gateway/openapi.json")]
+      discovery["filters"] = [{ "type" => "URLRewrite", "urlRewrite" => { "path" => { "type" => "ReplaceFullPath", "replaceFullPath" => "/openapi.json" } } }]
+    end
+    begin
+      GatewaySourceContract.validate(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted incompatible service routing: #{mutation}"
+  end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
   %w[http://cma-agent-manager.chrono-bot.svc https://cma-api.chrono-bot.svc http://cma-api.chrono-bot.svc:8080 missing duplicate].each do |origin|

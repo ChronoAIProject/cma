@@ -21,6 +21,8 @@ pub struct ManagementState {
     pub creator_auth: Arc<CreatorAuthenticator>,
     pub master_keys: Arc<MasterKeyRing>,
     pub public_url: String,
+    pub public_api_url: String,
+    pub advertise_public_api_url: bool,
     pub cma_base_url: String,
     pub tools_nyxid_slug: String,
     pub cma_service_token: cmaeg_core::channel::Secret,
@@ -46,6 +48,14 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    pub fn advertised_api_url(&self) -> &str {
+        if self.advertise_public_api_url {
+            &self.public_api_url
+        } else {
+            &self.public_url
+        }
+    }
+
     pub fn new(
         providers: Arc<ProviderClient>,
         records: Arc<RecordClient>,
@@ -86,6 +96,8 @@ impl ManagementState {
             creator_auth,
             master_keys: config.master_keys,
             public_url: config.public_url,
+            public_api_url: config.public_api_url,
+            advertise_public_api_url: config.advertise_public_api_url,
             cma_base_url: config.cma_base_url,
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,

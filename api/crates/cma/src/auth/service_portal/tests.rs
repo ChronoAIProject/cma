@@ -159,6 +159,7 @@ impl Fixture {
             Some(&crate::config::GatewayConfig {
                 base_url: gateway,
                 public_url: "https://gateway.example".into(),
+                public_api_url: "https://gateway.example".into(),
             }),
         )
         .unwrap();

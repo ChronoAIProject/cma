@@ -119,6 +119,8 @@ impl Fixture {
             Arc::new(CreatorAuthenticator::new(&self.base).unwrap()),
             ManagementConfig {
                 public_url: "https://gateway.example".into(),
+                public_api_url: "https://gateway.example".into(),
+                advertise_public_api_url: true,
                 master_keys: self.keys.clone(),
                 cma_base_url: self.base.clone(),
                 cma_service_token: Secret::new(SERVICE_TOKEN),
@@ -135,6 +137,8 @@ impl Fixture {
             delivery: Arc::new(crate::delivery::router::ShardedScheduler::new(delivery)),
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
+            public_api_url: management.public_url.clone(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };
@@ -1325,9 +1329,18 @@ async fn provisional_browser_reads_do_not_claim_a_link_and_first_cas_claim_exclu
 
 #[tokio::test]
 async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_csrf_before_claim() {
+    for advertise in [false, true] {
+        browser_http_exchange("", "https://gateway.example", advertise).await;
+        browser_http_exchange("/event-gateway", "https://bot.example", advertise).await;
+    }
+}
+
+async fn browser_http_exchange(prefix: &str, origin: &str, advertise: bool) {
     use axum::http::header;
     let fixture = Fixture::new().await;
-    let service = fixture.service();
+    let mut service = fixture.service();
+    service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.advertise_public_api_url = advertise;
     let mut record = connection("alice", false);
     record.browser_nonce = None;
     record.browser_claimed = false;
@@ -1358,12 +1371,15 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     let mut cookies = Vec::new();
     for _ in 0..2 {
         let response = client
-            .get(format!("{base}/connect/start/{start_token}"))
+            .get(format!("{base}{prefix}/connect/start/{start_token}"))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(response.headers()[header::LOCATION], "/connect");
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            format!("{prefix}/connect")
+        );
         assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
@@ -1382,10 +1398,32 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     let csrf = service
         .capability(&record, "csrf", &human_grant.nonce)
         .unwrap();
-    let target = format!("{base}/connect/submit");
+    let page = client
+        .get(format!("{base}{prefix}/connect"))
+        .header(header::COOKIE, &cookies[1])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    assert!(page
+        .text()
+        .await
+        .unwrap()
+        .contains(&format!("action=\"{prefix}/connect/submit\"")));
+    let target = format!("{base}{prefix}/connect/submit");
     // Invalid intent stops before any platform method while exercising real
     // HTTP extraction, Origin, CSRF and durable claim order.
-    for origin in [None, Some("null"), Some("https://foreign.example")] {
+    let other_origin = if prefix.is_empty() {
+        "https://bot.example"
+    } else {
+        "https://gateway.example"
+    };
+    for origin in [
+        None,
+        Some("null"),
+        Some("https://foreign.example"),
+        Some(other_origin),
+    ] {
         let mut request = client.post(&target).header(header::COOKIE, &cookies[1]);
         if let Some(origin) = origin {
             request = request.header(header::ORIGIN, origin);
@@ -1403,8 +1441,8 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     let response = client
         .post(&target)
         .header(header::COOKIE, &cookies[1])
-        .header(header::ORIGIN, "https://gateway.example")
-        .header(header::ORIGIN, "https://gateway.example")
+        .header(header::ORIGIN, origin)
+        .header(header::ORIGIN, origin)
         .form(&[
             ("csrf_token", csrf.as_str()),
             ("intent", "fixture_invalid_intent"),
@@ -1416,7 +1454,7 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     let response = client
         .post(&target)
         .header(header::COOKIE, &cookies[1])
-        .header(header::ORIGIN, "https://gateway.example")
+        .header(header::ORIGIN, origin)
         .form(&[
             ("csrf_token", start_token.as_str()),
             ("intent", "fixture_invalid_intent"),
@@ -1432,7 +1470,7 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     let response = client
         .post(&target)
         .header(header::COOKIE, &cookies[1])
-        .header(header::ORIGIN, "https://gateway.example")
+        .header(header::ORIGIN, origin)
         .form(&[
             ("csrf_token", csrf.as_str()),
             ("intent", "fixture_invalid_intent"),
@@ -1449,14 +1487,14 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
         Some(human_grant.nonce.as_str())
     );
     let response = client
-        .get(format!("{base}/connect"))
+        .get(format!("{base}{prefix}/connect"))
         .header(header::COOKIE, &cookies[0])
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::GONE);
     let response = client
-        .get(format!("{base}/connect/start/{start_token}"))
+        .get(format!("{base}{prefix}/connect/start/{start_token}"))
         .send()
         .await
         .unwrap();
@@ -1674,4 +1712,117 @@ async fn external_native_bot_capability_is_omitted_until_writes_enabled() {
             assert!(value.get("source_features").is_none());
         }
     }
+}
+
+#[tokio::test]
+async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fixed_authority() {
+    public_discovery(false).await;
+    public_discovery(true).await;
+}
+
+async fn public_discovery(advertise: bool) {
+    use axum::http::header;
+    use utoipa::OpenApi;
+    let fixture = Fixture::new().await;
+    let mut service = fixture.service();
+    service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.advertise_public_api_url = advertise;
+    let advertised = if advertise {
+        "https://bot.example/event-gateway"
+    } else {
+        "https://gateway.example"
+    };
+    let record = connection("alice", false);
+    assert!(service
+        .view(&record)
+        .unwrap()
+        .setup_url
+        .unwrap()
+        .starts_with(&format!("{advertised}/connect/start/")));
+    let app = crate::router_with_state(service.management);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let document: Value = client
+        .get(format!("{base}/openapi.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        document["servers"],
+        json!([{"url":format!("{advertised}/v1")}])
+    );
+    let static_document = serde_json::to_value(crate::ApiDoc::openapi()).unwrap();
+    assert_eq!(document["paths"], static_document["paths"]);
+    assert_eq!(document["components"], static_document["components"]);
+    let docs = client.get(format!("{base}/docs")).send().await.unwrap();
+    assert!(docs.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .contains(if advertise {
+            "img-src 'self' https://bot.example"
+        } else {
+            "img-src 'self' https://gateway.example"
+        }));
+    let html = docs.text().await.unwrap();
+    for path in [
+        "/docs/style.css",
+        "/docs/download",
+        "/openapi.json",
+        "/docs/diagrams/",
+    ] {
+        assert!(html.contains(&format!("{advertised}{path}")), "{path}");
+    }
+    assert!(!html.contains("href=\"/docs"));
+    if !advertise {
+        assert!(!html.contains("https://bot.chrono-ai.fun/event-gateway"));
+        assert!(html.contains("href=\"https://gateway.example/console\""));
+    }
+    let protocol_destination = format!("{advertised}/docs#protocol");
+    for (path, destination) in [
+        ("/docs/protocol", protocol_destination.as_str()),
+        (
+            "/event-gateway/legacy-console",
+            "https://gateway.example/console",
+        ),
+        (
+            "/event-gateway/legacy-console/channels/record-123?return_to=https://foreign.example",
+            "https://gateway.example/console/channels/record-123",
+        ),
+    ] {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert!(response.status().is_redirection());
+        assert_eq!(response.headers()[header::LOCATION], destination);
+    }
+    for path in [
+        "/event-gateway/legacy-console/channels/evil%2Fpath",
+        "/event-gateway/legacy-console/channels/evil%5Cpath",
+    ] {
+        assert_eq!(
+            client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        client
+            .post(format!("{base}/event-gateway/legacy-console"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    server.abort();
 }

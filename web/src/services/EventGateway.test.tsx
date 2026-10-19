@@ -86,7 +86,7 @@ it('puts channels in the sidebar and shows only the selected channel details', a
   await screen.findByRole('heading', { name: 'Existing channel' });
   expect(
     await screen.findByRole('link', { name: 'Open existing channel console' }),
-  ).toHaveAttribute('href', 'https://bot-gateway.chrono-ai.fun/console/channels/legacy-record');
+  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/legacy-record');
   expect(screen.queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
   const sidebar = screen.getByRole('region', { name: 'Channels' });
   await userEvent.click(within(sidebar).getByRole('button', { name: /Modern channel/ }));
