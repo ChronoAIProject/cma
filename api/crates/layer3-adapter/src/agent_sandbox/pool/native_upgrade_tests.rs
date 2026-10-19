@@ -571,3 +571,6 @@ async fn native_upgrade_requires_suspension_and_complete_pod_inventory() {
 
 #[path = "native_retired_policy_tests.rs"]
 mod retired_policy_tests;
+
+#[path = "retirement_tests.rs"]
+mod retirement_tests;

@@ -1,6 +1,33 @@
 use super::*;
 use crate::agent_sandbox::pool::network_policy_tests;
 
+#[tokio::test]
+async fn pool_retirement_rejects_genuinely_upgraded_template_network_dependents() {
+    let fixture = fixture(true).await;
+    upgrade(&fixture, &fixture.previous, &fixture.next)
+        .await
+        .unwrap();
+    let pool = &fixture
+        .home
+        .receipt
+        .native_authority
+        .as_ref()
+        .unwrap()
+        .claim
+        .request
+        .pool;
+    fixture.fixture.client.begin_retirement(pool).await.unwrap();
+    fixture.fixture.client.resize(pool, 0).await.unwrap();
+    fixture.fixture.state.lock().unwrap().calls.clear();
+    assert!(fixture
+        .fixture
+        .client
+        .retire_pool(pool, std::slice::from_ref(&fixture.home))
+        .await
+        .is_err());
+    fixture.no_writes();
+}
+
 async fn fixture(network: bool) -> Resume {
     let mut fixture = Fixture::new().await;
     fixture.client.config.template_fs_group_change_policy =
