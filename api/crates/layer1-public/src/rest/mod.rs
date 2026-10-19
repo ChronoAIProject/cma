@@ -384,11 +384,19 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi::document())
 }
 
+async fn agent_manager_openapi_document() -> Json<serde_json::Value> {
+    Json(openapi::agent_manager_document())
+}
+
 /// Public router for health-independent discovery infrastructure.
 pub fn router() -> Router {
     Router::new()
         .route("/api/v1/conformance", get(conformance))
         .route("/openapi.json", get(openapi_document))
+        .route(
+            "/agent-manager/openapi.json",
+            get(agent_manager_openapi_document),
+        )
 }
 
 #[cfg(test)]
