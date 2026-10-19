@@ -81,7 +81,7 @@ impl ConsumerGateway {
             }]).to_string()).unwrap(),
             provider_connect_timeout: Duration::from_secs(2), provider_request_timeout: Duration::from_secs(5),
             provider_max_inflight: 8, cma_service_account: None,
-            management: cmaeg::ManagementConfig { public_url: PUBLIC.into(), public_api_url: PUBLIC.into(), master_keys: keys.clone(),
+            management: cmaeg::ManagementConfig { public_url: PUBLIC.into(), public_api_url: PUBLIC.into(), advertise_public_api_url: true, master_keys: keys.clone(),
                 cma_base_url: server.base.clone(), cma_service_token: Secret::new("fixture-service"),
                 nyxid_base_url: server.base.clone(), tools_nyxid_slug: "cmaeg".into() },
             media: Default::default(), stt: Default::default(), transformer: Default::default(), console: Default::default(), routing: Default::default(),
@@ -108,6 +108,7 @@ impl ConsumerGateway {
             tracker: cmaeg::turns::TurnTracker::new(state.readiness.clone()),
             public_origin: PUBLIC.into(),
             public_api_url: PUBLIC.into(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };

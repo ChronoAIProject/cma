@@ -126,6 +126,7 @@ pub(crate) async fn serve(
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
         public_api_url: config.management.public_api_url.clone(),
+        advertise_public_api_url: config.management.advertise_public_api_url,
         media,
         downloads: std::sync::Arc::new(
             tools::MediaDownloads::default().with_link_ttl(config.media.link_ttl_seconds),

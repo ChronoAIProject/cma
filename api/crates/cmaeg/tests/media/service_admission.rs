@@ -240,6 +240,7 @@ fn config(media: MediaConfig) -> Config {
         management: ManagementConfig {
             public_url: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
             master_keys: Arc::new(ring()),
             cma_base_url: "https://cma.example".into(),
             cma_service_token: Secret::new("cma-service"),

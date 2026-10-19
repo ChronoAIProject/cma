@@ -399,7 +399,7 @@ pub(super) fn binding_request(
             .clone()
             .ok_or_else(|| ManagementError::Internal("missing provider credential".into()))?,
         tools: ToolsAdvertisement {
-            native_mcp_url: format!("{}/mcp", state.public_api_url),
+            native_mcp_url: format!("{}/mcp", state.advertised_api_url()),
             nyxid_service_slug: state.tools_nyxid_slug.clone(),
         },
     })
