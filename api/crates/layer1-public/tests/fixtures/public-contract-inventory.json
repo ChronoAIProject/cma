@@ -115,7 +115,6 @@
         "missing_idempotency_key",
         "not_authenticated",
         "store_failed",
-        "trigger_already_published",
         "trigger_not_found",
         "trigger_service_unavailable"
       ],
@@ -123,7 +122,8 @@
         "invalid_json": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "json_content_type_required": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
         "request_too_large": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
-        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable.",
+        "trigger_already_published": "api/crates/layer2-core/src/trigger_domain/store/memory.rs# Owner deletion archives published and retired Trigger definitions while preserving immutable revisions and Launch authority; publication no longer refuses deletion. Draft deletion still removes the definition."
       }
     },
     "DELETE /api/v1/workspaces/{id}": {
