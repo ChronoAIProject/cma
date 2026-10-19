@@ -102,7 +102,7 @@ export function ExistingChannel({
       </details>
       <a
         className="service-link"
-        href={`https://bot-gateway.chrono-ai.fun/console/channels/${segment(channel.record_id)}`}
+        href={`/event-gateway/legacy-console/channels/${segment(channel.record_id)}`}
         target="_blank"
         rel="noreferrer"
       >
