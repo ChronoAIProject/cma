@@ -250,6 +250,55 @@ it('surfaces an eventual failure even after accepted status was dismissed', asyn
   expect(pauseSandbox).toHaveBeenCalledOnce();
 });
 
+it.each(['pause', 'resume'] as const)(
+  'releases an accepted %s when a runtime update needs retry while still rotating',
+  async (action) => {
+    vi.useFakeTimers();
+    vi.spyOn(connectionClient, 'check').mockResolvedValue(readyConnections());
+    let failed = false;
+    const command = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Actions
+        client={agentClient({
+          pauseSandbox: command,
+          reviveSandbox: command,
+          readSandbox: async (id) => ({
+            ...sandboxFixture(failed ? 'rotating' : action === 'pause' ? 'pausing' : 'reviving'),
+            id,
+            runtimeUpdate: failed
+              ? {
+                  currentVersion: 'registry.example/runtime:old',
+                  latestVersion: 'registry.example/runtime:new',
+                  targetVersion: 'registry.example/runtime:new',
+                  updateAvailable: true,
+                  state: 'failed',
+                  canUpdate: true,
+                  schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
+                  preservesHome: true,
+                }
+              : undefined,
+          }),
+        })}
+      />,
+    );
+    const control = screen.getByRole('button', {
+      name: action === 'pause' ? 'Pause first' : 'Resume first',
+    });
+    await act(async () => fireEvent.click(control));
+    expect(control).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss status' }));
+    failed = true;
+    await act(() => vi.advanceTimersByTimeAsync(250));
+    expect(control).toBeEnabled();
+    expect(screen.getByText('Sandbox request needs attention.')).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'A runtime update needs attention. Open Sandbox details to retry it.',
+    );
+    expect(screen.queryByText(`Sandbox ${action === 'pause' ? 'paused' : 'resumed'}.`)).toBeNull();
+    expect(command).toHaveBeenCalledOnce();
+  },
+);
+
 it('surfaces failed background observations without unlocking or replaying the request', async () => {
   vi.useFakeTimers();
   const pauseSandbox = vi.fn().mockResolvedValue(undefined);
