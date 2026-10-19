@@ -16,6 +16,8 @@ mod pod_policy;
 pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
+mod retirement;
+mod retirement_inventory;
 mod runtime;
 pub(crate) mod runtime_upgrade;
 
@@ -168,7 +170,8 @@ impl AgentSandboxPools {
     }
 
     async fn verify_binding(&self, binding: &NativePoolBinding) -> Result<()> {
-        self.bound_resources(binding).await?;
+        let (_, pool) = self.bound_resources(binding).await?;
+        retirement::admitting(&pool)?;
         self.verify_seed(&binding.spec.home).await
     }
 }
