@@ -36,7 +36,7 @@ native MCP event tools are implemented independently.
 
 ## Exact method and path inventory
 
-The generated OpenAPI document contains **180 operations across 144 paths**.
+The generated OpenAPI document defines the full operation and path inventory.
 Each row below names a public method and path; schemas, authentication schemes,
 request parameters and error contracts are in `GET /openapi.json`. Disabled
 features and typed unsupported operations are included because they remain part
@@ -64,7 +64,7 @@ of the public contract.
 | responses | 7 |
 | responses v2 | 7 |
 | sandbox profiles | 9 |
-| sandboxes | 11 |
+| sandboxes | 12 |
 | service connections | 2 |
 | trigger launches | 8 |
 | trigger placements | 4 |
@@ -306,6 +306,7 @@ of the public contract.
 | `GET /api/v1/sandboxes/{id}/events` |
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
+| `POST /api/v1/sandboxes/{id}/runtime-update` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 
 ### service connections
