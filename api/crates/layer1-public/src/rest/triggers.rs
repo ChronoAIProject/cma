@@ -289,7 +289,7 @@ pub(super) async fn delete_trigger(
     Path(id): Path<String>,
     key: IdempotencyKey,
 ) -> Response {
-    // A successful delete removes the only ownership record, so its exact
+    // A successful delete removes the owner-visible record, so its exact
     // operation receipt must be allowed to replay before another owner read.
     if let Err(problem) = require_publisher(&caller) {
         return problem.into_response();

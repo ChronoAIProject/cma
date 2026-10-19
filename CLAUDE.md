@@ -285,6 +285,13 @@ effects. Cleanup proves claim, member and Pod finality before releasing a disk.
 Legacy `warm_sandboxes` records remain for already-claimed runtime recovery and
 cleanup only; production no longer admits or prepares new Profile warmups.
 
+New spare native capacity uses only the configured runtime image and current
+home/Pod policy. Operators cannot re-enable an obsolete target, but may configure
+multiple resource sizes for the current image. Release cleanup drains and removes
+obsolete pools only after the old control-plane generation is gone and no pending
+allocations or retained homes depend on them. Pool cleanup never rotates or
+deletes a claimed Sandbox; startup alone is not proof of allocation finality.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.

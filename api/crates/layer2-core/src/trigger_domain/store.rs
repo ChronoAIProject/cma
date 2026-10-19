@@ -104,11 +104,12 @@ pub trait TriggerStore: Send + Sync {
         owner: &SubjectId,
     ) -> Result<Option<Trigger>, TriggerStoreError>;
 
-    /// Deletes an owned Trigger only when no immutable revision has ever existed.
-    async fn delete_unpublished_trigger(
+    /// Deletes unpublished drafts; archives published definitions without removing Launch authority.
+    async fn delete_trigger(
         &self,
         id: &TriggerId,
         owner: &SubjectId,
+        archived_at: String,
     ) -> Result<(), TriggerStoreError>;
 
     /// Reads the first immutable revision whose content digest matches exactly.
