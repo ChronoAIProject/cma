@@ -2499,33 +2499,6 @@
       "captures": {}
     },
     {
-      "id": "trigger-state-delete-retired",
-      "operation": "DELETE /api/v1/triggers/{id}",
-      "scenario": "trigger_owner",
-      "request": {
-        "method": "DELETE",
-        "path": "/api/v1/triggers/$trigger_id",
-        "headers": {
-          "idempotency-key": "trigger-state-delete-retired"
-        }
-      },
-      "response": {
-        "status": 409,
-        "headers": {
-          "content-type": "application/problem+json"
-        },
-        "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-already-published",
-          "title": "trigger already published",
-          "status": 409,
-          "detail": "A Trigger that has been published cannot be deleted.",
-          "code": "trigger_already_published"
-        },
-        "bodyKind": "json"
-      },
-      "captures": {}
-    },
-    {
       "id": "trigger-state-embed-retired",
       "operation": "GET /api/v1/triggers/{id}/embed",
       "scenario": "trigger_owner",
@@ -2548,6 +2521,72 @@
           "status": 409,
           "detail": "An embed descriptor is available only for a published Trigger.",
           "code": "trigger_not_published"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-state-delete-retired",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger-state-delete-retired"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-state-delete-retired-replay",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger-state-delete-retired"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-state-embed-archived",
+      "operation": "GET /api/v1/triggers/{id}/embed",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$trigger_id/embed?placement_id=$placement_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-embed-not-found",
+          "title": "trigger embed not found",
+          "status": 404,
+          "detail": "No published Trigger placement matches this request.",
+          "code": "trigger_embed_not_found"
         },
         "bodyKind": "json"
       },
