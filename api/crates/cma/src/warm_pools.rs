@@ -187,7 +187,8 @@ impl NativeWarmPools {
             return Ok(());
         }
         // Original pool identities remain available for retained Sandboxes.
-        // The reconciler separately disables superseded spare capacity.
+        // Obsolete pools are removed only after pending allocations and
+        // running old control-plane processes have been ruled out.
         // Lost insert acknowledgements are resolved by the store's idempotent
         // identity lookup. A duplicate exact plan is safe to leave untouched.
         self.store.insert(target).await.map(|_| ())
@@ -199,16 +200,12 @@ impl NativeWarmPools {
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(5));
-            let mut retired_superseded = false;
             loop {
                 tokio::select! {
                     result = shutdown.changed() => {
                         if result.is_err() || *shutdown.borrow() { return; }
                     }
                     _ = tick.tick() => {
-                        if !retired_superseded {
-                            retired_superseded = self.retire_superseded().await.unwrap_or(false);
-                        }
                         for _ in 0..20 {
                             match self.reconcile_one().await {
                                 Ok(true) => {},
