@@ -48,6 +48,7 @@ impl AgentAdmission {
         parent: &mut crate::sandbox::Sandbox,
         workspace: &Workspace,
         cause: crate::sandbox::SandboxReviveCause,
+        managed_runtime_version: Option<&str>,
     ) -> Result<Option<crate::sandbox::SandboxEventKind>, SandboxStoreError> {
         if self.admits_bootstrap(workspace, parent) {
             parent.revision = parent
@@ -62,7 +63,11 @@ impl AgentAdmission {
             Ok(None)
         } else {
             parent
-                .record_creation_admission(cause, self.event_at.clone())
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    managed_runtime_version,
+                    self.event_at.clone(),
+                )
                 .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))
         }
     }

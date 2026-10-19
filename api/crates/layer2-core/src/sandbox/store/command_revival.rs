@@ -5,7 +5,8 @@ use super::lifecycle_command::{
 };
 use super::{
     SandboxLifecycleCommand, SandboxLifecycleCommandDisposition, SandboxLifecycleCommandOutcome,
-    SandboxLifecycleCommandResult, SandboxStoreError, SandboxTransaction, SandboxTransactionStore,
+    SandboxLifecycleCommandResult, SandboxStore, SandboxStoreError, SandboxTransaction,
+    SandboxTransactionStore,
 };
 use crate::sandbox::agent_io::CommandRevivalAuthorization;
 use crate::sandbox::{Sandbox, SandboxEventKind, SandboxReviveCause};
@@ -21,7 +22,7 @@ pub trait CommandRevivalStore: Send + Sync {
 }
 
 #[async_trait::async_trait]
-impl<T: SandboxTransactionStore + Send + Sync> CommandRevivalStore for T {
+impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStore for T {
     async fn schedule_command_revival(
         &self,
         authorization: Arc<CommandRevivalAuthorization>,
@@ -36,7 +37,7 @@ impl<T: SandboxTransactionStore + Send + Sync> CommandRevivalStore for T {
                 .validate()
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             let at = crate::now_rfc3339();
-            let command = revival(&current, &at);
+            let command = revival(&current, &at, self.managed_runtime_version());
             let application = apply_sandbox_lifecycle_command(current, &command)?;
             let SandboxLifecycleCommandApplication::Commit {
                 expected_revision,
@@ -86,6 +87,7 @@ pub fn validate_command_revival_transition(
     candidate: &Sandbox,
     at: &str,
     event: &SandboxEventKind,
+    managed_runtime_version: Option<&str>,
 ) -> Result<(), SandboxStoreError> {
     current
         .validate()
@@ -94,7 +96,10 @@ pub fn validate_command_revival_transition(
         expected_revision,
         sandbox,
         event: expected_event,
-    } = apply_sandbox_lifecycle_command(current.clone(), &revival(current, at))?
+    } = apply_sandbox_lifecycle_command(
+        current.clone(),
+        &revival(current, at, managed_runtime_version),
+    )?
     else {
         return Err(SandboxStoreError::Conflict);
     };
@@ -104,11 +109,17 @@ pub fn validate_command_revival_transition(
     Ok(())
 }
 
-fn revival(current: &Sandbox, at: &str) -> SandboxLifecycleCommand {
-    SandboxLifecycleCommand::revive(
+fn revival(
+    current: &Sandbox,
+    at: &str,
+    managed_runtime_version: Option<&str>,
+) -> SandboxLifecycleCommand {
+    let mut command = SandboxLifecycleCommand::revive(
         current.id.clone(),
         current.owner.clone(),
         at.into(),
         SandboxReviveCause::AgentMessage,
-    )
+    );
+    command.managed_runtime_version = managed_runtime_version.map(str::to_owned);
+    command
 }
