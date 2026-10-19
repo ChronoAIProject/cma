@@ -651,6 +651,15 @@ namespace is `chrono-pod`; the older last-applied annotation is not current
 configuration and must not determine the target. The private API endpoint was
 unreachable from CMA. No static token handoff is needed for metadata auth.
 The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatically.
+
+Only the current deployment runtime image and home/Pod policy receive native
+spare capacity. At control-plane startup, the warm-pool worker durably resizes
+superseded targets to zero using their current revision and lease fence; held
+leases or concurrent edits retry on the next worker tick. The original pool and
+template identities remain available for claimed Sandboxes and historical
+recovery. This retires unclaimed spares without rotating live user runtimes or
+changing their homes. An operator cannot raise an obsolete target above zero;
+multiple resource sizes using the current runtime and policy remain supported.
 Its ownership, immutable runtime contract and retained-home policy have not
 been verified as a CMA pool binding.
 

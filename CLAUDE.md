@@ -285,6 +285,13 @@ effects. Cleanup proves claim, member and Pod finality before releasing a disk.
 Legacy `warm_sandboxes` records remain for already-claimed runtime recovery and
 cleanup only; production no longer admits or prepares new Profile warmups.
 
+Spare native capacity uses only the configured runtime image and current home/Pod
+policy. On startup CMA durably disables superseded targets through the same
+revision and lease fences as an operator resize, retrying contention. Original
+pool/template bindings remain for claimed Sandboxes and recovery; disabling
+spares never rotates or deletes a claimed Sandbox. Operators cannot re-enable
+an obsolete target, but may configure multiple resource sizes for the current image.
+
 #### Capabilities must be proved
 
 "This can never do that" and "that just failed" are separate typed facts.
