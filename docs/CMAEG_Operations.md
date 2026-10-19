@@ -471,6 +471,12 @@ only newly issued links differ. The checked-in configmap describes the final
 `true` state. A ConfigMap change alone does not update existing process
 environments: each phase needs an explicit Pod-template change.
 
+CMA accepts native MCP advertisements at exactly either configured public base.
+Its binding/runtime proxy destination remains the retained legacy `/mcp`
+authority, so changing the advertisement never rewrites a binding's immutable
+tool endpoint or breaks replay. The configured canonical URL is an exact
+advertisement alias; request data cannot choose another proxy destination.
+
 Do not advertise canonical setup links during the first image overlap: a new
 Pod could issue a link that a still-serving old Pod cannot route. Keep the
 existing Service selectors, replica policy, ingress paths and NyxID registration
