@@ -152,11 +152,16 @@ async fn apply(
     if parent.owner != *owner {
         return Err(ClaimError::Domain(SandboxStoreError::NotFound));
     }
-    if parent.lifecycle.checkpoint_capture.is_some() {
+    if parent.lifecycle.checkpoint_capture.is_some()
+        || (parent.status == layer2_core::sandbox::SandboxStatus::Rotating
+            && !matches!(claim, ChildWriterClaim::Agent(agent) if parent.restored_connection_is_ready(agent)))
+    {
         return Ok(false);
     }
     if let ChildWriterClaim::Workspace(workspace) = claim {
-        if parent.defers_lifecycle_workspace(workspace) {
+        if parent.defers_lifecycle_workspace(workspace)
+            || parent.status == layer2_core::sandbox::SandboxStatus::Rotating
+        {
             return Ok(false);
         }
     }

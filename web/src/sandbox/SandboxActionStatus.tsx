@@ -57,6 +57,10 @@ export function SandboxActionStatus({
           ) {
             finished = true;
             settled.current(true);
+          } else if (sandbox.runtimeUpdate?.state === 'failed') {
+            finished = true;
+            setError('A runtime update needs attention. Open Sandbox details to retry it.');
+            settled.current(false);
           } else if (['failed', 'retiring', 'retired'].includes(sandbox.status)) {
             finished = true;
             setError(

@@ -15,11 +15,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod current;
+mod retirement;
+mod startup;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
     #[serde(rename = "_id")]
     pub id: String,
+    #[serde(default)]
+    pub activated_at: Option<mongodb::bson::DateTime>,
+    #[serde(default)]
+    pub retiring: bool,
+    #[serde(default)]
+    pub retired: bool,
     pub document_schema_version: i64,
     pub revision: i64,
     pub actor: String,
@@ -75,6 +83,22 @@ impl PoolTarget {
 
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
+    async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn retirement_homes(
+        &self,
+        _target: &PoolTarget,
+        _image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn remove_retired(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError>;
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError>;
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError>;
@@ -84,6 +108,9 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         body: &ResizeWarmPoolBody,
     ) -> Result<PoolTarget, WarmPoolError>;
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError>;
+    async fn claim_target(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn bind(
         &self,
         target: &PoolTarget,
@@ -149,9 +176,6 @@ impl NativeWarmPools {
     /// Pod-policy change creates a new pool identity and never mutates a claimed
     /// pool. Provider resources are still created only by the normal reconciler.
     pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
-        if self.default_target == 0 {
-            return Ok(());
-        }
         let provider = self
             .adapter
             .native_pools()
@@ -173,25 +197,17 @@ impl NativeWarmPools {
         // An operator may already have configured this exact immutable plan
         // under another idempotency key. Reuse that durable target instead of
         // tripping the collection's unique plan index during startup.
-        if self
+        if let Some(existing) = self
             .store
             .list()
             .await?
-            .iter()
-            .any(|target| target.plan.config_sha256 == plan.config_sha256)
+            .into_iter()
+            .find(|target| target.plan.config_sha256 == plan.config_sha256)
         {
-            return Ok(());
+            return self.store.activate(&existing.id).await;
         }
-        let target = default_target(plan, body);
-        if self.store.find(&target.id).await?.is_some() {
-            return Ok(());
-        }
-        // Original pool identities remain available for retained Sandboxes.
-        // Obsolete pools are removed only after pending allocations and
-        // running old control-plane processes have been ruled out.
-        // Lost insert acknowledgements are resolved by the store's idempotent
-        // identity lookup. A duplicate exact plan is safe to leave untouched.
-        self.store.insert(target).await.map(|_| ())
+        let target = self.store.insert(default_target(plan, body)).await?;
+        self.store.activate(&target.id).await
     }
 
     pub fn spawn(
@@ -223,7 +239,13 @@ impl NativeWarmPools {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(false);
         };
-        reconcile_one(self.store.as_ref(), provider).await
+        let Some(target) = self.store.claim().await? else {
+            return Ok(false);
+        };
+        if target.retiring || !self.current_plan(&target)? {
+            return self.retire_claimed(provider, target).await;
+        }
+        reconcile_claimed(self.store.as_ref(), provider, target).await
     }
 
     fn default_config_sha256(&self) -> Option<String> {
@@ -321,6 +343,9 @@ impl WarmPoolAdministration for NativeWarmPools {
             .map_err(|_| WarmPoolError::Invalid)?;
         let target = PoolTarget {
             id,
+            activated_at: None,
+            retiring: false,
+            retired: false,
             document_schema_version: 1,
             revision: 1,
             actor: caller.subject.0.clone(),
@@ -372,6 +397,9 @@ fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBod
     let key = format!("system-default-v1-{}", plan.config_sha256);
     PoolTarget {
         id: target_id(SYSTEM_ACTOR, &key),
+        activated_at: None,
+        retiring: false,
+        retired: false,
         document_schema_version: 1,
         revision: 1,
         actor: SYSTEM_ACTOR.into(),
@@ -401,15 +429,27 @@ fn replay(target: PoolTarget, body: &ConfigureWarmPoolBody) -> Result<PoolTarget
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
+#[cfg(test)]
 async fn reconcile_one(
     store: &dyn PoolTargetStore,
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
 ) -> Result<bool, WarmPoolError> {
-    let Some(mut target) = store.claim().await? else {
+    let Some(target) = store.claim().await? else {
         return Ok(false);
     };
+    reconcile_claimed(store, provider, target).await
+}
+
+async fn reconcile_claimed(
+    store: &dyn PoolTargetStore,
+    provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
+    mut target: PoolTarget,
+) -> Result<bool, WarmPoolError> {
+    if target.retiring {
+        return Err(WarmPoolError::Conflict);
+    }
     let result = async {
         if target.binding.is_none() {
             // Zero capacity until the original pool/template UIDs have durable acknowledgement.

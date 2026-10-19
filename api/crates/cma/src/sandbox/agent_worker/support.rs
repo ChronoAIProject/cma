@@ -116,6 +116,13 @@ impl AgentWorker {
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
         validate_lineage(agent, &sandbox, &workspace, &worktree)?;
+        if sandbox.status == SandboxStatus::Rotating && !sandbox.restored_connection_is_ready(agent)
+        {
+            return Err(WorkerFailure::retryable(
+                "agent_runtime_update_in_progress",
+                "the retained runtime update is pending",
+            ));
+        }
         if sandbox.lifecycle.checkpoint_capture.is_some() {
             return Err(WorkerFailure::retryable(
                 "agent_checkpoint_in_progress",

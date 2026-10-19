@@ -47,6 +47,7 @@ fn service(
     let store = Arc::new(Memory {
         target: Mutex::new(original),
         bind_response_loss: AtomicBool::new(false),
+        retirement_block: Mutex::new(std::collections::VecDeque::new()),
         calls: calls.clone(),
     });
     let adapter = CodexAdapter::with_backend(
@@ -54,6 +55,7 @@ fn service(
             calls,
             original: current.clone(),
             refuse_replaced_uid: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
         }),
         CodexSandboxSpec::default(),
     );

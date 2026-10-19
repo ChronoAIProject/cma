@@ -123,7 +123,7 @@ impl AgentSandboxPools {
                 && pool.observed
         });
         if let Some(pool) = selected {
-            self.verify_seed(&home.policy).await?;
+            self.verify_binding(&pool.binding).await?;
             Ok(Some(pool.binding))
         } else {
             Ok(None)
@@ -153,6 +153,7 @@ impl AgentSandboxPools {
         let template = template.ok_or_else(|| rejected("native pool template is missing"))?;
         let desired_pool = model::pool(&self.config, spec, &template, target(&pool)?)?;
         model::verify(&pool, &desired_pool)?;
+        super::retirement::admitting(&pool)?;
         status(binding(&self.config, spec, &template, &pool)?, &pool)
     }
 
@@ -171,6 +172,7 @@ impl AgentSandboxPools {
             None => super::create(&self.pools, &desired).await?,
         };
         let status = self.discover(&pool).await?;
+        super::retirement::admitting(&pool)?;
         if status.binding.spec != *spec
             || status.binding.pod_policy != NativePoolPodPolicy::from(&self.config)
             || status.binding.template_uid != template.uid().unwrap_or_default()
@@ -236,7 +238,7 @@ impl AgentSandboxPools {
                 && status.observed
         });
         if let Some(status) = selected {
-            self.verify_seed(&spec.home).await?;
+            self.verify_binding(&status.binding).await?;
             Ok(Some(status.binding))
         } else {
             Ok(None)
@@ -330,6 +332,9 @@ impl AgentSandboxPools {
         let mut prior = desired.clone();
         prior.data["spec"]["replicas"] = json!(target(&actual)?);
         model::verify(&actual, &prior)?;
+        if target(desired)? > 0 {
+            super::retirement::admitting(&actual)?;
+        }
         if actual.data["spec"]["replicas"] == desired.data["spec"]["replicas"] {
             return Ok(actual);
         }
@@ -364,6 +369,9 @@ impl AgentSandboxPools {
             return Err(rejected("native pool UID changed during scaling"));
         }
         model::verify(&updated, desired)?;
+        if target(desired)? > 0 {
+            super::retirement::admitting(&updated)?;
+        }
         Ok(updated)
     }
 }
@@ -389,7 +397,7 @@ pub(super) fn binding(
     })
 }
 
-fn target(pool: &DynamicObject) -> Result<u32> {
+pub(super) fn target(pool: &DynamicObject) -> Result<u32> {
     pool.data["spec"]["replicas"]
         .as_u64()
         .filter(|v| *v <= 1000)

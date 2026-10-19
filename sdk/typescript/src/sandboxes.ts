@@ -26,6 +26,10 @@ import {
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
+import {
+  updateSandboxRuntimeRequest,
+  type UpdateSandboxRuntimeRequest,
+} from './instances/runtime-update.js';
 import { accessibleSandboxDetail, accessibleSandboxSummary } from './instances/shared.js';
 import {
   sandboxCommandReceipt,
@@ -151,6 +155,26 @@ export class Sandboxes {
   }
   revive(id: string, options: CommandOptions) {
     return this.lifecycle(id, '/revive', 'POST', options);
+  }
+
+  /** Queue an exact deployment runtime image; active work finishes before rotation. */
+  updateRuntime(id: string, body: UpdateSandboxRuntimeRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-update`,
+      (value) => {
+        const result = identity(sandbox, id)(value);
+        if (result.runtime_update === undefined)
+          throw new ProtocolError('Runtime update response omitted its status');
+        return { ...result, runtime_update: result.runtime_update };
+      },
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(updateSandboxRuntimeRequest, body),
+        expectedStatus: [200, 202],
+      },
+    );
   }
 
   grantServiceAccess(id: string, body: GrantSandboxServiceAccessRequest, options: CommandOptions) {

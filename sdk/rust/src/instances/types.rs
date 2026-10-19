@@ -65,6 +65,8 @@ pub struct Sandbox {
     pub limits: SandboxLimits,
     /// Authoritative lifecycle eligibility and recorded progress; absent on older servers.
     pub lifecycle: Option<super::SandboxLifecycle>,
+    /// Managed runtime progress, when supplied on owner detail or update responses.
+    pub runtime_update: Option<super::SandboxRuntimeUpdate>,
     /// Currently bound runtime version, when present.
     pub runtime_version: Option<String>,
     /// Last recorded failure.

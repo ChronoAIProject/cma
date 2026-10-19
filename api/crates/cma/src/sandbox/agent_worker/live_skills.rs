@@ -25,10 +25,8 @@ impl AgentWorker {
                 if (matches!(
                     context.sandbox.status,
                     SandboxStatus::Active | SandboxStatus::CredentialRotating
-                ) || super::connection::restored_connection_is_ready(
-                    &context.sandbox,
-                    &agent,
-                )) && context.sandbox.credential.delivered
+                ) || context.sandbox.restored_connection_is_ready(&agent))
+                    && context.sandbox.credential.delivered
                     && context.workspace.status == WorkspaceStatus::Ready
                     && context.worktree.status == WorktreeStatus::Ready =>
             {

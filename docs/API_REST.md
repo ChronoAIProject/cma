@@ -1485,7 +1485,17 @@ volume; CMA does not expose a Sandbox snapshot archive endpoint.
 | `POST /api/v1/sandboxes/{id}/commands` | SandboxCommandRequest; key | - | 202 SandboxCommandReceiptView |
 | `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+`runtime-update` accepts `{ "target_version": "<exact image reference>" }`
+with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
+`runtime_update.latest_version`, or its retained `target_version` when retrying a
+failed update. HTTP 202 records the request; follow `runtime_update.state` on
+Sandbox reads until completion. Busy Agents defer the update until idle, and
+eligible managed Sandboxes retain their original home and conversations. Stale
+or conflicting targets return 409; replay an uncertain request with its original
+body and key.
 
 Sandbox inventory is personal by default. `organization=<canonical ID>` selects
 current organization ownership and whole-Sandbox grants. `shared=true` selects the

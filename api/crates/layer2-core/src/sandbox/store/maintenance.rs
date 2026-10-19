@@ -79,7 +79,7 @@ pub fn apply_inactivity_pause(
     })
 }
 
-/// Apply one image-drift decision to a Sandbox and its complete Agent set.
+/// Apply one explicitly requested image update decision to a Sandbox and its complete Agent set.
 #[doc(hidden)]
 pub fn apply_image_rotation(
     current: &Sandbox,
@@ -94,7 +94,14 @@ pub fn apply_image_rotation(
             SandboxMaintenanceOutcome::AlreadyScheduled,
         ));
     }
-    if !image_rotation_required(current, &request.expected_runtime_version) {
+    if !image_rotation_required(current, &request.expected_runtime_version)
+        || !crate::sandbox::runtime_update_agents_are_idle(agents)
+        || current.runtime_update_request().is_some_and(|update| {
+            update.completed_at.is_none()
+                && (update.target_version != request.expected_runtime_version
+                    || update.failure.is_some())
+        })
+    {
         return Ok(SandboxMaintenanceApplication::Complete(
             SandboxMaintenanceOutcome::NotEligible,
         ));
@@ -143,7 +150,7 @@ pub fn validate_image_rotation_request(
 /// Global discovery and evidence-backed atomic maintenance admission.
 #[async_trait]
 pub trait SandboxMaintenanceStore: Send + Sync {
-    /// Page active Sandbox IDs globally in stable, exclusive-cursor ID order.
+    /// Page active and paused Sandbox IDs globally in stable, exclusive-cursor ID order.
     async fn sandbox_maintenance_candidates(
         &self,
         page: &PageRequest,
@@ -179,7 +186,7 @@ fn schedule(
         expected_revision,
         sandbox: Box::new(sandbox),
         event: SandboxEventKind::StatusChanged {
-            from: SandboxStatus::Active,
+            from: current.status,
             to: next_status,
         },
     })

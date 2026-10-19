@@ -59,6 +59,28 @@ impl Default for HostedDeployment {
 }
 
 impl HostedDeployment {
+    pub(crate) fn render_adoption(
+        &self,
+        adoption: &crate::RuntimeAdoptionRequest,
+        generation: u64,
+    ) -> crate::Result<ProviderSandboxRequest> {
+        let mut retained = self.clone();
+        if let Some(image) = &adoption.expected_image {
+            retained.image.uri.clone_from(image);
+        }
+        let request = retained.render_runtime(&adoption.spec, generation)?;
+        if adoption
+            .expected_image
+            .as_ref()
+            .is_some_and(|image| image != &request.image.uri)
+        {
+            return Err(AdapterError::Rejected(
+                "persisted runtime image conflicts with its specification".into(),
+            ));
+        }
+        Ok(request)
+    }
+
     pub fn contract(&self) -> crate::Result<RuntimeContract> {
         RuntimeContract::admit(&self.image.uri, &self.image.labels)
     }
@@ -242,7 +264,7 @@ pub(crate) fn scoped_model_base_url(
     upstream.to_string()
 }
 
-fn validate_runtime_image(image: &str) -> crate::Result<()> {
+pub(crate) fn validate_runtime_image(image: &str) -> crate::Result<()> {
     let Some((name, digest)) = image.rsplit_once("@sha256:") else {
         return Err(AdapterError::Rejected(
             "runtime image must be pinned by digest".into(),
@@ -414,7 +436,7 @@ fn sha256_fingerprint(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-pub(super) fn image_sha256(uri: &str) -> String {
+pub(crate) fn image_sha256(uri: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(uri.as_bytes()))
 }
 

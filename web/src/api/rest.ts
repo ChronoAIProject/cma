@@ -9,7 +9,13 @@ import type {
 } from './client';
 import type { ConnectionTarget } from '../connections/client';
 import type { CreateInlineWorkspaceInput, ProfileReference } from './types';
-import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
+import {
+  agentDetail,
+  runtimeUpdate,
+  sandboxDetail,
+  sandboxSummary,
+  workspaceDetail,
+} from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 import { agentSettingsClient } from './rest/agentSettings';
 import { agentSkillsClient } from './rest/agentSkills';
@@ -58,6 +64,14 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    updateSandboxRuntime: async (id, targetVersion, options) => {
+      const result = await sdk.sandboxes.updateRuntime(
+        id,
+        { target_version: targetVersion },
+        options,
+      );
+      return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
+    },
     ...agentSettingsClient(),
     ...agentSkillsClient(),
     grantSandboxServiceAccess: async (id, services, options) => {

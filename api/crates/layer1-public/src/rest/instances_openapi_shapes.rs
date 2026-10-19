@@ -124,6 +124,8 @@ pub struct SandboxView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_update: Option<super::sandbox_runtime_update::SandboxRuntimeUpdateView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<FailureView>,
     pub last_activity_at: String,
     pub created_at: String,
@@ -160,6 +162,7 @@ impl From<&Sandbox> for SandboxView {
                 .runtime
                 .as_ref()
                 .map(|runtime| runtime.runtime_version.clone()),
+            runtime_update: None,
             failure: value.failure.as_ref().map(Into::into),
             last_activity_at: value.last_activity_at.clone(),
             created_at: value.created_at.clone(),

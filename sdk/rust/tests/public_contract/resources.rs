@@ -192,6 +192,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await
                 .map(|bytes| String::from_utf8(bytes).unwrap()),
         ),
+        "POST /api/v1/sandboxes/{id}/runtime-update" => c.check(
+            client
+                .sandboxes()
+                .update_runtime(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "POST /api/v1/sandboxes/{id}/commands" => c.check(
             client
                 .sandboxes()

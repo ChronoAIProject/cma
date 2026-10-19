@@ -14,6 +14,7 @@ mod claim_race_tests;
 mod guidance_revision_tests;
 mod installation_transfer_tests;
 pub(crate) mod open_ready_fixture;
+mod runtime_release_tests;
 mod tool_enrollment_tests;
 mod workspace_proof_tests;
 
