@@ -25,7 +25,13 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         store.insert(duplicate).await,
         Err(WarmPoolError::Conflict)
     ));
-    let leased = store.claim().await.unwrap().unwrap();
+    assert!(store
+        .claim_target("missing-target")
+        .await
+        .unwrap()
+        .is_none());
+    let leased = store.claim_target(&saved.id).await.unwrap().unwrap();
+    assert!(store.claim_target(&saved.id).await.unwrap().is_none());
     assert!(store.claim().await.unwrap().is_none());
     assert!(matches!(
         store
