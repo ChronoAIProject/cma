@@ -40,6 +40,16 @@ pub(in crate::store) async fn claim_ready(
         mongodb::bson::deserialize_from_bson(target.get("plan").cloned().unwrap_or(Bson::Null))
             .map_err(|e| domain(SandboxStoreError::Corrupt(e.to_string())))?;
     desired.validate().map_err(domain)?;
+    // The preparation worker reconciles its durable target asynchronously after
+    // startup. Never let that prior target override this process's released
+    // runtime while new owned admissions are already being accepted.
+    if store
+        .managed_runtime_version
+        .as_ref()
+        .is_some_and(|version| version != &desired.warm.runtime_version)
+    {
+        return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
+    }
     let database = store.client.database(&store.sandboxes.namespace().db);
     let Some(operation)=database.collection::<crate::store::agent_lifecycle_operations::LifecycleRecord>(crate::store::agent_lifecycle_operations::COLLECTION)
         .find_one(doc!{"_id":operation_id,"owner":sandbox.owner.as_str(),"status":{"$in":["queued","running"]}})
