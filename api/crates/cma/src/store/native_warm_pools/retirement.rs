@@ -9,13 +9,33 @@ use eligibility::{owned_home, warm_blocks};
 const MAX_RECORDS: i64 = 10_000;
 
 pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(), WarmPoolError> {
+    let candidate = store
+        .find(id)
+        .await?
+        .filter(|row| !row.retiring && !row.retired)
+        .ok_or(WarmPoolError::Conflict)?;
+    let mut image_scope = store.scope();
+    image_scope.extend(doc! {"plan.spec.image.uri":&candidate.plan.spec.image.uri,
+    "activated_at":{"$type":"date"}});
+    let previous = store
+        .targets
+        .find_one(image_scope)
+        .sort(doc! {"activated_at":1})
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .and_then(|row| row.activated_at);
     let mut filter = store.scope();
     filter.extend(doc! {"_id":id,"activated_at":mongodb::bson::Bson::Null,"retiring":{"$ne":true},"retired":{"$ne":true}});
-    // First activation is immutable. Restarting an older API cannot promote its
-    // old image above a newer release and begin deleting that release's pools.
+    // Release order belongs to the image, not a resource size or Pod policy.
+    // A new plan for a known image inherits its original release timestamp;
+    // an older API cannot promote a superseded image by changing its plan hash.
+    let activation = match previous {
+        Some(at) => doc! {"$set":{"activated_at":at}},
+        None => doc! {"$currentDate":{"activated_at":true}},
+    };
     store
         .targets
-        .update_one(filter, doc! {"$currentDate":{"activated_at":true}})
+        .update_one(filter, activation)
         .await
         .map_err(|_| WarmPoolError::Unavailable)?;
     let row = store
