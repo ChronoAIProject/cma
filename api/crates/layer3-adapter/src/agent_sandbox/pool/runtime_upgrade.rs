@@ -155,3 +155,34 @@ pub(crate) fn replace_image(spec: &mut serde_json::Value, image: &str) -> Result
     }
     Ok(())
 }
+
+impl super::AgentSandboxPools {
+    /// An upgraded, still-owned native member carries its complete immutable Pod
+    /// policy in the original home authority. Template-managed networking remains
+    /// an external dependency and must never use this retirement exemption.
+    pub(crate) fn retained_upgrade_policy(
+        &self,
+        member: &DynamicObject,
+        origin: &NativePoolHomeOrigin,
+    ) -> Result<bool> {
+        if !origin.claim.request.home.policy.is_native_vct()
+            || origin
+                .claim
+                .request
+                .pool
+                .pod_policy
+                .template_network_policy
+                .is_some()
+            || RuntimeUpgradeProof::from_member(member, origin)?.is_none()
+        {
+            return Ok(false);
+        }
+        self.member_owned(member, &origin.claim)?;
+        if !self.member_spec(member, origin, false)? {
+            return Err(rejected(
+                "upgraded native member lost its original home policy",
+            ));
+        }
+        Ok(true)
+    }
+}
