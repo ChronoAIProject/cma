@@ -84,6 +84,38 @@ async fn activation_is_immutable_and_old_process_cannot_retire_new_release() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn changed_plan_cannot_promote_a_superseded_runtime_image() {
+    let (db, store, old, _) = fixture().await;
+    let mut changed = old.clone();
+    changed.id = "changed-old-policy".into();
+    changed.plan.config_sha256 = "c".repeat(64);
+    changed.activated_at = None;
+    store.insert(changed.clone()).await.unwrap();
+    assert!(matches!(
+        store.activate(&changed.id).await,
+        Err(WarmPoolError::Conflict)
+    ));
+    assert_eq!(
+        store.find(&changed.id).await.unwrap().unwrap().activated_at,
+        old.activated_at,
+        "changed policy must not reset the runtime image's release order"
+    );
+    let mut current = store.find("current").await.unwrap().unwrap();
+    let released_at = current.activated_at;
+    current.id = "changed-current-policy".into();
+    current.plan.config_sha256 = "d".repeat(64);
+    current.activated_at = None;
+    store.insert(current.clone()).await.unwrap();
+    store.activate(&current.id).await.unwrap();
+    assert_eq!(
+        store.find(&current.id).await.unwrap().unwrap().activated_at,
+        released_at
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn fresh_scan_blocks_old_runtime_and_late_allocations_and_corrupt_authority() {
     let (db, store, old, image) = fixture().await;
     let sandboxes = db.collection::<Document>("sandboxes");
