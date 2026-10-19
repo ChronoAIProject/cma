@@ -84,7 +84,7 @@ impl AgentSandboxClient {
         let member = member?;
         let desired = self
             .pools
-            .runtime_desired_for_home(origin, home, request, name)?;
+            .runtime_desired_for_member(origin, home, request, name, &member)?;
         self.matches(&member, &desired)?;
         let pod = self.pod_binding_from_page(&member, pods.map_err(api_error)?)?;
         Ok(NativeRuntimeProof {
