@@ -153,7 +153,8 @@ async fn apply(
         return Err(ClaimError::Domain(SandboxStoreError::NotFound));
     }
     if parent.lifecycle.checkpoint_capture.is_some()
-        || parent.status == layer2_core::sandbox::SandboxStatus::Rotating
+        || (parent.status == layer2_core::sandbox::SandboxStatus::Rotating
+            && !matches!(claim, ChildWriterClaim::Agent(agent) if parent.restored_connection_is_ready(agent)))
     {
         return Ok(false);
     }
