@@ -32,6 +32,8 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 
 #[path = "availability_integration_tests.rs"]
 mod availability;
+#[path = "restored_connection_integration_tests.rs"]
+mod restored_connection_integration_tests;
 #[path = "runtime_update_integration_tests.rs"]
 mod runtime_update_integration_tests;
 
