@@ -125,7 +125,7 @@ a new write. Publishers need the public publishing capability.
 | GET | `/api/v1/triggers` | Owner page, `cursor` and `limit`. |
 | GET | `/api/v1/triggers/{id}` | Owner Trigger, draft version and availability. |
 | PUT | `/api/v1/triggers/{id}` | `{ content, draft_version }`; version-checked save. |
-| DELETE | `/api/v1/triggers/{id}` | Delete an eligible draft; 204. |
+| DELETE | `/api/v1/triggers/{id}` | Remove an owned Trigger from authoring; 204. |
 | POST | `/api/v1/triggers/{id}/publish` | `{ draft_version }`; 201 immutable publication. |
 | POST | `/api/v1/triggers/{id}/retire` | Retire new use without deleting existing resources. |
 | GET | `/api/v1/triggers/{id}/revisions` | Immutable revisions. |
@@ -133,6 +133,18 @@ a new write. Publishers need the public publishing capability.
 | POST | `/api/v1/triggers/{id}/placements/{placement_id}/retire` | Retire one placement. |
 | GET | `/api/v1/triggers/{id}/embed?placement_id=...` | Copy-ready descriptor. |
 | GET | `/api/v1/triggers/{id}/stats` | Total and placement counters. |
+
+DELETE physically removes a never-published draft. For a published or retired
+Trigger it archives the definition: owner reads/listing no longer return it,
+new Launch admission is refused, and edits/publication are unavailable. Its
+public mapping and immutable revisions remain available internally for existing
+Launches, including admitted visitor drafts; their resources and history are
+unchanged. Exact successful DELETE receipts still replay after removal.
+
+Archived definitions retain `retired` availability and an optional `archived_at`
+timestamp. Existing records without that field remain readable. Once any
+archive is written, rollback binaries must retain this reader and owner-list
+filter; an older strict reader cannot safely interpret archived aggregates.
 
 ## Host Snippets
 
