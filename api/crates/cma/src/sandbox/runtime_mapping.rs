@@ -85,21 +85,19 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         .and_then(|home| home.attachment())
         .map(Box::new);
     if spec.runtime_image.is_none() {
-        if let Some(native) = sandbox
+        spec.runtime_image = sandbox
             .lifecycle
             .home
             .as_ref()
             .and_then(|home| home.native_pool.as_ref())
-        {
-            // Native origin remains immutable after an admitted software update.
-            // The current binding, when present, is the actual image authority.
-            spec.runtime_image = Some(
+            .map(|native| {
+                // Original pool authority stays immutable; the current binding
+                // records the actual image after an admitted software update.
                 sandbox
                     .retained_runtime_binding()
                     .map(|binding| binding.runtime_version.clone())
-                    .unwrap_or_else(|| native.request.pool.spec.image.uri.clone()),
-            );
-        }
+                    .unwrap_or_else(|| native.request.pool.spec.image.uri.clone())
+            });
     }
     spec
 }
