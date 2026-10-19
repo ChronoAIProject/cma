@@ -80,6 +80,7 @@ mod limits;
 mod pending_approvals;
 mod provision;
 mod queued_message;
+mod restored_connection;
 mod revive;
 mod rotate;
 mod runtime_generation;
