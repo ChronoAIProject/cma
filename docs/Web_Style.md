@@ -2481,3 +2481,15 @@ exit; retain the existing 44px mobile touch target.
 | 2026-10-16 | Added evidence-based memory interruption and recovery notices, recorded-stage character animation, bounded completion feedback and retained interruption details. |
 | 2026-10-16 | Unknown Sandbox interruptions display Internal error while recorded recovery progress and any failure to finish remain explicit; historical interruption details do not imply ongoing recovery. |
 | 2026-10-16 | Move the single transient Thinking and turn-token row below the current Agent reply inside the conversation, align it with message content, and preserve elapsed/token state, reduced motion, smooth appearance/removal and reader-controlled scrolling. |
+
+
+### Operations profile inventory retirement (2026-10-19)
+
+Operations offers Sandboxes, Warm pools, Platform settings and Activity, with
+their existing capability gates and keyboard navigation. It has no Profiles tab,
+inventory or retirement action. This supersedes the Profiles inventory in §19.
+Immutable profile records and historical public APIs remain available to runtime
+recovery and compatibility; this navigation change does not modify them. Native
+warm-pool controls and current platform settings remain in their own views.
+
+| 2026-10-19 | Remove the obsolete Profiles inventory and retirement panel from Operations while retaining internal immutable profiles, historical APIs and current configuration controls. |
