@@ -100,7 +100,9 @@ mod trigger_assets_test_support;
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
-pub use bindings::{binding_router, binding_router_with_native_tools};
+pub use bindings::{
+    binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
+};
 mod gateway_connections;
 mod gateway_interactions;
 mod gateway_records;
@@ -384,11 +386,19 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi::document())
 }
 
+async fn agent_manager_openapi_document() -> Json<serde_json::Value> {
+    Json(openapi::agent_manager_document())
+}
+
 /// Public router for health-independent discovery infrastructure.
 pub fn router() -> Router {
     Router::new()
         .route("/api/v1/conformance", get(conformance))
         .route("/openapi.json", get(openapi_document))
+        .route(
+            "/agent-manager/openapi.json",
+            get(agent_manager_openapi_document),
+        )
 }
 
 #[cfg(test)]

@@ -81,6 +81,8 @@ fn management_state(
         cmaeg::ManagementConfig {
             master_keys: Arc::new(ring),
             public_url: "http://127.0.0.1:8090".into(),
+            public_api_url: "http://127.0.0.1:8090".into(),
+            advertise_public_api_url: true,
             cma_base_url: cma.base_url.clone(),
             tools_nyxid_slug: "cmaeg".into(),
             cma_service_token: cmaeg_core::channel::Secret::new("cma-service"),
@@ -203,3 +205,31 @@ mod write_gate;
 
 #[path = "management/routing.rs"]
 mod routing;
+
+#[tokio::test]
+async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {
+    for (advertise, expected) in [
+        (false, "http://127.0.0.1:8090"),
+        (true, "https://bot.example/event-gateway"),
+    ] {
+        let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+        let cma = FakeCma::start(false).await;
+        let nyxid = FakeNyxid::start().await;
+        let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+        state.public_api_url = "https://bot.example/event-gateway".into();
+        state.advertise_public_api_url = advertise;
+        let (base, stop, task) = serve_app(state).await;
+        let channel = created(&Client::new(), &base).await;
+        let id = channel["channel_id"].as_str().unwrap();
+        assert_eq!(
+            channel["endpoints"]["nyxid_callback_url"],
+            format!("{expected}/v1/callbacks/{id}")
+        );
+        assert_eq!(
+            channel["endpoints"]["custom_event_url"],
+            format!("{expected}/v1/channels/{id}/events")
+        );
+        stop.send(()).unwrap();
+        task.await.unwrap();
+    }
+}

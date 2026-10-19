@@ -27,6 +27,8 @@ pub struct ToolsState {
     pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
+    pub public_api_url: String,
+    pub advertise_public_api_url: bool,
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.
     pub media: Option<Arc<MediaService>>,
@@ -34,6 +36,14 @@ pub struct ToolsState {
     pub downloads: Arc<MediaDownloads>,
 }
 impl ToolsState {
+    pub fn advertised_api_url(&self) -> &str {
+        if self.advertise_public_api_url {
+            &self.public_api_url
+        } else {
+            &self.public_origin
+        }
+    }
+
     /// Open `reference` and authorize `caller` as the consumer it was issued
     /// to, returning that consumer with the channel and event. `tool` names
     /// the operation in refusal logs.

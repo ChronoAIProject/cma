@@ -44,7 +44,7 @@ it('renders all three canonical documents with complete navigation and all revie
   expect(openApi).not.toHaveAttribute('role');
   expect(openApi).toHaveAccessibleName('OpenAPI JSON');
   expect(openApi).toBeVisible();
-  expect(openApi).toHaveAttribute('href', '/api/event-gateway/openapi.json');
+  expect(openApi).toHaveAttribute('href', '/event-gateway/openapi.json');
   const download = header.getByText('Download document', { selector: 'a[href]' });
   expect(download).not.toHaveAttribute('role');
   expect(download).toHaveAccessibleName('Download document');
@@ -100,6 +100,30 @@ it('keeps cross-document references in CMA and omits unavailable private relativ
   );
   expect(gatewayDocLink('CMAEG_Operations.md', 'protocol')).toBeUndefined();
   expect(gatewayDocLink('javascript:alert(1)', 'protocol')).toBeUndefined();
+});
+
+it('uses service discovery on the portal origin and preserves canonical document anchors', () => {
+  for (const path of [
+    '/openapi.json',
+    '/event-gateway/openapi.json',
+    'https://bot.chrono-ai.fun/event-gateway/openapi.json',
+    'https://bot-gateway.chrono-ai.fun/openapi.json',
+  ])
+    expect(gatewayDocLink(path, 'protocol')).toBe('/event-gateway/openapi.json');
+  expect(
+    gatewayDocLink('https://bot.chrono-ai.fun/event-gateway/docs#protocol', 'integration'),
+  ).toBe('#protocol');
+  expect(
+    gatewayDocLink(
+      'https://bot.chrono-ai.fun/event-gateway/docs/protocol#5-management-api',
+      'integration',
+    ),
+  ).toBe('#protocol-5-management-api');
+  expect(
+    gatewayDocLink('https://bot.chrono-ai.fun/docs/event-gateway#protocol', 'integration'),
+  ).toBe('#protocol');
+  const unrelated = 'https://bot-gateway.chrono-ai.fun/docs-other';
+  expect(gatewayDocLink(unrelated, 'protocol')).toBe(unrelated);
 });
 
 it('opens the Event Gateway documentation from the Docs index using application navigation', () => {
