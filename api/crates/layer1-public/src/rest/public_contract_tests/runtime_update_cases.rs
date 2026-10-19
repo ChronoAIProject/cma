@@ -5,6 +5,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let f =
         super::super::instances_tests::runtime_update_tests::update_fixture(mode != "unconfigured")
             .await;
+    if mode == "unavailable" {
+        use layer2_core::sandbox::store::SandboxStore;
+        let mut sandbox = f
+            .store
+            .get_sandbox(&layer2_core::SandboxId("sbx_update".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = sandbox.revision;
+        sandbox.runtime.as_mut().unwrap().runtime_version = "runtime-v1".into();
+        sandbox.revision += 1;
+        f.store.save_sandbox(revision, sandbox).await.unwrap();
+    }
     Some(Scenario {
         router: f.router,
         subject: if mode == "anonymous" {

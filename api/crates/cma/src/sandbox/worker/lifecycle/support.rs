@@ -156,10 +156,7 @@ impl SandboxWorker {
         } else if sandbox
             .runtime_update_request()
             .is_some_and(|request| request.completed_at.is_none())
-            && matches!(
-                sandbox.lifecycle.operation,
-                Some(layer2_core::sandbox::SandboxLifecycleOperation::ImageRotation { .. })
-            )
+            && sandbox.admitted_runtime_update_target().is_some()
         {
             let typed = failure.typed();
             next.park_failed_runtime_update(
