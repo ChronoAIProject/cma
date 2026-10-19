@@ -1263,8 +1263,8 @@ occur: new Agent admissions write purpose even while older runtimes are retained
 A pre-feature API binary uses `deny_unknown_fields` and cannot safely read these
 new records. Restoring that binary after feature writes is unsupported.
 
-A safe rollback restores the previous Web and default runtime selection while
-retaining the compatible API reader. Existing Sandboxes keep their pinned image,
+A safe rollback restores the previous Web while retaining the compatible API
+reader and the latest released runtime default. Existing Sandboxes keep their pinned image,
 home, conversation and history. Never strip fields/events, rotate a live Sandbox,
 or restore an earlier database snapshot to accommodate an old reader. This reader
 floor is a release constraint; old-binary rollback has not been demonstrated.
@@ -1408,5 +1408,34 @@ a fresh home or duplicate upgrade.
 Once `lifecycle.runtime_update` is persisted, every rollback reader must understand
 that optional field, pinned targets and paused-return behavior. Restoring an older
 binary with deny-unknown-fields readers is unsafe even when no update is active.
-A compatible rollback may change the configured default; accepted update targets
-and immutable original home authority remain intact.
+A compatible API/Web rollback must retain the current released
+`CHRONO_SANDBOX_IMAGE`; it does not downgrade the runtime default. Accepted update
+targets and immutable original home authority remain intact.
+
+### Automatic retirement of obsolete pools
+
+After the latest runtime is promoted, obsolete pool definitions retire only when
+no stored allocation, paused old runtime, pending update or cleanup still needs
+them. The reconciler first records retirement under its lease, marks the original
+pool against new admission, then repeats the complete durable allocation scan.
+It drains spare capacity to zero and verifies all surviving Claim/Sandbox/PVC
+graphs against upgraded retained homes before deleting the exact original Pool
+and Template UIDs. It never deletes claimed user resources. Upgraded homes retain
+their original immutable pool authority and can resume after those definitions
+are gone; template-managed NetworkPolicy prevents this retirement path.
+
+Retired targets remain as small database records, hidden from pool administration
+and excluded from reconciliation. Their immutable first-activation time prevents
+an old API restart from recreating an old target and promoting its image. A
+superseded default is refused at startup. Activation ordering is checked before
+and after bounded scans; ambiguous ordering, incomplete inventories and corrupt
+authority defer cleanup. A two-minute rollout grace is additional delay, not the
+ownership proof. Partial retirement retries original UIDs without recreating
+deleted definitions.
+
+For initial activation, deploy the compatible API with the existing runtime
+first and verify the previous API Pod has exited. Then promote the verified CI
+runtime digest in `CHRONO_SANDBOX_IMAGE` and its source manifest. New allocation,
+prepared and native warm capacity, owner resume and the daily update service all
+consume this same release pointer. Existing running users update only after
+their admitted idle update or resume; changing the pointer does not stop work.
