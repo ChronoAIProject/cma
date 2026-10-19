@@ -189,15 +189,11 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
-        let now = DateTime::now();
-        let mut filter = self.scope();
-        filter.extend(
-            doc! {"retired":{"$ne":true},"lease_until":{"$lte":now},"reconcile_after":{"$lte":now}},
-        );
-        self.targets.find_one_and_update(filter, doc! {"$set":{
-            "lease":uuid::Uuid::new_v4().to_string(),"lease_until":DateTime::from_millis(now.timestamp_millis()+60_000)}})
-            .sort(doc! {"reconcile_after":1,"_id":1}).return_document(ReturnDocument::After)
-            .await.map_err(|_| WarmPoolError::Unavailable)?.map(validate).transpose()
+        self.claim_matching(None).await
+    }
+
+    async fn claim_target(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.claim_matching(Some(id)).await
     }
 
     async fn bind(
@@ -236,5 +232,23 @@ impl PoolTargetStore for MongoNativeWarmPools {
                 .await,
         )
         .await
+    }
+}
+
+impl MongoNativeWarmPools {
+    async fn claim_matching(&self, id: Option<&str>) -> Result<Option<PoolTarget>, WarmPoolError> {
+        let now = DateTime::now();
+        let mut filter = self.scope();
+        filter.extend(
+            doc! {"retired":{"$ne":true},"lease_until":{"$lte":now},"reconcile_after":{"$lte":now}},
+        );
+        if let Some(id) = id {
+            filter.insert("_id", id);
+            filter.insert("retiring", doc! {"$ne":true});
+        }
+        self.targets.find_one_and_update(filter, doc! {"$set":{
+            "lease":uuid::Uuid::new_v4().to_string(),"lease_until":DateTime::from_millis(now.timestamp_millis()+60_000)}})
+            .sort(doc! {"reconcile_after":1,"_id":1}).return_document(ReturnDocument::After)
+            .await.map_err(|_| WarmPoolError::Unavailable)?.map(validate).transpose()
     }
 }

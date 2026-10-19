@@ -138,6 +138,11 @@ impl PoolTargetStore for Memory {
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
         Ok(Some(self.target.lock().unwrap().clone()))
     }
+    async fn claim_target(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.calls.lock().unwrap().push(format!("claim:{id}"));
+        let target = self.target.lock().unwrap();
+        Ok((target.id == id && !target.retiring && !target.retired).then(|| target.clone()))
+    }
     async fn bind(&self, _: &PoolTarget, binding: &NativePoolBinding) -> Result<(), WarmPoolError> {
         self.calls.lock().unwrap().push("persist-binding".into());
         self.target.lock().unwrap().binding = Some(binding.clone());
@@ -149,6 +154,11 @@ impl PoolTargetStore for Memory {
     }
     async fn finish(&self, _: &PoolTarget, success: bool) -> Result<(), WarmPoolError> {
         self.calls.lock().unwrap().push(format!("finish:{success}"));
+        let mut target = self.target.lock().unwrap();
+        target.error = (!success).then(|| "unavailable".into());
+        if success {
+            target.applied_revision = target.revision;
+        }
         Ok(())
     }
 }
@@ -206,7 +216,13 @@ impl NativePoolControl for Provider {
         })
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
-        unreachable!()
+        self.calls.lock().unwrap().push("inventory".into());
+        Ok(vec![NativePoolStatus {
+            binding: self.binding(),
+            desired_replicas: 3,
+            ready_replicas: 1,
+            observed: true,
+        }])
     }
     async fn resize(
         &self,
@@ -468,3 +484,6 @@ mod resize;
 
 #[path = "retirement_tests.rs"]
 mod retirement_tests;
+
+#[path = "startup_tests.rs"]
+mod startup_tests;

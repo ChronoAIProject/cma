@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 mod current;
 mod retirement;
+mod startup;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -107,6 +108,9 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         body: &ResizeWarmPoolBody,
     ) -> Result<PoolTarget, WarmPoolError>;
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError>;
+    async fn claim_target(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn bind(
         &self,
         target: &PoolTarget,
