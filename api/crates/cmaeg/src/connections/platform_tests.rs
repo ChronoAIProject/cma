@@ -663,3 +663,49 @@ async fn restart_reconciles_abandoned_activation_and_uncertain_delete_before_reb
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn canonical_migration_preserves_and_can_retire_the_exact_legacy_webhook() {
+    let mut app = Native::new().await;
+    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
+    let (definition, channel_id) = app.reserve_child().await;
+    let legacy = format!("https://gateway.example/v1/telegram/{channel_id}");
+    *app.peer.webhook.lock().unwrap() = legacy.clone();
+    binding::activate(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert_eq!(*app.peer.webhook.lock().unwrap(), legacy);
+    assert!(!app.methods().contains(&"setWebhook".into()));
+    binding::disconnect(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert!(app.peer.webhook.lock().unwrap().is_empty());
+    assert!(app.methods().contains(&"deleteWebhook".into()));
+}
+
+#[tokio::test]
+async fn canonical_migration_installs_new_webhook_and_rejects_other_channel_urls() {
+    let mut app = Native::new().await;
+    app.service.management.public_api_url = "https://bot.example/event-gateway".into();
+    let (definition, channel_id) = app.reserve_child().await;
+    for foreign in [
+        "https://gateway.example/v1/telegram/another-channel",
+        "https://bot.example/event-gateway/v1/telegram/another-channel",
+    ] {
+        *app.peer.webhook.lock().unwrap() = foreign.into();
+        assert!(
+            binding::activate(&app.service.management, &definition, &channel_id)
+                .await
+                .is_err()
+        );
+        assert_eq!(*app.peer.webhook.lock().unwrap(), foreign);
+    }
+    app.peer.webhook.lock().unwrap().clear();
+    binding::activate(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.peer.webhook.lock().unwrap(),
+        format!("https://bot.example/event-gateway/v1/telegram/{channel_id}")
+    );
+}

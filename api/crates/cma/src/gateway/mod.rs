@@ -80,9 +80,10 @@ impl GatewayBots {
                 http.clone(),
                 &config.base_url,
                 &config.public_url,
-            )?,
+            )?
+            .with_public_api(&config.public_api_url)?,
             issuer: KeyIssuer::new(http, nyxid_url, deployment),
-            public: config.public_url.trim_end_matches('/').into(),
+            public: config.public_api_url.trim_end_matches('/').into(),
         }))
     }
 }
@@ -262,13 +263,9 @@ impl BotExternal for GatewayBots {
     async fn set_callback(&self, bot: &Bot, key_id: &str, url: &str) -> Result<(), BotError> {
         bounded(async {
             let token = self.auth.bot_authority_token(bot).await?;
-            if bot
-                .resources
-                .channel
-                .as_ref()
-                .is_none_or(|c| c.callback_url != url)
-                || !url.starts_with(&format!("{}/v1/callbacks/", self.public))
-            {
+            if bot.resources.channel.as_ref().is_none_or(|c| {
+                c.callback_url != url || !self.gateway.valid_callback(&c.channel_id, url)
+            }) {
                 return Err(BotError::Forbidden);
             }
             self.nyxid.callback(token.expose(), bot, key_id, url).await

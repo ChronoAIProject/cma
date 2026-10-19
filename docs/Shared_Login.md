@@ -43,3 +43,11 @@ Deploy the Agent Manager bridge and Gateway bearer-session view before routing
 `/api/event-gateway` to Agent Manager without a prefix rewrite. The web nginx
 fallback uses that same route. Confirm existing login, service-specific permission
 refusal, token renewal, logout, account switching, and cross-origin mutation refusal.
+
+The canonical external API is `https://bot.chrono-ai.fun/event-gateway/v1`, with
+public discovery at `/event-gateway/openapi.json` and native MCP at
+`/event-gateway/mcp`. These bearer/channel-authenticated routes go directly to
+Event Gateway. Sharing the hostname does not make the CMA session cookie an API
+credential: the existing `/api/event-gateway` bridge remains responsible for
+browser-session custody and its narrow allowlist. Legacy host routes remain
+available for retained callbacks, console OAuth and old capability tabs.

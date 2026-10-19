@@ -155,6 +155,7 @@ impl Harness {
         let console = Console::new(ConsoleDeps {
             config,
             public_url: base.clone(),
+            public_api_url: base.clone(),
             nyxid_base_url: nyxid.base_url.clone(),
             clock: clock.clone(),
             keys: keys.clone(),

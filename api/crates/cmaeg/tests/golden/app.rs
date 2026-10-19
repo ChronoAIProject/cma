@@ -94,6 +94,7 @@ impl GoldenApp {
             ManagementConfig {
                 master_keys: keys.clone(),
                 public_url: PUBLIC_URL.into(),
+                public_api_url: PUBLIC_URL.into(),
                 cma_base_url: cma.base_url.clone(),
                 tools_nyxid_slug: "cmaeg".into(),
                 cma_service_token: Secret::new("cma-service"),
@@ -137,6 +138,7 @@ impl GoldenApp {
             delivery,
             tracker: tracker.clone(),
             public_origin: PUBLIC_URL.into(),
+            public_api_url: PUBLIC_URL.into(),
             media: None,
             downloads: Default::default(),
         };

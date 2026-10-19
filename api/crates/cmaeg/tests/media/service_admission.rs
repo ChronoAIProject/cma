@@ -239,6 +239,7 @@ fn config(media: MediaConfig) -> Config {
         provider_max_inflight: 1,
         management: ManagementConfig {
             public_url: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
             master_keys: Arc::new(ring()),
             cma_base_url: "https://cma.example".into(),
             cma_service_token: Secret::new("cma-service"),
