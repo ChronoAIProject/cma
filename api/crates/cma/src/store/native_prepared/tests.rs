@@ -22,7 +22,7 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 const EXPIRED: &str = "2026-09-05T00:30:01Z";
 
-fn plan() -> NativePreparedPlan {
+pub(in crate::store) fn plan() -> NativePreparedPlan {
     let sandbox = crate::store::agent_access_fixtures::sandbox("prepared")
         .profile
         .content;

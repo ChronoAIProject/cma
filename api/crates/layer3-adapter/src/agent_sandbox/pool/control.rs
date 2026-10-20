@@ -13,8 +13,19 @@ pub trait NativePoolControl: Send + Sync {
             "native pool retirement is unavailable".into(),
         ))
     }
-    /// Called only after the durable admission barrier. False means the caller
-    /// must resize to zero, or controller drain/definition deletion is pending.
+    /// Drain spare capacity after the marker and a fresh complete durable scan.
+    /// Retained homes may still block final definition retirement.
+    async fn drain_pool(
+        &self,
+        _binding: &NativePoolBinding,
+        _retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "native pool drain is unavailable".into(),
+        ))
+    }
+    /// Called only after the durable admission barrier and guarded drain.
+    /// False means controller drain or definition deletion is pending.
     async fn retire_pool(
         &self,
         _binding: &NativePoolBinding,
@@ -58,6 +69,13 @@ pub trait NativePoolControl: Send + Sync {
 impl NativePoolControl for AgentSandboxPools {
     async fn begin_retirement(&self, binding: &NativePoolBinding) -> Result<()> {
         self.begin_retirement(binding).await
+    }
+    async fn drain_pool(
+        &self,
+        binding: &NativePoolBinding,
+        retained_homes: &[HomeVolumeAttachment],
+    ) -> Result<()> {
+        self.drain_pool(binding, retained_homes).await
     }
     async fn retire_pool(
         &self,

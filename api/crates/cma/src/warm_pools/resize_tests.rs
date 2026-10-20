@@ -7,7 +7,7 @@ use layer3_adapter::wire::{
 };
 use layer3_adapter::{AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle};
 
-struct PoolBackend(Provider);
+pub(super) struct PoolBackend(pub(super) Provider);
 
 #[async_trait]
 impl HostedBackend for PoolBackend {
@@ -48,6 +48,7 @@ fn service(
         target: Mutex::new(original),
         bind_response_loss: AtomicBool::new(false),
         retirement_block: Mutex::new(std::collections::VecDeque::new()),
+        drain_block: Mutex::new(std::collections::VecDeque::new()),
         calls: calls.clone(),
     });
     let adapter = CodexAdapter::with_backend(
