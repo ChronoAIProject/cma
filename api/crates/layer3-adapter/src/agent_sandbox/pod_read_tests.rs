@@ -85,7 +85,7 @@ impl Reads {
     }
 }
 
-fn ready() -> (RuntimeHandle, Value, Value) {
+pub(super) fn ready() -> (RuntimeHandle, Value, Value) {
     let (_, mut object) = object();
     object["status"]["conditions"] =
         json!([{"type":"Ready","status":"True","observedGeneration":1}]);
