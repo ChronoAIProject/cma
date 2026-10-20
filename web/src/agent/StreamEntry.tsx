@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ApprovalDecision } from './controller';
 import type {
   ApprovalRequest,
@@ -9,6 +10,11 @@ import type {
 import { Button } from '../ui/Button';
 import {
   IconCodeOutline16,
+  IconCopyOutline16,
+  IconDislikeFill16,
+  IconDislikeOutline16,
+  IconLikeFill16,
+  IconLikeOutline16,
   IconRightUpOutline16,
   IconThinkOutline16,
   IconWarningOutline16,
@@ -17,6 +23,85 @@ import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
 import { ActivityBody } from './Thinking';
 import { isPendingTool } from './toolStatus';
+
+const SGT_FORMATTER = new Intl.DateTimeFormat('en-SG', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'Asia/Singapore',
+  timeZoneName: 'short',
+});
+
+function messageTimestamp(value: string | undefined): string {
+  if (value === undefined) return 'Time unavailable';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? SGT_FORMATTER.format(date) : 'Time unavailable';
+}
+
+type Vote = 'up' | 'down' | undefined;
+
+function MessageActions({ content }: { readonly content: string }) {
+  const [vote, setVote] = useState<Vote>();
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText !== undefined) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        const field = document.createElement('textarea');
+        field.value = content;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        document.body.append(field);
+        field.select();
+        if (typeof document.execCommand === 'function' && !document.execCommand('copy')) {
+          throw new Error('copy failed');
+        }
+        field.remove();
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="message__actions" aria-label="Message actions">
+      <Button
+        size="sm"
+        variant="toolbar"
+        icon={<IconCopyOutline16 />}
+        aria-label={copied ? 'Message copied' : 'Copy message'}
+        title={copied ? 'Message copied' : 'Copy message'}
+        onClick={() => void copy()}
+      />
+      <Button
+        size="sm"
+        variant="toolbar"
+        icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
+        aria-label="Upvote message"
+        title="Upvote message"
+        aria-pressed={vote === 'up'}
+        onClick={() => setVote((current) => (current === 'up' ? undefined : 'up'))}
+      />
+      <Button
+        size="sm"
+        variant="toolbar"
+        icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
+        aria-label="Downvote message"
+        title="Downvote message"
+        aria-pressed={vote === 'down'}
+        onClick={() => setVote((current) => (current === 'down' ? undefined : 'down'))}
+      />
+    </div>
+  );
+}
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -50,6 +135,16 @@ export function StreamEntry({
         ) : (
           <MessageContent content={message.content} streaming={message.status === 'streaming'} />
         )}
+        <div className="message__meta">
+          <time
+            className="message__timestamp"
+            dateTime={message.at}
+            title={message.at === undefined ? undefined : messageTimestamp(message.at)}
+          >
+            {messageTimestamp(message.at)}
+          </time>
+          <MessageActions content={message.content} />
+        </div>
       </article>
     );
   }

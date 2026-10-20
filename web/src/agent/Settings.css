@@ -45,3 +45,71 @@
 .agent-settings-fields__picker > button {
   width: 100%;
 }
+
+/* The same three choices can live in the composer without turning it into a
+ * second settings page. Keep labels and anchors on one stable baseline. */
+.agent-settings--inline {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.agent-settings-fields--inline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-settings-fields--inline label {
+  gap: 3px;
+  min-width: 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.agent-settings-fields--inline .agent-settings-fields__picker > button {
+  min-width: 0;
+  height: 32px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+.agent-settings--inline > .button {
+  flex: none;
+  height: 32px;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
+.agent-settings--inline > p[role='status'] {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-settings--inline > p[role='alert'] {
+  max-width: 180px;
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+}
+
+@media (max-width: 30rem) {
+  .agent-settings--inline {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .agent-settings-fields--inline {
+    flex-basis: 100%;
+  }
+
+  .agent-settings--inline > .button {
+    margin-left: auto;
+  }
+}

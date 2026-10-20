@@ -1,5 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
+import { useCmaClient } from '../api/context';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import {
@@ -27,6 +28,7 @@ import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
+import { SessionSettings } from './SessionSettings';
 
 interface AgentSurfaceProps {
   readonly draft?: AgentDraft;
@@ -77,6 +79,7 @@ export function AgentSurface({
   const [connectionNeeded, setConnectionNeeded] = useState(false);
   const [connectionError, setConnectionError] = useState<string>();
   const [connectionRetry, setConnectionRetry] = useState(0);
+  const client = useCmaClient();
   const connections = useConnectionGate();
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
@@ -314,6 +317,17 @@ export function AgentSurface({
             source.status === 'ready' && source.value.access !== 'shared'
               ? source.value.trigger?.quick_messages
               : undefined
+          }
+          settings={
+            client.readAgentSettings && client.updateAgentSettings ? (
+              <SessionSettings
+                key={`inline-settings:${agentId}`}
+                agentId={agentId}
+                active
+                inline
+                busy={status !== 'ready' || approvalBusy}
+              />
+            ) : undefined
           }
           status={status}
           pausedNotice={pausedNotice}

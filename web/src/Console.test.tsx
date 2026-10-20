@@ -17,7 +17,7 @@ const OWNER: User = {
   capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
 };
 
-it('opens only Agent settings in Details while keeping conversation and tree navigation available', async () => {
+it('keeps session settings beside the composer while Details keeps scopes and navigation', async () => {
   const onNavigate = vi.fn();
   const actor = userEvent.setup();
   render(
@@ -42,11 +42,14 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   expect(await screen.findByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus());
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  expect(await screen.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(screen.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
   expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();

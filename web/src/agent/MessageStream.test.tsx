@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { conversationFromTranscript, foldLiveEvent } from './conversation';
 import { MessageStream } from './MessageStream';
@@ -43,6 +44,54 @@ it('renders messages and Agent activity in their original stream order', () => {
         ordered[index]!.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy(),
     );
+});
+
+it('keeps message times visible in SGT and exposes copy and feedback actions on demand', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  });
+  const transcript = {
+    agentId: 'agent',
+    throughSeq: 2,
+    turns: [
+      {
+        turnSequence: 1,
+        startedAt: '2026-09-06T00:01:00Z',
+        ownerMessage: 'Inspect this repository.',
+        agentMessages: ['The repository is ready.'],
+        messages: [
+          {
+            sequence: 1,
+            role: 'user' as const,
+            content: 'Inspect this repository.',
+            appendedAt: '2026-09-06T00:01:00Z',
+          },
+          {
+            sequence: 2,
+            role: 'assistant' as const,
+            content: 'The repository is ready.',
+            appendedAt: '2026-09-06T00:01:01Z',
+          },
+        ],
+        outcome: { type: 'completed' as const },
+      },
+    ],
+  };
+  render(
+    <MessageStream conversation={conversationFromTranscript(transcript)} onApproval={vi.fn()} />,
+  );
+  expect(screen.getAllByText('06 Sept 2026, 08:01 SGT')).toHaveLength(2);
+  const copy = screen.getAllByRole('button', { name: 'Copy message' });
+  expect(copy).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Upvote message' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Downvote message' })).toHaveLength(2);
+  await userEvent.click(copy[1]!);
+  expect(writeText).toHaveBeenCalledWith('The repository is ready.');
+  const upvote = screen.getAllByRole('button', { name: 'Upvote message' })[1]!;
+  await userEvent.click(upvote);
+  expect(upvote).toHaveAttribute('aria-pressed', 'true');
 });
 
 it('follows new content only while the reader stays at the end', () => {

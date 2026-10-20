@@ -9,10 +9,13 @@ export function SessionSettings({
   agentId,
   active,
   busy,
+  inline = false,
 }: {
   readonly agentId: string;
   readonly active: boolean;
   readonly busy: boolean;
+  /** Render the controls compactly for the message composer. */
+  readonly inline?: boolean;
 }) {
   const client = useCmaClient();
   const [value, setValue] = useState<AgentSettingsView>();
@@ -138,14 +141,15 @@ export function SessionSettings({
     }
   };
   if (!client.readAgentSettings || !client.updateAgentSettings)
-    return <p>Agent settings are unavailable from this connection.</p>;
+    return inline ? null : <p>Agent settings are unavailable from this connection.</p>;
   return (
-    <div className="agent-settings">
+    <div className={`agent-settings${inline ? ' agent-settings--inline' : ''}`}>
       {draft ? (
         <SettingsFields
           value={draft}
           models={models}
           modelsLoading={modelsLoading}
+          inline={inline}
           disabled={pending || intent !== undefined || draft.pending === true}
           onChange={(next) => {
             setValue(next);

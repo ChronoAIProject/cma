@@ -4,7 +4,7 @@ import { CmaClientProvider } from '../api/context';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { AgentDetails } from './Details';
 
-it('opens settings independently of optional creation provenance', async () => {
+it('keeps Details independent of optional creation provenance', async () => {
   const readAgentProvenance = vi.fn().mockRejectedValue(new Error('Denied'));
   const readAgentSettings = vi.fn().mockResolvedValue({
     model: 'gpt-6',
@@ -24,8 +24,8 @@ it('opens settings independently of optional creation provenance', async () => {
   const view = render(draw(false));
   expect(readAgentSettings).not.toHaveBeenCalled();
   view.rerender(draw(true));
-  expect(await screen.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
   expect(readAgentProvenance).not.toHaveBeenCalled();
   view.rerender(draw(false));
-  expect(readAgentSettings.mock.calls[0]?.[1].signal.aborted).toBe(true);
+  expect(readAgentSettings).not.toHaveBeenCalled();
 });

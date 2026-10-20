@@ -1,5 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
@@ -21,6 +22,8 @@ interface ComposerProps {
   readonly inputAvailability: SandboxInputAvailability;
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
+  /** Compact model controls rendered between the composer and send controls. */
+  readonly settings?: ReactNode;
   readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
 }
@@ -57,6 +60,7 @@ export function Composer({
   inputAvailability,
   busy,
   quickMessages = [],
+  settings,
   onSend,
   onStop,
 }: ComposerProps) {
@@ -163,7 +167,7 @@ export function Composer({
         )}
       </Presence>
       <form
-        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}`}
+        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}${settings === undefined ? ' agent-composer__form--without-settings' : ''}`}
         aria-label="Message Agent"
         onSubmit={(event) => {
           event.preventDefault();
@@ -210,6 +214,7 @@ export function Composer({
           />
           <div className="agent-composer__row" />
         </div>
+        {settings === undefined ? null : <div className="agent-composer__settings">{settings}</div>}
         {!running || queueWhileRunning ? (
           <Button
             placement="agent-composer__submit"

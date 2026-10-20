@@ -10,15 +10,17 @@ export function SettingsFields({
   disabled,
   models,
   modelsLoading,
+  inline = false,
 }: {
   readonly value: AgentSettingsView;
   readonly onChange: (value: AgentSettingsView) => void;
   readonly disabled: boolean;
   readonly models: readonly AgentModelOption[];
   readonly modelsLoading: boolean;
+  readonly inline?: boolean;
 }) {
   return (
-    <div className="agent-settings-fields">
+    <div className={`agent-settings-fields${inline ? ' agent-settings-fields--inline' : ''}`}>
       <label>
         Model
         <Picker

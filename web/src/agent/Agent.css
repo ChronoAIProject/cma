@@ -183,6 +183,50 @@
   margin-right: auto;
 }
 
+.message__meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  margin-top: 3px;
+}
+
+.message--user .message__meta {
+  justify-content: flex-end;
+}
+
+.message__timestamp {
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.message__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.message:hover .message__actions,
+.message:focus-within .message__actions {
+  opacity: 1;
+}
+
+.message__actions .button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+}
+
+.message__actions .button[aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
 .message__role {
   display: block;
   margin-bottom: 8px;
@@ -422,13 +466,25 @@
 
 .agent-composer__form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) minmax(290px, min(42%, 520px)) 40px;
   gap: 8px;
   align-items: center;
 }
 
 .agent-composer__form--queue {
+  grid-template-columns: minmax(0, 1fr) minmax(290px, min(42%, 520px)) 40px 40px;
+}
+
+.agent-composer__form--without-settings {
+  grid-template-columns: minmax(0, 1fr) 40px;
+}
+
+.agent-composer__form--queue.agent-composer__form--without-settings {
   grid-template-columns: minmax(0, 1fr) 40px 40px;
+}
+
+.agent-composer__settings {
+  min-width: 0;
 }
 
 .agent-composer__capsule {
@@ -524,6 +580,10 @@
   .message[data-streaming] > p::after {
     animation: none;
   }
+
+  .message__actions {
+    transition: none;
+  }
 }
 
 @media (max-width: 30rem) {
@@ -567,6 +627,19 @@
 
   .agent-composer__form--queue {
     grid-template-columns: minmax(0, 1fr) 44px 44px;
+  }
+
+  .agent-composer__form--without-settings {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .agent-composer__form--queue.agent-composer__form--without-settings {
+    grid-template-columns: minmax(0, 1fr) 44px 44px;
+  }
+
+  .agent-composer__settings {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .agent-composer .agent-composer__submit {

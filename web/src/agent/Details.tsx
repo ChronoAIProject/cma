@@ -4,7 +4,6 @@ import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentCommand } from './controller';
 import './Details.css';
-import { SessionSettings } from './SessionSettings';
 import { ScopeSettings } from './ScopeSettings';
 import { SkillsSettings } from './SkillsSettings';
 
@@ -54,12 +53,6 @@ export function AgentDetails({
       </header>
       <div className="agent-details__scroll">
         <div className="agent-details__band">
-          <SessionSettings
-            key={`settings:${detail.id}`}
-            agentId={detail.id}
-            active={open}
-            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
-          />
           <ScopeSettings key={`scope:${detail.id}`} detail={detail} />
           <SkillsSettings
             key={`skills:${detail.id}`}
