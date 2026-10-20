@@ -25,8 +25,16 @@ impl OperationStore for NoOperations {
 }
 
 async fn public_router(auth: Arc<AuthState>) -> Router {
+    public_router_for(auth, "owner", "another-owner").await
+}
+
+pub(super) async fn public_router_for(
+    auth: Arc<AuthState>,
+    owner: &str,
+    other_owner: &str,
+) -> Router {
     let resources = Arc::new(InMemorySandboxStore::default());
-    for owner in ["owner", "another-owner"] {
+    for owner in [owner, other_owner] {
         let sandbox = test_resources::sandbox(&format!("sbx_{owner}"), owner);
         let workspace =
             test_resources::workspace(&format!("wks_{owner}"), sandbox.id.as_str(), owner);
