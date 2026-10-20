@@ -92,6 +92,14 @@ test('LOCAL composer settings and message feedback remain usable across screen s
     await expect(
       composer.getByRole('button', { name: 'Permission mode', exact: true }),
     ).toBeVisible();
+    await expect
+      .poll(() =>
+        composer.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.left >= 0 && bounds.right <= innerWidth && bounds.width > 0;
+        }),
+      )
+      .toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
       true,
     );
