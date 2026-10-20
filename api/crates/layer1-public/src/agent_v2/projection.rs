@@ -58,11 +58,19 @@ pub(super) fn items(window: &AgentReplayWindow, identity: &str) -> Result<Vec<Ev
 
 /// An ignored preference preserves old servers and strict old event consumers during rollout.
 pub(super) fn message_bindings(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-message-bindings")
+}
+
+pub(super) fn live_timestamps(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-live-observed-at")
+}
+
+fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {
     headers.get_all("prefer").iter().any(|value| {
         value.to_str().is_ok_and(|value| {
             value
                 .split(',')
-                .any(|token| token.trim().eq_ignore_ascii_case("cma-message-bindings"))
+                .any(|token| token.trim().eq_ignore_ascii_case(requested))
         })
     })
 }
