@@ -71,6 +71,7 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+mod message_feedback;
 pub mod mongo;
 pub(crate) mod native_prepared;
 pub mod operation;
