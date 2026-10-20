@@ -68,9 +68,7 @@
 
 .agent-instruments {
   grid-column: 1;
-  /* The composer owns row placement; standalone usage keeps the fallback below. */
-  --agent-composer-usage-row: inherit;
-  grid-row: var(--agent-composer-usage-row, 2);
+  grid-row: usage;
   width: 100%;
   margin: 0;
   padding: 0;
