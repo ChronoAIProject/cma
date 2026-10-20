@@ -13,11 +13,23 @@ pub(super) fn permits_ambient_auth(token: &str) -> bool {
         return false;
     }
     let mut parts = token.split('.');
-    let (Some(_), Some(payload), Some(_), None) =
+    let (Some(header), Some(payload), Some(_), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
         return true;
     };
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(header)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(header))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| {
+            value.get("typ").and_then(serde_json::Value::as_str)
+                == Some("nyxid-resource-request+jwt")
+        })
+    {
+        return false;
+    }
     let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload))
@@ -34,7 +46,12 @@ pub(super) fn permits_ambient_auth(token: &str) -> bool {
         || claims
             .get("token_type")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|kind| matches!(kind, "relay_reply" | "relay_callback"))
+            .is_some_and(|kind| {
+                matches!(kind, "relay_reply" | "relay_callback" | "resource_request")
+            })
+        || claims
+            .get("nyx_request")
+            .is_some_and(|value| !value.is_null())
     {
         return false;
     }
@@ -176,6 +193,8 @@ mod tests {
             serde_json::json!({"relay_allowed_service_ids":[]}),
             serde_json::json!({"relay_allow_all_services":false}),
             serde_json::json!({"relay":"true"}),
+            serde_json::json!({"token_type":"resource_request"}),
+            serde_json::json!({"nyx_request": {"version":1}}),
         ] {
             let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .encode(serde_json::to_vec(&claims).unwrap());
@@ -183,6 +202,23 @@ mod tests {
                 "header.{payload}.signature"
             )));
         }
+    }
+
+    #[test]
+    fn request_proof_header_type_cannot_be_downgraded_to_an_ambient_bearer() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(
+                &serde_json::json!({"alg":"RS256", "typ":"nyxid-resource-request+jwt"}),
+            )
+            .unwrap(),
+        );
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({"sub":"owner", "permissions":["cma:*"]}))
+                .unwrap(),
+        );
+        assert!(!permits_ambient_auth(&format!(
+            "{header}.{payload}.signature"
+        )));
     }
 
     #[test]
