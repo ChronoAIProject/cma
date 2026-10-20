@@ -45,4 +45,6 @@ pub use store::{
 };
 
 #[cfg(test)]
+mod request_read_tests;
+#[cfg(test)]
 mod tests;
