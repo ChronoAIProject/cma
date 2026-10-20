@@ -119,7 +119,7 @@ pub(super) fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTi
         })
 }
 
-fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -> bool {
+pub(super) fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -> bool {
     if current.revision <= previous.revision
         || current.conversation.last_seq < previous.conversation.last_seq
     {
