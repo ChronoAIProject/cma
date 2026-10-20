@@ -442,3 +442,15 @@ continue emitting the compatible `usage` vocabulary.
 `client.agents().upload_attachment(agent_id, name, media_type, content, &key).await` uploads one binary file of at most 20 MiB to an owner-authorized active Agent. Empty files are supported. Use `application/octet-stream` for an unknown media type. The returned `AgentAttachment` includes the verified persisted `path`, sanitized `name`, exact `size_bytes`, `media_type`, and `sha256`.
 
 Uploading never sends a message or executes content. Refer to the returned path in the next Agent input. Retry an uncertain result with the same key and unchanged filename, type and bytes. Conflicting reuse is refused. Attachments require a supported runtime with full persistent home storage and are stored under `/home/attachments/<agent-id>/<attachment-id>/`; retained unsupported images and inactive Agents return typed errors. The existing approved-artifact APIs retain their separate publication contract.
+
+## Message feedback
+
+`agents().message_feedback(agent_id, EventOptions { after, limit })` reads private
+owner votes as a `ResourcePage<MessageFeedback, u64>`. Pass each non-null `next`
+as `after`; page size is 1–200. `set_message_feedback(agent_id, "event:42",
+Some(MessageVote::Up))` sets a positive vote; use `MessageVote::Down` to switch or
+`None` to remove it. The ID uses the transcript's durable message sequence.
+These idempotent metadata writes need no command key and never create turns.
+Serialize changes to one message and avoid replaying an old write after a newer
+choice. Current owner authority is required; shared readers cannot inspect or
+change these votes.

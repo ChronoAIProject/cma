@@ -155,8 +155,16 @@ invalid values fail explicitly.
 | SSE event | Data and acknowledgement |
 | --- | --- |
 | `cma.agent.event` | One complete snapshot-item projection, plus `agent_id` and `incarnation`. SSE `id` equals `cursor`. Apply the complete item before acknowledging. |
-| `cma.agent.live` | `agent_id`, `incarnation`, `turn_sequence`, `after_sequence`, `message_id`, `kind` (`text_delta` or `reasoning_summary_delta`) and `delta`. No SSE ID or durable cursor. |
+| `cma.agent.live` | `agent_id`, `incarnation`, `turn_sequence`, `after_sequence`, `message_id`, `kind` (`text_delta` or `reasoning_summary_delta`) and `delta`. With `Prefer: cma-live-observed-at`, also `observed_at` (RFC 3339 server live-fragment observation time). No SSE ID or durable cursor. |
 | `cma.agent.live_gap` | `agent_id`, `incarnation`, nullable `turn_sequence`, nullable `frames`, and `reason` (`lagged` or `reconnected`). No SSE ID. Reconnection cannot establish a lost-fragment count. |
+
+The live timestamp preference is opt-in so existing strict clients keep their
+unchanged event shape. New clients accept its absence during a rolling upgrade.
+`observed_at` records when the API observes and prepares that live fragment; it
+does not claim the provider's generation time or turn start. A message UI keeps
+the first such observation across subsequent fragments, then uses the committed
+message's authoritative `appended_at` when it arrives. Without the preference,
+or when an older server omits it, clients do not invent an unreported live time.
 | `cma.agent.error` | Safe `code` and `message`. No SSE ID. Revoked/expired authorization closes without releasing further resource information. |
 
 The server subscribes to live updates before reading the initial head, catches

@@ -10,6 +10,9 @@ import { UserMessage } from './UserMessage';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 import { useMessageArrival } from './messageArrival';
 import { ActiveThinking } from './ActiveThinking';
+import { MessageFooter } from './MessageFooter';
+import type { MessageFeedbackControls } from './useMessageFeedback';
+import { Button } from '../ui/Button';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
@@ -23,6 +26,7 @@ interface MessageStreamProps {
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
   readonly arrivalsEnabled?: boolean;
+  readonly feedback?: MessageFeedbackControls;
 }
 
 export function MessageStream({
@@ -37,6 +41,7 @@ export function MessageStream({
   user,
   unknownUserName,
   arrivalsEnabled = true,
+  feedback,
 }: MessageStreamProps) {
   const streamRef = useMessageArrival(conversation, optimisticMessages, arrivalsEnabled);
   const identity = messageIdentity('user', user, unknownUserName);
@@ -125,6 +130,7 @@ export function MessageStream({
           onApproval={onApproval}
           user={user}
           unknownUserName={unknownUserName}
+          feedback={feedback}
           showUsage={
             entry.kind === 'message' &&
             entry.item.runId !== undefined &&
@@ -164,10 +170,24 @@ export function MessageStream({
                     ? 'Awaiting confirmation'
                     : 'Not sent'}
             </span>
+            <MessageFooter
+              id={message.id}
+              at={message.at}
+              content={message.content}
+              committed={false}
+            />
           </div>
         </article>
       ))}
       {children}
+      {feedback?.error ? (
+        <div className="message-footer__error" role="status">
+          <span>{feedback.error}</span>
+          <Button size="sm" onClick={feedback.reload}>
+            Retry message feedback
+          </Button>
+        </div>
+      ) : null}
       <div ref={endRef} />
     </div>
   );

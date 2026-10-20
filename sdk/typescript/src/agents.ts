@@ -1,4 +1,9 @@
 import {
+  listMessageFeedback,
+  setMessageFeedback,
+  type MessageVote,
+} from './agents/message-feedback.js';
+import {
   readAgentSettings,
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
@@ -98,6 +103,20 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Read saved owner votes; use next as after until pagination completes. */
+  messageFeedback(id: string, options: EventOptions = {}) {
+    return listMessageFeedback(this.config, id, options);
+  }
+  /** Replace or clear feedback without creating an Agent turn. */
+  setMessageFeedback(
+    id: string,
+    messageId: string,
+    vote: MessageVote | null,
+    options: OperationOptions = {},
+  ) {
+    return setMessageFeedback(this.config, id, messageId, vote, options);
+  }
 
   /** Discover admitted models and their current runtime availability. */
   models(id: string, options: OperationOptions = {}) {

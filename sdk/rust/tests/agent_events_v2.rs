@@ -56,6 +56,50 @@ fn sse(path: &str, body: String) -> Expected {
 }
 
 #[tokio::test]
+async fn live_observation_timestamps_are_opt_in_and_allow_older_servers() {
+    for observed in [None, Some("2026-10-20T16:31:00Z")] {
+        let server = WireServer::new().await;
+        let mut live = json!({"agent_id":AGENT,"incarnation":"a".repeat(64),"turn_sequence":1,"after_sequence":2,"message_id":"msg","kind":"text_delta","delta":"reply"});
+        if let Some(at) = observed {
+            live["observed_at"] = json!(at);
+        }
+        let mut expected = sse(
+            &format!("{EVENTS}?after_cursor={}", cursor(2)),
+            frame("cma.agent.live", &live, None),
+        );
+        expected
+            .headers
+            .insert("prefer".into(), "cma-live-observed-at".into());
+        server.expect(expected);
+        let mut stream = server
+            .client
+            .agent_events_v2()
+            .events(
+                AGENT,
+                &TailOptions {
+                    after_cursor: Some(AgentCursor::parse(cursor(2)).unwrap()),
+                    live_timestamps: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        stream
+            .consume_next(|frame| async move {
+                match frame {
+                    AgentFrame::Live(live) => assert_eq!(live.observed_at.as_deref(), observed),
+                    _ => panic!("expected live fragment"),
+                }
+                Ok(())
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        server.assert_drained();
+    }
+}
+
+#[tokio::test]
 async fn retains_rich_recorded_snapshot_and_exact_turn_binding() {
     let server = WireServer::new().await;
     let _ = (&server.anonymous, &server.base_url);
@@ -366,7 +410,8 @@ async fn page_bytes_and_query_header_disagreement_fail_without_mutation() {
                 &TailOptions {
                     after_cursor: Some(AgentCursor::parse(cursor(1)).unwrap()),
                     last_event_id: Some(AgentCursor::parse(cursor(2)).unwrap()),
-                    follow: None
+                    follow: None,
+                    live_timestamps: false,
                 }
             )
             .await,

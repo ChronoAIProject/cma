@@ -10,18 +10,21 @@ export function SettingsFields({
   disabled,
   models,
   modelsLoading,
+  compact = false,
 }: {
   readonly value: AgentSettingsView;
   readonly onChange: (value: AgentSettingsView) => void;
   readonly disabled: boolean;
   readonly models: readonly AgentModelOption[];
   readonly modelsLoading: boolean;
+  readonly compact?: boolean;
 }) {
   return (
-    <div className="agent-settings-fields">
+    <div className={`agent-settings-fields${compact ? ' agent-settings-fields--compact' : ''}`}>
       <label>
-        Model
+        <span className={compact ? 'sr-only' : undefined}>Model</span>
         <Picker
+          size={compact ? 'sm' : undefined}
           placement="agent-settings-fields__picker"
           label="Model"
           value={value.model}
@@ -46,8 +49,9 @@ export function SettingsFields({
         />
       </label>
       <label>
-        Reasoning effort
+        <span className={compact ? 'sr-only' : undefined}>Reasoning effort</span>
         <Picker
+          size={compact ? 'sm' : undefined}
           placement="agent-settings-fields__picker"
           label="Reasoning effort"
           value={value.reasoning_effort}
@@ -61,14 +65,15 @@ export function SettingsFields({
         />
       </label>
       <label>
-        Permission mode
+        <span className={compact ? 'sr-only' : undefined}>Permission mode</span>
         <Picker
+          size={compact ? 'sm' : undefined}
           placement="agent-settings-fields__picker"
           label="Permission mode"
           value={value.permission_mode}
           disabled={disabled}
           options={[
-            { value: 'autonomous', label: 'YOLO (autonomous)' },
+            { value: 'autonomous', label: compact ? 'YOLO' : 'YOLO (autonomous)' },
             { value: 'guarded', label: 'Guarded' },
           ]}
           onChange={(permission_mode) => onChange({ ...value, permission_mode })}

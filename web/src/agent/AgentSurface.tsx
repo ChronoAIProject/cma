@@ -4,11 +4,13 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
 import type { AppRoute } from '../routing/routes';
-import { routePath } from '../routing/routes';
+import { SandboxLink } from './SandboxLink';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
+import { SessionSettings } from './SessionSettings';
+import { useMessageFeedback } from './useMessageFeedback';
 import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
@@ -48,31 +50,6 @@ interface AgentSurfaceProps {
   readonly onNavigate: (route: AppRoute) => void;
 }
 
-function SandboxLink({
-  id,
-  name,
-  onNavigate,
-}: {
-  readonly id: string;
-  readonly name: string;
-  readonly onNavigate: (route: AppRoute) => void;
-}) {
-  const route = { kind: 'sandbox', sandboxId: id } as const;
-  return (
-    <a
-      href={routePath(route)}
-      onClick={(event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
-          return;
-        event.preventDefault();
-        onNavigate(route);
-      }}
-    >
-      {name}
-    </a>
-  );
-}
-
 export function AgentSurface({
   lifecycleClient,
   draft,
@@ -102,6 +79,7 @@ export function AgentSurface({
   const readOnly =
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
+  const feedback = useMessageFeedback(agentId, viewerId, !readOnly && state.status === 'ready');
 
   const connection = useAgentConnectionReadiness(
     agentId,
@@ -342,6 +320,7 @@ export function AgentSurface({
           />
         ) : null}
         <MessageStream
+          feedback={feedback}
           user={user}
           viewPosition={viewPosition}
           conversation={conversation}
@@ -378,6 +357,17 @@ export function AgentSurface({
       </div>
       <div className="agent-surface__input">
         <Composer
+          settings={
+            readOnly ? undefined : (
+              <SessionSettings
+                key={`settings:${viewerId}:${agentId}`}
+                agentId={agentId}
+                active={!accessUncertain}
+                busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}
+                compact
+              />
+            )
+          }
           showUsage
           usage={conversation.usage}
           steeringMode={steeringMode}

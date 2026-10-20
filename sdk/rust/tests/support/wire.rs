@@ -118,6 +118,7 @@ async fn handle(
         "content-type",
         "if-none-match",
         "last-event-id",
+        "prefer",
         "x-cmaeg-owner",
         "x-cmaeg-agent-authorization",
     ] {

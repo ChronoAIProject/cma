@@ -2527,3 +2527,47 @@ are no longer prewarmed: their controls allow Disable and conflict recovery read
 never an increase. Disabling spare capacity does not interrupt claimed Sandboxes.
 
 | 2026-10-19 | Prioritize current-runtime warm pools, mark the exact default configuration, and collapse drained historical images while keeping unresolved capacity visible with disable-only controls. |
+
+### Composer settings and message feedback (2026-10-20)
+
+Model, reasoning effort and permission mode belong beside the composer, between
+its text input and the Send/Stop column, rather than in Agent Details. Use the
+shared small value pickers, with the selected value visible and full accessible
+labels. Arrange them in a compact horizontal group with existing 4px gaps;
+truncate long model names within 120px. Keep the current owner, runtime capability,
+turn-idle, explicit Apply and same-request recovery rules. Only a changed draft
+or retained update shows Apply/Retry; changes never submit conversation input.
+At Agent panel widths of 48rem or less, the controls wrap into a dedicated row
+below the text input, before usage, leaving Send/Stop and steering aligned in
+their action column. At 30rem or less, retain 44px touch targets and let the
+three controls share the full input row. Preserve typed drafts, attachments,
+queue/interrupt behavior, and input-aligned Context/Total tokens.
+
+Each normal message always shows its recorded timestamp as a semantic time in
+Asia/Singapore, with an explicit SGT suffix, using existing 12/18 caption text
+and tabular numerals. Never substitute render time for a missing historical
+timestamp: state that its time is unavailable until an authoritative timestamp
+arrives. An outgoing local message uses its actual local submission time; live
+messages use the source event timestamp. The durable message timestamp replaces
+that provisional observation when the recorded message arrives.
+
+Reserve a compact footer for Copy content, Upvote and Downvote using the existing
+copy/like/dislike glyphs and shared 32px Buttons. Fade these controls in on message
+hover or keyboard focus over the shared fast duration, with no movement or layout
+shift; keep them visible on touch devices. A selected vote stays visible and uses
+the existing business-primary ink and a filled glyph. Copy reports a brief local
+confirmation and failures remain actionable. Votes toggle off or switch sides,
+persist for the authenticated owner and exact recorded message, and never create
+an Agent turn. Until a streamed message is recorded its voting controls explain
+why voting is unavailable. Failed writes preserve the last confirmed vote with a
+retry action; no success is inferred from a click. Shared readers retain copy and
+timestamps but cannot vote as the owner. Honor reduced motion and preserve focus.
+
+| 2026-10-20 | Move model, effort and permission controls beside the composer with responsive wrapping; add always-visible SGT message timestamps and accessible hover/focus/touch copy and durable owner feedback controls. |
+
+| 2026-10-20 | Request negotiated server live-fragment observation timestamps for streaming message footers, preserve the first observation during text growth, and replace it with recorded message time on commit. Existing strict clients keep their prior wire shape; older servers without timestamps retain the explicit unavailable-time fallback. |
+
+The desktop composer settings group is capped at 320px so catalog errors and
+long values wrap without pushing the message field out of view. Its narrow-screen
+row uses the available width. In the smallest layout the settings row follows
+input-aligned usage, allowing all three controls their full touch targets.
