@@ -15,6 +15,7 @@ use tower::ServiceExt;
 use crate::auth::{persistence::MemoryAuthStore, ProviderMetadata};
 
 mod compatibility;
+mod paired;
 mod public_routes;
 
 struct Fixture {

@@ -1617,6 +1617,47 @@ a request. Keep the NyxID issuer disabled until all CMA readers are compatible;
 disable issuance first when rolling this feature back. See
 `CMA_Resource_Authorization.md` for the admitted routes and protocol limits.
 
+The opt-in test
+`auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads`
+joins CMA's real authentication and public Agent handlers to the NyxID companion
+test `services::resource_request_proof::tests::joined::serve_joined_cma_acceptance_fixture`.
+It uses real issued keys, confidential introspection and MCP/REST egress rather
+than replacing the provider response. CMA resources remain in memory, with no
+runtime and an operation store that refuses any attempted durable work.
+
+Start the NyxID fixture against a fresh, dedicated loopback Mongo replica set;
+its guard requires an explicit `NYXID_TEST_DATABASE_URL` on a non-default port,
+`directConnection=true`, and no pre-existing application databases. Give
+`NYXID_CMA_JOINED_MANIFEST` a new filename inside a private directory (0700).
+The fixture publishes that manifest atomically with mode 0600. In the CMA
+checkout, point `CMA_NYXID_PAIR_MANIFEST` at the same file and run:
+
+```sh
+cd api
+cargo test --locked -p cma --bin cma \
+  auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads \
+  -- --ignored --exact
+```
+
+The joined test checks owner listings and stored transcript reads, cross-owner
+denial, exact request binding, mutation refusal, live role/service/key revocation
+and the active-turn Stop fence. Successful completion shuts down the fixture;
+failed runs must also stop their dedicated Mongo process and remove its private
+data and credential manifest. The NyxID fixture expires after ten minutes as a
+fallback. Record both source revisions and test output. Local acceptance proves
+the two implementations interoperate; production topology, live credentials,
+safe draining and real NyxBot acceptance remain separate release requirements.
+
+This rollout must preserve every existing user's running Sandbox and Agent,
+including the operator's own sessions. Use only isolated fixtures or dedicated
+acceptance resources for test turns. Do not restart, pause, migrate, replace or
+delete existing runtimes, Claims or home volumes to validate authentication.
+Before replacing a control service, verify that its HTTP streams and background
+turns drain or resume without cancelling, duplicating or losing accepted work.
+An unchanged runtime Pod UID and a Ready replacement API are necessary observations,
+but do not establish active-turn continuity. Keep proof issuance disabled if
+the provider's deployment topology or draining behavior cannot be verified.
+
 ## Organization-owned always-live event workers
 
 A gateway creator authenticated as an organization can prepare an Event Worker
