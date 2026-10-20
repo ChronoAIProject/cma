@@ -1,6 +1,9 @@
 use super::*;
 use crate::agent_sandbox::pool::network_policy_tests;
 
+#[path = "native_resume_delayed_policy_tests.rs"]
+mod delayed_policy_tests;
+
 #[tokio::test]
 async fn pool_retirement_rejects_genuinely_upgraded_template_network_dependents() {
     let fixture = fixture(true).await;
