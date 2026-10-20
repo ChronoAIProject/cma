@@ -15,15 +15,15 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "587b55b56a0765bec7e8c8df6614ad869f2f7850"
-        cma.chronoai.dev/ci-artifact: "12268028279"
+        cma.chronoai.dev/candidate: "60a81ec0100cd552aec6fffb138c6ea3dcf42195"
+        cma.chronoai.dev/ci-artifact: "12276579572"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "5c7a0dba0d10b6327b8bb0dd3547f5a4a59ef39e"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:0a7c130ccca97c95a5c514b3413e61630a5a46229bd50f0cce6e6b686f35b01c"
-        cma.chronoai.dev/ci-run: "39431220872"
-        cma.chronoai.dev/image-digest: "sha256:50c3ced2c65495e22626fb0c6912a16563606336f27669bcc98fbe2fcb62409a"
-        cma.chronoai.dev/image-source: "daabacde059aa455b26591f8eeff821ae4393fdd"
-        cma.chronoai.dev/source-tree: "255e33efbe141a2c4a941790db1eba99f72c4cf4"
+        cma.chronoai.dev/ci-head: "3d3d4925e9eec0b09484a433aa355b89b986d5ec"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:f1e7d7259e0a3eadb781d8bf580115699f210daa4f4e31647d22f4d23d367c51"
+        cma.chronoai.dev/ci-run: "39448356610"
+        cma.chronoai.dev/image-digest: "sha256:6e435fcd7e4157523e1dd23a713da74d10a380bce30d7f9f9be0a0810e4ccdc3"
+        cma.chronoai.dev/image-source: "f828dfe96140f592dd71ab843c5b9d8a1e2f4433"
+        cma.chronoai.dev/source-tree: "42e71d3f1d69767857737987d8e698374d00c840"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -46,7 +46,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:50c3ced2c65495e22626fb0c6912a16563606336f27669bcc98fbe2fcb62409a
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:6e435fcd7e4157523e1dd23a713da74d10a380bce30d7f9f9be0a0810e4ccdc3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
