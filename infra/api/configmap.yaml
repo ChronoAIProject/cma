@@ -59,6 +59,9 @@ data:
   CHRONO_AUTH_MODE: "provider"
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
+  # Request-bound read proofs require coordinated NyxID issuance activation.
+  # Existing browser and ordinary API-key authentication do not use this flag.
+  CHRONO_NYXID_RESOURCE_REQUEST_ENABLED: "false"
   CHRONO_TRUSTED_SUBJECT: "local-developer"
   # Browser auth callbacks and host-only cookies use the app origin; the
   # Gateway routes API/auth/discovery paths directly to this control plane.

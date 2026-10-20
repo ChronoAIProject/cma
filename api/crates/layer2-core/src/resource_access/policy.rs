@@ -118,6 +118,39 @@ impl AccessDecision {
         purpose: AccessPurpose,
         now: SystemTime,
     ) -> Result<Self, AccessError> {
+        let super::CredentialSource::RequestBoundRead { expires_at } = context.credential_source
+        else {
+            return Self::evaluate_authority(context, scope, shares, purpose, now);
+        };
+        if !matches!(purpose, AccessPurpose::Read) || expires_at <= now {
+            return Ok(Self::empty());
+        }
+        let mut result = Self::evaluate_authority(context, scope, shares, purpose, now)?;
+        result.capabilities.retain(|capability| {
+            matches!(
+                capability,
+                ResourceCapability::ViewDetails | ResourceCapability::ViewHistory
+            )
+        });
+        result.independent.clear();
+        if let Some(deadline) = context.credential_deadline() {
+            result.deadline = Some(result.deadline.map_or(deadline, |old| old.min(deadline)));
+        }
+        result.revalidate_at = Some(
+            result
+                .revalidate_at
+                .map_or(expires_at, |old| old.min(expires_at)),
+        );
+        Ok(result)
+    }
+
+    fn evaluate_authority(
+        context: &CallerContext,
+        scope: &ResourceScope,
+        shares: &[ResourceShare],
+        purpose: AccessPurpose,
+        now: SystemTime,
+    ) -> Result<Self, AccessError> {
         let mut result = Self::empty();
         if !context.validate_principal() {
             return Ok(result);
