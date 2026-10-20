@@ -42,8 +42,62 @@ spec:
         runAsNonRoot: true
         runAsUser: 101
         runAsGroup: 101
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: web-assets-current
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:6e435fcd7e4157523e1dd23a713da74d10a380bce30d7f9f9be0a0810e4ccdc3
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -a /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-previous
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:50c3ced2c65495e22626fb0c6912a16563606336f27669bcc98fbe2fcb62409a
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              for file in /usr/share/nginx/html/assets/*; do
+                [ -e "$file" ] || continue;
+                name="${file##*/}";
+                [ -e "/compat/assets/$name" ] || cp -a "$file" "/compat/assets/$name";
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
       containers:
         - name: web
           image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:6e435fcd7e4157523e1dd23a713da74d10a380bce30d7f9f9be0a0810e4ccdc3
@@ -84,6 +138,11 @@ spec:
           volumeMounts:
             - name: nginx-cache
               mountPath: /tmp
+            - name: web-assets-compat
+              mountPath: /usr/share/nginx/html/assets
+              readOnly: true
       volumes:
         - name: nginx-cache
+          emptyDir: {}
+        - name: web-assets-compat
           emptyDir: {}
