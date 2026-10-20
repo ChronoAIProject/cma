@@ -17,6 +17,11 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v1/agents/{id}/usage", &["get"]),
     ("/api/v1/agents/{id}/models", &["get"]),
     ("/api/v1/agents/{id}/settings", &["get", "patch"]),
+    ("/api/v1/agents/{id}/message-feedback", &["get"]),
+    (
+        "/api/v1/agents/{id}/messages/{message_id}/feedback",
+        &["put"],
+    ),
     ("/api/v1/agents/{id}/attachments", &["post"]),
     ("/api/v1/agents/{id}/artifacts", &["get"]),
     ("/api/v1/agents/{id}/artifacts/{artifact_id}", &["get"]),

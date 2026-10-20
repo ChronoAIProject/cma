@@ -80,6 +80,36 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
+    /// Validate one immutable message without loading the whole conversation.
+    pub(super) async fn require_owned_message(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        sequence: u64,
+    ) -> Result<(), AgentReadError> {
+        let agent = self.read(caller, id).await?;
+        if sequence == 0 || sequence > agent.conversation.last_seq {
+            return Err(AgentReadError::NotFound);
+        }
+        let entry = self
+            .store
+            .agent_log_entry(id, sequence)
+            .await
+            .map_err(log_store_error)?
+            .ok_or_else(|| corrupt("committed message lookup is incomplete"))?;
+        if entry.agent_id != *id || entry.seq != sequence {
+            return Err(corrupt("committed message lookup identity is invalid"));
+        }
+        if matches!(
+            entry.kind,
+            super::AgentLogKind::OwnerMessage { .. } | super::AgentLogKind::AgentMessage { .. }
+        ) {
+            Ok(())
+        } else {
+            Err(AgentReadError::NotFound)
+        }
+    }
+
     /// Read the Agent and every parent needed to project its public context.
     pub async fn lineage(
         &self,
