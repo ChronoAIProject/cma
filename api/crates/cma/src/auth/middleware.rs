@@ -18,6 +18,12 @@ pub async fn attach_subject(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if request
+        .headers()
+        .contains_key(super::resource_request::HEADER)
+    {
+        return super::resource_request::attach(&auth, request, next).await;
+    }
     if bypasses_ambient_auth(request.uri().path()) {
         return next.run(request).await;
     }

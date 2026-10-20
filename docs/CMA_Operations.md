@@ -1600,6 +1600,23 @@ with such commands require this version or a compatible successor for rollback.
 Bot creation still requires the actual owner's renewable human login; accepting
 an agent key does not authorize borrowing that owner's stored login.
 
+### NyxID request-bound reads
+
+`CHRONO_NYXID_RESOURCE_REQUEST_ENABLED` defaults to `false`. Enable it only after
+the corresponding NyxID proof issuer and authenticated introspection endpoint
+are deployed and verified. It admits a finite set of read-only routes through
+the dedicated `X-NyxID-Resource-Request` header; it does not enable lifecycle,
+interaction, streaming, Bot creation or deferred commands. Ordinary bearer,
+agent-key and browser authentication remain unchanged without that header.
+
+Each proof binds the exact request and expires within 60 seconds. CMA verifies
+the proof with its confidential NyxID client and applies current ownership and
+RBAC checks. An invalid explicit proof fails closed without falling back to
+another credential. The legacy `X-NyxID-Identity-Token` header cannot authenticate
+a request. Keep the NyxID issuer disabled until all CMA readers are compatible;
+disable issuance first when rolling this feature back. See
+`CMA_Resource_Authorization.md` for the admitted routes and protocol limits.
+
 ## Organization-owned always-live event workers
 
 A gateway creator authenticated as an organization can prepare an Event Worker
