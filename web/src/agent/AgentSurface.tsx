@@ -118,7 +118,7 @@ export function AgentSurface({
   }, [connectionConfiguration, connection.scope, discardPrepared]);
 
   useEffect(() => {
-    if (state.status !== 'ready') headingRef.current?.focus();
+    if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
 
   useEffect(() => {
