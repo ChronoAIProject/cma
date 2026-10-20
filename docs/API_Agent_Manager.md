@@ -153,3 +153,35 @@ Sandbox detail/events for completion. Managed runtime updates submit the exact
 `target_version` advertised by the Sandbox's update view and retain the same
 Sandbox/home/conversation lineage. See [REST runtime updates](API_REST.md) for
 eligibility, queued work, original-target retries and failures.
+
+## Message feedback
+
+Feedback is private metadata belonging to the Agent owner. It never starts,
+interrupts or queues a turn, changes the transcript, or contacts the Sandbox.
+The caller needs current `UseOwnSandboxes` authority and ownership of the Agent
+and its complete Sandbox/Workspace/Worktree lineage. Shared readers cannot vote
+or read the owner's votes. Foreign and missing Agents return the same 404.
+
+`GET /api/v1/agents/{id}/message-feedback?after=0&limit=200` returns
+`{"items":[{"message_id":"event:42","vote":"up"}],"next":null}`. Only non-null
+votes are listed in ascending message sequence. `limit` is 1–200; pass a non-null
+`next` as the next `after` until it is null. The page reads through the captured
+Agent history high-water mark. Votes on messages committed later appear on a
+subsequent refresh.
+
+`PUT /api/v1/agents/{id}/messages/event:42/feedback` with `{"vote":"up"}`,
+`{"vote":"down"}`, or `{"vote":null}` sets, switches or clears the owner's vote.
+The response echoes `message_id` and the saved `vote`. The `vote` field is
+required, including when clearing. This absolute metadata update is idempotent
+and does not require an `Idempotency-Key`; concurrent requests use database write
+order. Clients should serialize changes to a particular message. Retrying an
+uncertain old request after a newer selection can replace that selection.
+
+Use `event:<sequence>` from `GET /api/v1/agents/{id}/transcript` message records
+or durable Agent event sequences. Only committed owner/assistant message events
+accept votes; lifecycle, tool, turn, draft and optimistic IDs are rejected. Votes
+persist across refreshes and API restarts in Agent Manager's independent
+`agent_message_feedback` collection. Its schema and unique owner/Agent/sequence
+index initialize additively at startup. Isolated database deployments must add
+this collection to the generated Agent Manager role before upgrading; explicit
+shared-schema deployments require no new database credential.

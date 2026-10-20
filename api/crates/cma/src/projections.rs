@@ -21,6 +21,7 @@ use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
+    message_feedback: Option<Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>>,
     skill_support: Option<Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>>,
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     agents: Arc<AgentService>,
@@ -32,6 +33,14 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_message_feedback(
+        mut self,
+        store: Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>,
+    ) -> Self {
+        self.message_feedback = Some(store);
+        self
+    }
+
     pub(crate) fn with_skill_support(
         mut self,
         support: Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>,
@@ -105,6 +114,7 @@ impl AgentProjectionServices {
         let reads = AgentReadService::new(store.clone(), resources);
         let operations = AgentOperationService::new(store, runtimes);
         Self {
+            message_feedback: None,
             skill_support: None,
             commands: None,
             agents,
@@ -135,6 +145,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.message_feedback {
+            Some(store) => agent_routes.with_message_feedback(store.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.skill_support {
             Some(support) => agent_routes.with_skill_support(support.clone()),
             None => agent_routes,

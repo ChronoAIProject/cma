@@ -42,6 +42,17 @@ export const resourceDispatch: Record<string, Dispatch> = {
   }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
   'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
     client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/message-feedback': ({ client, param, query }) =>
+    client.agents.messageFeedback(param('id'), {
+      ...(query.has('after') ? { after: Number(query.get('after')) } : {}),
+      ...(query.has('limit') ? { limit: Number(query.get('limit')) } : {}),
+    }),
+  'PUT /api/v1/agents/{id}/messages/{message_id}/feedback': ({ client, param, body }) =>
+    client.agents.setMessageFeedback(
+      param('id'),
+      param('message_id'),
+      (body as { vote: 'up' | 'down' | null }).vote,
+    ),
   'GET /api/v1/agents/{id}/settings': ({ client, param }) => client.agents.settings(param('id')),
   'PATCH /api/v1/agents/{id}/settings': ({ client, param, body, command }) =>
     client.agents.updateSettings(param('id'), body, command),

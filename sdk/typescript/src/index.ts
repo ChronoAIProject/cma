@@ -108,3 +108,9 @@ export * as cmaeg from './cmaeg/index.js';
 export * from './event-worker-profiles.js';
 
 export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';
+
+export type {
+  MessageVote,
+  MessageFeedback,
+  MessageFeedbackPage,
+} from './agents/message-feedback.js';

@@ -6,6 +6,7 @@ use std::{
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
+pub(super) mod message_feedback;
 mod models;
 mod settings;
 mod skills;
