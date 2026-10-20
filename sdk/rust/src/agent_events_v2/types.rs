@@ -129,6 +129,9 @@ pub struct AgentLive {
     pub after_sequence: u64,
     /// Live message identity for committed-text reconciliation.
     pub message_id: String,
+    /// Server live-fragment observation time; absent unless supported and requested.
+    #[serde(default)]
+    pub observed_at: Option<String>,
     /// Text or reasoning summary.
     pub kind: LiveKind,
     /// Ephemeral text, which must not enter durable reasoning storage.

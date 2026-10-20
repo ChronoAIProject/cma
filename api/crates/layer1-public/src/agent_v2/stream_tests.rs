@@ -146,6 +146,43 @@ async fn live_fragments_require_exact_runtime_turn_and_caught_up_anchor() {
 }
 
 #[tokio::test]
+async fn live_observation_time_is_real_and_negotiated_without_changing_old_frames() {
+    for preferred in [false, true] {
+        let (mut open, _) = following().await;
+        open.live_timestamps = preferred;
+        let before = layer2_core::now_rfc3339();
+        open.held = Some(fragment(&open));
+        open.queue_live();
+        let after = layer2_core::now_rfc3339();
+        let mut body = response(open).into_body().into_data_stream();
+        let bytes = body.next().await.unwrap().unwrap();
+        let wire = std::str::from_utf8(&bytes).unwrap();
+        let data = wire
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(data).unwrap();
+        assert_eq!(value["delta"], "Live text");
+        if preferred {
+            let at = value["observed_at"].as_str().unwrap();
+            assert!(at >= before.as_str() && at <= after.as_str());
+        } else {
+            assert!(value.get("observed_at").is_none());
+        }
+    }
+    for (header, expected) in [
+        ("cma-live-observed-at", true),
+        ("cma-message-bindings, CMA-LIVE-OBSERVED-AT", true),
+        ("cma-live-observed-at=true", false),
+        ("other-cma-live-observed-at", false),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert("prefer", header.parse().unwrap());
+        assert_eq!(projection::live_timestamps(&headers), expected);
+    }
+}
+
+#[tokio::test]
 async fn buffered_live_text_is_discarded_when_a_commit_arrives_before_release() {
     let (mut open, f) = following().await;
     open.held = Some(fragment(&open));

@@ -26,6 +26,8 @@ pub struct SnapshotOptions {
 /// One read-only replay/tail connection, without implicit reconnect.
 #[derive(Debug, Clone, Default)]
 pub struct TailOptions {
+    /// Request real server observation timestamps for live fragments; older servers may omit them.
+    pub live_timestamps: bool,
     /// Last fully applied Agent cursor; omission starts at retained history's beginning.
     pub after_cursor: Option<AgentCursor>,
     /// Standard SSE header alternative; if both coordinates are supplied they must agree.
@@ -100,6 +102,12 @@ impl AgentEventsV2<'_> {
         let mut request = Request::get(&segments);
         request.root = true;
         request.query = &query;
+        if options.live_timestamps {
+            request.headers.insert(
+                "prefer",
+                reqwest::header::HeaderValue::from_static("cma-live-observed-at"),
+            );
+        }
         if let Some(cursor) = &options.last_event_id {
             request.headers.insert(
                 "last-event-id",
