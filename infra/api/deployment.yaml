@@ -20,18 +20,18 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:475c53eab4c86cba86747687adede434b739daca21fbfee2676acadcf9eaddea"
+        cma.chronoai.dev/api-image-digest: "sha256:def7f33828570c0278e021d34ddb6c32784f2bfee993eb495eebb704dd3509eb"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "03f8985244a36ed7d4faff3937a0b6acf533bab3"
-        cma.chronoai.dev/ci-artifact: "12259319894"
+        cma.chronoai.dev/candidate: "587b55b56a0765bec7e8c8df6614ad869f2f7850"
+        cma.chronoai.dev/ci-artifact: "12273021597"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "03f8985244a36ed7d4faff3937a0b6acf533bab3"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:178ff6c5b440207a178504873554ee347ae19e65b0d1b32d43cd8863245a92b6"
-        cma.chronoai.dev/ci-run: "39408762886"
-        cma.chronoai.dev/image-digest: "sha256:475c53eab4c86cba86747687adede434b739daca21fbfee2676acadcf9eaddea"
-        cma.chronoai.dev/image-source: "b4125504e2e5974e0572ad74d85709f946365b58"
+        cma.chronoai.dev/ci-head: "5c7a0dba0d10b6327b8bb0dd3547f5a4a59ef39e"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:0a7c130ccca97c95a5c514b3413e61630a5a46229bd50f0cce6e6b686f35b01c"
+        cma.chronoai.dev/ci-run: "39431220872"
+        cma.chronoai.dev/image-digest: "sha256:def7f33828570c0278e021d34ddb6c32784f2bfee993eb495eebb704dd3509eb"
+        cma.chronoai.dev/image-source: "daabacde059aa455b26591f8eeff821ae4393fdd"
         cma.chronoai.dev/runtime-image: "sha256:dfa7cfddb3171ec2e2bc6942adefd7c9d2825d2f164c2b5b34f2d0dc234f719c"
-        cma.chronoai.dev/source-tree: "e6aca649cdd97b5fed39f55b6015654e90c290d0"
+        cma.chronoai.dev/source-tree: "255e33efbe141a2c4a941790db1eba99f72c4cf4"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -66,7 +66,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:475c53eab4c86cba86747687adede434b739daca21fbfee2676acadcf9eaddea
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:def7f33828570c0278e021d34ddb6c32784f2bfee993eb495eebb704dd3509eb
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
