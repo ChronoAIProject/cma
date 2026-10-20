@@ -146,14 +146,21 @@ impl AgentSandboxClient {
         // Both generations retain this persisted attachment. Acquire its complete
         // Claim/Sandbox/PVC authority once, then render without additional reads.
         // This proof is local to this call; suspension and final CAS still reread.
-        let (member, policy) = tokio::join!(
-            self.pools.prove_native_home(home),
-            self.verify_native_runtime_policy(runtime, home),
-        );
-        // The persisted origin supplies exact independent resource names. Keep
-        // graph errors first and honor a freshly proven retained upgrade policy.
-        let member = member?;
-        self.complete_native_runtime_policy(home, &member, policy)?;
+        let graph = self.pools.prove_native_home(home);
+        let policy = self.verify_native_runtime_policy(runtime, home);
+        tokio::pin!(graph, policy);
+        // Consume graph errors first. A proven retained upgrade must not wait
+        // for retired definitions, even when their speculative reads stall.
+        let (member, policy_result) = tokio::select! {
+            member = &mut graph => (member?, None),
+            result = &mut policy => (graph.await?, Some(result)),
+        };
+        if !self.pools.retained_upgrade_policy(&member, origin)? {
+            match policy_result {
+                Some(result) => result?,
+                None => policy.await?,
+            }
+        }
         let before = self
             .pools
             .runtime_desired_for_member(origin, home, previous, name, &member)?;
