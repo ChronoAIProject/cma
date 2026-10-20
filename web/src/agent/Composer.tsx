@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentStatus, AgentUsage } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
@@ -25,6 +25,7 @@ interface ComposerProps {
   readonly availableCommands?: readonly SessionCommand[];
   readonly usage?: AgentUsage;
   readonly showUsage?: boolean;
+  readonly settings?: ReactNode;
   readonly steeringMode?: SteeringMode;
   readonly onSteeringModeChange?: (mode: SteeringMode) => void;
   readonly status: AgentStatus;
@@ -73,6 +74,7 @@ export function Composer({
   availableCommands,
   usage,
   showUsage = false,
+  settings,
   steeringMode = 'queue',
   onSteeringModeChange,
   status,
@@ -304,7 +306,7 @@ export function Composer({
         )}
       </Presence>
       <form
-        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}`}
+        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}${settings ? ' agent-composer__form--settings' : ''}`}
         aria-label="Message Agent"
         onSubmit={(event) => {
           event.preventDefault();
@@ -379,6 +381,7 @@ export function Composer({
             </div>
           </div>
         </div>
+        {settings ? <div className="agent-composer__settings">{settings}</div> : null}
         <div className="agent-composer__actions">
           {!running || queueWhileRunning ? (
             <Button
