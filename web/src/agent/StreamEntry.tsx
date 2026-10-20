@@ -21,6 +21,8 @@ import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
+import { MessageFooter } from './MessageFooter';
+import type { MessageFeedbackControls } from './useMessageFeedback';
 
 export type Entry =
   | { kind: 'message'; item: ConversationMessage }
@@ -38,6 +40,7 @@ export function StreamEntry({
   usage,
   user,
   unknownUserName,
+  feedback,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
@@ -47,6 +50,7 @@ export function StreamEntry({
   readonly usage?: AgentUsage['currentTurn'];
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
+  readonly feedback?: MessageFeedbackControls;
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
@@ -71,6 +75,17 @@ export function StreamEntry({
               <TurnUsage usage={usage} animateInitial={false} />
             </div>
           ) : null}
+          <MessageFooter
+            id={message.id}
+            at={message.at}
+            content={message.content}
+            committed={
+              !message.liveOnly &&
+              message.status !== 'streaming' &&
+              /^event:[1-9]\d*$/.test(message.id)
+            }
+            feedback={feedback}
+          />
         </div>
       </article>
     );

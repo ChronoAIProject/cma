@@ -91,6 +91,12 @@ export interface AgentSettingsView {
   readonly permission_mode: 'guarded' | 'autonomous';
 }
 
+export type MessageVote = 'up' | 'down' | null;
+export interface MessageFeedback {
+  readonly message_id: string;
+  readonly vote: MessageVote;
+}
+
 export interface AgentLifecycleCreateReceipt {
   readonly id: string;
   readonly status?: string;
@@ -141,6 +147,16 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly readMessageFeedback?: (
+    agentId: string,
+    options?: ReadOptions,
+  ) => Promise<readonly MessageFeedback[]>;
+  readonly setMessageFeedback?: (
+    agentId: string,
+    messageId: string,
+    vote: MessageVote,
+    options?: ReadOptions,
+  ) => Promise<MessageFeedback>;
   readonly updateSandboxRuntime?: (
     id: string,
     targetVersion: string,
