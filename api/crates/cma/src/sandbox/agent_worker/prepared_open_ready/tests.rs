@@ -246,14 +246,14 @@ async fn prepared_open_ready_parent_race_refuses_publication_and_attachment_can_
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn prepared_parent_conflict_retains_completed_open_without_waiting_for_lease_expiry() {
-    use layer2_core::sandbox::store::SandboxStore;
     let fixture = Fixture::new().await;
-    let mut changed = fixture.context.sandbox.clone();
+    // Keep preparation eligibility intact while making the observed parent
+    // snapshot stale, so the atomic publication reaches its Conflict fence.
+    let mut changed = fixture.context.workspace.clone();
     changed.revision += 1;
-    changed.name = "Renamed during Open".into();
     fixture
         .store
-        .save_sandbox(fixture.context.sandbox.revision, changed)
+        .save_workspace(fixture.context.workspace.revision, changed)
         .await
         .unwrap();
     assert!(matches!(
