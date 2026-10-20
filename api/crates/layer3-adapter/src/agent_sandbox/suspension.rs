@@ -190,6 +190,7 @@ impl AgentSandboxClient {
     ) -> Result<()> {
         let (name, uid) = parse_handle(runtime)?;
         tokio::time::timeout(Duration::from_secs(120), async {
+            let started = tokio::time::Instant::now();
             loop {
                 let actual = self
                     .get(runtime)
@@ -222,7 +223,7 @@ impl AgentSandboxClient {
                 }) {
                     return Ok(());
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(super::observation::refresh_delay(started.elapsed())).await;
             }
         })
         .await
