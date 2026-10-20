@@ -37,12 +37,17 @@ impl Following {
                         self.held = Some(fragment);
                         break;
                     }
-                    let body = json!({"agent_id": fragment.agent_id, "incarnation": self.identity,
+                    let mut body = json!({"agent_id": fragment.agent_id, "incarnation": self.identity,
                         "turn_sequence": fragment.turn_sequence, "after_sequence": fragment.after_seq,
                         "message_id": fragment.message_id, "kind": match fragment.kind {
                             AgentLiveFragmentKind::Message => "text_delta",
                             AgentLiveFragmentKind::Thought => "reasoning_summary_delta",
                         }, "delta": fragment.delta});
+                    // Negotiate this field: existing strict consumers must keep their old shape.
+                    // This is this server's live observation time, not a provider generation time.
+                    if self.live_timestamps {
+                        body["observed_at"] = json!(layer2_core::now_rfc3339());
+                    }
                     self.pending.push_back(Frame {
                         event: Event::default()
                             .event("cma.agent.live")
