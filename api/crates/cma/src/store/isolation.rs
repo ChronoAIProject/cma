@@ -18,6 +18,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_access_tools",
     "agent_access_requests",
     "agent_log",
+    super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
     "agent_profile_revisions",
     "agent_profiles",

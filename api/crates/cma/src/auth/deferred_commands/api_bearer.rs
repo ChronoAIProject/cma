@@ -132,6 +132,7 @@ impl AuthState {
         if !crate::auth::bearer::permits_independent_commands(credential) {
             return Err(CommandAuthorizationError::Revoked);
         }
+        self.require_ordinary_api_credential(credential).await?;
         let metadata = self
             .metadata()
             .await
@@ -155,6 +156,9 @@ impl AuthState {
         if verified.subject != *subject || !authorization.allows(Capability::UseOwnSandboxes) {
             return Err(CommandAuthorizationError::Revoked);
         }
+        // Binding registration can race provider IO. A key that acquired a
+        // restricted binding identity cannot retain earlier ambient authority.
+        self.require_ordinary_api_credential(credential).await?;
         Ok(RequestAuth {
             binding: None,
             credential_source: CredentialSource::Independent { expires_at },
@@ -163,6 +167,21 @@ impl AuthState {
             profile: verified.profile.clone(),
             delegated_credential: Some(credential.to_owned()),
         })
+    }
+
+    async fn require_ordinary_api_credential(
+        &self,
+        credential: &str,
+    ) -> Result<(), CommandAuthorizationError> {
+        if crate::auth::agent_keys::is_agent_key(credential)
+            && self
+                .is_known_binding_key(credential)
+                .await
+                .map_err(|_| CommandAuthorizationError::Unavailable)?
+        {
+            return Err(CommandAuthorizationError::Revoked);
+        }
+        Ok(())
     }
 }
 

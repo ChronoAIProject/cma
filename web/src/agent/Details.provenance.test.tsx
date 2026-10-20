@@ -2,9 +2,9 @@ import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
-import { AgentDetails } from './Details';
+import { SessionSettings } from './SessionSettings';
 
-it('opens settings independently of optional creation provenance', async () => {
+it('loads composer settings independently of optional creation provenance', async () => {
   const readAgentProvenance = vi.fn().mockRejectedValue(new Error('Denied'));
   const readAgentSettings = vi.fn().mockResolvedValue({
     model: 'gpt-6',
@@ -18,7 +18,7 @@ it('opens settings independently of optional creation provenance', async () => {
   });
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
-      <AgentDetails open={open} detail={AGENT_DETAIL} />
+      <SessionSettings agentId={AGENT_DETAIL.id} active={open} busy={false} compact />
     </CmaClientProvider>
   );
   const view = render(draw(false));

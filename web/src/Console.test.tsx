@@ -90,7 +90,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   expect(deleteSandbox).toHaveBeenCalledTimes(1);
 });
 
-it('opens only Agent settings in Details while keeping conversation and tree navigation available', async () => {
+it('keeps composer settings available while Details and tree navigation remain usable', async () => {
   const onNavigate = vi.fn();
   const actor = userEvent.setup();
   render(
@@ -115,11 +115,15 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   expect(await screen.findByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus());
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  const composer = within(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(await composer.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(composer.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(composer.getByLabelText('Permission mode')).toHaveTextContent('YOLO');
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
   expect(panel.getByRole('button', { name: 'Sandbox operation progress' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
