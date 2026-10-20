@@ -1047,6 +1047,16 @@ and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
 advancing cursors and combine transcript fallback without duplicating messages.
 
+Message feedback is private, durable metadata for the Agent owner.
+`GET /api/v1/agents/{id}/message-feedback` pages non-null votes using `after`
+and `limit` (1–200, default 200). `PUT
+/api/v1/agents/{id}/messages/{message_id}/feedback` sets or clears a vote with
+`{"vote":"up"}`, `{"vote":"down"}`, or `{"vote":null}`. The message ID must be
+`event:<sequence>` for a committed owner or assistant message. This idempotent
+metadata update requires no `Idempotency-Key` and never starts or interrupts
+Agent work. See [Agent Manager feedback](API_Agent_Manager.md#message-feedback)
+for ownership, pagination, persistence and concurrent-update behavior.
+
 Each transcript turn includes ordered `messages` with the durable `sequence`,
 `role` (`user` or `assistant`), `content` and `appended_at`. Steering remains a
 distinct owner message inside the active turn, even when assistant messages
@@ -1287,6 +1297,8 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
+| `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
 | `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
