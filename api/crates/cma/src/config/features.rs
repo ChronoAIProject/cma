@@ -3,6 +3,7 @@
 pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
+    pub nyxid_resource_request: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -21,6 +22,7 @@ impl FeatureFlags {
         Ok(Self {
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
+            nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
         })
     }
 }

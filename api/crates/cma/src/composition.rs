@@ -122,6 +122,7 @@ impl ControlPlaneComposition {
             config.nyxid_public_url.clone(),
         )
         .with_agent_key_service(config.nyxid_service_id.clone())
+        .with_resource_request_enabled(config.features.nyxid_resource_request)
         .with_binding_store(stores.sandbox_model.clone())
         .with_bot_father_username(
             config
