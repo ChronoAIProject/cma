@@ -104,14 +104,14 @@ fn validate(
     }
     // The configured authenticated introspection endpoint establishes issuer
     // authority; transport/public origins need not equal the provider's issuer.
-    if !body
+    if body
         .get("iss")
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-        || !body
+        .is_none_or(|value| value.trim().is_empty())
+        || body
             .get("jti")
             .and_then(Value::as_str)
-            .is_some_and(|value| uuid::Uuid::parse_str(value).is_ok())
+            .is_none_or(|value| uuid::Uuid::parse_str(value).is_err())
     {
         return Err(Error::Rejected);
     }
