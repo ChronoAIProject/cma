@@ -19,6 +19,7 @@ import {
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 import { agentSettingsClient } from './rest/agentSettings';
 import { agentSkillsClient } from './rest/agentSkills';
+import { messageFeedbackClient } from './rest/messageFeedback';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -73,6 +74,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
     },
     ...agentSettingsClient(),
+    ...messageFeedbackClient(),
     ...agentSkillsClient(),
     grantSandboxServiceAccess: async (id, services, options) => {
       await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);

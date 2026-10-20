@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from './Button';
+import { Button, type ButtonSize } from './Button';
 import { Menu, type MenuEntry } from './Menu';
 import { IconChevronDownOutline14 } from './icons';
 import './Picker.css';
@@ -44,6 +44,7 @@ interface PickerProps<Value extends string> {
    * hand every picker in the product an `overflow-y` it never asked for.
    */
   readonly placement?: string;
+  readonly size?: ButtonSize;
 }
 
 export function Picker<Value extends string>({
@@ -57,6 +58,7 @@ export function Picker<Value extends string>({
   describedBy,
   invalid,
   placement,
+  size,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
   const chosen = options.find((option) => option.value === value);
@@ -95,6 +97,8 @@ export function Picker<Value extends string>({
       }}
       anchor={
         <Button
+          size={size}
+          title={`${label}: ${chosen?.label ?? value}`}
           id={id}
           variant="outline"
           placement="picker__anchor"

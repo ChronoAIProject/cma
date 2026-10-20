@@ -187,6 +187,7 @@ export function foldV2Frame(
       runId: String(event.turn_sequence),
       messageId: event.message_id,
       delta: event.delta,
+      timestamp: event.observed_at,
       'cma:live': true,
       'cma:after': event.after_sequence,
     },

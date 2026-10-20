@@ -4,15 +4,18 @@ import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
 import { SettingsFields } from './SettingsFields';
 import { AgentSettingsError } from '../api/rest/agentSettings';
+import { Presence } from '../ui/Presence';
 
 export function SessionSettings({
   agentId,
   active,
   busy,
+  compact = false,
 }: {
   readonly agentId: string;
   readonly active: boolean;
   readonly busy: boolean;
+  readonly compact?: boolean;
 }) {
   const client = useCmaClient();
   const [value, setValue] = useState<AgentSettingsView>();
@@ -61,6 +64,12 @@ export function SessionSettings({
   );
   const draft =
     unavailableModelChange && !intent && value && saved ? { ...value, model: saved.model } : value;
+  const changed = Boolean(draft && JSON.stringify(draft) !== JSON.stringify(saved));
+  useEffect(() => {
+    if (!confirmed || !compact) return;
+    const timer = setTimeout(() => setConfirmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [confirmed, compact]);
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
     if (!active || !client.readAgentSettings) return;
@@ -140,12 +149,16 @@ export function SessionSettings({
   if (!client.readAgentSettings || !client.updateAgentSettings)
     return <p>Agent settings are unavailable from this connection.</p>;
   return (
-    <div className="agent-settings">
+    <div
+      className={`agent-settings${compact ? ' agent-settings--compact' : ''}`}
+      aria-label="Agent settings"
+    >
       {draft ? (
         <SettingsFields
           value={draft}
           models={models}
           modelsLoading={modelsLoading}
+          compact={compact}
           disabled={pending || intent !== undefined || draft.pending === true}
           onChange={(next) => {
             setValue(next);
@@ -173,22 +186,20 @@ export function SessionSettings({
       {value?.pending ? (
         <p role="status">Waiting for the runtime to confirm these settings.</p>
       ) : null}
-      {busy ? <p role="status">Settings can be changed after the current turn finishes.</p> : null}
+      {busy && (!compact || changed) ? (
+        <p role="status">Settings can be changed after the current turn finishes.</p>
+      ) : null}
       {error ? <p role="alert">{error}</p> : null}
-      {confirmed ? <p role="status">Settings applied to this Agent.</p> : null}
-      {draft ? (
+      <Presence>{confirmed ? <p role="status">Settings applied to this Agent.</p> : null}</Presence>
+      {draft && (!compact || changed || intent !== undefined || pending) ? (
         <Button
-          disabled={
-            pending ||
-            busy ||
-            !draft.model.trim() ||
-            (!intent && JSON.stringify(draft) === JSON.stringify(saved))
-          }
+          size={compact ? 'sm' : undefined}
+          disabled={pending || busy || !draft.model.trim() || (!intent && !changed)}
           onClick={() => void update()}
         >
           {pending ? 'Applying settings…' : intent ? 'Retry settings update' : 'Apply settings'}
         </Button>
-      ) : error ? (
+      ) : !draft && error ? (
         <Button onClick={() => setReload((count) => count + 1)}>Retry settings</Button>
       ) : null}
     </div>

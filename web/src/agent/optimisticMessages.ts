@@ -6,6 +6,7 @@ import type { AgentV2Session } from './transport/client';
 export interface OptimisticMessage {
   readonly id: string;
   readonly content: string;
+  readonly at?: string;
   readonly state: 'sending' | 'accepted' | 'unconfirmed' | 'not_sent';
   readonly receipt?: MessageAcceptance;
   readonly key?: string;
@@ -98,7 +99,15 @@ export function useOptimisticMessages(
             },
           ]
         : []),
-      { id, content, state: 'sending', queued: mode === 'queue', source, queueBeforeSend },
+      {
+        id,
+        content,
+        at: new Date().toISOString(),
+        state: 'sending',
+        queued: mode === 'queue',
+        source,
+        queueBeforeSend,
+      },
     ]);
     return {
       ordinaryInput() {
