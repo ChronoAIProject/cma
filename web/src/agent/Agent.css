@@ -839,7 +839,7 @@
 }
 
 /* Keep the draft readable when the collapsed rail leaves very little room. */
-@container agent-conversation (max-width: 18.75rem) {
+@container agent-conversation (max-width: 20rem) {
   .agent-composer .agent-composer__form {
     grid-template-rows: auto [usage] auto auto;
   }

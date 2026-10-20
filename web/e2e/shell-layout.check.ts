@@ -33,7 +33,7 @@ async function insideViewport(element: Locator) {
     .toBe(true);
 }
 
-for (const width of [390, 320]) {
+for (const width of [390, 360, 320]) {
   for (const running of [false, true]) {
     test(`LOCAL cold ${width}px shell keeps ${running ? 'active' : 'idle'} conversation controls usable`, async ({
       page,

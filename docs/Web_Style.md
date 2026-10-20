@@ -904,7 +904,7 @@ recorded messages, settled tools and the turn's original start time.
 The composer keeps a compact, fixed 38px desktop seat with 32px Send/Stop controls.
 The one-line input centers its 24px line vertically with 6px padding on either side.
 Below 30rem, the input and controls retain 44px targets within a 46px capsule seat.
-When the conversation column is at most 300px wide, let the capsule and its usage
+When the conversation column is at most 320px wide, let the capsule and its usage
 readings span the full composer width. Place steering at the left and Send/Stop
 at the right of a separate compact row, followed by the settings row. Preserve
 the 44px controls instead of squeezing the editable text between them. Initial
@@ -2577,3 +2577,5 @@ The desktop composer settings group is capped at 320px so catalog errors and
 long values wrap without pushing the message field out of view. Its narrow-screen
 row uses the available width. In the smallest layout the settings row follows
 input-aligned usage, allowing all three controls their full touch targets.
+
+| 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
