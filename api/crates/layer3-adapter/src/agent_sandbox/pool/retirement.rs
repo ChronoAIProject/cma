@@ -101,7 +101,7 @@ impl AgentSandboxPools {
 
     /// Validate each original definition independently so lost deletion replies
     /// and restarts do not require recreating an already removed definition.
-    async fn retirement_definitions(
+    pub(super) async fn retirement_definitions(
         &self,
         binding: &NativePoolBinding,
     ) -> Result<(Option<DynamicObject>, Option<DynamicObject>)> {

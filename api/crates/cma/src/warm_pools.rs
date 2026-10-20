@@ -93,6 +93,13 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
+    async fn retirement_drain_homes(
+        &self,
+        _target: &PoolTarget,
+        _image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
