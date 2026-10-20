@@ -321,8 +321,11 @@ async fn drain_rechecks_late_claim_and_marker_changes_before_any_target_patch() 
         );
         let pools = effects.pools(&fixture);
         let owned = home.clone();
-        let task =
-            tokio::spawn(async move { pools.drain_pool(binding(&owned), &[owned.clone()]).await });
+        let task = tokio::spawn(async move {
+            pools
+                .drain_pool(binding(&owned), std::slice::from_ref(&owned))
+                .await
+        });
         gate.wait().await;
         if change == "claim" {
             fixture.state.lock().unwrap().rows.insert(format!("{}/sandboxclaims/late", prefix()), json!({"apiVersion":API_VERSION,"kind":"SandboxClaim","metadata":{"name":"late","namespace":"cma-test","uid":"late-uid","resourceVersion":"210"},"spec":{"warmPoolRef":{"name":binding(&home).name}}}));
