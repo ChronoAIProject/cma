@@ -98,6 +98,13 @@ impl PoolTargetStore for MongoNativeWarmPools {
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
         retirement::homes(self, target, image).await
     }
+    async fn retirement_drain_homes(
+        &self,
+        target: &PoolTarget,
+        image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        retirement::drain_homes(self, target, image).await
+    }
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         retirement::begin(self, target).await
     }

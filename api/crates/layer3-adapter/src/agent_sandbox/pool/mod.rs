@@ -3,6 +3,7 @@ mod claims;
 mod cleanup;
 mod cleanup_inventory;
 mod control;
+mod drain;
 mod home;
 mod home_origin;
 mod native_home;
@@ -258,3 +259,6 @@ mod policy_read_tests;
 mod read_fixture;
 #[cfg(test)]
 mod selection_read_tests;
+
+#[cfg(test)]
+mod drain_tests;

@@ -287,10 +287,14 @@ cleanup only; production no longer admits or prepares new Profile warmups.
 
 New spare native capacity uses only the configured runtime image and current
 home/Pod policy. Operators cannot re-enable an obsolete target, but may configure
-multiple resource sizes for the current image. Release cleanup drains and removes
-obsolete pools only after the old control-plane generation is gone and no pending
-allocations or retained homes depend on them. Pool cleanup never rotates or
-deletes a claimed Sandbox; startup alone is not proof of allocation finality.
+multiple resource sizes for the current image. Release cleanup drains obsolete
+spares only after release authority, a durable admission barrier and fresh complete
+allocation/Claim checks exclude pending adoption. A settled retained home,
+including a failed home, does not require spare capacity; its exact original
+attachment must still be proved, or its original Claim/Sandbox/PVC graph proved
+fully absent. Its history remains intact. Definitions remain until the separate
+full retirement check proves no retained home depends on them. Pool cleanup never
+rotates or deletes a claimed Sandbox; startup alone is not allocation finality.
 Upgraded homes may outlive their original definitions only after exact retained
 Claim/Sandbox/PVC and policy verification proves they can recover independently.
 Retired target records preserve immutable release order and cannot be activated
