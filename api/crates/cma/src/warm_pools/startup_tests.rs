@@ -14,6 +14,7 @@ fn fixture() -> (Memory, Provider) {
         target: Mutex::new(original),
         bind_response_loss: AtomicBool::new(false),
         retirement_block: Mutex::new(std::collections::VecDeque::new()),
+        drain_block: Mutex::new(std::collections::VecDeque::new()),
         calls,
     };
     (store, provider)
