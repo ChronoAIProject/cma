@@ -31,6 +31,28 @@ impl AgentSandboxPools {
                 "native runtime must retain its original Sandbox name",
             ));
         }
+        if origin.claim.request.home.policy.is_native_vct() {
+            let storage = origin.storage_reference()?;
+            // The validated persisted origin supplies all three names. Read
+            // independently, but retain Claim, PVC, then member validation and
+            // error precedence. This rendering proof never replaces the later
+            // suspension observation or fresh transition CAS.
+            let (claim, volume, member) = tokio::join!(
+                self.observe_claim(&origin.claim),
+                self.volumes.get(&storage),
+                self.members.get(name),
+            );
+            claim?;
+            let volume = volume.map_err(api_error)?;
+            self.volume_candidate(&volume, origin, true)?;
+            let home = self.native_attachment(origin, &volume)?;
+            let member = member.map_err(api_error)?;
+            self.member_owned(&member, &origin.claim)?;
+            if !self.member_spec(&member, origin, false)? {
+                return Err(rejected("native runtime home authority changed"));
+            }
+            return self.runtime_desired_for_member(origin, &home, request, name, &member);
+        }
         // The claim must still own the admitted member; disappearance or a
         // replacement claim cannot authorize a different runtime incarnation.
         self.observe_claim(&origin.claim).await?;
@@ -40,29 +62,16 @@ impl AgentSandboxPools {
             .await
             .map_err(api_error)?;
         self.volume_candidate(&volume, origin, true)?;
-        let home = if origin.claim.request.home.policy.is_native_vct() {
-            self.native_attachment(origin, &volume)?
-        } else {
-            HomeVolumeAttachment {
-                request: origin.claim.request.home.clone(),
-                receipt: PersistentHomeVolumes::native_home_receipt(
-                    &self.config.namespace,
-                    &self.config.deployment,
-                    &origin.claim.request.home,
-                    &volume,
-                )?,
-            }
+        let home = HomeVolumeAttachment {
+            request: origin.claim.request.home.clone(),
+            receipt: PersistentHomeVolumes::native_home_receipt(
+                &self.config.namespace,
+                &self.config.deployment,
+                &origin.claim.request.home,
+                &volume,
+            )?,
         };
-        if home.request.policy.is_native_vct() {
-            let member = self.members.get(name).await.map_err(api_error)?;
-            self.member_owned(&member, &origin.claim)?;
-            if !self.member_spec(&member, origin, false)? {
-                return Err(rejected("native runtime home authority changed"));
-            }
-            self.runtime_desired_for_member(origin, &home, request, name, &member)
-        } else {
-            self.runtime_desired_for_home(origin, &home, request, name)
-        }
+        self.runtime_desired_for_home(origin, &home, request, name)
     }
 
     /// Pure rendering after the caller has verified the exact current home graph.
