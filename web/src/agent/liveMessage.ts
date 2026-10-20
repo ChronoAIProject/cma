@@ -57,12 +57,17 @@ export function liveMessage(state: ConversationState, event: AgentLiveEvent): Co
             role: 'assistant' as const,
             content: '',
             status: 'streaming' as const,
+            at: event.timestamp,
             liveOnly: true,
           }
         : undefined);
     return message === undefined
       ? state
-      : put(state, { ...message, content: `${message.content}${event.delta}` });
+      : put(state, {
+          ...message,
+          at: message.at ?? event.timestamp,
+          content: `${message.content}${event.delta}`,
+        });
   }
   return current === undefined ? state : put(state, { ...current, status: 'complete' });
 }

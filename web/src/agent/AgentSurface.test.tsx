@@ -9,6 +9,67 @@ import { conversationFromTranscript, type ConversationState } from './conversati
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
+import { chooseOptionValue } from '../test/select';
+
+it('places settings between composer input and actions and preserves draft and busy-turn apply rules', async () => {
+  const defaults = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  } as const;
+  const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
+  const client = agentClient({
+    readAgentSettings: async () => defaults,
+    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }],
+    updateAgentSettings: update,
+  });
+  const draw = (busy: boolean) => (
+    <CmaClientProvider client={client}>
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, status: busy ? 'working' : 'ready' },
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  const model = await screen.findByRole('button', { name: 'Model' });
+  expect(model).toHaveTextContent('GPT-6');
+  const form = screen.getByRole('form', { name: 'Message Agent' });
+  expect(form.querySelector('.agent-composer__capsule')?.nextElementSibling).toBe(
+    form.querySelector('.agent-composer__settings'),
+  );
+  expect(form.querySelector('.agent-composer__settings')?.nextElementSibling).toBe(
+    form.querySelector('.agent-composer__actions'),
+  );
+  expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Retain this draft' },
+  });
+  await chooseOptionValue(
+    userEvent.setup(),
+    screen.getByRole('button', { name: 'Reasoning effort' }),
+    'medium',
+  );
+  expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
+  expect(update).not.toHaveBeenCalled();
+  view.rerender(draw(false));
+  expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
+  await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(update).toHaveBeenCalledWith(
+    'agt_1',
+    { ...defaults, reasoning_effort: 'medium' },
+    expect.objectContaining({ idempotencyKey: expect.any(String) }),
+  );
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain this draft');
+});
 
 it('shows authorized history while later pages load and preserves the editable draft when hydration finishes', async () => {
   let finish!: (page: { items: [] }) => void;
