@@ -140,6 +140,7 @@ export const v2AgentLive = strict({
   turn_sequence: positiveInteger,
   after_sequence: integer,
   message_id: text,
+  observed_at: optional(identifier),
   kind: enumeration('text_delta', 'reasoning_summary_delta'),
   delta: text,
 });

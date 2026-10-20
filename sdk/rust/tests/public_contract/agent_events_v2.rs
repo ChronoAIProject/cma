@@ -33,6 +33,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                             .map(|(_, value)| AgentCursor::parse(value))
                             .transpose()?,
                         follow: c.number("follow")?,
+                        live_timestamps: false,
                     },
                 )
                 .await?;
