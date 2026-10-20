@@ -150,12 +150,15 @@ it('does not treat successful OAuth verification as runtime access completion', 
 });
 it('leaves a dismissed request pending and permits reopening without approval', async () => {
   const decide = vi.spyOn(accessRequests, 'decide');
+  const user = userEvent.setup();
   show();
-  await screen.findByRole('dialog');
-  fireEvent.keyDown(document, { key: 'Escape' });
+  await screen.findByRole('dialog', { name: 'Agent key access' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   await screen.findByRole('button', { name: 'Review access request' });
   expect(decide).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole('button', { name: 'Review access request' }));
+  await user.click(screen.getByRole('button', { name: 'Review access request' }));
   expect(screen.getByRole('dialog', { name: 'Agent key access' })).toBeVisible();
 });
 it('never displays another Agent’s access request', async () => {
