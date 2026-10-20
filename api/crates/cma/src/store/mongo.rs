@@ -13,6 +13,7 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
     pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
@@ -159,7 +160,12 @@ impl MongoStores {
             )
             .await?,
         );
+        let message_feedback = Arc::new(
+            super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
+                .await?,
+        );
         let stores = Self {
+            message_feedback,
             native_warm_pools,
             event_workers,
             bot_setups,

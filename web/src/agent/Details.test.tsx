@@ -1,4 +1,3 @@
-import { chooseOptionValue } from '../test/select';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -6,27 +5,18 @@ import { CmaClientProvider } from '../api/context';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { AgentDetails } from './Details';
 
-const defaults = {
-  model: 'gpt-6',
-  reasoning_effort: 'high',
-  permission_mode: 'autonomous',
-} as const;
-
-it('shows the three settings and fixed Agent key scopes without technical or lifecycle panels', async () => {
-  const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
-  const client = agentClient({
-    readAgentSettings: async () => defaults,
-    updateAgentSettings: update,
-  });
+it('keeps Agent key scopes and skills in Details without duplicating composer settings', async () => {
+  const readAgentSettings = vi.fn();
+  const client = agentClient({ readAgentSettings });
   render(
     <CmaClientProvider client={client}>
       <AgentDetails detail={AGENT_DETAIL} open />
     </CmaClientProvider>,
   );
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
   for (const scope of ['chrono-llm-public Required', 'ornn-api Required']) {
     const checkbox = panel.getByRole('checkbox', { name: scope });
@@ -41,52 +31,12 @@ it('shows the three settings and fixed Agent key scopes without technical or lif
   expect(panel.queryByText(AGENT_DETAIL.worktree.branch)).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-  await chooseOptionValue(userEvent.setup(), panel.getByLabelText('Reasoning effort'), 'medium');
-  await userEvent.click(panel.getByRole('button', { name: 'Apply settings' }));
-  await panel.findByText('Settings applied to this Agent.');
-  expect(update).toHaveBeenCalledWith(
-    AGENT_DETAIL.id,
-    { ...defaults, reasoning_effort: 'medium' },
-    expect.objectContaining({ idempotencyKey: expect.any(String) }),
-  );
+  expect(readAgentSettings).not.toHaveBeenCalled();
 });
-
-it.each(['history', 'working', 'command'] as const)(
-  'holds settings updates during %s and preserves the draft until the Agent is ready',
-  async (busy) => {
-    const update = vi.fn();
-    const client = agentClient({
-      readAgentSettings: async () => defaults,
-      updateAgentSettings: update,
-    });
-    const draw = (blocked: boolean) => (
-      <CmaClientProvider client={client}>
-        <AgentDetails
-          open
-          detail={{ ...AGENT_DETAIL, status: blocked && busy === 'working' ? 'working' : 'ready' }}
-          historyLoading={blocked && busy === 'history'}
-          pending={blocked && busy === 'command' ? 'send' : undefined}
-        />
-      </CmaClientProvider>
-    );
-    const view = render(draw(true));
-    await screen.findByLabelText('Model');
-    await chooseOptionValue(
-      userEvent.setup(),
-      screen.getByRole('button', { name: 'Reasoning effort' }),
-      'medium',
-    );
-    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
-    expect(update).not.toHaveBeenCalled();
-    view.rerender(draw(false));
-    expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
-    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled();
-  },
-);
 
 it('focuses the Details heading on open and restores the opener on close', async () => {
   const onClose = vi.fn();
-  const client = agentClient({ readAgentSettings: async () => defaults });
+  const client = agentClient();
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
       <button>Open details</button>

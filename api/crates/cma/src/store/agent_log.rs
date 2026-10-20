@@ -419,6 +419,23 @@ impl AgentLogStore for MongoSandboxStore {
         Ok(page)
     }
 
+    async fn agent_log_entry(
+        &self,
+        agent_id: &AgentId,
+        sequence: u64,
+    ) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
+        if sequence == 0 {
+            return Ok(None);
+        }
+        self.agent_log
+            .find_one(doc! {"_id": log_id(agent_id, sequence)})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .as_ref()
+            .map(read_entry)
+            .transpose()
+    }
+
     async fn agent_log_prefix(
         &self,
         agent_id: &AgentId,

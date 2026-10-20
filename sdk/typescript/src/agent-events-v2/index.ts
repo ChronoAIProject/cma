@@ -18,6 +18,8 @@ export interface V2AgentSnapshotOptions extends OperationOptions {
   readonly pageCursor?: string;
 }
 export interface V2AgentEventsOptions extends OperationOptions {
+  /** Request the server's real live-fragment observation time; older servers may omit it. */
+  readonly liveTimestamps?: boolean;
   /** Opt into authoritative per-message command correlation; older servers may omit it. */
   readonly messageBindings?: boolean;
   /** The last completely applied durable Agent cursor; omit to start at the retained beginning. */
@@ -68,6 +70,8 @@ export class AgentEventsV2 {
     const after = queryCursor ?? headerCursor;
     if (options.follow !== undefined && typeof options.follow !== 'boolean')
       throw new ValidationError('follow must be a boolean');
+    if (options.liveTimestamps !== undefined && typeof options.liveTimestamps !== 'boolean')
+      throw new ValidationError('liveTimestamps must be a boolean');
     if (
       typeof options.onEvent !== 'function' ||
       (options.onCursor !== undefined && typeof options.onCursor !== 'function')
@@ -86,7 +90,16 @@ export class AgentEventsV2 {
       undefined,
       {
         ...(headerCursor === undefined ? {} : { 'Last-Event-ID': headerCursor }),
-        ...(options.messageBindings ? { Prefer: 'cma-message-bindings' } : {}),
+        ...(options.messageBindings || options.liveTimestamps
+          ? {
+              Prefer: [
+                options.messageBindings ? 'cma-message-bindings' : undefined,
+                options.liveTimestamps ? 'cma-live-observed-at' : undefined,
+              ]
+                .filter(Boolean)
+                .join(', '),
+            }
+          : {}),
       },
     )) {
       try {

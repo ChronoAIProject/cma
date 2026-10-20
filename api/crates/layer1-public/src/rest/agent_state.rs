@@ -7,6 +7,8 @@ use layer2_core::OperationStore;
 
 #[derive(Clone)]
 pub struct AgentRoutesState {
+    pub(in crate::rest) message_feedback:
+        Option<Arc<layer2_core::sandbox::message_feedback::MessageFeedbackService>>,
     pub(in crate::rest) skill_support:
         Option<Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>>,
     pub(in crate::rest) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
@@ -20,6 +22,19 @@ pub struct AgentRoutesState {
 }
 
 impl AgentRoutesState {
+    pub fn with_message_feedback(
+        mut self,
+        store: Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>,
+    ) -> Self {
+        self.message_feedback = Some(
+            layer2_core::sandbox::message_feedback::MessageFeedbackService::new(
+                self.reads.clone(),
+                store,
+            ),
+        );
+        self
+    }
+
     pub fn with_skill_support(
         mut self,
         support: Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>,
@@ -35,6 +50,7 @@ impl AgentRoutesState {
         operation_records: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            message_feedback: None,
             skill_support: None,
             commands: None,
             agents,
