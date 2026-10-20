@@ -17,7 +17,14 @@ struct Resume {
 }
 impl Resume {
     async fn new() -> Self {
-        let fixture = Fixture::new().await;
+        Self::with_policy(false).await
+    }
+    async fn with_policy(explicit: bool) -> Self {
+        let mut fixture = Fixture::new().await;
+        if explicit {
+            fixture.client.config.template_fs_group_change_policy =
+                Some(crate::agent_sandbox::NativeFsGroupChangePolicy::OnRootMismatch);
+        }
         let claim = assigned_spec(&fixture, &spec()).await;
         let home = adopted(&fixture, &claim).await;
         let previous = request(&home, 1);
@@ -435,3 +442,6 @@ async fn native_resume_rejects_authority_changes_at_fresh_final_cas_boundary() {
 
 #[path = "native_upgrade_tests.rs"]
 mod upgrade_tests;
+
+#[path = "native_resume_policy_read_tests.rs"]
+mod policy_tests;

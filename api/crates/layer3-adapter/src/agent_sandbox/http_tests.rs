@@ -8,6 +8,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[path = "pod_read_tests.rs"]
 mod pod_read_tests;
 
+#[path = "observation_tests.rs"]
+mod observation_tests;
+
 struct Fixture {
     client: AgentSandboxClient,
     calls: Arc<Mutex<Vec<(String, Value)>>>,
