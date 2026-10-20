@@ -177,7 +177,7 @@ export function Composer({
   ]);
 
   useEffect(() => {
-    if (usable) inputRef.current?.focus();
+    if (usable) inputRef.current?.focus({ preventScroll: true });
   }, [usable]);
 
   useLayoutEffect(() => {

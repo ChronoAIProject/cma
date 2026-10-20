@@ -106,3 +106,9 @@
     overflow-wrap: normal;
   }
 }
+
+@container agent-conversation (max-width: 18.75rem) {
+  .agent-instruments {
+    grid-column: 1 / -1;
+  }
+}
