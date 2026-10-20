@@ -153,6 +153,7 @@ it('leaves a dismissed request pending and permits reopening without approval', 
   show();
   await screen.findByRole('dialog');
   fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   await screen.findByRole('button', { name: 'Review access request' });
   expect(decide).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Review access request' }));
