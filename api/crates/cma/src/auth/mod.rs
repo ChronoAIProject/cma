@@ -32,6 +32,7 @@ pub(crate) mod provider_http;
 mod public_contract_tests;
 mod records;
 mod refresh;
+mod resource_request;
 mod sandbox_prerequisite;
 pub(crate) mod service_portal;
 mod session_routes;
@@ -96,6 +97,7 @@ impl std::fmt::Debug for AuthMode {
 pub struct AuthState {
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
+    resource_request_enabled: bool,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -155,6 +157,7 @@ impl AuthState {
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
+            resource_request_enabled: false,
             mode,
             nyxid_public_url,
             records,

@@ -35,6 +35,12 @@ impl AgentCommandAdmissionAuthority for AuthState {
         credential: &str,
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        if matches!(
+            context.credential_source,
+            layer2_core::resource_access::CredentialSource::RequestBoundRead { .. }
+        ) {
+            return Err(CommandAuthorizationError::Revoked);
+        }
         if context.credential_source == layer2_core::resource_access::CredentialSource::Binding {
             return tokio::time::timeout(
                 VERIFICATION_TIMEOUT,
