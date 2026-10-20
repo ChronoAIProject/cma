@@ -8,6 +8,7 @@ mod model;
 mod native_assignment;
 mod native_runtime_proof;
 mod network_policy;
+mod observation;
 mod pods;
 mod pool;
 mod pool_runtime;

@@ -242,3 +242,88 @@ async fn prepared_open_ready_parent_race_refuses_publication_and_attachment_can_
     );
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_parent_conflict_retains_completed_open_without_waiting_for_lease_expiry() {
+    let fixture = Fixture::new().await;
+    // Keep preparation eligibility intact while making the observed parent
+    // snapshot stale, so the atomic publication reaches its Conflict fence.
+    let mut changed = fixture.context.workspace.clone();
+    changed.revision += 1;
+    fixture
+        .store
+        .save_workspace(fixture.context.workspace.revision, changed)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.publish().await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert_eq!(
+        fixture
+            .store
+            .get_agent(&fixture.agent.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        fixture.agent
+    );
+    let request = layer3_adapter::AgentOpenRequest::new(
+        format!("agent:{}:open:v1", fixture.agent.id),
+        crate::sandbox::runtime_options(
+            &fixture.agent,
+            &fixture.context.sandbox,
+            &fixture.context.worktree,
+        ),
+        None,
+    );
+    assert_eq!(request.operation_id, fixture.evidence.operation_id);
+    assert_eq!(request.request_sha256, fixture.evidence.request_sha256);
+    let now = SystemTime::UNIX_EPOCH
+        + std::time::Duration::from_secs(
+            layer2_core::seconds_from_rfc3339("2026-09-05T00:00:00Z").unwrap(),
+        );
+    fixture
+        .worker
+        .retain_completed_open_after_conflict(
+            &fixture.agent,
+            &fixture.context.sandbox,
+            &request,
+            &fixture.attachment,
+            now,
+        )
+        .await
+        .unwrap();
+    let pending = fixture
+        .store
+        .get_agent(&fixture.agent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.status, AgentStatus::Starting);
+    assert_eq!(pending.work.step, AgentWorkStep::PublishReady);
+    assert!(pending.work.lease.is_none());
+    assert!(pending.work.cleanup_debt.is_empty());
+    assert_eq!(pending.work.receipts.len(), 3);
+    assert_eq!(
+        pending.conversation.conversation_id,
+        fixture.agent.work.warm_conversation_id
+    );
+    let identity = fixture.attachment.identity();
+    assert!(fixture
+        .worker
+        .dependencies
+        .registry
+        .staged_attachment(
+            &LiveAgentTarget {
+                agent_id: pending.id,
+                conversation_id: identity.conversation_id,
+                runtime_generation: identity.runtime_generation,
+            },
+            identity.authority_fence
+        )
+        .unwrap()
+        .is_some());
+    fixture.cleanup().await;
+}
