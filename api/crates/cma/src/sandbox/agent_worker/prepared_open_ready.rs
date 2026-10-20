@@ -16,6 +16,7 @@ use super::AgentWorker;
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentTarget};
 
 mod connection;
+mod recovery;
 
 impl AgentWorker {
     pub(super) async fn publish_prepared_open_ready(
