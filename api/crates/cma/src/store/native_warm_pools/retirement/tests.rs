@@ -2,6 +2,12 @@ use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox;
 
 async fn fixture() -> (Database, MongoNativeWarmPools, PoolTarget, String) {
+    fixture_with_old(crate::warm_pools::tests::target()).await
+}
+
+async fn fixture_with_old(
+    mut old: PoolTarget,
+) -> (Database, MongoNativeWarmPools, PoolTarget, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
     let client = mongodb::Client::with_uri_str(uri).await.unwrap();
     let db = client.database(&format!(
@@ -9,13 +15,13 @@ async fn fixture() -> (Database, MongoNativeWarmPools, PoolTarget, String) {
         uuid::Uuid::new_v4().simple()
     ));
     let store = MongoNativeWarmPools::open(&db, "test").await.unwrap();
-    let mut old = crate::warm_pools::tests::target();
     old.activated_at = Some(DateTime::from_millis(1));
     store.insert(old.clone()).await.unwrap();
     let mut current = old.clone();
     current.id = "current".into();
     current.plan.config_sha256 = "b".repeat(64);
     current.plan.spec.image.uri = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+    current.binding = None;
     current.activated_at = Some(DateTime::from_millis(2));
     let image = current.plan.spec.image.uri.clone();
     store.insert(current).await.unwrap();
@@ -38,9 +44,18 @@ async fn activation_is_immutable_and_old_process_cannot_retire_new_release() {
         store.retirement_homes(&old, &image).await.unwrap(),
         Some(vec![])
     );
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
     let current = store.find("current").await.unwrap().unwrap();
     assert!(store
         .retirement_homes(&current, &old.plan.spec.image.uri)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .retirement_drain_homes(&current, &old.plan.spec.image.uri)
         .await
         .unwrap()
         .is_none());
@@ -60,6 +75,11 @@ async fn activation_is_immutable_and_old_process_cannot_retire_new_release() {
             .is_none(),
         "rollout grace must apply"
     );
+    assert!(store
+        .retirement_drain_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
     collection
         .update_one(
             doc! {"_id":"current"},
@@ -75,6 +95,11 @@ async fn activation_is_immutable_and_old_process_cannot_retire_new_release() {
             .is_none(),
         "ambiguous release order must defer"
     );
+    assert!(store
+        .retirement_drain_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
     assert!(matches!(
         store.activate("current").await,
         Err(WarmPoolError::Conflict)
@@ -196,6 +221,10 @@ async fn retirement_retains_original_authority_and_requires_current_lease_to_del
         Err(WarmPoolError::Conflict)
     ));
     assert!(store.retirement_homes(&retired, &image).await.is_err());
+    assert!(store
+        .retirement_drain_homes(&retired, &image)
+        .await
+        .is_err());
     let next = store.find(&retired.id).await.unwrap().unwrap();
     store.remove_retired(&next).await.unwrap();
     let tombstone = store.find(&retired.id).await.unwrap().unwrap();
@@ -217,5 +246,146 @@ async fn retirement_retains_original_authority_and_requires_current_lease_to_del
         old.activated_at
     );
     assert!(store.find("current").await.unwrap().is_some());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn drain_preserves_failed_history_and_rechecks_late_allocations_and_corrupt_records() {
+    let (mut sandbox, target, _) = super::eligibility_tests::upgraded();
+    sandbox.status = SandboxStatus::Failed;
+    sandbox.runtime = None;
+    sandbox.failure = Some(
+        layer2_core::sandbox::SandboxReviveFailureClass::RestoreFailed
+            .typed_failure("historical restore failed"),
+    );
+    sandbox.validate().unwrap();
+    let original_home = sandbox
+        .lifecycle
+        .home
+        .as_ref()
+        .unwrap()
+        .attachment()
+        .unwrap();
+    let (db, store, old, image) = fixture_with_old(target).await;
+    let sandboxes = db.collection::<Document>("sandboxes");
+    let original_document = crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap();
+    sandboxes
+        .insert_one(original_document.clone())
+        .await
+        .unwrap();
+    assert!(store
+        .retirement_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![original_home.clone()])
+    );
+    let retiring = store.begin_retirement(&old).await.unwrap();
+    assert_eq!(
+        store
+            .retirement_drain_homes(&retiring, &image)
+            .await
+            .unwrap(),
+        Some(vec![original_home])
+    );
+    let mut pending = active_sandbox("late-allocation");
+    pending.status = SandboxStatus::Provisioning;
+    pending.runtime = None;
+    sandboxes
+        .insert_one(crate::store::sandboxes::sandbox_document(&pending, 0).unwrap())
+        .await
+        .unwrap();
+    assert!(store
+        .retirement_drain_homes(&retiring, &image)
+        .await
+        .unwrap()
+        .is_none());
+    sandboxes
+        .delete_one(doc! {"_id":pending.id.as_str()})
+        .await
+        .unwrap();
+    assert_eq!(
+        sandboxes
+            .find_one(doc! {"_id":sandbox.id.as_str()})
+            .await
+            .unwrap(),
+        Some(original_document)
+    );
+    for collection in ["native_prepared_sandboxes", "warm_sandboxes"] {
+        let rows = db.collection::<Document>(collection);
+        rows.insert_one(doc! {"_id":"corrupt-reservation","kind":"reservation"})
+            .await
+            .unwrap();
+        assert!(store
+            .retirement_drain_homes(&retiring, &image)
+            .await
+            .is_err());
+        rows.delete_many(doc! {}).await.unwrap();
+    }
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn drain_blocks_unowned_prepared_and_legacy_warm_allocations_before_their_claim_exists() {
+    let (db, store, old, image) = fixture().await;
+    let client = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let allocations = crate::store::MongoSandboxStore::open(&client, db.name())
+        .await
+        .unwrap();
+    let plan = crate::store::native_prepared::tests::plan();
+    allocations
+        .reconcile_native_prepared_target(Some(&plan), 1, "2026-10-20T00:00:00Z")
+        .await
+        .unwrap();
+    let prepared = db.collection::<Document>("native_prepared_sandboxes");
+    let reservation = prepared
+        .find_one(doc! {"kind":"reservation"})
+        .await
+        .unwrap()
+        .unwrap();
+    let unowned = crate::store::native_prepared::unowned_for_retirement(&reservation)
+        .unwrap()
+        .unwrap();
+    assert!(unowned.home.is_none());
+    assert!(store
+        .retirement_drain_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
+    prepared.delete_many(doc! {}).await.unwrap();
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
+    let legacy = db.collection::<Document>("warm_sandboxes");
+    let mut warm =
+        WarmSandbox::new(plan.warm_plan().clone(), "2026-10-20T00:00:00Z".into()).unwrap();
+    legacy
+        .insert_one(crate::store::warm_sandboxes::document(&warm).unwrap())
+        .await
+        .unwrap();
+    assert!(store
+        .retirement_drain_homes(&old, &image)
+        .await
+        .unwrap()
+        .is_none());
+    warm.state = layer2_core::sandbox::WarmSandboxState::Retired;
+    legacy
+        .replace_one(
+            doc! {"_id":warm.id.as_str()},
+            crate::store::warm_sandboxes::document(&warm).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
     db.drop().await.unwrap();
 }

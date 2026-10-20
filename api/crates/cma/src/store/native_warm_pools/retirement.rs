@@ -146,6 +146,23 @@ pub(super) async fn homes(
     target: &PoolTarget,
     image: &str,
 ) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
+    scan(store, target, image, false).await
+}
+
+pub(super) async fn drain_homes(
+    store: &MongoNativeWarmPools,
+    target: &PoolTarget,
+    image: &str,
+) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
+    scan(store, target, image, true).await
+}
+
+async fn scan(
+    store: &MongoNativeWarmPools,
+    target: &PoolTarget,
+    image: &str,
+    draining: bool,
+) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
     if !authorized(store, target, image).await? {
         return Ok(None);
     }
@@ -154,7 +171,15 @@ pub(super) async fn homes(
         let sandbox = crate::store::sandboxes::read_sandbox(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
         match owned_home(&sandbox, target, image)? {
-            eligibility::Owned::Blocked => return Ok(None),
+            eligibility::Owned::Blocked => {
+                if !draining {
+                    return Ok(None);
+                }
+                let Some(home) = eligibility::settled_native_home(&sandbox, target)? else {
+                    return Ok(None);
+                };
+                homes.push(home);
+            }
             eligibility::Owned::Retained(home) => homes.push(*home),
             eligibility::Owned::Unrelated => (),
         }
