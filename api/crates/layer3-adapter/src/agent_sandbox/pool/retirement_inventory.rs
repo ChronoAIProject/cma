@@ -45,6 +45,58 @@ impl AgentSandboxPools {
         Ok(members)
     }
 
+    /// Shared by guarded draining and final retirement. A marker does not stop
+    /// an already-created Claim from consuming spare capacity.
+    pub(super) fn verify_retained_claim_inventory(
+        &self,
+        binding: &NativePoolBinding,
+        origins: &[&NativePoolHomeOrigin],
+        claims: &[DynamicObject],
+    ) -> Result<()> {
+        let mut seen_claims = BTreeSet::new();
+        for claim in claims {
+            let recorded_pool = recorded_claim_pool(claim, binding, &self.config.deployment)?;
+            let expected = origins.iter().find(|o| {
+                claim.uid().as_deref() == Some(&o.claim.uid) || claim.name_any() == o.claim.name
+            });
+            if let Some(expected) = expected {
+                super::claims::verify_claim(
+                    claim,
+                    &super::model::claim(&self.config, &expected.claim.request)?,
+                )?;
+                if claim.uid().as_deref() != Some(&expected.claim.uid)
+                    || super::claims::receipt(&expected.claim.request, claim)?.sandbox_name
+                        != expected.claim.sandbox_name
+                {
+                    return Err(rejected("native retirement retained Claim changed"));
+                }
+                seen_claims.insert(expected.claim.uid.clone());
+            } else if claim
+                .data
+                .pointer("/spec/warmPoolRef/name")
+                .and_then(|v| v.as_str())
+                == Some(&binding.name)
+                || claim
+                    .data
+                    .pointer("/spec/sandboxTemplateRef/name")
+                    .and_then(|v| v.as_str())
+                    == Some(&binding.template_name)
+                || associated(claim, binding)
+                || recorded_pool
+            {
+                return Err(rejected(
+                    "native retirement found an unrecorded or pending Claim",
+                ));
+            }
+        }
+        if seen_claims.len() != origins.len() {
+            return Err(rejected(
+                "native retirement inventory lost a retained Claim",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) async fn retirement_inventory(
         &self,
         binding: &NativePoolBinding,
@@ -64,47 +116,7 @@ impl AgentSandboxPools {
         let volumes = volumes?;
         let pools = pools?;
         let origins = homes.iter().map(origin).collect::<Result<Vec<_>>>()?;
-        let mut seen_claims = BTreeSet::new();
-        for claim in claims {
-            let recorded_pool = recorded_claim_pool(&claim, binding, &self.config.deployment)?;
-            let expected = origins.iter().find(|o| {
-                claim.uid().as_deref() == Some(&o.claim.uid) || claim.name_any() == o.claim.name
-            });
-            if let Some(expected) = expected {
-                super::claims::verify_claim(
-                    &claim,
-                    &super::model::claim(&self.config, &expected.claim.request)?,
-                )?;
-                if claim.uid().as_deref() != Some(&expected.claim.uid)
-                    || super::claims::receipt(&expected.claim.request, &claim)?.sandbox_name
-                        != expected.claim.sandbox_name
-                {
-                    return Err(rejected("native retirement retained Claim changed"));
-                }
-                seen_claims.insert(expected.claim.uid.clone());
-            } else if claim
-                .data
-                .pointer("/spec/warmPoolRef/name")
-                .and_then(|v| v.as_str())
-                == Some(&binding.name)
-                || claim
-                    .data
-                    .pointer("/spec/sandboxTemplateRef/name")
-                    .and_then(|v| v.as_str())
-                    == Some(&binding.template_name)
-                || associated(&claim, binding)
-                || recorded_pool
-            {
-                return Err(rejected(
-                    "native retirement found an unrecorded or pending Claim",
-                ));
-            }
-        }
-        if seen_claims.len() != homes.len() {
-            return Err(rejected(
-                "native retirement inventory lost a retained Claim",
-            ));
-        }
+        self.verify_retained_claim_inventory(binding, &origins, &claims)?;
         for pool in pools {
             if pool.name_any() == binding.name {
                 if pool.uid().as_deref() != Some(&binding.uid) {

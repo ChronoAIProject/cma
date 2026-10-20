@@ -5,7 +5,7 @@ use layer3_adapter::agent_sandbox::{
 };
 use layer3_adapter::{HomeVolumeMode, HomeVolumeReceipt, HomeVolumeScope};
 
-fn upgraded() -> (Sandbox, PoolTarget, String) {
+pub(super) fn upgraded() -> (Sandbox, PoolTarget, String) {
     let mut sandbox =
         crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox("upgraded");
     let mut target = crate::warm_pools::tests::target();
@@ -65,6 +65,142 @@ fn upgraded() -> (Sandbox, PoolTarget, String) {
     sandbox.runtime.as_mut().unwrap().runtime_version = image.clone();
     sandbox.validate().unwrap();
     (sandbox, target, image)
+}
+
+#[test]
+fn settled_old_or_failed_home_allows_spare_drain_without_definition_retirement() {
+    let (mut sandbox, target, image) = upgraded();
+    let original_home = sandbox.lifecycle.home.clone();
+    sandbox.runtime.as_mut().unwrap().runtime_version = target.plan.spec.image.uri.clone();
+    assert_eq!(
+        settled_native_home(&sandbox, &target).unwrap(),
+        original_home.as_ref().unwrap().attachment()
+    );
+    assert!(matches!(
+        owned_home(&sandbox, &target, &image).unwrap(),
+        Owned::Blocked
+    ));
+    // Adoption can observe a newer Claim resourceVersion than the durable
+    // assignment receipt without changing any original allocation identity.
+    sandbox
+        .lifecycle
+        .home
+        .as_mut()
+        .unwrap()
+        .native_pool
+        .as_mut()
+        .unwrap()
+        .claim
+        .as_mut()
+        .unwrap()
+        .resource_version = "newer-observation".into();
+    assert_eq!(
+        settled_native_home(&sandbox, &target).unwrap(),
+        original_home.as_ref().unwrap().attachment()
+    );
+    sandbox.lifecycle.home = original_home.clone();
+    sandbox.status = SandboxStatus::Failed;
+    sandbox.runtime = None;
+    sandbox.failure = Some(
+        layer2_core::sandbox::SandboxReviveFailureClass::RestoreFailed
+            .typed_failure("historical restore failed"),
+    );
+    sandbox.validate().unwrap();
+    assert_eq!(
+        settled_native_home(&sandbox, &target).unwrap(),
+        original_home.as_ref().unwrap().attachment()
+    );
+    assert!(matches!(
+        owned_home(&sandbox, &target, &image).unwrap(),
+        Owned::Blocked
+    ));
+    assert_eq!(sandbox.lifecycle.home, original_home);
+}
+
+#[test]
+fn drain_requires_completed_original_attachment_not_a_claim_reservation() {
+    let (sandbox, target, _) = upgraded();
+    for status in [
+        SandboxStatus::Provisioning,
+        SandboxStatus::Installing,
+        SandboxStatus::Reviving,
+    ] {
+        let mut pending = sandbox.clone();
+        pending.status = status;
+        assert!(settled_native_home(&pending, &target).unwrap().is_none());
+    }
+    let mut pending = sandbox.clone();
+    pending.lifecycle.home.as_mut().unwrap().receipt = None;
+    assert!(settled_native_home(&pending, &target).unwrap().is_none());
+    let mut pending = sandbox.clone();
+    pending
+        .lifecycle
+        .home
+        .as_mut()
+        .unwrap()
+        .native_pool
+        .as_mut()
+        .unwrap()
+        .claim = None;
+    assert!(matches!(
+        settled_native_home(&pending, &target),
+        Err(WarmPoolError::Conflict)
+    ));
+    let mut changed = target;
+    changed.binding.as_mut().unwrap().uid = "replaced-pool".into();
+    assert!(matches!(
+        settled_native_home(&sandbox, &changed),
+        Err(WarmPoolError::Conflict)
+    ));
+}
+
+#[test]
+fn upgraded_home_with_template_networking_allows_drain_but_keeps_definitions() {
+    let (mut sandbox, mut target, image) = upgraded();
+    let policy = Some(
+        layer3_adapter::agent_sandbox::NativeTemplateNetworkPolicy::parse(
+            r#"{"ingress":[],"egress":[]}"#,
+        )
+        .unwrap(),
+    );
+    target.plan.pod_policy.template_network_policy = policy.clone();
+    target
+        .binding
+        .as_mut()
+        .unwrap()
+        .pod_policy
+        .template_network_policy = policy.clone();
+    let home = sandbox.lifecycle.home.as_mut().unwrap();
+    let native = home.native_pool.as_mut().unwrap();
+    native.request.pool.pod_policy.template_network_policy = policy.clone();
+    native
+        .claim
+        .as_mut()
+        .unwrap()
+        .request
+        .pool
+        .pod_policy
+        .template_network_policy = policy.clone();
+    home.receipt
+        .as_mut()
+        .unwrap()
+        .native_authority
+        .as_mut()
+        .unwrap()
+        .claim
+        .request
+        .pool
+        .pod_policy
+        .template_network_policy = policy;
+    sandbox.validate().unwrap();
+    assert!(matches!(
+        owned_home(&sandbox, &target, &image).unwrap(),
+        Owned::Blocked
+    ));
+    assert_eq!(
+        settled_native_home(&sandbox, &target).unwrap(),
+        sandbox.lifecycle.home.as_ref().unwrap().attachment()
+    );
 }
 
 #[test]

@@ -19,8 +19,12 @@ pub(super) async fn retire_claimed(
     mut target: PoolTarget,
 ) -> Result<bool, WarmPoolError> {
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        if store.retirement_homes(&target, image).await?.is_none() {
-            return Ok(false);
+        if store
+            .retirement_drain_homes(&target, image)
+            .await?
+            .is_none()
+        {
+            return Err(WarmPoolError::Unavailable);
         }
         if target.binding.is_none() {
             // Recover an uncertain configure acknowledgement before marking
@@ -38,21 +42,27 @@ pub(super) async fn retire_claimed(
             .begin_retirement(binding)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
-        let Some(homes) = store.retirement_homes(&target, image).await? else {
-            return Ok(false);
+        let retirement_homes = store.retirement_homes(&target, image).await?;
+        let Some(drain_homes) = store.retirement_drain_homes(&target, image).await? else {
+            return Err(WarmPoolError::Unavailable);
         };
         // retire_pool handles absent definitions idempotently, and only
         // succeeds after both definitions and all spare graphs are absent.
-        if provider
-            .retire_pool(binding, &homes)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
-        {
-            store.remove_retired(&target).await?;
-            return Ok(true);
+        if let Some(homes) = retirement_homes {
+            if provider
+                .retire_pool(binding, &homes)
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?
+            {
+                store.remove_retired(&target).await?;
+                return Ok(true);
+            }
         }
+        // Settled retained homes can prevent definition deletion without
+        // keeping spare capacity alive. Admission is fenced and all durable
+        // allocation sources have been rechecked after the provider marker.
         provider
-            .resize(binding, 0)
+            .drain_pool(binding, &drain_homes)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<bool, WarmPoolError>(false)
