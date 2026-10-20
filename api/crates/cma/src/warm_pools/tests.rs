@@ -73,10 +73,25 @@ struct Memory {
     target: Mutex<PoolTarget>,
     bind_response_loss: AtomicBool,
     retirement_block: Mutex<std::collections::VecDeque<bool>>,
+    drain_block: Mutex<std::collections::VecDeque<bool>>,
     calls: Arc<Mutex<Vec<String>>>,
 }
 #[async_trait]
 impl PoolTargetStore for Memory {
+    async fn retirement_drain_homes(
+        &self,
+        _: &PoolTarget,
+        _: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        self.calls.lock().unwrap().push("drain-scan".into());
+        Ok((!self
+            .drain_block
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(false))
+        .then_some(vec![]))
+    }
     async fn retirement_homes(
         &self,
         _: &PoolTarget,
@@ -184,6 +199,14 @@ impl Provider {
 }
 #[async_trait]
 impl NativePoolControl for Provider {
+    async fn drain_pool(
+        &self,
+        binding: &NativePoolBinding,
+        _: &[layer3_adapter::HomeVolumeAttachment],
+    ) -> layer3_adapter::Result<()> {
+        self.calls.lock().unwrap().push("prove-drain".into());
+        self.resize(binding, 0).await.map(|_| ())
+    }
     async fn begin_retirement(&self, _: &NativePoolBinding) -> layer3_adapter::Result<()> {
         self.calls.lock().unwrap().push("mark-provider".into());
         Ok(())
@@ -283,6 +306,7 @@ async fn binding_is_durable_before_capacity_and_lost_ack_replays_original_uid() 
         target: Mutex::new(original),
         bind_response_loss: AtomicBool::new(true),
         retirement_block: Mutex::new(std::collections::VecDeque::new()),
+        drain_block: Mutex::new(std::collections::VecDeque::new()),
         calls: calls.clone(),
     };
     assert!(reconcile_one(&store, &provider).await.unwrap());

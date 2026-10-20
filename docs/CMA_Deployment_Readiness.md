@@ -655,11 +655,22 @@ The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatical
 New native spare capacity uses the current deployment runtime image and home/Pod
 policy. An operator cannot raise an obsolete target above zero; multiple resource
 sizes using the current runtime and policy remain supported. Release cleanup must
-first prove the old control-plane generation is gone and no pending Claim, durable
-home allocation or prepared reservation references an obsolete pool. It then
-drains the durable target using its revision and lease fence, verifies member/Pod
-finality and removes unreferenced original pool/template identities and target
-records. Preserve all claimed Sandboxes and their homes. Do not infer safe
+first establish latest-release authority and its rollout grace, then check every
+durable allocation, prepared reservation and legacy warm record. It persists
+retirement under the target's revision and lease fence, marks the original Pool
+against new admissions, and repeats those complete checks. Before draining, the
+adapter verifies the retained attachment graphs and complete live Claim inventory,
+refuses pending or unexplained Claims, and refreshes the original definition UIDs
+and admission marker before setting replicas to zero. A zero target alone is not
+an admission barrier: native cold allocation can use zero-sized pools.
+
+Settled failed or unupgraded homes may block definition deletion while unused
+spares drain. Their exact original Claim/Sandbox/PVC attachment must be intact, or
+all three original objects and dependents must be absent; partial absence or a
+same-name replacement fails closed. This does not delete or rewrite Sandbox
+history. Definition deletion keeps the stricter upgraded-home and template-network
+checks, complete member/Pod finality, and immutable target tombstones. Preserve all
+claimed Sandboxes and their homes. Do not infer safe
 scale-down from startup or a single empty Claim list: reservations can be persisted
 before their Claim exists, and controller v1.0.2 does not fence cached excess-member
 deletion against concurrent adoption.
