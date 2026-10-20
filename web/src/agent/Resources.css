@@ -107,7 +107,7 @@
   }
 }
 
-@container agent-conversation (max-width: 18.75rem) {
+@container agent-conversation (max-width: 20rem) {
   .agent-instruments {
     grid-column: 1 / -1;
   }
