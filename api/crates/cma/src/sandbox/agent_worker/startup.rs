@@ -286,19 +286,34 @@ impl AgentWorker {
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
         let result = async {
-            if self
+            match self
                 .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
-                .await?
+                .await
             {
-                tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
-                return self
-                    .publish_prepared_connection(
-                        &agent,
-                        &context,
-                        &attachment,
-                        attempt_now + started.elapsed(),
-                    )
-                    .await;
+                Ok(true) => {
+                    tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
+                    return self
+                        .publish_prepared_connection(
+                            &agent,
+                            &context,
+                            &attachment,
+                            attempt_now + started.elapsed(),
+                        )
+                        .await;
+                }
+                Err(SandboxStoreError::Conflict) => {
+                    return self
+                        .retain_completed_open_after_conflict(
+                            &agent,
+                            &context.sandbox,
+                            &request,
+                            &attachment,
+                            attempt_now + started.elapsed(),
+                        )
+                        .await;
+                }
+                Err(error) => return Err(error),
+                Ok(false) => {}
             }
             self.startup_progress(
                 agent,
