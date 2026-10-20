@@ -60,6 +60,25 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .deny_access_request(c.param("id"), c.param("request_id"), &c.key()?)
                 .await,
         ),
+        "GET /api/v1/agents/{id}/message-feedback" => c.check(
+            client
+                .agents()
+                .message_feedback(c.param("id"), c.events()?)
+                .await,
+        ),
+        "PUT /api/v1/agents/{id}/messages/{message_id}/feedback" => {
+            #[derive(serde::Deserialize)]
+            struct FeedbackBody {
+                vote: Option<cma_sdk::agents::MessageVote>,
+            }
+            let body: FeedbackBody = c.body()?;
+            c.check(
+                client
+                    .agents()
+                    .set_message_feedback(c.param("id"), c.param("message_id"), body.vote)
+                    .await,
+            )
+        }
         "GET /api/v1/agents/{id}/settings" => {
             c.check(client.agents().settings(c.param("id")).await)
         }

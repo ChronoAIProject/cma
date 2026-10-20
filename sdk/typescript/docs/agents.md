@@ -475,3 +475,14 @@ continue emitting the compatible `usage` vocabulary.
 The result contains `id`, `agentId`, `name`, `path`, `size`, `mediaType` and `sha256`. The verified `path` is under `/home/attachments/<agent-id>/<attachment-id>/`. Include that path in your subsequent Agent input when ready; uploading never sends a message or executes content. A lost response may be retried with exactly the same key, filename, media type and bytes. Reusing a key for different content returns a conflict. Aborting an uncertain request does not guarantee the file was not committed; preserve the key for recovery.
 
 Only current owner authority may upload. Shared conversation readers and delegated Agents cannot write files through this route. The runtime must prove a full persisted home and the attachment capability; older runtime images and inactive Agents return a typed refusal. Existing Sandboxes are not rotated by this feature. File storage lasts with the Sandbox's persisted home; the approved artifact API remains the separate publication and download interface.
+
+## Message feedback
+
+`agents.messageFeedback(agentId, { after, limit })` reads private owner votes as
+`{ items, next }`. Pass each non-null `next` as `after` until it is null; page size
+is 1–200. `agents.setMessageFeedback(agentId, 'event:42', 'up')` sets a positive
+vote; use `'down'` to switch or `null` to remove it. The message ID uses the
+transcript's durable message sequence. These idempotent metadata writes need no
+command key and never create turns. Serialize changes to one message and avoid
+replaying an old write after a newer choice. Current owner authority is required;
+shared readers cannot inspect or change these votes.

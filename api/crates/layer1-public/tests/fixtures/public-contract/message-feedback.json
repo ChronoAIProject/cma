@@ -1,0 +1,491 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "message-feedback-initial",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-up",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:4/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message_id": "event:4",
+          "vote": "up"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-down",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:5/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "down"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message_id": "event:5",
+          "vote": "down"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-page",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback?limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "message_id": "event:4",
+              "vote": "up"
+            }
+          ],
+          "next": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-next",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback?after=4&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "message_id": "event:5",
+              "vote": "down"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-switch",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:5/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message_id": "event:5",
+          "vote": "up"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-clear",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:5/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": null
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message_id": "event:5",
+          "vote": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-cleared",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "message_id": "event:4",
+              "vote": "up"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-list-anonymous",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-set-anonymous",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:4/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-list-foreign",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-set-foreign",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_foreign",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:4/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-list-forbidden",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-set-forbidden",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:4/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-list-unavailable",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-set-unavailable",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:4/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-nonmessage",
+      "operation": "PUT /api/v1/agents/{id}/messages/{message_id}/feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/agents/agt_feedback/messages/event:3/feedback",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "vote": "up"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "message-feedback-invalid-page",
+      "operation": "GET /api/v1/agents/{id}/message-feedback",
+      "scenario": "message_feedback_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_feedback/message-feedback?limit=201",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
