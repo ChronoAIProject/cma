@@ -14,6 +14,14 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { agentNameFor, validRepository } from './repository';
+import {
+  agentLocationOptions,
+  locationId,
+  locationScope,
+  useAgentLocations,
+  type AgentLocation,
+} from './agentLocations';
+import { AgentLocationChoice } from './AgentLocationChoice';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -43,12 +51,23 @@ export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
 function AgentLifecycleForm({
   client,
   viewerId,
-  workspaceId,
-  sandboxId,
+  workspaceId: openedWorkspaceId,
+  sandboxId: openedSandboxId,
   canCreateSandbox = true,
   onClose,
   onCreated,
 }: AgentLifecycleCardProps) {
+  const opened: AgentLocation | undefined =
+    openedWorkspaceId !== undefined
+      ? { kind: 'workspace', workspaceId: openedWorkspaceId, sandboxId: openedSandboxId }
+      : openedSandboxId !== undefined
+        ? { kind: 'sandbox', sandboxId: openedSandboxId }
+        : undefined;
+  const [location, setLocation] = useState<AgentLocation | undefined>(
+    opened ?? (canCreateSandbox ? { kind: 'new_sandbox' } : undefined),
+  );
+  // Each location keeps its own retained request; the hooks below follow it.
+  const { workspaceId, sandboxId } = locationScope(location);
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
@@ -75,7 +94,8 @@ function AgentLifecycleForm({
   // Shown only after the field is left or Create agent is pressed, never while
   // somebody is still typing the URL, so the alert is announced once.
   const [repositoryError, setRepositoryError] = useState(false);
-  const [workspaceName, setWorkspaceName] = useState<string>();
+  const [openedName, setOpenedName] = useState<string>();
+  const locations = useAgentLocations(client, createdReceipt === undefined);
   const openedOperation = useRef<string | undefined>(undefined);
   const clearIntent = lifecycle.clear;
   const bindAgent = lifecycle.bindAgent;
@@ -93,20 +113,32 @@ function AgentLifecycleForm({
     }
   }, [bindAgent, clearIntent, createdReceipt, handoffTransport, onCreated, operation, openTarget]);
   useEffect(() => {
-    if (workspaceId === undefined) return;
+    // Names the Workspace the dialog was opened for until the hierarchy lists it.
+    if (openedWorkspaceId === undefined) return;
     const request = new AbortController();
     void client
-      .readWorkspace(workspaceId, { signal: request.signal })
+      .readWorkspace(openedWorkspaceId, { signal: request.signal })
       .then((workspace) => {
-        if (!request.signal.aborted && workspace.id === workspaceId)
-          setWorkspaceName(workspace.name);
+        if (!request.signal.aborted && workspace.id === openedWorkspaceId)
+          setOpenedName(workspace.name);
       })
       .catch(() => undefined);
     return () => request.abort();
-  }, [client, workspaceId]);
+  }, [client, openedWorkspaceId]);
+  const options = agentLocationOptions(
+    locations.state.status === 'ready' ? locations.state.items : [],
+    viewerId,
+    canCreateSandbox,
+    opened,
+    openedName,
+  );
+  const selected =
+    location === undefined
+      ? undefined
+      : options.find((option) => option.id === locationId(location));
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
-  const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
+  const canCreate = selected !== undefined && selected.reason === undefined;
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
@@ -122,17 +154,67 @@ function AgentLifecycleForm({
     };
     void lifecycle.submit(input);
   };
+  const form = (
+    <>
+      <div className="create-form__field">
+        <label className="field__label" htmlFor="agent-repository">
+          GitHub repository (optional)
+        </label>
+        <Input
+          id="agent-repository"
+          type="url"
+          placeholder="https://github.com/org/repository"
+          value={repository}
+          onChange={(event) => {
+            setRepository(event.target.value);
+            if (repositoryError && validRepository(event.target.value.trim()))
+              setRepositoryError(false);
+          }}
+          onBlur={() => setRepositoryError(!repositoryValid)}
+          aria-invalid={repositoryError || undefined}
+          aria-describedby={
+            repositoryError
+              ? 'agent-repository-help agent-repository-error'
+              : 'agent-repository-help'
+          }
+        />
+        <p id="agent-repository-help" className="field__hint">
+          Your Agent receives this repository in its first message and prepares it in the empty
+          workspace. If authorization is needed, you’ll be prompted to connect your account.
+        </p>
+        {repositoryError ? (
+          <p id="agent-repository-error" className="field__error" role="alert">
+            Enter an HTTPS GitHub repository URL.
+          </p>
+        ) : null}
+      </div>
+      {/*
+       * Read-only on purpose: the lifecycle request sends no inline
+       * settings, so the summary states the server's defaults rather
+       * than offering a choice it would not honour.
+       */}
+      <section className="agent-lifecycle-settings" aria-labelledby="agent-settings-title">
+        <span className="agent-lifecycle-settings__icon" aria-hidden="true">
+          <IconAgentPresetOutline16 />
+        </span>
+        <div>
+          <h3 id="agent-settings-title">Agent settings</h3>
+          <p>gpt-6 · High · Autonomous</p>
+        </div>
+      </section>
+    </>
+  );
   return (
     <>
       <Modal
         open={connectionRequest === undefined}
         title="New agent"
         description={
-          workspaceId === undefined && sandboxId === undefined
-            ? 'Start an Agent in a new Sandbox with an empty workspace.'
-            : workspaceId !== undefined
-              ? 'Start an Agent in the selected workspace.'
-              : 'Start an Agent with a new workspace in this Sandbox.'
+          location?.kind === 'workspace'
+            ? 'Start an Agent in the selected workspace.'
+            : location?.kind === 'sandbox'
+              ? 'Start an Agent with a new workspace in this Sandbox.'
+              : 'Start an Agent in a new Sandbox with an empty workspace.'
         }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
@@ -199,64 +281,18 @@ function AgentLifecycleForm({
         {createdReceipt !== undefined ? (
           <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}
-        {createdReceipt === undefined && lifecycle.intent === undefined ? (
+        {createdReceipt === undefined ? (
           <div className="agent-lifecycle-step">
-            {workspaceId === undefined ? null : (
-              <p role="status">Existing Sandbox · {workspaceName ?? 'Selected workspace'}</p>
-            )}
-            {canCreate ? null : (
-              <p role="status">
-                You don’t have permission to create a Sandbox. Use New agent from an existing
-                Sandbox or workspace.
-              </p>
-            )}
-            <div className="create-form__field">
-              <label className="field__label" htmlFor="agent-repository">
-                GitHub repository (optional)
-              </label>
-              <Input
-                id="agent-repository"
-                type="url"
-                placeholder="https://github.com/org/repository"
-                value={repository}
-                onChange={(event) => {
-                  setRepository(event.target.value);
-                  if (repositoryError && validRepository(event.target.value.trim()))
-                    setRepositoryError(false);
-                }}
-                onBlur={() => setRepositoryError(!repositoryValid)}
-                aria-invalid={repositoryError || undefined}
-                aria-describedby={
-                  repositoryError
-                    ? 'agent-repository-help agent-repository-error'
-                    : 'agent-repository-help'
-                }
-              />
-              <p id="agent-repository-help" className="field__hint">
-                Your Agent receives this repository in its first message and prepares it in the
-                empty workspace. If authorization is needed, you’ll be prompted to connect your
-                account.
-              </p>
-              {repositoryError ? (
-                <p id="agent-repository-error" className="field__error" role="alert">
-                  Enter an HTTPS GitHub repository URL.
-                </p>
-              ) : null}
-            </div>
-            {/*
-             * Read-only on purpose: the lifecycle request sends no inline
-             * settings, so the summary states the server's defaults rather
-             * than offering a choice it would not honour.
-             */}
-            <section className="agent-lifecycle-settings" aria-labelledby="agent-settings-title">
-              <span className="agent-lifecycle-settings__icon" aria-hidden="true">
-                <IconAgentPresetOutline16 />
-              </span>
-              <div>
-                <h3 id="agent-settings-title">Agent settings</h3>
-                <p>gpt-6 · High · Autonomous</p>
-              </div>
-            </section>
+            <AgentLocationChoice
+              options={options}
+              value={selected?.id}
+              onChange={setLocation}
+              locked={pending}
+              loading={locations.state.status === 'loading'}
+              failed={locations.state.status === 'error'}
+              onRetry={locations.retry}
+            />
+            {lifecycle.intent === undefined ? form : null}
           </div>
         ) : null}
         {lifecycle.intent && !createdReceipt ? (
