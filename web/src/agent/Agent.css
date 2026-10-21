@@ -145,6 +145,16 @@
   object-fit: cover;
 }
 
+/* The Agent's mark takes the brand ink on a layer circle, so it follows both appearances. */
+.message__avatar[data-agent] {
+  color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.message__avatar svg {
+  display: block;
+}
+
 .message--user > .message__avatar {
   grid-column: 2;
   grid-row: 1;
