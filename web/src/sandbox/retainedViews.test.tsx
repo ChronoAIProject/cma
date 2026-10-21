@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
@@ -106,12 +106,17 @@ it('restores owner Sandbox and child details immediately but holds commands unti
   view.rerender(f.draw(false));
   view.rerender(f.draw(true));
   expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'chrono-bot' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'chrono-bot', hidden: true })).toBeInTheDocument();
   expect(screen.getByText('gpt-5')).toBeInTheDocument();
   expect(screen.queryByText('Loading workspaces')).not.toBeInTheDocument();
   expect(screen.queryByText('Opening Sandbox')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  expect(screen.getByRole('menuitem', { name: /^Delete Sandbox/ })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
   await act(async () => nextSandbox.resolve({ ...sandbox, name: 'Fresh Sandbox' }));
   expect(screen.getByRole('heading', { name: 'Fresh Sandbox' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();

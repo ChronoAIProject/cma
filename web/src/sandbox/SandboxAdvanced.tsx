@@ -51,7 +51,7 @@ export function SandboxAdvanced({
   }, [client, sandbox, retry]);
   const operation = sandbox.lifecycle?.operation;
   return (
-    <Modal open title="Advanced sandbox details" onClose={onClose} placement="modal--wide">
+    <Modal open title="Technical details" onClose={onClose} placement="modal--wide">
       <div className="sandbox-advanced">
         <dl>
           <div>
