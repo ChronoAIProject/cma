@@ -147,6 +147,10 @@
 .sandbox-page .sandbox-page__toolbar h2 {
   margin: 0;
 }
+/* The scope editor's save sits under the list, sized to its label. */
+.sandbox-page [data-scope-editor] > div > button {
+  justify-self: start;
+}
 .sandbox-table__agents {
   display: grid;
   gap: 8px;

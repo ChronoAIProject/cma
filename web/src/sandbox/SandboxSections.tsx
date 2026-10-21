@@ -33,6 +33,7 @@ export function sandboxQuiet(sandbox: SandboxDetail): boolean {
 export function SandboxSections({
   client,
   sandbox,
+  owner,
   observedAt,
   permissions,
   busy,
@@ -47,6 +48,8 @@ export function SandboxSections({
 }: {
   readonly client: CmaWebClient;
   readonly sandbox: SandboxDetail;
+  /** The signed-in viewer, when they own this Sandbox. */
+  readonly owner?: string;
   readonly observedAt: string;
   readonly permissions: TreePermissions;
   readonly busy: boolean;
@@ -104,7 +107,16 @@ export function SandboxSections({
         {
           id: 'access',
           label: 'Access',
-          content: <SandboxAccess sandbox={sandbox} contents={contents} settings={settings} />,
+          content: (
+            <SandboxAccess
+              sandbox={sandbox}
+              contents={contents}
+              settings={settings}
+              owner={owner}
+              active={selected === 'access'}
+              onRetry={retry}
+            />
+          ),
         },
         {
           id: 'activity',

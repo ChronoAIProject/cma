@@ -31,3 +31,15 @@ export function rememberSandboxTab(sandboxId: string, tab: SandboxTab): void {
   if (window.location.pathname !== routePath({ kind: 'sandbox', sandboxId })) return;
   window.history.replaceState(window.history.state, '', sandboxTabPath(sandboxId, tab));
 }
+
+/**
+ * Navigate to a Sandbox and land on one of its tabs.
+ *
+ * Routes carry no query, so `navigate` pushes the bare Sandbox path. It does
+ * so synchronously and the page reads its tab when it mounts, after this
+ * returns, so the query written onto the entry just pushed is what it finds.
+ */
+export function openSandboxTab(navigate: () => void, sandboxId: string, tab: SandboxTab): void {
+  navigate();
+  rememberSandboxTab(sandboxId, tab);
+}
