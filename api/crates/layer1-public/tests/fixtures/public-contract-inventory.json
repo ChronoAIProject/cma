@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 199,
+  "openapi_operations": 209,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2872,6 +2872,125 @@
         "forbidden",
         "not_authenticated",
         "instance_service_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "idempotency_key_reused",
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/share-links/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_access_changed",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agent-share-links/{share_id}/redeem": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/files": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/content": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_too_large",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_too_large",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/tree": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/files": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
       ]
     }
   }
