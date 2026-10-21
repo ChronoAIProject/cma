@@ -60,7 +60,9 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
   const composer = page.getByRole('form', { name: 'Message Agent' });
-  await expect(composer.getByRole('button', { name: 'Model', exact: true })).toHaveText('GPT-6');
+  await expect(composer.getByRole('button', { name: /^Model and reasoning effort/ })).toHaveText(
+    'GPT-6 High',
+  );
   const reply = page.getByRole('article', { name: 'Chrono Agent' });
   await expect(reply.getByText('21 Oct 2026, 00:31 SGT')).toBeVisible();
   await page.getByRole('textbox', { name: 'Message' }).fill('Preserve my unsent draft');
@@ -329,14 +331,28 @@ test('LOCAL composer settings apply only after a confirmed runtime response and 
   });
   await page.goto('/agents/agt_contract');
   const details = page.getByRole('form', { name: 'Message Agent' });
-  await expect(details.getByLabel('Model', { exact: true })).toHaveText('GPT-6');
-  await details.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Medium', exact: true }).click();
+  const chip = details.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  const effort = card.getByRole('slider', { name: 'Reasoning effort' });
+  await expect(effort).toBeFocused();
+  await effort.press('ArrowLeft');
+  await expect(effort).toHaveAttribute('aria-valuetext', 'Medium');
+  await effort.press('Escape');
+  await expect(card).toHaveCount(0);
+  await expect(chip).toHaveText('GPT-6 Medium');
   await details.getByRole('button', { name: 'Permission mode', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Guarded', exact: true }).click();
   await details.getByRole('button', { name: 'Apply settings', exact: true }).click();
   await expect(details.getByRole('button', { name: 'Retry settings update' })).toBeEnabled();
-  await expect(details.getByLabel('Model', { exact: true })).toBeDisabled();
+  await expect(
+    details.getByRole('button', { name: 'Permission mode', exact: true }),
+  ).toBeDisabled();
+  await chip.click();
+  await expect(card.getByRole('button', { name: 'Model', exact: true })).toBeDisabled();
+  await expect(effort).toHaveAttribute('aria-disabled', 'true');
+  await effort.press('Escape');
   await expect(details.getByText('Settings applied to this Agent.')).toHaveCount(0);
   await details.getByRole('button', { name: 'Retry settings update' }).click();
   await expect(details.getByText('Settings applied to this Agent.')).toBeVisible();
@@ -417,12 +433,16 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
   const details = page.getByRole('complementary', { name: 'Agent details' });
   const composer = page.getByRole('form', { name: 'Message Agent' });
   await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
-  await expect(composer.getByRole('button', { name: 'Model', exact: true })).toHaveText('GPT-6');
-  await composer.getByRole('button', { name: 'Model', exact: true }).click();
+  const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  await card.getByRole('button', { name: 'Model', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Fast model', exact: true }).click();
-  await expect(composer.getByRole('button', { name: 'Model', exact: true })).toHaveText(
-    'Fast model',
-  );
+  await expect(card.getByRole('button', { name: 'Model', exact: true })).toHaveText('Fast model');
+  await expect(chip).toHaveText('Fast model High');
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
   await expect(details.getByRole('list', { name: 'Services' }).getByRole('listitem')).toHaveCount(
     108,
   );

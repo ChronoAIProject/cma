@@ -9,9 +9,8 @@ import { conversationFromTranscript, type ConversationState } from './conversati
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
-import { chooseOptionValue } from '../test/select';
 
-it('places settings between composer input and actions and preserves draft and busy-turn apply rules', async () => {
+it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
     model: 'gpt-6',
     reasoning_effort: 'high',
@@ -40,29 +39,30 @@ it('places settings between composer input and actions and preserves draft and b
     </CmaClientProvider>
   );
   const view = render(draw(true));
-  const model = await screen.findByRole('button', { name: 'Model' });
-  expect(model).toHaveTextContent('GPT-6');
+  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  expect(chip).toHaveTextContent('GPT-6 High');
   const form = screen.getByRole('form', { name: 'Message Agent' });
   // Settings sit inside the composer box, in the row of controls under the draft.
   const controls = form.querySelector('.agent-composer__box > .agent-composer__controls');
   expect(controls).not.toBeNull();
   expect(controls!.previousElementSibling).toBe(screen.getByRole('textbox', { name: 'Message' }));
-  expect(controls!.querySelector('.agent-composer__settings')).not.toBeNull();
-  expect(controls!.querySelector('.agent-composer__actions')).not.toBeNull();
+  expect(controls).toContainElement(chip);
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Permission mode' }));
   expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Retain this draft' },
   });
-  await chooseOptionValue(
-    userEvent.setup(),
-    screen.getByRole('button', { name: 'Reasoning effort' }),
-    'medium',
-  );
+  const actor = userEvent.setup();
+  await actor.click(chip);
+  const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+  await actor.keyboard('{ArrowLeft}');
+  expect(slider).toHaveAttribute('aria-valuetext', 'Medium');
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Apply settings' }));
   expect(update).not.toHaveBeenCalled();
   view.rerender(draw(false));
-  expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
-  await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(chip).toHaveTextContent('GPT-6 Medium');
+  await actor.click(screen.getByRole('button', { name: 'Apply settings' }));
   expect(update).toHaveBeenCalledWith(
     'agt_1',
     { ...defaults, reasoning_effort: 'medium' },
