@@ -1,10 +1,9 @@
 import { Presence } from '../ui/Presence';
-import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
-import { routePath, type AppRoute } from '../routing/routes';
+import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
@@ -15,16 +14,15 @@ import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { AgentHeader } from './AgentHeader';
-import { PageHeader } from '../ui/PageHeader';
 import { Alert } from '../ui/Alert';
-import type { MenuEntry } from '../ui/Menu';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { agentActions } from '../shell/treeActions';
+import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
+import { AgentOpening, AgentUnavailable } from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
@@ -134,33 +132,16 @@ export function AgentSurface({
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
 
-  if (state.status === 'idle' || state.status === 'loading') {
+  if (state.status === 'idle' || state.status === 'loading')
+    return <AgentOpening headingRef={headingRef} />;
+  if (state.status === 'error')
     return (
-      <section className="agent-surface agent-surface--loading" aria-busy="true">
-        <PageHeader placement="agent-header" title="Agent" headingRef={headingRef} />
-        <div className="agent-loading">
-          <SkeletonRows rows={4} label="Opening your agent" />
-        </div>
-      </section>
+      <AgentUnavailable
+        message={state.message}
+        headingRef={headingRef}
+        onRetry={controller.reload}
+      />
     );
-  }
-
-  if (state.status === 'error') {
-    return (
-      <section className="agent-surface agent-surface--error" role="alert">
-        <div>
-          <p className="eyebrow">Agent</p>
-          <h1 ref={headingRef} tabIndex={-1}>
-            Agent unavailable
-          </h1>
-          <p>{state.message}</p>
-          <Button variant="outline" onClick={controller.reload}>
-            Try again
-          </Button>
-        </div>
-      </section>
-    );
-  }
 
   const { detail, conversation } = state;
   const messageQueue = queuePresentation(
@@ -189,35 +170,12 @@ export function AgentSurface({
       : (connectionError ?? connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
   const observed = controller.progressObservation;
-  const headerActions =
-    permissions === undefined
-      ? []
-      : agentActions(
-          status,
-          permissions,
-          observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
-        );
-  const headerRow = (action: (typeof headerActions)[number]): MenuEntry => ({
-    id: action.id,
-    label:
-      action.id === 'stop_agent'
-        ? 'Stop agent'
-        : action.id === 'delete_agent'
-          ? 'Delete agent'
-          : action.label,
-    icon: action.icon,
-    danger: action.danger,
-    disabled: action.disabled === true || actionsBusy,
-    reason: actionsBusy ? 'Another action is still being confirmed.' : action.reason,
-  });
-  // Destructive rows last, behind a separator, so a slip of the pointer
-  // down the list lands on something reversible first.
-  const safe = headerActions.filter((action) => action.danger !== true).map(headerRow);
-  const destructive = headerActions.filter((action) => action.danger === true).map(headerRow);
-  const headerMenu: MenuEntry[] =
-    safe.length > 0 && destructive.length > 0
-      ? [...safe, { type: 'separator', id: 'before-destructive' }, ...destructive]
-      : [...safe, ...destructive];
+  const headerMenu = agentHeaderMenu(
+    status,
+    permissions,
+    observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
+    actionsBusy,
+  );
   const uploadAttachment: UploadAttachment | undefined =
     readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
       ? undefined
@@ -241,19 +199,7 @@ export function AgentSurface({
         onDetailsOpenChange={(open) => {
           if (!accessUncertain) onDetailsOpenChange(open);
         }}
-        breadcrumb={[
-          {
-            label: detail.sandbox.name,
-            href: routePath({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
-            onSelect: () => onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
-          },
-          {
-            label: detail.workspace.name,
-            href: routePath({ kind: 'workspace', workspaceId: detail.workspace.id }),
-            onSelect: () => onNavigate({ kind: 'workspace', workspaceId: detail.workspace.id }),
-          },
-          { label: title },
-        ]}
+        breadcrumb={agentBreadcrumb(detail, title, onNavigate)}
         moreActions={headerMenu}
         onMoreAction={
           onAgentAction === undefined || readOnly
