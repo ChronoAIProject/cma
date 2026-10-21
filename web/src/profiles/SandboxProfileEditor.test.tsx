@@ -11,7 +11,7 @@ import {
 } from '../test/profiles';
 import { SandboxProfileEditor } from './SandboxProfileEditor';
 
-it('separates the Codex provider from NyxID integrations and removes old model grants when switching', async () => {
+it('separates model access from NyxID integrations and removes old model grants when switching', async () => {
   const actor = userEvent.setup();
   const record = {
     ...SANDBOX_PROFILE,
@@ -40,12 +40,12 @@ it('separates the Codex provider from NyxID integrations and removes old model g
       services={services}
     />,
   );
-  const provider = await screen.findByRole('radiogroup', { name: 'Codex provider' });
+  const provider = await screen.findByRole('radiogroup', { name: 'Model access' });
   expect(within(provider).getByRole('radio', { name: 'Chrono LLM (public)' })).toBeChecked();
   expect(await screen.findByRole('checkbox', { name: /GitHub OAuth/ })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: /Ornn API/ })).toBeChecked();
   expect(screen.queryByRole('checkbox', { name: /Chrono LLM/ })).not.toBeInTheDocument();
-  await actor.click(within(provider).getByRole('radio', { name: 'My Codex subscription' }));
+  await actor.click(within(provider).getByRole('radio', { name: 'Your ChatGPT subscription' }));
   await actor.click(screen.getByRole('button', { name: 'Save draft' }));
   await screen.findByText('Draft saved.');
   expect(saveProfile.mock.calls[0]?.[1]).toMatchObject({
@@ -130,7 +130,7 @@ it('converts custom cores and GiB, selects services, and saves environment and o
   fireEvent.change(screen.getByLabelText('CPU cores'), { target: { value: '1.5' } });
   fireEvent.change(screen.getByLabelText('Memory (GiB)'), { target: { value: '2.25' } });
   await actor.click(await screen.findByRole('checkbox', { name: /Storage/ }));
-  await actor.click(screen.getByRole('radio', { name: 'My Codex subscription' }));
+  await actor.click(screen.getByRole('radio', { name: 'Your ChatGPT subscription' }));
   await actor.click(await screen.findByRole('button', { name: 'Add Research workspace' }));
   await actor.click(screen.getByRole('button', { name: 'Add variable' }));
   fireEvent.change(screen.getByLabelText('Variable 1 name'), { target: { value: 'RUN_MODE' } });
