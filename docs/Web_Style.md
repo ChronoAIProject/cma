@@ -1900,12 +1900,31 @@ existing tokens, field primitives, code treatment, and button hierarchy.
 
 ## 20. The signed-out surface
 
-The generic authentication gate is an unframed, centred brand lockup and one
-Sign in command. It uses the existing background and typography tokens, a
-bounded image that fits narrow screens, and no terminal simulation, 3D scene,
-marketing hero or animated prerequisite. Sign-in is available on the first
-interactive frame. Authentication errors preserve their explanation and a
-supported reload action.
+The signed-out home says what CMA is and offers one primary action. It sits in
+the centre column of the collapsed portal frame and scrolls as one page:
+
+- **Hero.** The product name, ChronoAI Managed Agent, is the page's `h1`, set
+  as a 13px 500 pill with a 1px `border-l2` outline, 999px radius and a 6px
+  accent dot. Below it a display line states the value in one sentence at
+  `clamp(36px, 5vw, 56px)`, 600, 1.05 leading and `-0.035em` tracking,
+  balanced across lines; then an 18/28 secondary lede. The one primary Button
+  is **Get Started**; an outline anchor styled as a Button jumps to How it
+  works. A 13px caption names NyxID and doubles as the polite live summary
+  while sign-in opens. The Three.js character sits beside the copy as a
+  companion: it spins on press and is never the way in.
+- **How it works.** Three ordered steps in 12px-radius `layer-1` cards with a
+  1px `border-l1`, each numbered in a 28px mono square.
+- **Services.** Agent Manager and Event Gateway cards each carry an outline
+  `Open …` Button that signs in and returns to that service. Image Manager is
+  a dashed card marked Coming soon, with no action, until its route exists.
+- Section kickers are 12px code-face `brand-text`; section headings are 32/40,
+  600, `-0.025em`, 24/32 under 760px.
+- Below 900px the hero stacks with the character first at most 220px wide;
+  below 760px the card grids become one column and nothing scrolls sideways.
+- Sign-in fades the page to 40% for 200ms, or immediately under reduced
+  motion, and starts once. A failure restores every action and shows an inline
+  alert with Try again.
+- Copy never names the agent provider; CMA is the brand.
 
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
@@ -1995,14 +2014,11 @@ The original Three.js character geometry, materials, studio lights, pointer
 look, press-to-spin and visibility disposal return to the unframed Home and
 authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
-The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
-landing names the product ChronoAI Managed Agent on one line where it fits, with
-responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking; where the
-column is narrower it wraps with balanced lines and never overflows into the services.
-Its lockup is at most 760px wide, retaining 24px horizontal padding, and has no
-separate Sign in button. Its title and cloud invitation use self-hosted
-OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
-synthesized at weight 700 for the requested bold treatment. The glasses have no text.
+The signed-in wordmark is 48px, weight 700, with zero tracking. The signed-out
+home follows §20: the character is a companion beside the hero copy, not the
+sign-in control, and carries no invitation cloud. The glasses have no text.
+The invitation cloud below is retired from the signed-out home by §20; its
+styles and Shrikhand remain only for a character given an activation handler.
 A cloud-shaped, 264px by 88px prompt says Click to start... above the character,
 with its top 120px above the reserved square. The signed-out lockup reserves
 144px top padding so the cloud never covers the character or clips the viewport.
@@ -2589,3 +2605,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
 | 2026-10-21 | Moved both appearances onto a shadcn/ui-based neutral system: one `zinc` ramp for grounds, borders and labels, Chrono lime kept as the brand and accent (`lime 800` in light, where the bright step cannot carry text), a `zinc 900` light primary and lime dark primary, neutral low-alpha light shadows, inverted tooltips, and one interface/code pairing, Geist and Geist Mono, in both appearances. Kept every alias and specific name and the three-tier architecture so every surface re-inks without a migration vocabulary; the earlier ramps and faces stay declared only for remaining static and brand-asset consumers. Regenerated the §2 alias contract from the shipped sheet so the tables cannot drift from it. |
 | 2026-10-21 | Let the signed-out product name wrap with balanced lines when its column is narrower than the name. The unbroken line overflowed its 360px grid column between 761px and about 1040px, where the services cards covered it, and widened a phone's grid past the viewport. Restored the lockup's documented 144px top reservation so the cloud invitation no longer clips above the viewport. |
+| 2026-10-21 | Rebuilt the signed-out home around one visible primary action. The character had been the only way in, its Get Started name never appeared on screen and its invitation waited five seconds, so §20 now specifies a hero with the product name as `h1`, a one-sentence value line, Get Started, a NyxID caption that announces progress, three How it works steps and service cards that return to their service after sign-in. Image Manager is marked Coming soon until its route exists. The character stays as a companion without the cloud. Copy never names the agent provider. |
