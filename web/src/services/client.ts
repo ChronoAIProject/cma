@@ -5,6 +5,11 @@ export interface ServiceSession {
   permissions: readonly string[];
   expires_at: number;
 }
+/**
+ * Reports a refused request. A 403 means the account is signed in but not
+ * permitted; anything else ends the sign-in, so a caller passes the status.
+ */
+export type Denied = (status?: number) => void;
 export class ServiceError extends Error {
   constructor(
     readonly status: number,

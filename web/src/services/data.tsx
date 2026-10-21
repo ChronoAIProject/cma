@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { ServiceError, serviceRequest, type Service } from './client';
+import { ServiceError, serviceRequest, type Denied, type Service } from './client';
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;
 }
-export function usePage<T>(service: Service, path: string, denied: () => void) {
+export function usePage<T>(service: Service, path: string, denied: Denied) {
   const [value, setValue] = useState<Page<T>>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
@@ -36,7 +36,7 @@ export function usePage<T>(service: Service, path: string, denied: () => void) {
         if (!controller.signal.aborted) {
           if (e instanceof ServiceError && [401, 403].includes(e.status)) {
             setValue(undefined);
-            if ([401, 403].includes(e.status)) denied();
+            if ([401, 403].includes(e.status)) denied(e.status);
           }
           setError(e instanceof Error ? e.message : 'Service unavailable.');
         }
@@ -108,7 +108,7 @@ export function WriteForm({
   readonly label: string;
   readonly fields: readonly Field[];
   readonly onDone: () => void;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly method?: string;
   readonly revision?: number;
 }) {
@@ -131,7 +131,7 @@ export function WriteForm({
     } catch (e) {
       if (e instanceof ServiceError && e.status >= 400 && e.status < 500) {
         setPending(undefined);
-        if ([401, 403].includes(e.status)) denied();
+        if ([401, 403].includes(e.status)) denied(e.status);
       }
       setError(e instanceof Error ? e.message : 'The outcome is unknown. Retry this request.');
     }
