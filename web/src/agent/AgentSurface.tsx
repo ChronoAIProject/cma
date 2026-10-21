@@ -3,8 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
-import type { AppRoute } from '../routing/routes';
-import { SandboxLink } from './SandboxLink';
+import { routePath, type AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
@@ -15,6 +14,12 @@ import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { AgentHeader } from './AgentHeader';
+import { PageHeader } from '../ui/PageHeader';
+import type { MenuEntry } from '../ui/Menu';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
+import { agentActions } from '../shell/treeActions';
+import type { TreeAction, TreePermissions } from '../shell/Tree';
+import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
@@ -48,6 +53,11 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  /** What the viewer may do to this Agent from its header. */
+  readonly permissions?: TreePermissions;
+  /** Another resource action is still being confirmed. */
+  readonly actionsBusy?: boolean;
+  readonly onAgentAction?: (action: TreeAction) => void;
 }
 
 export function AgentSurface({
@@ -63,6 +73,9 @@ export function AgentSurface({
   user,
   accessUncertain = false,
   accessAuthorized = false,
+  permissions,
+  actionsBusy = false,
+  onAgentAction,
 }: AgentSurfaceProps) {
   const [steeringMode, setSteeringMode] = useState<SteeringMode>('queue');
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -70,8 +83,7 @@ export function AgentSurface({
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
-  const documentTitle =
-    state.status === 'ready' ? `${agentDisplayTitle(state.detail)} · CMA` : undefined;
+  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined);
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -121,23 +133,10 @@ export function AgentSurface({
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
 
-  useEffect(() => {
-    if (documentTitle === undefined) return;
-    document.title = documentTitle;
-    return () => {
-      document.title = 'CMA';
-    };
-  }, [documentTitle]);
-
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <section className="agent-surface agent-surface--loading" aria-busy="true">
-        <header className="agent-header">
-          <p className="agent-header__lineage">CMA</p>
-          <h1 ref={headingRef} tabIndex={-1}>
-            Agent
-          </h1>
-        </header>
+        <PageHeader placement="agent-header" title="Agent" headingRef={headingRef} />
         <div className="agent-loading">
           <BrandLoading label="Opening your agent" />
         </div>
@@ -188,6 +187,36 @@ export function AgentSurface({
       ? 'Conversation activity is unavailable. Reconnecting.'
       : (connectionError ?? connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
+  const observed = controller.progressObservation;
+  const headerActions =
+    permissions === undefined
+      ? []
+      : agentActions(
+          status,
+          permissions,
+          observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
+        );
+  const headerRow = (action: (typeof headerActions)[number]): MenuEntry => ({
+    id: action.id,
+    label:
+      action.id === 'stop_agent'
+        ? 'Stop agent'
+        : action.id === 'delete_agent'
+          ? 'Delete agent'
+          : action.label,
+    icon: action.icon,
+    danger: action.danger,
+    disabled: action.disabled === true || actionsBusy,
+    reason: actionsBusy ? 'Another action is still being confirmed.' : action.reason,
+  });
+  // Destructive rows last, behind a separator, so a slip of the pointer
+  // down the list lands on something reversible first.
+  const safe = headerActions.filter((action) => action.danger !== true).map(headerRow);
+  const destructive = headerActions.filter((action) => action.danger === true).map(headerRow);
+  const headerMenu: MenuEntry[] =
+    safe.length > 0 && destructive.length > 0
+      ? [...safe, { type: 'separator', id: 'before-destructive' }, ...destructive]
+      : [...safe, ...destructive];
   const uploadAttachment: UploadAttachment | undefined =
     readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
       ? undefined
@@ -213,29 +242,41 @@ export function AgentSurface({
         title={title}
         status={status}
         headingRef={headingRef}
+        branch={readOnly ? undefined : detail.worktree.branch}
         detailsOpen={detailsOpen}
         detailsUnavailable={accessUncertain}
         onDetailsOpenChange={(open) => {
           if (!accessUncertain) onDetailsOpenChange(open);
         }}
-        lineage={
-          <>
-            <SandboxLink
-              id={detail.sandbox.id}
-              name={detail.sandbox.name}
-              onNavigate={onNavigate}
-            />
-            <span aria-hidden="true">/</span>
-            <span>{detail.runtimeMetadata?.workingDirectory || detail.workspace.path}</span>
-            <span aria-hidden="true">/</span>
-            <span>Agent</span>
-          </>
+        breadcrumb={[
+          {
+            label: detail.sandbox.name,
+            href: routePath({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+            onSelect: () => onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          },
+          {
+            label: detail.workspace.name,
+            href: routePath({ kind: 'workspace', workspaceId: detail.workspace.id }),
+            onSelect: () => onNavigate({ kind: 'workspace', workspaceId: detail.workspace.id }),
+          },
+          { label: title },
+        ]}
+        moreActions={headerMenu}
+        onMoreAction={
+          onAgentAction === undefined || readOnly
+            ? undefined
+            : (id) =>
+                onAgentAction({
+                  kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
+                  agentId,
+                })
         }
       >
         <AgentSourceLabel source={source} provenance={provenance} originLabel={originLabel} />
         {!readOnly &&
         verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
+            size="sm"
             onClick={() =>
               connections.run(
                 { type: 'agent', id: agentId },
@@ -247,7 +288,7 @@ export function AgentSurface({
               )
             }
           >
-            Re-login with Codex subscription
+            Sign in to your ChatGPT subscription again
           </Button>
         ) : null}
       </AgentHeader>
