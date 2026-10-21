@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { can, segment, ServiceError, serviceRequest, type ServiceSession } from './client';
 import { PageStatus, usePage } from './data';
 import {
@@ -39,6 +41,7 @@ export function EventGateway({
     created && !rows.some((row) => row.record_id === created.record_id) ? [created, ...rows] : rows
   ).filter((row) => !deleted.includes(row.record_id));
   const current = items.find((row) => row.record_id === selected) ?? items[0];
+  useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
   const select = (id: string) => {
     setVisited((previous) => [
       ...new Set([...previous, ...(current ? [current.record_id] : []), id]),
@@ -105,10 +108,11 @@ export function EventGateway({
     <div className="gateway-content">
       {createStarted ? (
         <section className="gateway-detail" hidden={!creating}>
-          <header>
-            <h1>New channel</h1>
-            <p>Connect an event source to your agent.</p>
-          </header>
+          <PageHeader
+            breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
+            title="New channel"
+            description="Connect an event source to your agent."
+          />
           <ChannelEditor
             denied={denied}
             onDone={(channel) => {
@@ -151,8 +155,11 @@ export function EventGateway({
         ))}
       {!creating && !current ? (
         <section className="gateway-empty">
-          <h1>Event Gateway</h1>
-          <p>Choose a channel to view its endpoints, configure event delivery, or send a test.</p>
+          <PageHeader
+            breadcrumb={[{ label: 'Event Gateway' }, { label: 'Channels' }]}
+            title="Event Gateway"
+            description="Choose a channel to view its endpoints, configure event delivery, or send a test."
+          />
         </section>
       ) : null}
     </div>
@@ -182,12 +189,19 @@ function ChannelDetail({
 }) {
   return (
     <>
-      <header>
-        <h1>{channel.definition.name}</h1>
-        <p>
-          {channel.provider.slug} · {channel.provider.level} · Version {channel.version}
-        </p>
-      </header>
+      <PageHeader
+        breadcrumb={[
+          { label: 'Event Gateway' },
+          { label: 'Channels' },
+          { label: channel.definition.name },
+        ]}
+        title={channel.definition.name}
+        meta={
+          <span className="page-header__chip">
+            {channel.provider.slug} · {channel.provider.level} · Version {channel.version}
+          </span>
+        }
+      />
       {hasChannelAddress(channel) ? (
         <AddressedChannel
           channel={channel}

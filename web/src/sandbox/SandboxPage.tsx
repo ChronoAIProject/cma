@@ -3,7 +3,9 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
-import type { AppRoute } from '../routing/routes';
+import { routePath, type AppRoute } from '../routing/routes';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
 import {
@@ -179,13 +181,10 @@ export function SandboxPage({
       document.removeEventListener('visibilitychange', poll);
     };
   }, [client, sandboxId, request, views, viewerId]);
+  useDocumentTitle(documentTitle);
   useEffect(() => {
     heading.current?.focus();
-    document.title = `${documentTitle} · CMA`;
-    return () => {
-      document.title = 'CMA';
-    };
-  }, [sandboxId, state.status, documentTitle]);
+  }, [sandboxId, state.status]);
   if (state.status === 'loading')
     return (
       <section className="sandbox-page" aria-busy="true">
@@ -231,83 +230,91 @@ export function SandboxPage({
   );
   return (
     <section className="sandbox-page">
-      <header className="sandbox-page__header">
-        <div>
-          <h1 ref={heading} tabIndex={-1}>
-            {sandbox.name}
-          </h1>
-          <p role="status">{sandboxLifecycleLabel(sandbox)}</p>
-        </div>
-        <div className="sandbox-page__actions">
-          {client.resourceViews === undefined || stale ? null : (
-            <SharingButton
-              client={client.resourceViews}
-              target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
-            />
-          )}
-          {permissions.createAgent ? (
-            <Button
-              icon={<IconPlusOutline16 />}
-              disabled={busy || stale || needsConnections || !childrenAvailable}
-              onClick={() => onAction({ kind: 'new_agent', sandboxId })}
-              aria-label="New agent in this Sandbox"
-            >
-              New agent
+      <PageHeader
+        breadcrumb={[
+          {
+            label: 'Agent Manager',
+            href: routePath({ kind: 'agent_manager' }),
+            onSelect: () => onNavigate({ kind: 'agent_manager' }),
+          },
+          { label: sandbox.name },
+        ]}
+        title={sandbox.name}
+        headingRef={heading}
+        badge={<span role="status">{sandboxLifecycleLabel(sandbox)}</span>}
+        meta={<span className="page-header__chip">{sandbox.id}</span>}
+        actions={
+          <>
+            {client.resourceViews === undefined || stale ? null : (
+              <SharingButton
+                client={client.resourceViews}
+                target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
+              />
+            )}
+            {permissions.createAgent ? (
+              <Button
+                icon={<IconPlusOutline16 />}
+                disabled={busy || stale || needsConnections || !childrenAvailable}
+                onClick={() => onAction({ kind: 'new_agent', sandboxId })}
+                aria-label="New agent in this Sandbox"
+              >
+                New agent
+              </Button>
+            ) : null}
+            {permissions.createWorkspace ? (
+              <Button
+                icon={<IconPlusOutline16 />}
+                disabled={busy || stale || needsConnections || !childrenAvailable}
+                onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
+              >
+                New workspace
+              </Button>
+            ) : null}
+            {permissions.pauseSandbox ? (
+              <Button
+                icon={
+                  lifecycleAction.kind === 'revive_sandbox' ? (
+                    <IconPlayOutline16 />
+                  ) : (
+                    <IconPauseOutline16 />
+                  )
+                }
+                disabled={
+                  busy ||
+                  stale ||
+                  !lifecycleAction.allowed ||
+                  (needsConnections && lifecycleAction.kind === 'revive_sandbox')
+                }
+                aria-describedby={
+                  lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
+                }
+                onClick={() => onAction({ kind: lifecycleAction.kind, sandboxId })}
+              >
+                {lifecycleAction.label}
+              </Button>
+            ) : null}
+            {permissions.deleteSandbox ? (
+              <Button
+                variant="danger"
+                icon={<IconTrashOutline16 />}
+                disabled={
+                  busy ||
+                  stale ||
+                  ['retiring', 'retired'].includes(sandbox.status) ||
+                  sandbox.lifecycle?.checkpoint !== undefined ||
+                  sandbox.lifecycle?.operation !== undefined
+                }
+                onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
+              >
+                Delete
+              </Button>
+            ) : null}
+            <Button icon={<IconSettingsOutline16 />} onClick={() => setAdvanced(true)}>
+              Advanced
             </Button>
-          ) : null}
-          {permissions.createWorkspace ? (
-            <Button
-              icon={<IconPlusOutline16 />}
-              disabled={busy || stale || needsConnections || !childrenAvailable}
-              onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
-            >
-              New workspace
-            </Button>
-          ) : null}
-          {permissions.pauseSandbox ? (
-            <Button
-              icon={
-                lifecycleAction.kind === 'revive_sandbox' ? (
-                  <IconPlayOutline16 />
-                ) : (
-                  <IconPauseOutline16 />
-                )
-              }
-              disabled={
-                busy ||
-                stale ||
-                !lifecycleAction.allowed ||
-                (needsConnections && lifecycleAction.kind === 'revive_sandbox')
-              }
-              aria-describedby={
-                lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
-              }
-              onClick={() => onAction({ kind: lifecycleAction.kind, sandboxId })}
-            >
-              {lifecycleAction.label}
-            </Button>
-          ) : null}
-          {permissions.deleteSandbox ? (
-            <Button
-              variant="danger"
-              icon={<IconTrashOutline16 />}
-              disabled={
-                busy ||
-                stale ||
-                ['retiring', 'retired'].includes(sandbox.status) ||
-                sandbox.lifecycle?.checkpoint !== undefined ||
-                sandbox.lifecycle?.operation !== undefined
-              }
-              onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
-            >
-              Delete
-            </Button>
-          ) : null}
-          <Button icon={<IconSettingsOutline16 />} onClick={() => setAdvanced(true)}>
-            Advanced
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+      />
       {needsConnections && !stale ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}

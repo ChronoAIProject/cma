@@ -1,4 +1,6 @@
 import { useId, useState } from 'react';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { Capability } from '../auth/types';
 import type { OperatorClient } from './client';
 import { Sandboxes } from './Sandboxes';
@@ -21,13 +23,18 @@ export function Operations({
   const [selected, setSelected] = useState<string>();
   const selectedView = available.find((view) => view.id === selected) ?? available[0];
   const id = useId();
+  useDocumentTitle('Operations');
   if (selectedView === undefined) return null;
   const canControl = capabilities.includes('control_any_sandbox');
   return (
     <section className="operator" aria-labelledby={`${id}-heading`}>
-      <header className="operator-header">
-        <h1 id={`${id}-heading`}>Operations</h1>
-      </header>
+      <div className="operator-header">
+        <PageHeader
+          breadcrumb={[{ label: 'Operations' }, { label: selectedView.label }]}
+          title="Operations"
+          headingId={`${id}-heading`}
+        />
+      </div>
       <div className="operator-tabs" role="tablist" aria-label="Operations views">
         {available.map((view, index) => (
           <button
