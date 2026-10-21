@@ -569,11 +569,13 @@ for its owner (a shared reader sees `Agent Manager / <Workspace>`); Agents — `
 `Triggers / <Trigger title>`; Event Gateway — `Event Gateway / Channels / <channel>` and `Event
 Gateway / Consumers / <consumer>`; Docs — `Docs / <document>`.
 
-The Agent header's actions are the Details toggle and *More Agent actions*: **Stop agent**,
+The Agent header's actions are a Pin toggle and *More Agent actions*. The menu starts with
+**Show Agent details** / **Hide Agent details**, then the creation origin (§13), then **Stop agent**,
 **Export history** and **Delete agent**, with Delete unavailable until the Agent is stopped
 (*Stop this Agent before deleting it and its Worktree.*), every row unavailable while the Sandbox is
 not active, and every row held while another action is still being confirmed. These are the same
-public operations as the sidebar row menu, with the same confirmations.
+public operations as the sidebar row menu, with the same confirmations. The Agent header folds its
+breadcrumb into the title line and collapses out of the way; §13 describes it.
 
 **The browser tab is named after the view**: `<view or resource> · CMA`. Services stay mounted
 while hidden, so each view registers its name rather than writing it: the most recently registered
@@ -896,8 +898,9 @@ their own bounds; long words and links cannot widen the reading axis.
 Every user or Agent message has a 32px circular avatar beside its reading column,
 separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
 name uses caption ink at 12/18, weight 600, with 4px before the content. The Agent
-name is always **Chrono Agent**, with a bundled, static front-face capture of the
-existing §23 3D character; message rows do not start WebGL scenes. Personal user
+name is always **Chrono Agent**, and its avatar is the CMA mark (§21) drawn inline as SVG in
+`brand-primary` ink on a `bg-layer-2` circle, so it follows the appearance with no raster ground
+of its own; message rows do not start WebGL scenes. Personal user
 messages use the current signed-in display name and avatar, falling back to the
 account handle and then **You**. Missing, unsafe or failed avatar images show
 centered uppercase initials at 12/18, weight 600, on the avatar fallback aliases.
@@ -1105,9 +1108,10 @@ incomplete history and read-only access hold its actions. The draft and any othe
 active response stay visible while status observation and cancellation proceed.
 
 Responses v2 tabs offer **Queue message** beside **Stop response** while a turn
-is running, using the existing circular composer buttons. Keep both controls
-centered on the same row beside the input, with a flexible input column and two
-32px button columns (44px on mobile), separated by the existing 8px gap. Enter
+is running, as two circular buttons at the right end of the composer's control
+row. The steering chip beside the permission chip says whether that button
+queues or interrupts; it appears only while a turn runs, because outside a turn
+both modes send ordinary input. Enter
 and Trigger
 quick messages admit ordinary queued input; they do not steer the running turn.
 Keep the next draft editable while retaining the submitted snapshot until
@@ -1123,20 +1127,76 @@ local sign-in epoch changes clear the prior view before any new-account read is
 shown. A live gap discards uncommitted partial text and Thinking while preserving
 recorded messages, settled tools and the turn's original start time.
 
-The composer keeps a compact, fixed 38px desktop seat with 32px Send/Stop controls.
-The one-line input centers its 24px line vertically with 6px padding on either side.
-Below 30rem, the input and controls retain 44px targets within a 46px capsule seat.
-When the conversation column is at most 320px wide, let the capsule and its usage
-readings span the full composer width. Place steering at the left and Send/Stop
-at the right of a separate compact row, followed by the settings row. Preserve
-the 44px controls instead of squeezing the editable text between them. Initial
-conversation and composer focus must not scroll the frame while its columns animate.
-Long drafts expand upward while the capsule is hovered or focused, capped at the
-smaller of 336px and 40dvh. They collapse to one line otherwise, preserving the
-draft and selection. Expansion overlays history without moving the controls or
-conversation scrollport. Use the existing capsule background, focus treatment
-and shadow. Put Attach files on the same row and its paste/drop hint in the
-button title; thumbnail and upload status records remain visible above that row.
+The composer is **one rounded box**: radius 16, a 1px `border-l2` hairline and the
+level-1 shadow, on the floating-card ground (`--dsw-specific-menu`: white in light,
+layer 2 in dark). Focus within the box draws its hairline in the accent. The draft
+sits on top at 16/24 with the placeholder **Message Agent**; it starts at one line,
+grows with its content up to the smaller of 336px and 40dvh, then scrolls inside
+the box. The box grows upward from a stable bottom edge and never overlays history.
+Attachment thumbnails and upload records sit above the draft. Initial conversation
+and composer focus must not scroll the frame while its columns animate.
+
+The **control row** is inside the box along its bottom edge, with 32px controls
+(44px below 30rem) and 4px gaps. On the left: **Attach files** as a + icon button
+with its paste/drop hint in the title, the permission chip, and the steering chip
+while a turn runs. On the right: the model and effort chip, the context ring, and
+the Send (or Queue/Interrupt) and Stop circles. There is no settings row and no
+usage row below the box. A chip is quiet: 12/18 secondary ink, no border, radius 8,
+an interactive hover wash, a leading icon or trailing chevron. Send is a 28px
+circle (44px below 30rem): a neutral `bg-layer-3` ground with dimmed ink while
+there is nothing to send, the primary fill once the draft is ready. Below 30rem
+the permission and steering chips show only their icons and keep their names as
+accessible names; while a turn runs there the row wraps, putting the model chip,
+ring and buttons on a second line.
+
+The **permission chip** is a shield and **Guarded** or **Autonomous**, named
+*Permission mode*; it opens the shared dropdown (§12.3) with those two rows. The
+**steering chip** shows **Queue** or **Interrupt** and opens the shared dropdown
+with each mode's reason. The **model and effort chip** reads `<model> <Effort> ⌄`
+(the catalog label, else the model id) and is named *Model and reasoning effort*
+with both values. It opens a popover card drawn on the body like a dropdown list
+(§12.3): radius 12, the menu fill, an inverted hairline, the level-3 shadow,
+256px wide and nudged inside the viewport, above the chip. The card holds:
+
+- the current effort word (Minimal, Low, Medium, High, Very high) as its heading,
+  14/20 semibold in the accent ink, and at the top right a 24px reset icon button,
+  **Reset to current settings**, which returns model and effort to the Agent's
+  confirmed settings and is unavailable when they already match;
+- the model name with a `›` chevron, named *Model*, opening the shared dropdown of
+  the model catalog with each unavailable row keeping its reason; catalog loading,
+  failure (with **Retry models**), emptiness and runtime-capability notices sit
+  under it in 12/18 caption ink;
+- a discrete slider named *Reasoning effort*: a 4px rounded `bg-layer-3` track with a
+  6px dot per stop, filled in the accent up to a 16px round thumb on the
+  menu fill with an accent edge. It is operated by pointer or with the arrow keys,
+  Page Up/Down, Home and End, and announces the effort word as its value text. The
+  stops are the effort levels the settings contract accepts; the model catalog
+  reports no narrower set per model.
+
+Escape or a press outside closes the card and returns focus to the chip; Escape
+inside the open model list closes only that list.
+
+Choosing a model, effort or permission changes a **draft**: the explicit Apply
+rule, turn-idle and runtime-capability gating, and same-request recovery are
+unchanged, and changes never submit conversation input. A settings status line
+appears inside the box under the control row only when there is something to
+say, in 12/18 caption ink: **Apply settings** or **Retry settings update** as a
+compact button, *Applying settings…*, *Waiting for the runtime to confirm these
+settings.*, *Settings can be changed after the current turn finishes.*, an error,
+or the transient *Settings applied to this Agent.* (three seconds). While an
+update is pending or retained the chips stay readable but their controls hold.
+
+The **context ring** is a 20px ring in a 32px target (44px below 30rem), named
+*Context usage*. A 2.5px neutral `border-l2` track carries an accent arc drawn to
+scale of context used against the reported limit; without both figures the ring
+draws only its track, never an empty arc that reads as zero. Hover or keyboard
+focus opens a tooltip above it on the tooltip ground with inverted ink, 12/18,
+radius 8 and 8px by 10px padding, listing **Context** `<used> / <limit>` (or the
+used figure alone, or *not reported*), **Total tokens** `<input + output>` with
+`<input> input · <output> output`, and **This turn** with its input and output
+when the current turn reports usage. Figures are tabular; a missing figure reads
+*not reported*, never zero. Escape dismisses the tooltip without moving focus.
+
 Pasted screenshots use the clipboard's file items when its file list is empty;
 plain text paste retains normal editing behavior. A confirmed message includes
 both the text and the exact uploaded attachment paths for that Agent.
@@ -1149,12 +1209,29 @@ the draft. Track composition lifecycle as well as native composition flags and
 the IME key code used by Safari. Ordinary Enter sends after composition ends;
 Shift+Enter inserts a newline. Composition completion alone never sends.
 
-The conversation header labels immutable creation as Created manually, Created
-by Trigger, Created by channel bridge, or Creation origin unknown. A missing or
-refused read says Creation origin unavailable. A resolvable published Trigger
-appears separately as a native link labeled Published Trigger; later Trigger
-reuse cannot relabel an Agent. Source loading or failure does not block history
-or ordinary messages. Do not substitute internal IDs for missing display names.
+The **Agent header** is one compact line on the base ground with a bottom hairline:
+the breadcrumb's Sandbox and Workspace links, then the title as the view's `h1` at
+14/20 semibold, its status badge and the branch chip, and at the end a Pin toggle
+and *More Agent actions* (§11), 32px controls with 8px 20px padding. It is
+**collapsed by default** to a 28px strip that shows only the title in caption ink.
+Hovering the strip or moving keyboard focus into it reveals the full line as an
+overlay above the conversation, on the same ground with the level-1 shadow, so
+the conversation never moves; it fades over the shared fast duration and stays
+while the pointer, focus or an open menu is inside it. The heading stays in the
+document and focusable for the surface's focus-on-open behaviour, and Tab reaches
+the breadcrumb links and actions in the collapsed strip, which reveals it.
+**Pin header** keeps the full line in flow; **Unpin header** collapses it again.
+The choice is remembered per viewer in the browser's local storage; a storage
+read or write that fails leaves the header unpinned and never breaks the view.
+
+The More Agent actions menu labels immutable creation as Created manually, Created
+by Trigger, Created by channel bridge, or Creation origin unknown, in a heading row
+after the Details toggle. A missing or refused read says Creation origin
+unavailable. A resolvable published Trigger appears separately as a link row
+labeled **Published Trigger: <title>**; later Trigger reuse cannot relabel an
+Agent. A subscription Agent offers **Sign in to your ChatGPT subscription again**
+in the same menu. Source loading or failure does not block history or ordinary
+messages. Do not substitute internal IDs for missing display names.
 
 An unframed, wrapping row directly above the composer contains up to eight
 publisher-defined quick-message buttons. Use existing compact outline buttons,
@@ -1252,10 +1329,10 @@ with chrono-llm-public and ornn-api marked Required, and ends with **Manage on
 Sandbox**, a real link to `/sandboxes/<id>?tab=access`. **Sandbox operation
 progress** opens the same page's Activity tab.
 
-Usage and context sit below the composer with tabular figures. Missing usage is
-not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
-accessible numeric values. Without a reported ceiling, show only the known
-figure. Context-summary boundaries use neutral metadata, not failure colour.
+Usage and context are read from the composer's context ring and its tooltip, with
+tabular figures. Missing usage is not zero. Without a reported ceiling, the tooltip
+shows only the known figure. Context-summary boundaries use neutral metadata, not
+failure colour.
 
 ### Organization inventory and shared Agent views
 
@@ -2710,6 +2787,10 @@ motion tokens, reverse without jumping and stop under reduced motion.
 
 ## 26. Composer steering and individual queued messages (2026-10-16)
 
+> Superseded in part by §13 (2026-10-21): Context and Total tokens moved into the composer's
+> context ring, and the steering menu became a chip inside the composer box shown only while a
+> turn runs. The queue and its editing below are unchanged.
+
 Context and cumulative Total tokens share the composer's input column, aligning to
 its left and right edges respectively. The adjacent Send/Stop group has a stable
 seat and a compact steering-mode menu directly below it. Its choices are Interrupt
@@ -2871,6 +2952,10 @@ never an increase. Disabling spare capacity does not interrupt claimed Sandboxes
 
 ### Composer settings and message feedback (2026-10-20)
 
+> Superseded in part by §13 (2026-10-21): model and effort became one chip with a popover card and
+> a discrete effort slider, and permission became a chip, all inside the composer box; there is no
+> settings row. Timestamps and message feedback below are unchanged.
+
 Model, reasoning effort and permission mode belong with the composer, in a
 dedicated row directly below its text input at every width, rather than in Agent
 Details. Use the
@@ -2928,3 +3013,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Made New agent one step that creates the Agent where the owner asked. A Workspace's New agent used to create another Workspace in its Sandbox, so a Workspace made with New workspace could never receive an Agent; it now opens the dialog on that Workspace and sends its `workspace_id`. §12.2 specifies the Where it works choice (New Sandbox, a Sandbox's new workspace, or a Workspace; unusable rows `aria-disabled` with their reasons), repository validation on blur and submit instead of on every keystroke, the read-only Agent settings summary and the access note. The preparation section replaces the percentage circle, which read 80% with every listed step Ready, with a four-step stepper (Sandbox, Workspace, Service access, Agent startup) that is also the setup band above the conversation. |
 | 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
 | 2026-10-21 | Added one shared table (§12.6): a bordered box at radius 12 with a 40px header row, 52px rows on hairlines, a right-aligned actions column with a visually hidden header, note rows, skeleton loading and an empty row, scrolling inside its own box on narrow screens. Event Gateway channels and consumers and the Operations Sandboxes, Warm pools and Activity lists moved onto it, with status and outcome badges and SGT-labelled time columns; Operations says a missing cross-owner capability once for the page instead of on every row. Channels open on the table, endpoints gained Copy, and a 403 now says the account lacks Event Gateway permissions instead of offering sign-in again. Triggers carry their Draft, Published or Retired badge in the rail and header. Launch progress rows use state dots instead of the character, with the overall state as a badge and failures as alerts. |
+| 2026-10-21 | Rebuilt the composer as one rounded box with its controls inside: Attach files, a permission chip and, only while a turn runs, the steering chip on the left; one model and effort chip, a context ring and Send on the right. The chip opens a card with the effort word, the model list and a keyboard-operable effort slider with a reset to the confirmed settings; the explicit Apply rule is unchanged and its status sits inside the box. Context and Total tokens moved from a text row into the ring's tooltip, and a missing figure still reads not reported. The Chrono Agent avatar became the inline CMA mark on a themed circle, so light no longer shows a black square. The Agent header became one line that collapses to a 28px strip, reveals itself on hover or focus without moving the conversation and can be pinned per viewer; the Details toggle, creation origin and subscription sign-in moved into More Agent actions. |

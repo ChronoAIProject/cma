@@ -288,3 +288,57 @@ it('replaces Send with Stop while an Agent response is running', async () => {
   await actor.click(screen.getByRole('button', { name: 'Stop response' }));
   expect(onStop).toHaveBeenCalledOnce();
 });
+
+it('keeps every control inside the box and offers steering only while a turn runs', async () => {
+  const actor = userEvent.setup();
+  const onSteeringModeChange = vi.fn();
+  const draw = (running: boolean) => (
+    <Composer
+      status={running ? 'working' : 'ready'}
+      running={running}
+      queueWhileRunning
+      showUsage
+      steeringMode="queue"
+      onSteeringModeChange={onSteeringModeChange}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      uploadAttachment={vi.fn()}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />
+  );
+  const { rerender } = render(draw(false));
+  const box = screen.getByRole('textbox', { name: 'Message' }).parentElement!;
+  expect(box).toHaveClass('agent-composer__box');
+  for (const name of ['Attach files', 'Context usage', 'Send message'])
+    expect(box).toContainElement(screen.getByRole('button', { name }));
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+  rerender(draw(true));
+  const steering = screen.getByRole('button', { name: 'Steering mode: Queue' });
+  expect(box).toContainElement(steering);
+  expect(box).toContainElement(screen.getByRole('button', { name: 'Queue message' }));
+  expect(box).toContainElement(screen.getByRole('button', { name: 'Stop response' }));
+  await actor.click(steering);
+  await actor.click(screen.getByRole('menuitemradio', { name: /Interrupt/ }));
+  expect(onSteeringModeChange).toHaveBeenCalledExactlyOnceWith('interrupt');
+  rerender(draw(false));
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+});
+
+it('does not offer steering to a tab that cannot queue behind a running turn', () => {
+  render(
+    <Composer
+      status="working"
+      running
+      steeringMode="queue"
+      onSteeringModeChange={vi.fn()}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+});
