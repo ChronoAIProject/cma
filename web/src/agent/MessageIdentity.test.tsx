@@ -31,7 +31,7 @@ function draw(identity?: MessageUser) {
   );
 }
 
-it('uses one personal identity for recorded and optimistic messages and one Agent face for replay and live text', () => {
+it('uses one personal identity for recorded and optimistic messages and one Agent mark for replay and live text', () => {
   render(draw(user));
   const own = screen.getAllByRole('article', { name: 'Ada Lovelace' });
   expect(own).toHaveLength(2);
@@ -49,10 +49,17 @@ it('uses one personal identity for recorded and optimistic messages and one Agen
   expect(agents).toHaveLength(2);
   for (const row of agents) {
     expect(within(row).getByText('Chrono Agent')).toBeVisible();
-    expect(row.querySelector('img')).toHaveAttribute(
-      'src',
-      expect.stringContaining('chrono-agent-face.png'),
-    );
+    // The mark is inline SVG painted with currentColor, never a raster with its own ground.
+    const avatar = row.querySelector('.message__avatar')!;
+    expect(avatar).toHaveAttribute('aria-hidden', 'true');
+    expect(avatar.querySelector('img')).toBeNull();
+    expect(avatar.querySelector('svg')).not.toBeNull();
+    for (const painted of avatar.querySelectorAll('[fill], [stroke]')) {
+      for (const attribute of ['fill', 'stroke']) {
+        const value = painted.getAttribute(attribute);
+        if (value !== null) expect(['currentColor', 'none']).toContain(value);
+      }
+    }
     expect(row.querySelector('canvas')).toBeNull();
   }
   expect(agents[1]).toHaveAttribute('data-streaming');
