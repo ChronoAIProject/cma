@@ -79,14 +79,16 @@ describe('the retained application shell', () => {
       'aria-expanded',
       'false',
     );
-    const services = screen.getByRole('navigation', { name: 'CMA services' });
     expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+    const services = screen.getByRole('menu', { name: 'CMA services' });
     for (const name of ['Agent Manager', 'Event Gateway']) {
-      expect(within(services).getByRole('link', { name })).toHaveAttribute('href');
+      expect(within(services).getByRole('menuitemradio', { name })).toHaveAttribute('href');
     }
-    expect(
-      within(services).getByRole('button', { name: 'Image Manager (coming soon)' }),
-    ).toBeDisabled();
+    expect(within(services).getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
   });
 
   it('explains an unreachable service in plain words and offers Reload', async () => {

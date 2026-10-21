@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
 
 it.each([true, false])(
-  'retains account and hierarchy controls with the shared brand with creation %s',
+  'retains the home link, service menu, account and hierarchy controls with creation %s',
   (canCreateAgent) => {
     const draw = (collapsed: boolean, status: string) => (
       <Sidebar
@@ -24,7 +24,7 @@ it.each([true, false])(
     ] as const) {
       rerender(draw(collapsed, status));
       expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
-      expect(screen.getByLabelText(/^Build /)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Service: Agent Manager' })).toBeInTheDocument();
       expect(screen.getByText('Account')).toBeInTheDocument();
     }
     expect(screen.getByText('Active')).toBeInTheDocument();

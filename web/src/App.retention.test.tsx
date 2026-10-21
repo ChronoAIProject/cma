@@ -7,6 +7,7 @@ import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 import { agentClient } from './test/agent';
 import './test/connectedAccounts';
+import { chooseService, currentService } from './test/services';
 
 const session = {
   authenticated: true,
@@ -47,7 +48,7 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   show();
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Retain this Agent draft' } });
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  chooseService('Event Gateway');
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
   const editor = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
   fireEvent.change(editor, { target: { value: '{"name":"Retained channel","sources":[]}' } });
@@ -56,12 +57,12 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   });
   fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
   await waitFor(() => expect(writes).toHaveLength(1));
-  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  chooseService('Agent Manager');
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Retain this Agent draft');
   await act(async () => rejectWrite(new TypeError('Gateway response interrupted')));
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  chooseService('Event Gateway');
   expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(editor);
   expect(editor).toHaveValue('{"name":"Retained channel","sources":[]}');
   fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
@@ -141,29 +142,23 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   );
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep my Agent draft' } });
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  chooseService('Event Gateway');
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
   const channelDraft = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
   fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
   fireEvent.click(screen.getByRole('link', { name: 'Consumers' }));
   await screen.findByRole('heading', { name: 'Event Gateway consumers' });
   expect(window.location.pathname).toBe('/bots');
-  expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+  expect(currentService()).toBe('Service: Event Gateway');
   expect(screen.getByRole('link', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');
   fireEvent.click(await screen.findByRole('link', { name: bot.name }));
   await screen.findByRole('heading', { name: bot.name });
   expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
-  expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+  expect(currentService()).toBe('Service: Event Gateway');
   fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
   expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(channelDraft);
   expect(channelDraft).toHaveValue('Retained channel configuration');
-  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  chooseService('Agent Manager');
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Keep my Agent draft');
