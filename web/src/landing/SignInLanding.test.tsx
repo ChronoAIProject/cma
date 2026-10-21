@@ -5,35 +5,54 @@ import { SignInLanding } from './SignInLanding';
 
 afterEach(() => vi.useRealTimers());
 
-describe('the signed-out invitation', () => {
-  it('introduces all three services alongside the CMA character', () => {
+describe('the signed-out landing', () => {
+  it('says what CMA is and offers one visible primary action', () => {
     render(<SignInLanding onSignIn={vi.fn()} />);
-    for (const name of ['Agent Manager', 'Image Manager', 'Event Gateway']) {
-      expect(screen.getByRole('heading', { name })).toBeInTheDocument();
-    }
-    expect(screen.getByRole('complementary', { name: 'CMA services' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'ChronoAI Managed Agent' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Run coding agents in the cloud. Nothing to install.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Get Started' })).toBeEnabled();
+    expect(screen.getByText('Sign in with NyxID. You’ll come straight back.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'See how it works' })).toHaveAttribute(
+      'href',
+      '#sign-in-landing-how',
+    );
   });
 
-  it('reveals the cloud after five seconds, not glasses lettering', () => {
+  it('never names the agent provider in its branding', () => {
+    const { container } = render(<SignInLanding onSignIn={vi.fn()} />);
+    expect(container.textContent).not.toMatch(/codex/i);
+  });
+
+  it('introduces the services, marking Image Manager as not yet available', () => {
+    render(<SignInLanding onSignIn={vi.fn()} />);
+    const services = screen.getByRole('region', {
+      name: 'One console for your Agents and what feeds them',
+    });
+    for (const name of ['Agent Manager', 'Event Gateway']) {
+      expect(screen.getByRole('button', { name: `Open ${name}` })).toBeEnabled();
+    }
+    expect(services).toHaveTextContent('Image Manager Coming soon');
+    expect(screen.queryByRole('button', { name: 'Open Image Manager' })).not.toBeInTheDocument();
+  });
+
+  it('explains how it works in three ordered steps', () => {
+    render(<SignInLanding onSignIn={vi.fn()} />);
+    const how = screen.getByRole('region', { name: 'One Agent, one Worktree, one conversation' });
+    expect(how.querySelectorAll('ol > li')).toHaveLength(3);
+  });
+
+  it('keeps the character as a companion rather than the way in', () => {
     vi.useFakeTimers();
     render(<SignInLanding onSignIn={vi.fn()} />);
-    const character = screen.getByRole('button', { name: 'Get Started' });
-    expect(character).not.toHaveAttribute('data-invitation');
-    act(() => vi.advanceTimersByTime(4_999));
-    expect(character).not.toHaveAttribute('data-invitation');
-    act(() => vi.advanceTimersByTime(1));
-    expect(character).toHaveAttribute('data-invitation');
-    expect(screen.getByText('Click to start...')).toBeInTheDocument();
-    expect(screen.queryByText('Get')).not.toBeInTheDocument();
-    expect(screen.queryByText('Started')).not.toBeInTheDocument();
-  });
-
-  it.each(['hover', 'focus'])('reveals immediately on %s', (interaction) => {
-    render(<SignInLanding onSignIn={vi.fn()} />);
-    const character = screen.getByRole('button', { name: 'Get Started' });
-    if (interaction === 'hover') fireEvent.pointerEnter(character);
-    else fireEvent.focus(character);
-    expect(character).toHaveAttribute('data-invitation');
+    act(() => vi.advanceTimersByTime(5_000));
+    expect(screen.queryByText('Click to start...')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Spin CMA character' })).not.toHaveAttribute(
+      'data-activation',
+    );
   });
 
   it('does not add invitations or activation to signed-in characters', () => {
@@ -48,15 +67,26 @@ describe('the signed-out invitation', () => {
     expect(screen.queryByText('Click to start...')).not.toBeInTheDocument();
   });
 
-  it('starts fallback sign-in only once after the fade', async () => {
+  it('starts sign-in only once after the fade and announces it', async () => {
     vi.useFakeTimers();
     const signIn = vi.fn().mockResolvedValue(undefined);
     render(<SignInLanding onSignIn={signIn} />);
-    const character = screen.getByRole('button', { name: 'Get Started' });
-    fireEvent.click(character);
-    fireEvent.click(character);
+    const start = screen.getByRole('button', { name: 'Get Started' });
+    fireEvent.click(start);
+    fireEvent.click(start);
+    expect(screen.getByRole('status')).toHaveTextContent('Opening NyxID sign-in…');
     await act(() => vi.advanceTimersByTimeAsync(200));
     expect(signIn).toHaveBeenCalledTimes(1);
+    expect(signIn).toHaveBeenCalledWith(undefined);
+  });
+
+  it('returns a service card to its own service after sign-in', async () => {
+    vi.useFakeTimers();
+    const signIn = vi.fn().mockResolvedValue(undefined);
+    render(<SignInLanding onSignIn={signIn} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Event Gateway' }));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(signIn).toHaveBeenCalledWith('/event-gateway');
   });
 
   it('restores a usable retry when sign-in fails', async () => {
@@ -69,6 +99,7 @@ describe('the signed-out invitation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
     await act(() => vi.advanceTimersByTimeAsync(200));
     expect(screen.getByRole('alert')).toHaveTextContent('Sign-in could not be started.');
+    expect(screen.getByRole('button', { name: 'Get Started' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await act(() => vi.advanceTimersByTimeAsync(200));
     expect(signIn).toHaveBeenCalledTimes(2);
