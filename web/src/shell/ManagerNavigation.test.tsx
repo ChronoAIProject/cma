@@ -50,11 +50,11 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
-  await user.click(screen.getByRole('button', { name: 'Collapse Sandbox Machine - 1' }));
+  await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
   await user.click(screen.getByRole('button', { name: 'Agent' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
   await user.click(screen.getByRole('button', { name: 'Sandbox' }));
-  expect(screen.getByRole('button', { name: 'Expand Sandbox Machine - 1' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Expand Atlas' })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
