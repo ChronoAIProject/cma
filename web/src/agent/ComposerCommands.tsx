@@ -129,7 +129,7 @@ function ComposerCommands({
       ref={panel}
       id={id}
       role="listbox"
-      aria-label="Codex session commands"
+      aria-label="Agent commands"
       className="composer-commands"
       style={{ visibility: 'hidden' }}
       {...presenceAttributes(exiting)}

@@ -18,7 +18,7 @@ const permissions = {
 
 it.each([
   ['chronoai_managed', 'Chrono LLM (public)'],
-  ['own_credentials', 'My Codex subscription'],
+  ['own_credentials', 'Your ChatGPT subscription'],
 ] as const)(
   'shows pinned %s providers without reading an internal profile',
   async (access, label) => {
@@ -62,8 +62,9 @@ it.each([
       />,
     );
     await act(async () => {});
-    expect(screen.getByText('Agent provider').parentElement).toHaveTextContent('Codex');
-    expect(screen.getByText('Codex provider').parentElement).toHaveTextContent(label);
+    expect(screen.getByText('Model access').parentElement).toHaveTextContent(label);
+    // The agent provider is never named in CMA copy.
+    expect(document.body.textContent).not.toMatch(/codex/i);
     expect(screen.queryByText('Unavailable')).not.toBeInTheDocument();
     expect(screen.queryByText(/Agent access settings could not be loaded/)).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
@@ -95,7 +96,7 @@ it('retains the pinned revision fallback for older Sandbox detail responses', as
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByText('My Codex subscription')).toBeInTheDocument();
+  expect(await screen.findByText('Your ChatGPT subscription')).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0]?.[0]).toBe('/api/v1/sandbox-profiles/profile-1/revisions/1');
 });

@@ -12,6 +12,8 @@ import { foldLiveEvent, type ConversationState } from '../agent/conversation';
 import { useAgentProvenance, creationLabel } from '../agent/provenance';
 import { Button } from '../ui/Button';
 import { AgentHeader } from '../agent/AgentHeader';
+import { routePath, type AppRoute } from '../routing/routes';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { ActiveThinking } from '../agent/ActiveThinking';
 import type { ApprovalDecision } from '../agent/controller';
 import { agentDisplayTitle } from '../agent/presentation';
@@ -24,6 +26,7 @@ interface Props {
   readonly onAccessChanged: () => void;
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
+  readonly onNavigate?: (route: AppRoute) => void;
 }
 
 export function SharedAgent({
@@ -33,15 +36,11 @@ export function SharedAgent({
   onAccessChanged,
   detailsOpen,
   onDetailsOpenChange,
+  onNavigate,
 }: Props) {
   const agentId = detail.id;
   const title = agentDisplayTitle(detail);
-  useEffect(() => {
-    document.title = `${title} · CMA`;
-    return () => {
-      document.title = 'CMA';
-    };
-  }, [title]);
+  useDocumentTitle(title);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {
@@ -164,7 +163,17 @@ export function SharedAgent({
       <AgentHeader
         title={title}
         status={status}
-        lineage={<span>Agent</span>}
+        // A shared reader is authorized for this Agent, not for its parents,
+        // so the breadcrumb names only the place it was opened from.
+        breadcrumb={[
+          {
+            label: 'Agent Manager',
+            href: routePath({ kind: 'agent_manager' }),
+            onSelect:
+              onNavigate === undefined ? undefined : () => onNavigate({ kind: 'agent_manager' }),
+          },
+          { label: title },
+        ]}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={onDetailsOpenChange}
       >

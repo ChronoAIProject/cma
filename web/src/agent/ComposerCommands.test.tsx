@@ -76,7 +76,7 @@ it('keeps unsupported commands as drafts instead of sending ordinary model text'
   await user.type(field, '/unsupported argument{Enter}');
   expect(onSend).not.toHaveBeenCalled();
   expect(field).toHaveValue('/unsupported argument');
-  expect(screen.getByRole('alert')).toHaveTextContent('not available in this Codex session');
+  expect(screen.getByRole('alert')).toHaveTextContent('not available for this Agent');
   await user.clear(field);
   await user.type(field, 'Explain /unsupported and /tmp/files{Enter}');
   expect(onSend).toHaveBeenCalledExactlyOnceWith(

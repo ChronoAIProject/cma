@@ -112,15 +112,6 @@
 .gateway-detail header {
   margin-bottom: var(--space-6);
 }
-.gateway-detail h1,
-.gateway-empty h1 {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-page);
-}
-.gateway-detail header p,
-.gateway-empty p {
-  color: var(--dsw-alias-label-secondary);
-}
 .gateway-detail__section {
   margin-block: var(--space-6);
 }
