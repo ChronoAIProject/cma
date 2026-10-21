@@ -21,8 +21,8 @@ and `infra/cmaeg/Dockerfile`, not overrideable build arguments.
 | Upstream commit | `83d9cd684c87d95d656c1458ef04895a7f1cbd8e` |
 | Source archive SHA-256 | `6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115` |
 | Embedded `config/gitleaks.toml` SHA-256 | `e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf` |
-| Go toolchain | `1.26.9` |
-| Go builder | `golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c` |
+| Go toolchain | `1.26.10` |
+| Go builder | `golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0` |
 | Resolved `go.mod` SHA-256 | `0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675` |
 | Resolved `go.sum` SHA-256 | `c1f21f073cc203c7678f230b9cb14131a25729f3e2fdbd73475d0de44be5711e` |
 
@@ -35,6 +35,7 @@ Linux amd64; the web image also targets Linux arm64.
 The only explicit dependency requests are `golang.org/x/crypto@v0.55.0`,
 `golang.org/x/text@v0.41.0`, and `github.com/klauspost/compress@v1.18.7`.
 The compress pin fixes CVE-2026-63209 in the upstream `v1.17.11` dependency.
+Go 1.26.10 fixes the crypto/x509 standard-library advisory CVE-2026-111943.
 Go's module resolver raises the source language floor
 from `1.24.11` to `1.25.0` and selects `x/sys v0.47.0` and `x/sync v0.22.0` for
 existing requirements. Crypto also requires `x/net v0.57.0` and `x/term v0.45.0`;
