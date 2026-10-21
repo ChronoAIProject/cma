@@ -3,6 +3,42 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/files/tree': ({ client, param, query }) =>
+    client.agentFiles.list(param('id'), query.get('path') ?? ''),
+  'GET /api/v1/agents/{id}/files/content': ({ client, param, query }) =>
+    client.agentFiles.read(param('id'), query.get('path') ?? '', {
+      maxBytes: query.has('max_bytes') ? Number(query.get('max_bytes')) : undefined,
+    }),
+  'GET /api/v1/agents/{id}/files/download': async ({ client, param, query }) =>
+    new TextDecoder('utf-8', { fatal: true }).decode(
+      await client.agentFiles.download(param('id'), query.get('path') ?? ''),
+    ),
+  'POST /api/v1/agents/{id}/files': ({ client, param, body }) =>
+    client.agentFiles.write(param('id'), body),
+  'DELETE /api/v1/agents/{id}/files': ({ client, param, query }) =>
+    client.agentFiles.remove(
+      param('id'),
+      query.get('path') ?? '',
+      query.get('recursive') === 'true',
+    ),
+  'GET /api/v1/agents/{id}/share-links': ({ client, param }) =>
+    client.resourceAccess.listAgentShareLinks(param('id')),
+  'POST /api/v1/agents/{id}/share-links': ({ client, param, body, command }) =>
+    client.resourceAccess.createAgentShareLink(param('id'), body, command),
+  'DELETE /api/v1/agents/{id}/share-links/{share_id}': ({ client, param, query, command }) =>
+    client.resourceAccess.revokeAgentShareLink(
+      param('id'),
+      param('share_id'),
+      Number(query.get('expected_revision')),
+      command,
+    ),
+  'GET /api/v1/agents/{id}/share-recipients': ({ client, param, query }) =>
+    client.resourceAccess.shareRecipients(param('id'), query.get('q') ?? ''),
+  'POST /api/v1/agent-share-links/{share_id}/redeem': ({ client, param, body }) =>
+    client.resourceAccess.redeemAgentShareLink(
+      param('share_id'),
+      (body as { token: string }).token,
+    ),
   'POST /api/v1/agents/{id}/attachments': async ({
     client,
     param,

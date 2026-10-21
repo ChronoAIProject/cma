@@ -13,6 +13,38 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    (
+        "filesystem-tree-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-content-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-download-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-delete-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-delete-reject-invalid-recursive",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-content-reject-invalid-max-bytes",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-write-reject-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-write-reject-malformed-json",
+        Classification::RawJson,
+    ),
     ("admin-runtime-update-invalid-json", Classification::RawJson),
     ("attachment-invalid-name", Classification::Local),
     ("attachment-missing-key", Classification::Local),
@@ -992,6 +1024,10 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/agents/{id}/files/tree"
+                | "GET /api/v1/agents/{id}/files/content"
+                | "GET /api/v1/agents/{id}/files/download"
+                | "DELETE /api/v1/agents/{id}/files" => &["path", "max_bytes", "recursive"],
                 "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
                 "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
                 "GET /api/v2/agents/{agent_id}/queued-inputs" => &["after", "limit"],

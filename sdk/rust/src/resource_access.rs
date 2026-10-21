@@ -396,14 +396,12 @@ impl ResourceAccess<'_> {
         &self,
         share_id: &str,
         token: &str,
-        key: &IdempotencyKey,
     ) -> Result<AgentShareLink> {
         self.client
-            .command(
+            .operation(
                 Method::POST,
                 &["agent-share-links", share_id, "redeem"],
                 Some(&serde_json::json!({"token":token})),
-                key,
                 StatusCode::OK,
             )
             .await
