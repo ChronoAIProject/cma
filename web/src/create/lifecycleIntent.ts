@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from '../api/client';
 import type {
@@ -81,6 +81,8 @@ export function useLifecycleIntent(
   workspaceId?: string,
   sandboxId?: string,
 ) {
+  const scope = JSON.stringify([owner ?? null, workspaceId ?? null, sandboxId ?? null]);
+  const [loadedScope, setLoadedScope] = useState(scope);
   const [saved, setSaved] = useState(() => load(owner, workspaceId, sandboxId));
   const current = useRef(saved.intent);
   const active = useRef<AbortController | undefined>(undefined);
@@ -89,7 +91,23 @@ export function useLifecycleIntent(
   const [operation, setOperation] = useState<AgentLifecycleOperationView>();
   const [connection, setConnection] = useState<AgentLifecycleOperationView['connection']>();
   const [pollVersion, setPollVersion] = useState(0);
-  useEffect(() => () => active.current?.abort(), []);
+  if (loadedScope !== scope) {
+    // Another location is another retained request with its own slot. Read
+    // that slot and drop every observation of the previous one; nothing from
+    // one location may be shown as, or resubmitted for, another.
+    setLoadedScope(scope);
+    setSaved(load(owner, workspaceId, sandboxId));
+    setPending(false);
+    setFailure(undefined);
+    setOperation(undefined);
+    setConnection(undefined);
+  }
+  useLayoutEffect(() => {
+    current.current = saved.intent;
+  }, [saved.intent]);
+  // An unsettled request belongs to the scope that sent it. Leaving that scope
+  // abandons only its response; its key stays retained there for recovery.
+  useEffect(() => () => active.current?.abort(), [scope]);
   const retain = (intent?: Intent) => {
     try {
       if (!owner) throw new Error();
