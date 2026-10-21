@@ -103,6 +103,48 @@ describe('Trigger publisher flow', () => {
     expect(navigate).toHaveBeenCalledWith({ kind: 'trigger_embed', triggerId: published.id });
   });
 
+  it.each([
+    ['draft', 'Draft', 'muted'],
+    ['published', 'Published', 'neutral'],
+    ['retired', 'Retired', 'muted'],
+  ] as const)(
+    'marks a %s Trigger with its badge in the rail and the header',
+    async (availability, word, tone) => {
+      const document = { ...published, availability };
+      const fixture = publisherFixture(document);
+      render(
+        <TriggerPublisherPage
+          client={fixture.client}
+          triggerId={document.id}
+          view="embed"
+          onNavigate={vi.fn()}
+        />,
+      );
+      const link = await screen.findByRole('link', { name: /trureturing/ });
+      expect(within(link).getByText(word).closest('.badge')).toHaveAttribute('data-tone', tone);
+      const header = screen.getByRole('heading', { name: 'Triggers' }).closest('header')!;
+      expect(within(header).getByText(word).closest('.badge')).toHaveAttribute('data-tone', tone);
+      expect(within(link).queryByText(availability)).not.toBeInTheDocument();
+    },
+  );
+
+  it('names no status in the header while authoring a new Trigger', async () => {
+    const fixture = publisherFixture(published);
+    render(<TriggerPublisherPage client={fixture.client} onNavigate={vi.fn()} />);
+    await screen.findByRole('link', { name: /trureturing/ });
+    const header = screen.getByRole('heading', { name: 'Triggers' }).closest('header')!;
+    expect(header.querySelector('.badge')).toBeNull();
+  });
+
+  it('reports a list that could not be read as an alert with Try again', async () => {
+    const fixture = publisherFixture();
+    fixture.triggers.list.mockRejectedValueOnce(new TypeError('offline'));
+    render(<TriggerPublisherPage client={fixture.client} onNavigate={vi.fn()} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Triggers could not be loaded.');
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeEnabled();
+  });
+
   it('publishes the trureturing setup in five steps with pinned payloads and API README/HTML snippets', async () => {
     const user = userEvent.setup();
     const test = publisherFixture();

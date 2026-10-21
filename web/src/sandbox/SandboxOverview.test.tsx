@@ -3,18 +3,35 @@ import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
 import { createRestWebClient } from '../api/rest';
 import { WIRE_SANDBOX_DETAIL, wireRevision } from '../test/rest';
+import type { CmaWebClient } from '../api/client';
+import type { SandboxDetail } from '../api/types';
 import { SandboxOverview } from './SandboxOverview';
+import { useSandboxContents } from './useSandboxContents';
 
-const permissions = {
-  createWorkspace: false,
-  createAgent: false,
-  pauseSandbox: false,
-  deleteSandbox: false,
-  removeWorkspace: false,
-  stopAgent: false,
-  deleteAgent: false,
-  exportHistory: false,
-};
+/** The Overview tab as the Sandbox page feeds it: from the shared contents read. */
+function Overview({
+  client,
+  sandbox,
+}: {
+  readonly client: CmaWebClient;
+  readonly sandbox: SandboxDetail;
+}) {
+  const { settings, settingsLoaded, contents, retry } = useSandboxContents({
+    client,
+    sandbox,
+    readEnabled: true,
+  });
+  return (
+    <SandboxOverview
+      sandbox={sandbox}
+      contents={contents}
+      settings={settings}
+      settingsLoaded={settingsLoaded}
+      onRetry={retry}
+      busy={false}
+    />
+  );
+}
 
 it.each([
   ['chronoai_managed', 'Chrono LLM (public)'],
@@ -51,16 +68,7 @@ it.each([
     const client = createRestWebClient(sdk);
     const sandbox = await client.readSandbox('sandbox-1');
     fetch.mockClear();
-    render(
-      <SandboxOverview
-        client={client}
-        sandbox={sandbox}
-        permissions={permissions}
-        busy={false}
-        onAction={vi.fn()}
-        onNavigate={vi.fn()}
-      />,
-    );
+    render(<Overview client={client} sandbox={sandbox} />);
     await act(async () => {});
     expect(screen.getByText('Model access').parentElement).toHaveTextContent(label);
     // The agent provider is never named in CMA copy.
@@ -86,16 +94,7 @@ it('retains the pinned revision fallback for older Sandbox detail responses', as
   const client = createRestWebClient(createClient({ fetch }));
   const sandbox = await client.readSandbox('sandbox-1');
   fetch.mockClear();
-  render(
-    <SandboxOverview
-      client={client}
-      sandbox={sandbox}
-      permissions={permissions}
-      busy={false}
-      onAction={vi.fn()}
-      onNavigate={vi.fn()}
-    />,
-  );
+  render(<Overview client={client} sandbox={sandbox} />);
   expect(await screen.findByText('Your ChatGPT subscription')).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0]?.[0]).toBe('/api/v1/sandbox-profiles/profile-1/revisions/1');

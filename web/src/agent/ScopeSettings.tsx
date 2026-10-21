@@ -161,10 +161,7 @@ export function ScopeSettings({
         replace
         disabled={pending || !!intent || !!saved.error || !owner}
       />
-      <p>
-        Save updates the shared key for every Agent in this Sandbox without restarting their
-        sessions.
-      </p>
+      <p>Save updates the shared key for every Agent in this Sandbox without restarting them.</p>
       {detail.sandbox.status === 'paused' ? (
         <p>The Sandbox is paused. Saved access will be applied when you resume it.</p>
       ) : null}
@@ -212,6 +209,7 @@ export function ScopeSettings({
         <p role="status">Updating the key and notifying your Agent…</p>
       ) : null}
       <Button
+        variant="primary"
         disabled={
           pending ||
           !owner ||

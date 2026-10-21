@@ -89,42 +89,36 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-.operator-records {
-  border-top: 1px solid var(--dsw-alias-border-l2);
+.operator-table {
+  margin-top: 16px;
 }
-.operator-record {
-  display: grid;
-  grid-template-columns: 190px minmax(0, 1fr) auto;
-  gap: 16px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-}
-.operator-record time {
-  color: var(--dsw-alias-label-caption);
-  font: var(--dsw-font-xxs-12);
+.operator-table time {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.operator-record p {
-  margin: 0 0 8px;
+.operator-notices {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
 }
-.operator-record code,
+.operator-name {
+  display: block;
+  font-weight: 500;
+}
+.operator-id,
 .operator-detail code,
 .operator-failure code {
   overflow-wrap: anywhere;
   font-size: 12px;
 }
-.operator-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+.operator-id {
   color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xs-13);
+  font-family: var(--ds-font-family-code);
 }
 .operator-state {
   text-transform: capitalize;
   font-weight: 500;
 }
-.operator-empty,
 .operator-notice {
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-s-14);
@@ -247,18 +241,8 @@
 .operator-conflict p {
   margin: 0 0 12px;
 }
-.operator-record > *,
 .operator-default-picker .operator-actions > .input {
   min-width: 0;
-}
-.operator-record p {
-  overflow-wrap: anywhere;
-}
-@media (max-width: 64rem) {
-  .operator-record {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
 }
 @media (max-width: 30rem) {
   .operator-header,
