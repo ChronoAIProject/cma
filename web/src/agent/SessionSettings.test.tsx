@@ -1,4 +1,4 @@
-import { chooseOptionValue } from '../test/select';
+import { chooseOptionValue, openedOptions } from '../test/select';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -34,7 +34,7 @@ it('loads actual settings and retains the same update body and key after an unce
   const model = await screen.findByLabelText('Model');
   expect(model).toHaveTextContent('GPT-6');
   expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('High');
-  expect(screen.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  expect(screen.getByLabelText('Permission mode')).toHaveTextContent('Autonomous');
   await chooseOptionValue(
     userEvent.setup(),
     screen.getByRole('button', { name: 'Reasoning effort' }),
@@ -314,4 +314,30 @@ it('refreshes capability after a turn and preserves reasoning edits when a model
   await screen.findByText('Settings applied to this Agent.');
   expect(update.mock.calls[0]?.[1]).toEqual({ ...defaults, reasoning_effort: 'medium' });
   expect(readModels.mock.calls.length).toBeGreaterThanOrEqual(3);
+});
+it('names the permission modes Guarded and Autonomous while sending the unchanged wire values', async () => {
+  const update = vi.fn().mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
+  const client = agentClient({
+    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }],
+    readAgentSettings: async () => defaults,
+    updateAgentSettings: update,
+  });
+  render(
+    <CmaClientProvider client={client}>
+      <SessionSettings agentId="agent-one" active busy={false} compact />
+    </CmaClientProvider>,
+  );
+  await screen.findByLabelText('Model');
+  const actor = userEvent.setup();
+  expect(await openedOptions(actor, 'Permission mode')).toEqual(['Guarded', 'Autonomous']);
+  await actor.keyboard('{Escape}');
+  await chooseOptionValue(
+    actor,
+    screen.getByRole('button', { name: 'Permission mode' }),
+    'guarded',
+  );
+  expect(screen.getByRole('button', { name: 'Permission mode' })).toHaveTextContent('Guarded');
+  await actor.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update.mock.calls[0]?.[1]).toEqual({ ...defaults, permission_mode: 'guarded' });
 });

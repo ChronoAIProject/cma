@@ -9,6 +9,7 @@ const conversation: ConversationState = {
   toolCalls: [],
   reasoning: [],
   approvals: [],
+  plans: [],
   recovery: [],
   cursor: 0,
 };

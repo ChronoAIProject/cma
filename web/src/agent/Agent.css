@@ -188,16 +188,6 @@
   line-height: 18px;
 }
 
-.approval__eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
-}
-
 .message p,
 .agent-event p {
   font-size: 16px;
@@ -304,8 +294,7 @@
   border-radius: 7px;
 }
 
-.agent-event summary,
-.agent-event--tool {
+.agent-event summary {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -317,93 +306,18 @@
   cursor: pointer;
 }
 
-.agent-event summary > span,
-.agent-event--tool span {
+.agent-event summary > span {
   margin-left: auto;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
-.agent-event > p,
-.agent-event--tool p {
+.agent-event > p {
   padding: 0 12px 12px;
   color: var(--dsw-alias-label-secondary);
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 19px;
-}
-
-.agent-event--tool > svg {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.agent-event.agent-event--tool {
-  align-items: flex-start;
-  padding: 12px;
-  margin: 0 0 16px;
-  border-radius: 8px;
-}
-
-.agent-event--tool > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px 8px;
-  align-items: start;
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-event--tool strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool span {
-  margin-left: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool p {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
-.approval {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 16px 0;
-  padding: 14px;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-state-warn-secondary);
-  border-radius: 8px;
-}
-
-.approval h2 {
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.approval p {
-  margin-top: 3px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-}
-
-.approval__actions {
-  display: flex;
-  flex: none;
-  gap: 4px;
-}
-
-.approval__decision {
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: capitalize;
 }
 
 .message-stream__usage {
@@ -577,17 +491,6 @@
 
   .message {
     max-width: 96%;
-  }
-
-  .approval {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .approval__actions .button {
-    flex: 1;
-    min-height: 44px;
-    max-height: 44px;
   }
 
   .agent-composer {
