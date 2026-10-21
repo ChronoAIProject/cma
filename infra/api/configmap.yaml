@@ -59,6 +59,11 @@ data:
   CHRONO_AUTH_MODE: "provider"
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
+  # Existing NyxID signed service identity; enable the CMA catalog connection's
+  # jwt propagation with audience equal to CHRONO_SERVER_PUBLIC_URL.
+  CHRONO_NYXID_PROXY_ENABLED: "true"
+  CHRONO_NYXID_PROXY_ISSUER: "https://nyx-api.chrono-ai.fun"
+  CHRONO_NYXID_PROXY_JWKS_URL: "https://nyx-api.chrono-ai.fun/.well-known/jwks.json"
   # Request-bound read proofs require coordinated NyxID issuance activation.
   # Existing browser and ordinary API-key authentication do not use this flag.
   CHRONO_NYXID_RESOURCE_REQUEST_ENABLED: "false"

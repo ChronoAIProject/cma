@@ -1,10 +1,10 @@
 # Secret Scanner Build
 
 The API image contains a **CMA security rebuild of Gitleaks 8.30.1**, not the
-untouched upstream release binary. The upstream release's Go standard library
-`golang.org/x/crypto`, `golang.org/x/text` and `github.com/klauspost/compress`
-versions failed the strict image
-vulnerability gate. The rebuild preserves upstream source, embedded default
+untouched upstream release binary. The upstream release's Go standard library,
+`golang.org/x/crypto`, `golang.org/x/text`, and `github.com/klauspost/compress`
+versions failed the strict image vulnerability gate. The rebuild preserves
+upstream source, embedded default
 rules, regex implementation, and version output while updating those build
 inputs. It does not add scanner configuration, ignore entries, or policy
 exceptions. The Rust scanner's bounded, fully redacted stdin protocol and exact
@@ -12,8 +12,8 @@ version check are unchanged.
 
 ## Reviewed Inputs
 
-All artifact and dependency pins are literal values in `infra/api/Dockerfile`,
-not overrideable build arguments.
+All artifact and dependency pins are literal values in `infra/api/Dockerfile`
+and `infra/cmaeg/Dockerfile`, not overrideable build arguments.
 
 | Input | Pin |
 | --- | --- |
@@ -33,8 +33,10 @@ Linux architectures accepted by the scanner stage. Current API delivery targets
 Linux amd64; the web image also targets Linux arm64.
 
 The only explicit dependency requests are `golang.org/x/crypto@v0.55.0`,
-`golang.org/x/text@v0.41.0` and `github.com/klauspost/compress@v1.18.7` (CVE-2026-63209,
-HIGH, fixed in 1.18.7; upstream pins 1.17.11). Go's module resolver raises the source language floor
+`golang.org/x/text@v0.41.0`, and `github.com/klauspost/compress@v1.18.7`.
+The compress pin fixes CVE-2026-63209 in the upstream `v1.17.11` dependency.
+Go 1.26.10 fixes the crypto/x509 standard-library advisory CVE-2026-111943.
+Go's module resolver raises the source language floor
 from `1.24.11` to `1.25.0` and selects `x/sys v0.47.0` and `x/sync v0.22.0` for
 existing requirements. Crypto also requires `x/net v0.57.0` and `x/term v0.45.0`;
 text declares `x/tools v0.48.0` and `x/mod v0.38.0` in its graph. No blanket

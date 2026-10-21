@@ -13,6 +13,7 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("admin-runtime-update-invalid-json", Classification::RawJson),
     ("attachment-invalid-name", Classification::Local),
     ("attachment-missing-key", Classification::Local),
     ("agent-skills-install-invalid-id", Classification::Local),
