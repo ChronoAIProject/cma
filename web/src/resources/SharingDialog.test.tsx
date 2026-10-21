@@ -1,12 +1,26 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { createClient, type ResourceShare } from '@chronoai/cma-sdk';
-import { SharingButton } from './SharingButton';
+import type { ResourceViewsClient } from './client';
+import { SharingDialog, useSharingAllowed } from './SharingDialog';
 
 const sandbox = { kind: 'sandbox', id: 'sbx_own', name: 'Research Sandbox' } as const;
 const at = '2026-09-01T00:00:00Z';
 const actor = { kind: 'human', subject: 'owner' } as const;
+
+/** The Sandbox page's composition: an entry shown only with authority, and the dialog. */
+function SharingEntry({ client }: { readonly client: ResourceViewsClient }) {
+  const allowed = useSharingAllowed(client, sandbox);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {allowed ? <button onClick={() => setOpen(true)}>Sharing</button> : null}
+      <SharingDialog client={client} target={sandbox} open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
 
 function fixture() {
   const state = {
@@ -77,7 +91,7 @@ function fixture() {
     });
   });
   const client = createClient({ baseUrl: 'https://fixture.invalid', fetch });
-  const show = () => render(<SharingButton client={client} target={sandbox} />);
+  const show = () => render(<SharingEntry client={client} />);
   const open = async () => {
     const view = show();
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Sharing' }));
@@ -96,6 +110,14 @@ it('does not expose sharing controls or request grants for a recipient', async (
   expect(test.fetch.mock.calls.every(([url]) => String(url).includes('/resource-access/'))).toBe(
     true,
   );
+});
+
+it('offers no sharing entry while there is no resource client to check authority', async () => {
+  function Probe() {
+    return <p>{useSharingAllowed(undefined, sandbox) ? 'Allowed' : 'Not allowed'}</p>;
+  }
+  render(<Probe />);
+  expect(await screen.findByText('Not allowed')).toBeInTheDocument();
 });
 
 it('always shares the whole Sandbox and requires explicit acknowledgement', async () => {
