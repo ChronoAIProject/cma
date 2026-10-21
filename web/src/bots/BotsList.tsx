@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { AppRoute } from '../routing/routes';
 import { ResourceLink } from '../resources/ResourceLink';
 import { Button } from '../ui/Button';
@@ -21,18 +23,25 @@ export function BotsList({
   );
   const current = useBotRead(read);
   const page = current.value;
+  useDocumentTitle('Consumers');
   return (
     <section aria-labelledby="bots-title">
-      <header className="bots__header">
-        <h1 id="bots-title">Event Gateway consumers</h1>
-        <p>Choose an Event Gateway connection and configure the Agent that handles its messages.</p>
-        <div className="bots__actions">
-          <Button onClick={current.reload}>Refresh consumers</Button>
-          <Button variant="primary" onClick={() => onNavigate({ kind: 'bot_new' })}>
-            New consumer
-          </Button>
-        </div>
-      </header>
+      <div className="bots__header">
+        <PageHeader
+          breadcrumb={[{ label: 'Event Gateway' }, { label: 'Consumers' }]}
+          title="Consumers"
+          headingId="bots-title"
+          description="Choose an Event Gateway connection and configure the Agent that handles its messages."
+          actions={
+            <>
+              <Button onClick={current.reload}>Refresh consumers</Button>
+              <Button variant="primary" onClick={() => onNavigate({ kind: 'bot_new' })}>
+                New consumer
+              </Button>
+            </>
+          }
+        />
+      </div>
       <div className="bots__body">
         {current.error === undefined ? null : <p role="alert">{current.error}</p>}
         {page === undefined && current.error === undefined ? (

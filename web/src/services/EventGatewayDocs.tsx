@@ -1,4 +1,6 @@
 import { memo } from 'react';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AppRoute } from '../routing/routes';
@@ -212,10 +214,14 @@ const DocumentSection = memo(function DocumentSection({
   );
 });
 export function DocsIndex({ onNavigate }: { readonly onNavigate?: (route: AppRoute) => void }) {
+  useDocumentTitle('Docs');
   return (
     <section className="gateway-docs-index">
-      <h1>Docs</h1>
-      <p>Guides and references for building with CMA.</p>
+      <PageHeader
+        breadcrumb={[{ label: 'Docs' }]}
+        title="Docs"
+        description="Guides and references for building with CMA."
+      />
       <a
         className="gateway-docs-index__link"
         href="/docs/event-gateway"
@@ -240,23 +246,42 @@ export function DocsIndex({ onNavigate }: { readonly onNavigate?: (route: AppRou
     </section>
   );
 }
-export function EventGatewayDocs() {
+export function EventGatewayDocs({
+  onNavigate,
+}: { readonly onNavigate?: (route: AppRoute) => void } = {}) {
+  useDocumentTitle('Event Gateway Protocol');
   return (
     <div className="gateway-docs">
-      <header className="gateway-docs__header">
-        <h1>Event Gateway Protocol</h1>
-        <p>
-          Connect event sources to agents. Build channels, integrate providers and deliver replies
-          using one gateway.
-        </p>
-        <a className="service-link" href={download} download="agent-event-gateway.md">
-          Download document
-        </a>
-        {' · '}
-        <a className="service-link" href="/event-gateway/openapi.json">
-          OpenAPI JSON
-        </a>
-      </header>
+      <div className="gateway-docs__header">
+        <PageHeader
+          breadcrumb={[
+            {
+              label: 'Docs',
+              href: '/docs',
+              onSelect: onNavigate === undefined ? undefined : () => onNavigate({ kind: 'docs' }),
+            },
+            { label: 'Event Gateway Protocol' },
+          ]}
+          title="Event Gateway Protocol"
+          description={
+            <>
+              <p>
+                Connect event sources to agents. Build channels, integrate providers and deliver
+                replies using one gateway.
+              </p>
+              <p>
+                <a className="service-link" href={download} download="agent-event-gateway.md">
+                  Download document
+                </a>
+                {' · '}
+                <a className="service-link" href="/event-gateway/openapi.json">
+                  OpenAPI JSON
+                </a>
+              </p>
+            </>
+          }
+        />
+      </div>
       <div className="gateway-docs__layout">
         <nav aria-label="On this page">
           {DOCUMENT_CONTENTS.map((document) => (

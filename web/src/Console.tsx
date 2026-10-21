@@ -28,6 +28,7 @@ import { IconGoalOutline16, IconNewChatOutline16 } from './ui/icons';
 import { CommandMenu, useCommandShortcut } from './shell/CommandMenu';
 import { shellCommands } from './shell/commands';
 import { setAppearance } from './theme/appearance';
+import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
@@ -169,6 +170,13 @@ function ConsoleContent({
   const [commandsOpen, setCommandsOpen] = useState(false);
   const toggleCommands = useCallback(() => setCommandsOpen((open) => !open), []);
   useCommandShortcut(toggleCommands, !user.visitor);
+  useDocumentTitle(
+    route.kind === 'home' || route.kind === 'agent_manager'
+      ? 'Agent Manager'
+      : route.kind === 'not_found'
+        ? 'Page not found'
+        : undefined,
+  );
   const commands = useMemo(
     () =>
       shellCommands({
@@ -198,7 +206,7 @@ function ConsoleContent({
     route.kind === 'docs' ? (
       <Suspense fallback={<p role="status">Loading documentation</p>}>
         {route.view === 'event_gateway_protocol' ? (
-          <EventGatewayDocs />
+          <EventGatewayDocs onNavigate={onNavigate} />
         ) : (
           <DocsIndex onNavigate={onNavigate} />
         )}
