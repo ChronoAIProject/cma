@@ -23,7 +23,12 @@ impl ResourceSelector {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShareMode {
+    /// Recipient can inspect the shared Agent/resource.
     View,
+    /// Recipient can interact with the Agent and mutate its settings/files,
+    /// subject to the same isolation checks as the legacy organization role grant.
+    ViewWrite,
+    /// Legacy organization role based grant. Kept for backwards compatibility.
     OrgRoles,
 }
 
@@ -92,6 +97,16 @@ impl ResourceShare {
             && match &self.selector {
                 ResourceSelector::Agent { agent_id } => !agent_id.as_str().trim().is_empty(),
                 ResourceSelector::Sandbox { sandbox_id } => !sandbox_id.as_str().trim().is_empty(),
+            }
+            && if let Some(subject) = self.target_org_id.as_str().strip_prefix("user:") {
+                !subject.trim().is_empty() && !subject.bytes().any(|byte| byte.is_ascii_control())
+            } else {
+                self.target_org_id.as_str() == "public"
+                    || !self
+                        .target_org_id
+                        .as_str()
+                        .bytes()
+                        .any(|byte| byte.is_ascii_control())
             }
     }
 }

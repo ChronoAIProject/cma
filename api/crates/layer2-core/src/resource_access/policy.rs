@@ -1,4 +1,7 @@
 use std::collections::BTreeSet;
+
+const USER_RECIPIENT_PREFIX: &str = "user:";
+const PUBLIC_RECIPIENT: &str = "public";
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -204,6 +207,61 @@ impl AccessDecision {
                 && share.revoked_at.is_none()
                 && share.selector.covers(scope)
         }) {
+            // User-scoped links are represented in the existing durable share
+            // record as `user:<subject>`. They do not require an organization
+            // membership lookup and are checked against the authenticated
+            // caller on every request, so revocation remains immediate.
+            let direct_user = share
+                .target_org_id
+                .as_str()
+                .strip_prefix(USER_RECIPIENT_PREFIX);
+            let public_link = share.target_org_id.as_str() == PUBLIC_RECIPIENT;
+            let whole_sandbox = matches!(share.selector, ResourceSelector::Sandbox { .. });
+            let isolated = whole_sandbox
+                || scope.sharing_isolation == SharingIsolation::IndependentlyIsolated
+                || shares.iter().any(|other| {
+                    other.validate()
+                        && other.owner == share.owner
+                        && other.target_org_id == share.target_org_id
+                        && matches!(other.mode, ShareMode::OrgRoles | ShareMode::ViewWrite)
+                        && other.revoked_at.is_none()
+                        && matches!(&other.selector, ResourceSelector::Sandbox { sandbox_id }
+                            if sandbox_id == &scope.sandbox_id)
+                });
+            let mut granted = Self::empty();
+            // Agent-specific shares include the mounted home/files view. The
+            // legacy organization selector retains its historical sandbox-only
+            // file boundary below.
+            granted.grant_view(if direct_user.is_some() || public_link {
+                true
+            } else {
+                whole_sandbox
+            });
+
+            if direct_user.is_some() || public_link {
+                if direct_user.is_some_and(|subject| subject != context.caller.subject.as_str()) {
+                    continue;
+                }
+                // Public links are resolved by the request-bound link layer;
+                // when this marker reaches policy it is intentionally view-only.
+                if share.mode == ShareMode::ViewWrite && isolated && direct_user.is_some() {
+                    granted.grant_interaction();
+                    if whole_sandbox {
+                        granted
+                            .capabilities
+                            .insert(ResourceCapability::ManageSandbox);
+                    }
+                }
+                result.capabilities.extend(&granted.capabilities);
+                if direct_user.is_some() {
+                    result.independent.extend(&granted.capabilities);
+                }
+                result
+                    .share_revisions
+                    .push((share.id.clone(), share.revision));
+                continue;
+            }
+
             let evidence = match membership(context, &share.target_org_id, purpose, now) {
                 Ok(Some(evidence)) => evidence,
                 Ok(None) => continue,
@@ -212,24 +270,10 @@ impl AccessDecision {
                     continue;
                 }
             };
-            let whole_sandbox = matches!(share.selector, ResourceSelector::Sandbox { .. });
-            let mut granted = Self::empty();
-            granted.grant_view(whole_sandbox);
             if share.mode == ShareMode::OrgRoles && evidence.role == OrganizationRole::Admin {
                 // An unsafe narrow grant never gains interaction, even if a
                 // historical creation check ran before the Sandbox changed.
-                if whole_sandbox
-                    || scope.sharing_isolation == SharingIsolation::IndependentlyIsolated
-                    || shares.iter().any(|other| {
-                        other.validate()
-                            && other.owner == scope.owner
-                            && other.target_org_id == share.target_org_id
-                            && other.mode == ShareMode::OrgRoles
-                            && other.revoked_at.is_none()
-                            && matches!(&other.selector, ResourceSelector::Sandbox { sandbox_id }
-                                if sandbox_id == &scope.sandbox_id)
-                    })
-                {
+                if isolated {
                     granted.grant_interaction();
                     if whole_sandbox {
                         granted
@@ -237,8 +281,10 @@ impl AccessDecision {
                             .insert(ResourceCapability::ManageSandbox);
                     }
                 }
+            } else if share.mode == ShareMode::ViewWrite && isolated {
+                granted.grant_interaction();
             }
-            result.observe_membership(evidence, granted, Some(share));
+            result.observe_membership(&evidence, granted, Some(share));
             result
                 .share_revisions
                 .push((share.id.clone(), share.revision));

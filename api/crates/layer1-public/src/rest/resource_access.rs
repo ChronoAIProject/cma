@@ -195,13 +195,24 @@ pub(crate) async fn create(
         Ok(body) => body,
         Err(problem) => return problem.into_response(),
     };
+    let target_org_id = match body.audience {
+        Some(ShareAudienceView::Public) => SubjectId::new("public"),
+        Some(ShareAudienceView::Organization { organization_id }) => {
+            SubjectId::new(organization_id)
+        }
+        Some(ShareAudienceView::User { subject }) => SubjectId::new(format!("user:{subject}")),
+        None => match body.target_org_id {
+            Some(target) => SubjectId::new(target),
+            None => return invalid().into_response(),
+        },
+    };
     change(
         service,
         caller,
         (kind, id),
         key,
         ShareChange::Create {
-            target_org_id: SubjectId::new(body.target_org_id),
+            target_org_id,
             mode: body.mode.into(),
         },
         None,
