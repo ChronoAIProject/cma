@@ -119,6 +119,10 @@
   padding: 0 24px;
 }
 
+.agent-files .modal__body {
+  gap: 12px;
+}
+
 /* A short card must not spend its entire height on fixed header/footer chrome. */
 @media (max-width: 480px), (max-height: 480px) {
   .modal__card {
