@@ -25,6 +25,7 @@ import {
   sandboxTone,
 } from './lifecycle';
 import { Badge } from '../ui/Badge';
+import { Alert } from '../ui/Alert';
 import { SandboxOverview } from './SandboxOverview';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
@@ -332,14 +333,18 @@ export function SandboxPage({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      {notice === undefined ? null : <p>{notice}</p>}
+      <div className="alert-stack">
+        <Presence>
+          {pollError ? (
+            <Alert tone="warning">Progress could not be refreshed. Reconnecting.</Alert>
+          ) : null}
+        </Presence>
+        {notice === undefined ? null : <Alert tone="info">{notice}</Alert>}
+      </div>
       <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
-      <Presence>
-        {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
-      </Presence>
       {optionalProgress ? (
         <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
           <summary>Sandbox operation progress</summary>

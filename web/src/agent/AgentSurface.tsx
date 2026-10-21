@@ -16,6 +16,7 @@ import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { AgentHeader } from './AgentHeader';
 import { PageHeader } from '../ui/PageHeader';
+import { Alert } from '../ui/Alert';
 import type { MenuEntry } from '../ui/Menu';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentActions } from '../shell/treeActions';
@@ -230,14 +231,6 @@ export function AgentSurface({
   return (
     <section className="agent-surface">
       {connections.dialog}
-      <AgentAccessRequests
-        key={`access:${agentId}`}
-        agentId={agentId}
-        owner={viewerId}
-        granted={detail.reach}
-        sandboxStatus={detail.sandbox.status}
-        enabled={!readOnly && viewerId !== undefined}
-      />
       <AgentHeader
         title={title}
         status={status}
@@ -293,62 +286,82 @@ export function AgentSurface({
         ) : null}
       </AgentHeader>
 
-      <Presence>
-        {issue === undefined ? null : (
-          <div className="agent-action-error" role={historyIncomplete ? 'status' : 'alert'}>
-            <span>{issue}</span>
-            {historyIncomplete ? null : (
+      {/*
+        One row for every state message, so a second message can never be
+        auto-placed below the composer, and each takes its severity's tone.
+      */}
+      <div className="agent-surface__alerts">
+        <AgentAccessRequests
+          key={`access:${agentId}`}
+          agentId={agentId}
+          owner={viewerId}
+          granted={detail.reach}
+          sandboxStatus={detail.sandbox.status}
+          enabled={!readOnly && viewerId !== undefined}
+        />
+        <Presence>
+          {issue === undefined ? null : (
+            <Alert
+              tone={historyIncomplete ? 'info' : 'error'}
+              actions={
+                <>
+                  {connectionError && !readOnly ? (
+                    <Button size="sm" onClick={connection.retry}>
+                      Retry connections
+                    </Button>
+                  ) : null}
+                  {historyIncomplete ? null : (
+                    <Button
+                      size="sm"
+                      icon={<IconCloseOutline16 />}
+                      aria-label="Dismiss error"
+                      onClick={() => {
+                        connection.clearError();
+                        connections.clearError();
+                        controller.clearActionError();
+                      }}
+                    />
+                  )}
+                </>
+              }
+            >
+              {issue}
+            </Alert>
+          )}
+        </Presence>
+
+        {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
+          <Alert
+            tone="warning"
+            actions={
               <Button
                 size="sm"
-                icon={<IconCloseOutline16 />}
-                aria-label="Dismiss error"
-                onClick={() => {
-                  connection.clearError();
-                  connections.clearError();
-                  controller.clearActionError();
-                }}
-              />
-            )}
-            {connectionError && !readOnly ? (
-              <Button size="sm" onClick={connection.retry}>
-                Retry connections
+                disabled={
+                  readOnly ||
+                  controller.pending !== undefined ||
+                  historyIncomplete ||
+                  (status === 'starting' && !controller.inputAvailability.allowed)
+                }
+                onClick={() => void controller.recoverPending?.()}
+              >
+                Recover pending request
               </Button>
-            ) : null}
-          </div>
-        )}
-      </Presence>
-
-      {controller.pendingMessage === undefined && !controller.pendingControl ? null : (
-        <div className="agent-action-error" role="status">
-          <span>
+            }
+          >
             {controller.pendingMessage !== undefined
               ? 'Your message is awaiting confirmation. Recover it before sending another message.'
               : 'Your response action is awaiting confirmation.'}
-          </span>
-          <Button
-            size="sm"
-            disabled={
-              readOnly ||
-              controller.pending !== undefined ||
-              historyIncomplete ||
-              (status === 'starting' && !controller.inputAvailability.allowed)
-            }
-            onClick={() => void controller.recoverPending?.()}
-          >
-            Recover pending request
-          </Button>
-        </div>
-      )}
+          </Alert>
+        )}
 
-      {controller.controlNotice === undefined ? null : (
-        <div className="agent-action-error" role="status">
-          {controller.controlNotice}
-        </div>
-      )}
+        {controller.controlNotice === undefined ? null : (
+          <Alert tone="info">{controller.controlNotice}</Alert>
+        )}
 
-      {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
-        <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
-      ) : null}
+        {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
+          <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
+        ) : null}
+      </div>
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||

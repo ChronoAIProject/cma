@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Alert } from '../ui/Alert';
 import type { CmaWebClient } from '../api/client';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { Button } from '../ui/Button';
@@ -65,36 +66,44 @@ function RetainedSetup({
       ) : null}
       {connections.dialog}
       {waiting ? (
-        <div className="agent-action-error" role="status">
-          <span>Agent setup needs a connection check to continue.</span>
-          <Button
-            size="sm"
-            disabled={lifecycle.pending || connections.pending || !operation?.connection}
-            onClick={() => {
-              if (operation?.connection)
-                void connections.checkAndRun(
-                  operation.connection.target,
-                  viewerId,
-                  () => void lifecycle.submit(),
-                );
-            }}
-          >
-            Continue Agent setup
-          </Button>
-        </div>
+        <Alert
+          tone="warning"
+          actions={
+            <Button
+              size="sm"
+              disabled={lifecycle.pending || connections.pending || !operation?.connection}
+              onClick={() => {
+                if (operation?.connection)
+                  void connections.checkAndRun(
+                    operation.connection.target,
+                    viewerId,
+                    () => void lifecycle.submit(),
+                  );
+              }}
+            >
+              Continue Agent setup
+            </Button>
+          }
+        >
+          Agent setup needs a connection check to continue.
+        </Alert>
       ) : null}
       {failed ? (
-        <p className="agent-action-error" role="alert">
+        <Alert tone="error">
           {operation.error ?? 'Agent setup could not finish. Your conversation is still available.'}
-        </p>
+        </Alert>
       ) : null}
       {error ? (
-        <div className="agent-action-error" role="alert">
-          <span>{error}</span>
-          <Button size="sm" onClick={lifecycle.retryStatus}>
-            Retry setup status
-          </Button>
-        </div>
+        <Alert
+          tone="error"
+          actions={
+            <Button size="sm" onClick={lifecycle.retryStatus}>
+              Retry setup status
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
       ) : null}
     </>
   );
