@@ -1,5 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
-import { readSandboxTab, rememberSandboxTab, sandboxTabPath } from './sandboxTabRoute';
+import {
+  openSandboxTab,
+  readSandboxTab,
+  rememberSandboxTab,
+  sandboxTabPath,
+} from './sandboxTabRoute';
 
 afterEach(() => {
   window.history.replaceState(null, '', '/');
@@ -38,4 +43,12 @@ it('never stamps a tab onto another page', () => {
   rememberSandboxTab('sbx_1', 'access');
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(window.location.search).toBe('');
+});
+
+it('lands on a tab after navigating, and leaves the address alone if navigation went elsewhere', () => {
+  window.history.replaceState(null, '', '/agents/agt_1');
+  openSandboxTab(() => window.history.pushState(null, '', '/sandboxes/sbx_1'), 'sbx_1', 'access');
+  expect(window.location.pathname + window.location.search).toBe('/sandboxes/sbx_1?tab=access');
+  openSandboxTab(() => window.history.pushState(null, '', '/agents/agt_2'), 'sbx_1', 'activity');
+  expect(window.location.pathname + window.location.search).toBe('/agents/agt_2');
 });
