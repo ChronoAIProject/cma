@@ -1,15 +1,9 @@
 import type { ApprovalDecision } from './controller';
 import { Button } from '../ui/Button';
-import {
-  IconCodeOutline16,
-  IconRightUpOutline16,
-  IconThinkOutline16,
-  IconWarningOutline16,
-} from '../ui/icons';
+import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
-import { ActivityBody } from './Thinking';
-import { isPendingTool } from './toolStatus';
+import { ToolCallRow } from './ToolCallRows';
 import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
@@ -23,6 +17,7 @@ export function StreamEntry({
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
+  activeRunId,
   showUsage = false,
   usage,
   user,
@@ -33,6 +28,8 @@ export function StreamEntry({
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  /** Only the active turn can still be running a call. */
+  readonly activeRunId?: string;
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
   readonly user?: MessageUser;
@@ -89,32 +86,7 @@ export function StreamEntry({
       </details>
     );
   }
-  if (entry.kind === 'tool') {
-    const tool = entry.item;
-    return (
-      <article className="agent-event agent-event--tool" aria-label={`Tool call: ${tool.title}`}>
-        <IconCodeOutline16 aria-hidden="true" />
-        <div>
-          <strong>{tool.title}</strong>
-          <span>
-            {[
-              tool.kind,
-              isPendingTool(tool)
-                ? `Outcome not reported (last status: ${tool.status})`
-                : tool.status,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-          <span className="tool-call__duration">Duration not reported</span>
-          <ActivityBody
-            label="Details"
-            body={tool.detail === undefined ? undefined : { text: tool.detail, truncated: false }}
-          />
-        </div>
-      </article>
-    );
-  }
+  if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
   if (entry.kind === 'recovery') {
     const notice = entry.item;
     if (notice.clearsOn !== undefined)

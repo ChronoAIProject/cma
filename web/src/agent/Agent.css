@@ -304,8 +304,7 @@
   border-radius: 7px;
 }
 
-.agent-event summary,
-.agent-event--tool {
+.agent-event summary {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -317,59 +316,18 @@
   cursor: pointer;
 }
 
-.agent-event summary > span,
-.agent-event--tool span {
+.agent-event summary > span {
   margin-left: auto;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
-.agent-event > p,
-.agent-event--tool p {
+.agent-event > p {
   padding: 0 12px 12px;
   color: var(--dsw-alias-label-secondary);
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 19px;
-}
-
-.agent-event--tool > svg {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.agent-event.agent-event--tool {
-  align-items: flex-start;
-  padding: 12px;
-  margin: 0 0 16px;
-  border-radius: 8px;
-}
-
-.agent-event--tool > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px 8px;
-  align-items: start;
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-event--tool strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool span {
-  margin-left: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool p {
-  grid-column: 1 / -1;
-  min-width: 0;
 }
 
 .approval {
