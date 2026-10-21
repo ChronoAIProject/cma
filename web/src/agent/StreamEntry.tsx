@@ -1,41 +1,24 @@
 import type { ApprovalDecision } from './controller';
-import type {
-  ApprovalRequest,
-  ConversationMessage,
-  ReasoningBlock,
-  RecoveryNotice,
-  ToolCall,
-} from './model';
-import { Button } from '../ui/Button';
-import {
-  IconCodeOutline16,
-  IconRightUpOutline16,
-  IconThinkOutline16,
-  IconWarningOutline16,
-} from '../ui/icons';
+import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
-import { ActivityBody } from './Thinking';
-import { isPendingTool } from './toolStatus';
+import { ToolCallRow } from './ToolCallRows';
+import { PlanCard } from './PlanCard';
+import { ApprovalCard } from './ApprovalCard';
 import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
-
-export type Entry =
-  | { kind: 'message'; item: ConversationMessage }
-  | { kind: 'tool'; item: ToolCall }
-  | { kind: 'reasoning'; item: ReasoningBlock }
-  | { kind: 'approval'; item: ApprovalRequest }
-  | { kind: 'recovery'; item: RecoveryNotice };
+import type { Entry } from './timeline';
 
 export function StreamEntry({
   entry,
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
+  activeRunId,
   showUsage = false,
   usage,
   user,
@@ -46,6 +29,8 @@ export function StreamEntry({
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  /** Only the active turn can still be running a call. */
+  readonly activeRunId?: string;
   readonly showUsage?: boolean;
   readonly usage?: AgentUsage['currentTurn'];
   readonly user?: MessageUser;
@@ -102,32 +87,8 @@ export function StreamEntry({
       </details>
     );
   }
-  if (entry.kind === 'tool') {
-    const tool = entry.item;
-    return (
-      <article className="agent-event agent-event--tool" aria-label={`Tool call: ${tool.title}`}>
-        <IconCodeOutline16 aria-hidden="true" />
-        <div>
-          <strong>{tool.title}</strong>
-          <span>
-            {[
-              tool.kind,
-              isPendingTool(tool)
-                ? `Outcome not reported (last status: ${tool.status})`
-                : tool.status,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-          <span className="tool-call__duration">Duration not reported</span>
-          <ActivityBody
-            label="Details"
-            body={tool.detail === undefined ? undefined : { text: tool.detail, truncated: false }}
-          />
-        </div>
-      </article>
-    );
-  }
+  if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
+  if (entry.kind === 'plan') return <PlanCard plan={entry.item} />;
   if (entry.kind === 'recovery') {
     const notice = entry.item;
     if (notice.clearsOn !== undefined)
@@ -156,40 +117,12 @@ export function StreamEntry({
       </div>
     );
   }
-  const approval = entry.item;
   return (
-    <section className="approval" aria-labelledby={`approval-${approval.id}`}>
-      <div>
-        <span className="approval__eyebrow">Approval</span>
-        <h2 id={`approval-${approval.id}`}>{approval.reason}</h2>
-        {approval.message === undefined ? null : <p>{approval.message}</p>}
-      </div>
-      {approval.decision === undefined && approvalReadOnly ? (
-        <p>Waiting for an authorized participant to answer this approval.</p>
-      ) : approval.decision === undefined ? (
-        <div className="approval__actions">
-          <Button size="sm" disabled={approvalBusy} onClick={() => onApproval(approval.id, 'deny')}>
-            Deny
-          </Button>
-          <Button
-            size="sm"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'abort')}
-          >
-            Abort
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'allow')}
-          >
-            Allow
-          </Button>
-        </div>
-      ) : (
-        <span className="approval__decision">{approval.decision}</span>
-      )}
-    </section>
+    <ApprovalCard
+      approval={entry.item}
+      busy={approvalBusy}
+      readOnly={approvalReadOnly}
+      onApproval={onApproval}
+    />
   );
 }
