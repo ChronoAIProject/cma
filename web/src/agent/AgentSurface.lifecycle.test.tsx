@@ -70,10 +70,9 @@ it('retains usage and drafts across lifecycle changes without polling machine re
   expect(readSandbox).toHaveBeenCalledTimes(3);
   expect(readAgentResources).not.toHaveBeenCalled();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Agent usage' })).toHaveTextContent(
-    'Total tokens · 120 input · 60 output',
-  );
-  expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
+  const ring = screen.getByRole('button', { name: 'Context usage' });
+  expect(ring).toHaveAccessibleDescription(/Total tokens.*120 input · 60 output/);
+  expect(ring.querySelector('.context-ring__arc')).not.toBeNull();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Preserve this draft' } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
