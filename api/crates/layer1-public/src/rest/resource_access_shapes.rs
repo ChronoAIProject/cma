@@ -67,7 +67,7 @@ pub(crate) struct RevokeShareQuery {
     pub expected_revision: u64,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ResourceOwnerView {
     Person { subject: String },
