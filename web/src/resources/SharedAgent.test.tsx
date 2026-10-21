@@ -113,7 +113,8 @@ it('opens a narrow shared deep link without private ancestry, runtime or persona
     test.readAgentResources,
   ])
     expect(read).not.toHaveBeenCalled();
-  expect(await screen.findByText('Created manually')).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(await within(screen.getByRole('menu')).findByText('Created manually')).toBeInTheDocument();
 });
 
 it('allows current admin interaction through the public SDK and removes it on downgrade', async () => {
@@ -128,7 +129,8 @@ it('allows current admin interaction through the public SDK and removes it on do
   );
   expect(test.fetch.mock.calls.filter(([url]) => String(url).endsWith('/input'))).toHaveLength(1);
   test.state.capabilities = ['view_details', 'view_history'];
-  await user.click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   await user.click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(
     await screen.findByText(/Your current access does not allow interaction/),
@@ -148,7 +150,8 @@ it('clears a revoked shared page and aborts its open stream without signing out'
   await screen.findByText(/Your current access does not allow interaction/);
   await waitFor(() => expect(streams.length).toBe(1));
   test.state.revoked = true;
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(await screen.findByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
   expect(screen.queryByText(detail.title)).not.toBeInTheDocument();
@@ -332,7 +335,8 @@ it('discards personal classification as soon as a shared response arrives and ke
   );
   await screen.findByText(/Your current access does not allow interaction/);
   vi.spyOn(sdk.agents, 'readAccessible').mockImplementation(() => new Promise(() => {}));
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Opening Agent' })).toBeInTheDocument();
@@ -342,10 +346,11 @@ it('uses the personal details drawer without private reads and clears details af
   const test = fixture();
   test.show();
   const user = userEvent.setup();
-  const toggle = await screen.findByRole('button', { name: 'Show Agent details' });
+  const toggle = await screen.findByRole('button', { name: 'More Agent actions' });
   expect(screen.queryByRole('complementary', { name: 'Agent details' })).not.toBeInTheDocument();
   expect(test.fetch.mock.calls.some(([url]) => String(url).endsWith('/channel-usage'))).toBe(false);
   await user.click(toggle);
+  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   const panel = await screen.findByRole('complementary', { name: 'Agent details' });
   expect(await within(panel).findByText(detail.title)).toBeInTheDocument();
   expect(await within(panel).findByText('No channel activity recorded')).toBeInTheDocument();
@@ -353,6 +358,7 @@ it('uses the personal details drawer without private reads and clears details af
   await user.click(screen.getByRole('button', { name: 'Close Agent details' }));
   expect(toggle).toHaveFocus();
   await user.click(toggle);
+  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   expect(
     await within(screen.getByRole('complementary', { name: 'Agent details' })).findByText(
       detail.title,

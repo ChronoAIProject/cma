@@ -84,7 +84,12 @@ it.each(['unavailable', 'network', 'timeout'])(
     expect(composer).toHaveValue(draft);
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    expect(screen.getByRole('menuitem', { name: /^Show Agent details/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.getByText(/Checking Agent access/)).toBeInTheDocument();
     fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
     expect(test.runAgent).not.toHaveBeenCalled();

@@ -42,20 +42,30 @@ test('LOCAL creation labels, tree filtering and details preserve original facts 
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
-  await expect(page.locator('.agent-header__source')).toContainText('Created manually');
-  await expect(page.locator('.agent-header__source')).toContainText('Published Trigger:');
-  await expect(page.getByRole('link', { name: 'Project introduction' })).toHaveAttribute(
-    'href',
-    '/t/pub_shortcut',
+  await page.locator('.agent-header__strip').hover();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
+    'Created manually',
   );
+  await expect(
+    page.getByRole('menuitem', { name: 'Published Trigger: Project introduction' }),
+  ).toHaveAttribute('href', '/t/pub_shortcut');
+  await page.keyboard.press('Escape');
   await expect(page.getByTitle('Created manually')).toBeVisible();
   const filter = page.getByRole('combobox', { name: 'Agent creation' });
   await filter.selectOption('trigger');
   await expect(page.getByText('No matching Agents in this tree')).toBeVisible();
-  await expect(page.locator('.agent-header__source')).toContainText('Created manually');
+  await page.locator('.agent-header__strip').hover();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
+    'Created manually',
+  );
+  await page.keyboard.press('Escape');
   await filter.selectOption('manual');
   await expect(page.getByTitle('Created manually')).toBeVisible();
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  await page.locator('.agent-header__strip').hover();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   const details = page.getByRole('complementary', { name: 'Agent details' });
   await expect(details.getByText('Created manually')).toBeVisible();
   await expect(page.getByText('private-creator-reference')).toHaveCount(0);
@@ -73,7 +83,12 @@ test('LOCAL creation labels, tree filtering and details preserve original facts 
   await page.setViewportSize({ width: 1440, height: 1000 });
   allowed = false;
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-  await expect(page.locator('.agent-header__source')).toContainText('Creation origin unavailable');
+  await page.locator('.agent-header__strip').hover();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
+    'Creation origin unavailable',
+  );
+  await page.keyboard.press('Escape');
   await expect(details.getByText('Creation origin unavailable')).toBeVisible();
   await expect(page.getByTitle('Created manually')).toHaveCount(0);
   expect(boundary.writes).toEqual([]);
