@@ -12,6 +12,7 @@ import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { agentNameFor, validRepository } from './repository';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -23,29 +24,6 @@ interface AgentLifecycleCardProps {
   readonly canCreateSandbox?: boolean;
   readonly onClose: () => void;
   readonly onCreated: (receipt: AgentLifecycleCreateReceipt) => void;
-}
-
-function validRepository(value: string): boolean {
-  if (value === '') return true;
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === 'https:' &&
-      url.hostname === 'github.com' &&
-      url.username === '' &&
-      url.password === '' &&
-      url.port === '' &&
-      url.search === '' &&
-      url.hash === '' &&
-      /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(url.pathname) &&
-      url.pathname
-        .split('/')
-        .filter(Boolean)
-        .every((part) => !['.', '..', '.git'].includes(part))
-    );
-  } catch {
-    return false;
-  }
 }
 
 export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
@@ -93,6 +71,9 @@ function AgentLifecycleForm({
     [admitted, createdReceipt?.id, operation],
   );
   const [repository, setRepository] = useState('');
+  // Shown only after the field is left or Create agent is pressed, never while
+  // somebody is still typing the URL, so the alert is announced once.
+  const [repositoryError, setRepositoryError] = useState(false);
   const [workspaceName, setWorkspaceName] = useState<string>();
   const openedOperation = useRef<string | undefined>(undefined);
   const clearIntent = lifecycle.clear;
@@ -125,19 +106,15 @@ function AgentLifecycleForm({
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
-  const valid = repositoryValid && canCreate;
   const submit = () => {
-    if (!valid) return;
+    if (!canCreate) return;
+    if (!repositoryValid) {
+      setRepositoryError(true);
+      document.getElementById('agent-repository')?.focus();
+      return;
+    }
     const input: AgentLifecycleCreateInput = {
-      name:
-        repositoryUrl === ''
-          ? 'New agent'
-          : new URL(repositoryUrl).pathname
-              .split('/')
-              .filter(Boolean)
-              .at(-1)!
-              .replace(/\.git$/, '')
-              .slice(0, 64),
+      name: agentNameFor(repositoryUrl),
       ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
       ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
       ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
@@ -162,7 +139,6 @@ function AgentLifecycleForm({
           onClose();
         }}
         dismissible={!pending}
-        placement="modal--wide"
         footer={
           createdReceipt !== undefined ? (
             <>
@@ -203,7 +179,7 @@ function AgentLifecycleForm({
               </Button>
               <Button
                 variant="primary"
-                disabled={pending || lifecycle.blocked || (!lifecycle.intent && !valid)}
+                disabled={pending || lifecycle.blocked || (!lifecycle.intent && !canCreate)}
                 onClick={lifecycle.intent ? () => void lifecycle.submit() : submit}
               >
                 {pending
@@ -231,26 +207,37 @@ function AgentLifecycleForm({
               </p>
             )}
             <div className="create-form__field">
-              <label htmlFor="agent-repository">GitHub repository (optional)</label>
+              <label className="field__label" htmlFor="agent-repository">
+                GitHub repository (optional)
+              </label>
               <Input
                 id="agent-repository"
                 type="url"
                 placeholder="https://github.com/org/repository"
                 value={repository}
-                onChange={(event) => setRepository(event.target.value)}
-                aria-invalid={!repositoryValid || undefined}
-                aria-describedby="agent-repository-help"
+                onChange={(event) => {
+                  setRepository(event.target.value);
+                  if (repositoryError && validRepository(event.target.value.trim()))
+                    setRepositoryError(false);
+                }}
+                onBlur={() => setRepositoryError(!repositoryValid)}
+                aria-invalid={repositoryError || undefined}
+                aria-describedby={
+                  repositoryError
+                    ? 'agent-repository-help agent-repository-error'
+                    : 'agent-repository-help'
+                }
               />
-              <p id="agent-repository-help" className="profile-field__help">
+              <p id="agent-repository-help" className="field__hint">
                 Your Agent receives this repository in its first message and prepares it in the
                 empty workspace. If authorization is needed, you’ll be prompted to connect your
                 account.
               </p>
-              {repositoryValid ? null : (
-                <p className="create-error" role="alert">
+              {repositoryError ? (
+                <p id="agent-repository-error" className="field__error" role="alert">
                   Enter an HTTPS GitHub repository URL.
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
         ) : null}

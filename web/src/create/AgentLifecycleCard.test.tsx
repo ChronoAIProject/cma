@@ -373,12 +373,36 @@ it('keeps global new-Sandbox creation unavailable without its capability', async
   expect(create).not.toHaveBeenCalled();
 });
 
-it('refuses invalid repository URLs before admission', async () => {
+it('validates the repository when the field is left, never while typing', async () => {
+  const create = vi.fn();
+  show(agentClient({ createAgentLifecycle: create }));
+  const user = userEvent.setup();
+  const input = screen.getByLabelText('GitHub repository (optional)');
+  await user.type(input, 'https://github.com/org/repo/tree/main');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute('aria-invalid');
+  await user.tab();
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter an HTTPS GitHub repository URL.');
+  expect(input).toHaveAttribute('aria-invalid', 'true');
+  expect(input).toHaveAccessibleDescription(/Enter an HTTPS GitHub repository URL\./);
+  await user.clear(input);
+  await user.type(input, 'https://github.com/org/repo');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute('aria-invalid');
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('refuses invalid repository URLs on submit before admission', async () => {
   const create = vi.fn();
   show(agentClient({ createAgentLifecycle: create }));
   const input = screen.getByLabelText('GitHub repository (optional)');
-  fireEvent.change(input, { target: { value: 'https://github.com/org/repo/tree/main' } });
-  expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
+  fireEvent.change(input, { target: { value: 'http://github.com/org/repo' } });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  const button = screen.getByRole('button', { name: 'Create agent' });
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
   expect(screen.getByRole('alert')).toHaveTextContent('HTTPS GitHub repository URL');
+  expect(input).toHaveFocus();
   expect(create).not.toHaveBeenCalled();
+  expect(sessionStorage.length).toBe(0);
 });
