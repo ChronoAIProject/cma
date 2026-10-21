@@ -8,8 +8,10 @@ use serde_json::{json, Value};
 
 async fn status(fixture: &Fixture, envelope: &Envelope) -> Value {
     let response = fixture.send(envelope).await;
-    assert_eq!(response.status(), 202);
-    response.json().await.unwrap()
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, 202, "{body}");
+    body
 }
 async fn accepted(fixture: &Fixture, envelope: &Envelope) {
     let value = status(fixture, envelope).await;
