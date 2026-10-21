@@ -118,29 +118,36 @@ impl ResourceAccessService {
             return Ok(request.replay(receipt)?);
         }
         if let ShareChange::Create { target_org_id, .. } = &request.change {
-            // Only canonical current choices can be selected for a new grant.
-            // Revocation and existing-grant management never depend on this IO.
-            let evidence = self
-                .organizations
-                .organization_context(
-                    &context.caller,
-                    credential.ok_or(MembershipError::Unavailable)?,
-                    target_org_id,
-                )
-                .await?;
-            if !evidence.validate_principal()
-                || evidence.credential != context.credential
-                || evidence.caller.subject != context.caller.subject
-                || !evidence
-                    .caller
-                    .authorization
-                    .allows(crate::Capability::UseOwnSandboxes)
-                || evidence.memberships.len() != 1
-                || evidence.memberships[0].organization != *target_org_id
-                || !evidence.memberships[0].is_current(&context.credential, SystemTime::now())
-                || evidence.memberships[0].observed_at < started_at
-            {
-                return Err(MembershipError::InvalidEvidence.into());
+            // Organization grants retain the canonical membership check. User
+            // selectors are checked directly by policy, while public markers
+            // are resolved by the request-bound link layer and therefore do not
+            // have an organization membership to validate here.
+            let direct_or_public =
+                target_org_id.as_str().starts_with("user:") || target_org_id.as_str() == "public";
+            if !direct_or_public {
+                // Only canonical current choices can be selected for a grant.
+                let evidence = self
+                    .organizations
+                    .organization_context(
+                        &context.caller,
+                        credential.ok_or(MembershipError::Unavailable)?,
+                        target_org_id,
+                    )
+                    .await?;
+                if !evidence.validate_principal()
+                    || evidence.credential != context.credential
+                    || evidence.caller.subject != context.caller.subject
+                    || !evidence
+                        .caller
+                        .authorization
+                        .allows(crate::Capability::UseOwnSandboxes)
+                    || evidence.memberships.len() != 1
+                    || evidence.memberships[0].organization != *target_org_id
+                    || !evidence.memberships[0].is_current(&context.credential, SystemTime::now())
+                    || evidence.memberships[0].observed_at < started_at
+                {
+                    return Err(MembershipError::InvalidEvidence.into());
+                }
             }
         }
         Ok(self.store.mutate_share(request).await?)

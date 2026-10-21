@@ -8,12 +8,16 @@ use utoipa::ToSchema;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ShareModeView {
     View,
+    /// View and write access for a recipient. This is distinct from the
+    /// legacy organization-role grant but shares its isolation safeguards.
+    ViewWrite,
     OrgRoles,
 }
 impl From<ShareModeView> for ShareMode {
     fn from(value: ShareModeView) -> Self {
         match value {
             ShareModeView::View => Self::View,
+            ShareModeView::ViewWrite => Self::ViewWrite,
             ShareModeView::OrgRoles => Self::OrgRoles,
         }
     }
@@ -22,14 +26,33 @@ impl From<ShareMode> for ShareModeView {
     fn from(value: ShareMode) -> Self {
         match value {
             ShareMode::View => Self::View,
+            ShareMode::ViewWrite => Self::ViewWrite,
             ShareMode::OrgRoles => Self::OrgRoles,
         }
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ShareAudienceView {
+    /// A bearer-link exchange may use this marker for public view access.
+    Public,
+    Organization {
+        organization_id: String,
+    },
+    User {
+        subject: String,
+    },
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CreateShareBody {
-    pub target_org_id: String,
+    /// Legacy organization selector. Kept for API compatibility.
+    #[serde(default)]
+    pub target_org_id: Option<String>,
+    /// New recipient selector. Exactly one of this and target_org_id is used.
+    #[serde(default)]
+    pub audience: Option<ShareAudienceView>,
     pub mode: ShareModeView,
 }
 #[derive(Deserialize, ToSchema)]
@@ -139,8 +162,12 @@ impl From<ResourceSelector> for ResourceSelectorView {
 pub(crate) struct ResourceShareView {
     pub id: String,
     pub owner: ResourceOwnerView,
+    /// Explicit attribution for shared-Agent consumers. This is kept separate
+    /// from ownership so clients can render a stable "Shared by" banner.
+    pub shared_by: ResourceOwnerView,
     pub selector: ResourceSelectorView,
     pub target_org_id: String,
+    pub audience: ShareAudienceView,
     pub mode: ShareModeView,
     pub issuer_actor: ResourceActorView,
     pub created_at: String,
@@ -149,11 +176,14 @@ pub(crate) struct ResourceShareView {
 }
 impl From<ResourceShare> for ResourceShareView {
     fn from(value: ResourceShare) -> Self {
+        let owner: ResourceOwnerView = value.owner.clone().into();
         Self {
             id: value.id,
-            owner: value.owner.into(),
+            owner: owner.clone(),
+            shared_by: owner,
             selector: value.selector.into(),
             target_org_id: value.target_org_id.to_string(),
+            audience: audience_from_target(&value.target_org_id),
             mode: value.mode.into(),
             issuer_actor: value.issuer_actor.into(),
             created_at: value.created_at,
@@ -162,6 +192,20 @@ impl From<ResourceShare> for ResourceShareView {
         }
     }
 }
+fn audience_from_target(target: &layer2_core::SubjectId) -> ShareAudienceView {
+    if target.as_str() == "public" {
+        ShareAudienceView::Public
+    } else if let Some(subject) = target.as_str().strip_prefix("user:") {
+        ShareAudienceView::User {
+            subject: subject.to_owned(),
+        }
+    } else {
+        ShareAudienceView::Organization {
+            organization_id: target.to_string(),
+        }
+    }
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ShareReceiptView {
     pub operation_id: String,

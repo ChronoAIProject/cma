@@ -84,6 +84,7 @@ impl ResourceAccessService {
             .shares
             .iter()
             .map(|share| share.target_org_id.as_str().to_owned())
+            .filter(|organization| !organization.starts_with("user:") && organization != "public")
             .chain(match &scope.owner {
                 ResourceOwner::Organization { subject } => Some(subject.as_str().to_owned()),
                 ResourceOwner::Person { .. } => None,
