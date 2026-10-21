@@ -55,9 +55,11 @@ value and a theme never names a component.
 **A component referencing a static token is a defect.** The static tier exists so the alias tier has
 something to point at; reaching past the alias is how a surface ends up unable to change theme.
 
-The Harness ramps (`neutral`, `neutral-bluish`, `blue`, `deepseek`, and `green`) retire. The palette
-is now first-party and comes from two reference libraries: **Inkwell** for light and **Lumen** for
-dark. The raw ramps are declared once and are available to either theme, even where one theme is their
+The Harness ramps (`neutral`, `neutral-bluish`, `blue`, `deepseek`, and `green`) retire. Since
+2026-10-21 both appearances are drawn from one neutral **`zinc`** ramp, the shadcn/ui neutral scale,
+with Chrono **`lime`** as the brand and accent: lime in dark, its deep `lime 800` in light where the
+bright step cannot carry text. The Inkwell `paper`/`ink` and Lumen `coal` ramps stay declared for
+the remaining static consumers but no alias reads them. The raw ramps are declared once and are available to either theme, even where one theme is their
 main consumer. A ramp and step expand directly to a static token name: for example, `paper 50` below
 is `--dsw-static-paper-50`.
 
@@ -66,7 +68,8 @@ is `--dsw-static-paper-50`.
 | `paper` | `0 #FFFBF2`, `50 #FAF2E0`, `100 #F5EAD3`, `200 #EFE4CB`, `250 #EFE2C6`, `300 #E5D8BC`, `400 #CFBE99`, `500 #B9A57C`                                                |
 | `ink`   | `50 #FDF8EC`, `200 #B7AB92`, `300 #8C8474`, `350 #756D5E`, `500 #4C5A68`, `800 #0E61AC`, `850 #0A4C88`, `900 #073A69`, `950 #15283C`                               |
 | `coal`  | `50 #EDF2E2`, `300 #A9B199`, `450 #7D876F`, `500 #6B7361`, `650 #3F4630`, `700 #333A26`, `750 #21251A`, `800 #191C14`, `850 #121410`, `900 #0C0D0A`, `950 #060606` |
-| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `900 #24300F`                                                                                          |
+| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `800 #3F6212`, `900 #24300F`                                                                                        |
+| `zinc`  | `0 #FFFFFF`, `50 #FAFAFA`, `100 #F4F4F5`, `200 #E4E4E7`, `300 #D4D4D8`, `400 #A1A1AA`, `500 #71717A`, `600 #52525B`, `700 #3F3F46`, `800 #27272A`, `850 #1F1F23`, `900 #18181B`, `925 #111113`, `950 #09090B` |
 | `moss`  | `100 #EDF6E7`, `400 #5F963B`, `500 #3E7A22`, `600 #2D6017`, `900 #1C2E14`                                                                                          |
 | `red`   | `100 #F8E4DE`, `300 #FF806F`, `400 #FF5A45`, `500 #D7604A`, `600 #BC3B26`, `700 #A42D1B`, `900 #3A1711`                                                            |
 | `amber` | `100 #F5E6C4`, `300 #FFC45A`, `400 #FFB020`, `500 #D18B12`, `600 #A9720B`, `700 #875A08`, `900 #33260C`                                                            |
@@ -81,106 +84,106 @@ derivation is still fixed here so implementation never has to guess. Component s
 names while their values change, which lets the rebrand land surface by surface without inventing a
 second vocabulary.
 
-| Alias                                 | Light — Inkwell                                            | Dark — Lumen                                             |
-| ------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
-| `--dsw-alias-bg-base`                 | `#FAF2E0`                                                  | `#060606`                                                |
-| `--dsw-alias-bg-layer-1`              | `#FFFBF2`                                                  | `#0C0D0A`                                                |
-| `--dsw-alias-bg-layer-2`              | `#F5EAD3`                                                  | `#121410`                                                |
-| `--dsw-alias-bg-layer-3`              | `#EFE2C6`                                                  | `#191C14`                                                |
-| `--dsw-alias-bg-mask-1`               | `rgba(46,36,18,.42)`                                       | `rgba(3,3,3,.72)`                                        |
-| `--dsw-alias-bg-mask-2`               | `rgba(46,36,18,.24)` **derived**, a quieter warm scrim     | `rgba(3,3,3,.48)` **derived**                            |
-| `--dsw-alias-bg-mask-3`               | `rgba(46,36,18,.60)` **derived**, the strongest warm scrim | `rgba(3,3,3,.84)` **derived**                            |
-| `--dsw-alias-bg-mask-photo`           | `rgba(21,40,60,.88)` **derived**                           | `rgba(3,3,3,.92)` **derived**                            |
-| `--dsw-alias-bg-mask-drop`            | `rgba(255,251,242,.74)` **derived**                        | `rgba(12,13,10,.74)` **derived**                         |
-| `--dsw-alias-bg-module-platform`      | `#F5EAD3`                                                  | `#121410`                                                |
-| `--dsw-alias-bg-multi-select`         | `#F5EAD3`                                                  | `#191C14`                                                |
-| `--dsw-alias-bg-overlay`              | `#EFE2C6`                                                  | `#333A26`                                                |
-| `--dsw-alias-bg-skeleton`             | `rgba(122,96,52,.10)` **derived** from the warm shadow hue | `rgba(255,255,255,.08)` **derived** from Lumen's shimmer |
-| `--dsw-alias-border-inverted`         | `rgba(21,40,60,.06)` **derived**                           | `rgba(237,242,226,.08)` **derived**                      |
-| `--dsw-alias-border-inverted2`        | `rgba(21,40,60,.08)` **derived**                           | `rgba(237,242,226,.10)` **derived**                      |
-| `--dsw-alias-border-l1`               | `#EFE4CB` **derived**, one paper step before `line`        | `#191C14` **derived**, the adjacent coal hairline        |
-| `--dsw-alias-border-l2-darkmode-thin` | `#E5D8BC`                                                  | `#21251A`                                                |
-| `--dsw-alias-border-l2`               | `#E5D8BC`                                                  | `#21251A`                                                |
-| `--dsw-alias-border-l3`               | `#CFBE99`                                                  | `#333A26`                                                |
-| `--dsw-alias-border-l4`               | `#B9A57C`, the reference input-hover line                  | `#3F4630` **derived**, one coal step beyond `line-2`     |
+| Alias                                 | Light                   | Dark                    |
+| ------------------------------------- | ----------------------- | ----------------------- |
+| `--dsw-alias-bg-base`                 | `#FFFFFF`               | `#09090B`               |
+| `--dsw-alias-bg-layer-1`              | `#FFFFFF`               | `#111113`               |
+| `--dsw-alias-bg-layer-2`              | `#FAFAFA`               | `#18181B`               |
+| `--dsw-alias-bg-layer-3`              | `#F4F4F5`               | `#1F1F23`               |
+| `--dsw-alias-bg-mask-1`               | `rgba(9,9,11,.42)`      | `rgba(0,0,0,.72)`       |
+| `--dsw-alias-bg-mask-2`               | `rgba(9,9,11,.24)`      | `rgba(0,0,0,.48)`       |
+| `--dsw-alias-bg-mask-3`               | `rgba(9,9,11,.6)`       | `rgba(0,0,0,.84)`       |
+| `--dsw-alias-bg-mask-photo`           | `rgba(9,9,11,.88)`      | `rgba(0,0,0,.92)`       |
+| `--dsw-alias-bg-mask-drop`            | `rgba(255,255,255,.74)` | `rgba(17,17,19,.74)`    |
+| `--dsw-alias-bg-module-platform`      | `#FAFAFA`               | `#18181B`               |
+| `--dsw-alias-bg-multi-select`         | `#F4F4F5`               | `#1F1F23`               |
+| `--dsw-alias-bg-overlay`              | `#F4F4F5`               | `#27272A`               |
+| `--dsw-alias-bg-skeleton`             | `rgba(9,9,11,.06)`      | `rgba(255,255,255,.08)` |
+| `--dsw-alias-border-inverted`         | `rgba(9,9,11,.06)`      | `rgba(250,250,250,.08)` |
+| `--dsw-alias-border-inverted2`        | `rgba(9,9,11,.08)`      | `rgba(250,250,250,.1)`  |
+| `--dsw-alias-border-l1`               | `#E4E4E7`               | `#1F1F23`               |
+| `--dsw-alias-border-l2-darkmode-thin` | `#E4E4E7`               | `#27272A`               |
+| `--dsw-alias-border-l2`               | `#E4E4E7`               | `#27272A`               |
+| `--dsw-alias-border-l3`               | `#D4D4D8`               | `#3F3F46`               |
+| `--dsw-alias-border-l4`               | `#A1A1AA`               | `#52525B`               |
 
-| Alias                                        | Light — Inkwell                   | Dark — Lumen                        |
-| -------------------------------------------- | --------------------------------- | ----------------------------------- |
-| `--dsw-alias-brand-primary`                  | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-brand-primary-invert`           | `#FDF8EC`                         | `#060606`                           |
-| `--dsw-alias-brand-text`                     | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-contrast-fill`           | `#15283C`                         | `#EDF2E2`                           |
-| `--dsw-alias-button-elevated-fill`           | `#FFFBF2`                         | `#191C14`                           |
-| `--dsw-alias-button-floating-fill`           | `#FFFBF2`                         | `#121410`                           |
-| `--dsw-alias-button-floating-hover`          | `#F5EAD3`                         | `#191C14`                           |
-| `--dsw-alias-button-ghost-active-border`     | `#CFBE99`                         | `#333A26`                           |
-| `--dsw-alias-button-ghost-active-fill`       | `#F5EAD3`                         | `#191C14`                           |
-| `--dsw-alias-button-ghost-active-hover`      | `#EFE2C6`                         | `#21251A`                           |
-| `--dsw-alias-button-info-fill`               | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-info-hover`              | `#0A4C88`                         | `#AEE734`                           |
-| `--dsw-alias-button-primary-dimmed`          | `#E5D8BC` **derived**             | `#333A26` **derived**               |
-| `--dsw-alias-button-primary-fill`            | `#0E61AC`                         | `#C3FD43`                           |
-| `--dsw-alias-button-primary-hover`           | `#0A4C88`                         | `#AEE734`                           |
-| `--dsw-alias-button-primary-active`          | `#073A69`                         | `#8FC121`                           |
-| `--dsw-alias-button-tool-bar-fill-invisible` | `rgba(21,40,60,.12)` **derived**  | `rgba(237,242,226,.12)` **derived** |
-| `--dsw-alias-button-tool-bar-fill`           | `rgba(21,40,60,.64)` **derived**  | `rgba(237,242,226,.32)` **derived** |
-| `--dsw-alias-button-tool-bar-hover`          | `rgba(21,40,60,.78)` **derived**  | `rgba(237,242,226,.46)` **derived** |
-| `--dsw-alias-interactive-bg-active`          | `rgba(122,96,52,.14)` **derived** | `rgba(255,255,255,.08)` **derived** |
-| `--dsw-alias-interactive-bg-hover`           | `rgba(122,96,52,.08)` **derived** | `rgba(255,255,255,.04)` **derived** |
-| `--dsw-alias-interactive-bg-hover-accent`    | `rgba(14,97,172,.08)`             | `rgba(195,253,67,.10)`              |
-| `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.09)`             | `rgba(255,90,69,.10)`               |
-| `--dsw-alias-interactive-bg-hover-solid`     | `#F5EAD3` **derived**             | `#191C14` **derived**               |
+| Alias                                        | Light                 | Dark                    |
+| -------------------------------------------- | --------------------- | ----------------------- |
+| `--dsw-alias-brand-primary`                  | `#3F6212`             | `#C3FD43`               |
+| `--dsw-alias-brand-primary-invert`           | `#FFFFFF`             | `#09090B`               |
+| `--dsw-alias-brand-text`                     | `#3F6212`             | `#C3FD43`               |
+| `--dsw-alias-button-contrast-fill`           | `#18181B`             | `#FAFAFA`               |
+| `--dsw-alias-button-elevated-fill`           | `#FFFFFF`             | `#1F1F23`               |
+| `--dsw-alias-button-floating-fill`           | `#FFFFFF`             | `#18181B`               |
+| `--dsw-alias-button-floating-hover`          | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-button-ghost-active-border`     | `#D4D4D8`             | `#3F3F46`               |
+| `--dsw-alias-button-ghost-active-fill`       | `#F4F4F5`             | `#1F1F23`               |
+| `--dsw-alias-button-ghost-active-hover`      | `#E4E4E7`             | `#27272A`               |
+| `--dsw-alias-button-info-fill`               | `#18181B`             | `#C3FD43`               |
+| `--dsw-alias-button-info-hover`              | `#27272A`             | `#AEE734`               |
+| `--dsw-alias-button-primary-dimmed`          | `#E4E4E7`             | `#3F3F46`               |
+| `--dsw-alias-button-primary-fill`            | `#18181B`             | `#C3FD43`               |
+| `--dsw-alias-button-primary-hover`           | `#27272A`             | `#AEE734`               |
+| `--dsw-alias-button-primary-active`          | `#3F3F46`             | `#8FC121`               |
+| `--dsw-alias-button-tool-bar-fill-invisible` | `rgba(9,9,11,.12)`    | `rgba(250,250,250,.12)` |
+| `--dsw-alias-button-tool-bar-fill`           | `rgba(9,9,11,.64)`    | `rgba(250,250,250,.32)` |
+| `--dsw-alias-button-tool-bar-hover`          | `rgba(9,9,11,.78)`    | `rgba(250,250,250,.46)` |
+| `--dsw-alias-interactive-bg-active`          | `rgba(9,9,11,.08)`    | `rgba(255,255,255,.08)` |
+| `--dsw-alias-interactive-bg-hover`           | `rgba(9,9,11,.04)`    | `rgba(255,255,255,.04)` |
+| `--dsw-alias-interactive-bg-hover-accent`    | `rgba(63,98,18,.08)`  | `rgba(195,253,67,.1)`   |
+| `--dsw-alias-interactive-bg-hover-danger`    | `rgba(188,59,38,.08)` | `rgba(255,90,69,.1)`    |
+| `--dsw-alias-interactive-bg-hover-solid`     | `#F4F4F5`             | `#1F1F23`               |
 
-| Alias                                          | Light — Inkwell                                | Dark — Lumen                                  |
-| ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
-| `--dsw-alias-label-caption`                    | `#756D5E` **derived**, AA small-text ink       | `#7D876F` **derived**, AA small-text ink      |
-| `--dsw-alias-label-dimmed`                     | `#B7AB92` **derived**, disabled/non-text only  | `#4B523E` **derived**, disabled/non-text only |
-| `--dsw-alias-label-primary`                    | `#15283C`                                      | `#EDF2E2`                                     |
-| `--dsw-alias-label-primary-bluish`             | `#15283C`                                      | `#EDF2E2`                                     |
-| `--dsw-alias-label-primary-dimmed`             | `#756D5E` **derived**                          | `#7D876F` **derived**                         |
-| `--dsw-alias-label-primary-foreground`         | `#FDF8EC`                                      | `#060606`                                     |
-| `--dsw-alias-label-primary-inverted`           | `#FDF8EC`                                      | `#060606`                                     |
-| `--dsw-alias-label-secondary`                  | `#4C5A68`                                      | `#A9B199`                                     |
-| `--dsw-alias-label-tertiary`                   | `#8C8474`                                      | `#6B7361`                                     |
-| `--dsw-alias-markdown-citation`                | `#F5EAD3` **derived**                          | `#191C14` **derived**                         |
-| `--dsw-alias-markdown-code-block`              | `#F5EAD3`                                      | `#060606`                                     |
-| `--dsw-alias-markdown-code-block-banner`       | `#F5EAD3`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-code-segment-selected`   | `#FFFBF2`                                      | `#191C14`                                     |
-| `--dsw-alias-markdown-code-segment-unselected` | `#EFE2C6`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-inline-code`             | `#EFE2C6`                                      | `#191C14`                                     |
-| `--dsw-alias-markdown-placeholder`             | `#F5EAD3`                                      | `#121410`                                     |
-| `--dsw-alias-markdown-tag`                     | `#EFE2C6`                                      | `#191C14`                                     |
-| `--dsw-alias-scrollbar-bg-l1`                  | `#CFBE99`                                      | `#333A26`                                     |
-| `--dsw-alias-scrollbar-bg-l2`                  | `#B9A57C` **derived**, one stronger paper step | `#3F4630` **derived**, one stronger coal step |
-| `--dsw-alias-scrollbar-hover-l1`               | `#0E61AC`                                      | `#8FC121`                                     |
-| `--dsw-alias-scrollbar-hover-l2`               | `#0A4C88` **derived**, one stronger ink step   | `#AEE734` **derived**, one brighter lime step |
-| `--dsw-alias-state-business-primary`           | `#0E61AC`                                      | `#C3FD43`                                     |
-| `--dsw-alias-state-business-tertiary`          | `rgba(14,97,172,.15)`                          | `rgba(195,253,67,.18)`                        |
-| `--dsw-alias-state-error-primary`              | `#BC3B26`                                      | `#FF5A45`                                     |
-| `--dsw-alias-state-error-secondary`            | `#D7604A`                                      | `#FF806F`                                     |
-| `--dsw-alias-state-success-primary`            | `#3E7A22`                                      | `#C3FD43`                                     |
-| `--dsw-alias-state-success-secondary`          | `#5F963B`                                      | `#AEE734`                                     |
-| `--dsw-alias-state-success-tertiary`           | `#EDF6E7`                                      | `#24300F`                                     |
-| `--dsw-alias-state-warn-label`                 | `#875A08` **derived**, AA small-text amber     | `#FFB020`                                     |
-| `--dsw-alias-state-warn-primary`               | `#A9720B`                                      | `#FFB020`                                     |
-| `--dsw-alias-state-warn-secondary`             | `#D18B12`                                      | `#FFC45A`                                     |
-| `--dsw-alias-state-warn-tertiary`              | `#F5E6C4`                                      | `#33260C`                                     |
-| `--dsw-alias-toast-bg`                         | `#15283C` **derived**                          | `#121410` **derived**                         |
-| `--dsw-alias-tooltip-bg`                       | `#15283C`, the Inkwell tip                     | `#C3FD43`, the Lumen tip                      |
+| Alias                                          | Light                | Dark                   |
+| ---------------------------------------------- | -------------------- | ---------------------- |
+| `--dsw-alias-label-caption`                    | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-dimmed`                     | `#A1A1AA`            | `#52525B`              |
+| `--dsw-alias-label-primary`                    | `#09090B`            | `#FAFAFA`              |
+| `--dsw-alias-label-primary-bluish`             | `#09090B`            | `#FAFAFA`              |
+| `--dsw-alias-label-primary-dimmed`             | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-primary-foreground`         | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-label-primary-inverted`           | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-label-secondary`                  | `#52525B`            | `#A1A1AA`              |
+| `--dsw-alias-label-tertiary`                   | `#71717A`            | `#71717A`              |
+| `--dsw-alias-markdown-citation`                | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-markdown-code-block`              | `#FAFAFA`            | `#09090B`              |
+| `--dsw-alias-markdown-code-block-banner`       | `#F4F4F5`            | `#18181B`              |
+| `--dsw-alias-markdown-code-segment-selected`   | `#FFFFFF`            | `#1F1F23`              |
+| `--dsw-alias-markdown-code-segment-unselected` | `#F4F4F5`            | `#18181B`              |
+| `--dsw-alias-markdown-inline-code`             | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-markdown-placeholder`             | `#FAFAFA`            | `#18181B`              |
+| `--dsw-alias-markdown-tag`                     | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-alias-scrollbar-bg-l1`                  | `#D4D4D8`            | `#3F3F46`              |
+| `--dsw-alias-scrollbar-bg-l2`                  | `#A1A1AA`            | `#52525B`              |
+| `--dsw-alias-scrollbar-hover-l1`               | `#71717A`            | `#8FC121`              |
+| `--dsw-alias-scrollbar-hover-l2`               | `#52525B`            | `#AEE734`              |
+| `--dsw-alias-state-business-primary`           | `#3F6212`            | `#C3FD43`              |
+| `--dsw-alias-state-business-tertiary`          | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-alias-state-error-primary`              | `#BC3B26`            | `#FF5A45`              |
+| `--dsw-alias-state-error-secondary`            | `#D7604A`            | `#FF806F`              |
+| `--dsw-alias-state-success-primary`            | `#3E7A22`            | `#C3FD43`              |
+| `--dsw-alias-state-success-secondary`          | `#5F963B`            | `#AEE734`              |
+| `--dsw-alias-state-success-tertiary`           | `#EDF6E7`            | `#24300F`              |
+| `--dsw-alias-state-warn-label`                 | `#875A08`            | `#FFB020`              |
+| `--dsw-alias-state-warn-primary`               | `#A9720B`            | `#FFB020`              |
+| `--dsw-alias-state-warn-secondary`             | `#D18B12`            | `#FFC45A`              |
+| `--dsw-alias-state-warn-tertiary`              | `#F5E6C4`            | `#33260C`              |
+| `--dsw-alias-toast-bg`                         | `#18181B`            | `#18181B`              |
+| `--dsw-alias-tooltip-bg`                       | `#18181B`            | `#FAFAFA`              |
 
-| Specific token                                  | Light — Inkwell                    | Dark — Lumen             |
-| ----------------------------------------------- | ---------------------------------- | ------------------------ |
-| `--dsw-specific-bubble`                         | `rgba(14,97,172,.08)` over layer 1 | `#121410`                |
-| `--dsw-specific-bubble-highlight`               | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
-| `--dsw-specific-input-major`                    | `#FFFBF2`                          | `#121410`                |
-| `--dsw-specific-login-input`                    | `#FFFBF2`                          | `#121410`                |
-| `--dsw-specific-menu`                           | `#EFE2C6` (`bg-layer-3`)           | `#191C14` (`bg-layer-3`) |
-| `--dsw-specific-selector`                       | `#F5EAD3` **derived**              | `#191C14` **derived**    |
-| `--dsw-specific-sidebar-fill`                   | `#F5EAD3`                          | `#0C0D0A`                |
-| `--dsw-specific-sidebar-nav-item-active`        | `#EFE2C6` **derived**              | `#21251A` **derived**    |
-| `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(14,97,172,.15)`              | `rgba(195,253,67,.18)`   |
-| `--dsw-specific-sidebar-nav-item-hover`         | `#F5EAD3` **derived**              | `#191C14` **derived**    |
-| `--dsw-specific-tip`                            | `#F5EAD3` **derived**              | `#191C14` **derived**    |
+| Specific token                                  | Light                | Dark                   |
+| ----------------------------------------------- | -------------------- | ---------------------- |
+| `--dsw-specific-bubble`                         | `#F4F4F5`            | `#18181B`              |
+| `--dsw-specific-bubble-highlight`               | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-specific-input-major`                    | `#FFFFFF`            | `#111113`              |
+| `--dsw-specific-login-input`                    | `#FFFFFF`            | `#111113`              |
+| `--dsw-specific-menu`                           | `#FFFFFF`            | `#18181B`              |
+| `--dsw-specific-selector`                       | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-specific-sidebar-fill`                   | `#FAFAFA`            | `#111113`              |
+| `--dsw-specific-sidebar-nav-item-active`        | `#F4F4F5`            | `#27272A`              |
+| `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
+| `--dsw-specific-sidebar-nav-item-hover`         | `#F4F4F5`            | `#1F1F23`              |
+| `--dsw-specific-tip`                            | `#F4F4F5`            | `#1F1F23`              |
 
 `--dsw-alias-brand-primary-new-colorprimary-new-color` is retired. Its malformed exported name had
 zero consumers under `web/src`; retaining it would preserve no compatibility. Every other alias and
@@ -194,37 +197,40 @@ themes; components still never read static tokens directly:
 
 | Alias | Both themes | Existing source |
 |---|---|---|
-| `--dsw-alias-preview-light-bg` | `#FFFBF2` | `paper 0` |
-| `--dsw-alias-preview-light-label` | `#15283C` | `ink 950` |
-| `--dsw-alias-preview-dark-bg` | `#0C0D0A` | `coal 900` |
-| `--dsw-alias-preview-dark-label` | `#EDF2E2` | `coal 50` |
+| `--dsw-alias-preview-light-bg` | `#FFFFFF` | `zinc 0` |
+| `--dsw-alias-preview-light-label` | `#09090B` | `zinc 950` |
+| `--dsw-alias-preview-dark-bg` | `#111113` | `zinc 925` |
+| `--dsw-alias-preview-dark-label` | `#FAFAFA` | `zinc 50` |
 
 Message-avatar fallback aliases are also appearance-independent:
-`--dsw-alias-avatar-bg` is `coal 950` (`#060606`), and
-`--dsw-alias-avatar-label` is `coal 50` (`#EDF2E2`). They retain a black circle
+`--dsw-alias-avatar-bg` is `zinc 950` (`#09090B`), and
+`--dsw-alias-avatar-label` is `zinc 50` (`#FAFAFA`). They retain a black circle
 with readable initials in either theme.
 
-- **Backgrounds.** Inkwell reverses the old light-theme rule: cards are visibly lighter than the
-  cream ground, while grooves are darker. Lumen climbs from near-black through green-shifted coal.
-- **Primary actions use the accent.** `brand-primary` and `button-primary-fill` are ink blue in
-  light and lime in dark. This deliberately reverses the old neutral-primary doctrine.
-- **Neutral interaction stays neutral.** Generic hover and active fills use warm brown alpha in
-  light and white alpha in dark. Only an explicitly accent interaction takes the blue/lime wash.
+- **Backgrounds.** Light is white with `zinc 50` and `zinc 100` layers; dark climbs from
+  `zinc 950` through `zinc 925`, `900` and `850`. Separation comes from a 1px zinc border first and
+  shadow second, as in shadcn/ui.
+- **One primary per view.** `button-primary-fill` is `zinc 900` in light and lime in dark, so the
+  dark primary keeps the brand and the light primary keeps contrast. `brand-primary` and the accent
+  are `lime 800` in light and lime in dark.
+- **Neutral interaction stays neutral.** Generic hover and active fills are zinc alpha in light and
+  white alpha in dark. Only an explicitly accent interaction takes the lime wash.
 - **Status remains semantic.** Warning is `#A9720B` light / `#FFB020` dark; error is `#BC3B26` /
-  `#FF5A45`; success is moss `#3E7A22` in light and the same lime as the accent in dark. The light
-  asymmetry is required because blue is not success.
-- **Glow is dark-only.** Lumen may use the `rgba(195,253,67,.35)` family on the primary hover,
-  focus, live dot, progress fill, tab underline, and signed-out mark. Accent covers no more than 8%
-  of the viewport. Inkwell never glows; it uses warm shadow.
+  `#FF5A45`; success is moss `#3E7A22` in light and the same lime as the accent in dark.
+- **Glow is dark-only and rare.** Dark may use the `rgba(195,253,67,.35)` family on the primary
+  hover, focus, live dot, progress fill and tab underline. Accent covers no more than 8% of the
+  viewport. Light never glows; it uses a neutral `zinc 950` shadow at low alpha.
+- **Tooltips and toasts invert.** The tip is `zinc 900` in light and `zinc 50` in dark, with the
+  inverse label, so it reads as an overlay rather than another brand surface.
 - **Selection and focus follow the accent.** `::selection` is accent ground with
   `label-primary-foreground`. The global `--focus-ring` remains the same whole-value double ring:
   `0 0 0 2px bg-base, 0 0 0 4px state-business-primary`.
 
-Measured on the base grounds, primary text is 13.45:1 light / 17.75:1 dark, secondary text is
-6.34:1 / 9.10:1, the accent is 5.67:1 / 16.84:1, and light success is 4.70:1. The fixed reference
-tertiaries are 3.32:1 / 4.10:1 and therefore carry only non-essential or sufficiently large text;
-required small metadata uses `label-caption`, measured at 4.59:1 / 5.37:1. `label-dimmed` is a
-disabled or non-text paint and never the sole readable account of state.
+Measured on the base grounds, primary text is 19.9:1 light / 19.1:1 dark, secondary text is
+7.7:1 / 7.8:1, and the accent is 7.1:1 / 16.5:1. Tertiary (`zinc 500`) is 4.8:1 light and 4.1:1
+dark and therefore carries only non-essential or sufficiently large text in dark; required small
+metadata uses `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
+readable account of state.
 
 The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
 and `shiki.css`) keep their filenames but become first-party token sheets governed here. The
@@ -247,7 +253,7 @@ chrome 2 and 20, tooltip and menu 100, submenu 101, modal 1000, toast and onboar
 load-bearing rather than stylistic: sheets that style the scrollbar resolve against the same element
 the tokens are declared on, and an `html`-scoped rule cannot see them.
 
-Inkwell is `light`; Lumen is `dark`. The preference is `light | dark | system`, defaulting to
+The appearances are `light` and `dark`. The preference is `light | dark | system`, defaulting to
 `system`, and is stored only at `localStorage['cma:appearance']`. Invalid or inaccessible storage
 resolves to `system`; no historical key is read. The inline script immediately after `<body>`
 resolves the canonical value before first paint — resolving `system` through
@@ -262,18 +268,19 @@ sunset follows the machine.
 
 ## 4. Typography
 
-The interface has a self-hosted face for each appearance. This deliberately reverses the former
-no-interface-webfont rule:
+Both appearances use one self-hosted interface face and one code face, the shadcn/ui pairing:
 
-| Role      | Light — Inkwell                                                                                                                                                                                      | Dark — Lumen                                                                                                                                                                                |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Interface | `'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` | `'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` |
-| Code      | `'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                           | `'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                                                   |
+| Role      | Both appearances                                                                                                                                                                  |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Interface | `'Geist', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif` |
+| Code      | `'Geist Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei'`                                          |
 
-Familjen Grotesk, Archivo, and JetBrains Mono are variable WOFF2 files. IBM Plex Mono has no official
-variable release, so weights 400, 500, and 600 are separate static WOFF2 files. Every family is OFL,
-is stored under `web/src/assets/fonts/` with its licence beside it, and uses `font-display: swap`.
-There is no font `@import`, Google Fonts link, or third-party request. The exact file list is tested.
+Geist and Geist Mono are variable WOFF2 files (weights 100–900) from Vercel under OFL 1.1. The
+earlier faces (Familjen Grotesk, Archivo, IBM Plex Mono, JetBrains Mono and Shrikhand) remain
+vendored for the brand lockups and the signed-out lockup until those assets are redrawn. Every
+family is OFL, is stored under `web/src/assets/fonts/` with its licence beside it, and uses
+`font-display: swap`. There is no font `@import`, Google Fonts link, or third-party request. The
+exact file list is tested.
 
 Bare `monospace` is forbidden because Windows may resolve it to a CJK serif.
 There is no terminal-specific font stack in this release.
@@ -319,18 +326,18 @@ The reference voice sits around that existing composite ramp:
 
 ## 5. Depth
 
-Depth changes with appearance. Inkwell shadows with warm brown, never black; Lumen separates by coal
+Depth changes with appearance. Light shadows with `zinc 950` at low alpha; dark separates by zinc
 luminance and black depth, then adds lime glow only to an accent element named in §2.
 
 | Whole-value token           | Light — Inkwell                                                      | Dark — Lumen                            |
 | --------------------------- | -------------------------------------------------------------------- | --------------------------------------- |
-| `--dsw-shadow-lv1`          | `0 1px 2px rgba(122,96,52,.10)`                                      | `0 1px 2px rgba(0,0,0,.45)` **derived** |
-| `--dsw-shadow-lv1-blur`     | `0 4px 12px rgba(122,96,52,.08)` **derived**                         | `0 8px 20px -8px #000` **derived**      |
-| `--dsw-shadow-lv2`          | `0 2px 4px rgba(122,96,52,.10), 0 8px 20px -8px rgba(122,96,52,.22)` | `0 20px 44px -14px #000`                |
-| `--dsw-shadow-lv3`          | `0 18px 44px -14px rgba(82,62,30,.32)`                               | `0 40px 90px -30px #000`                |
-| `--dsw-shadow-accent-hover` | the warm `--dsw-shadow-lv2` value                                    | `0 6px 26px -8px rgba(195,253,67,.35)`  |
+| `--dsw-shadow-lv1`          | `0 1px 2px rgba(9,9,11,.06)`                                         | `0 1px 2px rgba(0,0,0,.45)` **derived** |
+| `--dsw-shadow-lv1-blur`     | `0 4px 12px rgba(9,9,11,.06)` **derived**                            | `0 8px 20px -8px #000` **derived**      |
+| `--dsw-shadow-lv2`          | `0 2px 4px rgba(9,9,11,.06), 0 8px 20px -8px rgba(9,9,11,.12)`       | `0 20px 44px -14px #000`                |
+| `--dsw-shadow-lv3`          | `0 18px 44px -14px rgba(9,9,11,.18)`                                 | `0 40px 90px -30px #000`                |
+| `--dsw-shadow-accent-hover` | the neutral `--dsw-shadow-lv2` value                                 | `0 6px 26px -8px rgba(195,253,67,.35)`  |
 | `--dsw-glow-accent`         | `none`                                                               | `0 0 14px rgba(195,253,67,.35)`         |
-| `--dsw-ring-accent-soft`    | `0 0 0 3px rgba(14,97,172,.08)`                                      | `0 0 0 3px rgba(195,253,67,.10)`        |
+| `--dsw-ring-accent-soft`    | `0 0 0 3px rgba(63,98,18,.08)`                                       | `0 0 0 3px rgba(195,253,67,.10)`        |
 
 Every shadow, glow, and ring is a whole-value token. Component sheets never assemble a `box-shadow`
 themselves. A floating surface still carries a 1px border as well as shadow, so its edge survives on
@@ -2579,3 +2586,4 @@ row uses the available width. In the smallest layout the settings row follows
 input-aligned usage, allowing all three controls their full touch targets.
 
 | 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
+| 2026-10-21 | Moved both appearances onto a shadcn/ui-based neutral system: one `zinc` ramp for grounds, borders and labels, Chrono lime kept as the brand and accent (`lime 800` in light, where the bright step cannot carry text), a `zinc 900` light primary and lime dark primary, neutral low-alpha light shadows, inverted tooltips, and one interface/code pairing, Geist and Geist Mono, in both appearances. Kept every alias and specific name and the three-tier architecture so every surface re-inks without a migration vocabulary; the earlier ramps and faces stay declared only for remaining static and brand-asset consumers. Regenerated the §2 alias contract from the shipped sheet so the tables cannot drift from it. |
