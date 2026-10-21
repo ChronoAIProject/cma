@@ -253,12 +253,14 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   ).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeInTheDocument();
   // Destructive last, after a separator.
+  // Details first, then the creation origin, then the actions with destructive last.
   expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
     'Stop agent',
     'Export history',
     'Delete agent Stop this Agent before deleting it and its Worktree.',
   ]);
-  expect(screen.getByRole('menu').querySelector('[role="separator"]')).not.toBeNull();
+  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(3);
   await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
   expect(onAgentAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
 });
@@ -295,7 +297,7 @@ it('holds every header action while another action is being confirmed', async ()
   expect(onAgentAction).not.toHaveBeenCalled();
 });
 
-it('offers no header actions to a reader without them', () => {
+it('offers only the Details toggle and creation origin to a reader without actions', async () => {
   render(
     <AgentSurface
       agentId="agt_1"
@@ -310,7 +312,11 @@ it('offers no header actions to a reader without them', () => {
       onNavigate={vi.fn()}
     />,
   );
-  expect(screen.queryByRole('button', { name: 'More Agent actions' })).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
+  ]);
+  expect(screen.getByRole('menu')).toHaveTextContent('Creation origin unavailable');
 });
 
 it('holds approval and Stop response controls during history hydration', async () => {
@@ -479,7 +485,8 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
   expect(approve).toHaveBeenCalledWith('approval_1', 'allow');
-  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   expect(onDetailsOpenChange).toHaveBeenCalledWith(true);
 });
 
