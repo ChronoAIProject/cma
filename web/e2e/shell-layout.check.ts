@@ -2,9 +2,13 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalAgentV2, binding } from './agent-v2.fixture';
 
+/** The collapsed sidebar's width: none on a phone (§9), the 56px rail elsewhere. */
+const rail = (viewport: number) => (viewport < 640 ? 0 : 56);
+
 async function settleShell(page: Page, viewport: number, sidebar: number) {
-  // Both tracks must settle: the rail stays 56px when resizing between phones,
-  // while the center still has a 300ms transition to its new available width.
+  // Both tracks must settle: the collapsed sidebar keeps its width when
+  // resizing between phones, while the center still has a 300ms transition
+  // to its new available width.
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -68,7 +72,7 @@ for (const width of [390, 360, 320]) {
         });
         const attach = page.getByRole('button', { name: 'Attach files', exact: true });
         await expect(field).toBeEnabled();
-        await settleShell(page, width, 56);
+        await settleShell(page, width, rail(width));
         await field.fill('Keep this draft while resizing the full shell.');
         for (const element of [field, send, attach, page.locator('.agent-composer__mode')]) {
           await insideViewport(element);
@@ -99,7 +103,7 @@ for (const width of [390, 360, 320]) {
         await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
         await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
         await expect(field).toHaveValue('Keep this draft while resizing the full shell.');
-        await settleShell(page, width, 56);
+        await settleShell(page, width, rail(width));
         await insideViewport(field);
         await page.screenshot({
           path: info.outputPath(`cold-${width}-${running ? 'active' : 'idle'}.png`),
@@ -137,7 +141,7 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   await settleShell(page, 1440, 400);
   for (const width of [390, 320, 1440]) {
     await page.setViewportSize({ width, height: 844 });
-    await settleShell(page, width, width < 1024 ? 56 : 400);
+    await settleShell(page, width, width < 1024 ? rail(width) : 400);
     await insideViewport(input);
     await expect(input).toHaveValue('Keep this draft while resizing the full shell.');
   }
@@ -145,7 +149,7 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   await settleShell(page, 1440, 56);
   for (const width of [320, 1440]) {
     await page.setViewportSize({ width, height: 844 });
-    await settleShell(page, width, 56);
+    await settleShell(page, width, rail(width));
     await expect(input).toHaveValue('Keep this draft while resizing the full shell.');
   }
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
