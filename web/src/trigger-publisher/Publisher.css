@@ -66,6 +66,7 @@
 .trigger-rail strong {
   font: var(--dsw-font-s-strong-14);
 }
+.trigger-rail span,
 .trigger-rail code {
   font-size: 12px;
 }
