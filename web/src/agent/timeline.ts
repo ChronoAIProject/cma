@@ -1,6 +1,7 @@
 import type {
   ApprovalRequest,
   ConversationMessage,
+  PlanSnapshot,
   ReasoningBlock,
   RecoveryNotice,
   ToolCall,
@@ -12,6 +13,7 @@ export type Entry =
   | { kind: 'tool'; item: ToolCall }
   | { kind: 'reasoning'; item: ReasoningBlock }
   | { kind: 'approval'; item: ApprovalRequest }
+  | { kind: 'plan'; item: PlanSnapshot }
   | { kind: 'recovery'; item: RecoveryNotice };
 
 /** Two or more tool calls with nothing else recorded between them. */
