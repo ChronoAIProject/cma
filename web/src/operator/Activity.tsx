@@ -1,18 +1,37 @@
 import { Picker } from '../ui/Picker';
 import { useCallback, useState } from 'react';
-import type { ActivityAction } from '@chronoai/cma-sdk';
+import type { ActivityAction, ActivityRecord } from '@chronoai/cma-sdk';
+import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { Table, TableCell } from '../ui/Table';
 import { IconSearchOutline16 } from '../ui/icons';
+import type { StatusTone } from '../vocabulary/status';
 import type { OperatorClient } from './client';
-import {
-  FailureNotice,
-  RecordControls,
-  Records,
-  Timestamp,
-  stateWord,
-  useRecords,
-} from './records';
+import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
+
+const COLUMNS = [
+  { header: 'Time (SGT)' },
+  { header: 'Actor' },
+  { header: 'Action' },
+  { header: 'Target' },
+  { header: 'Outcome' },
+  { header: 'Code' },
+];
+
+// A refusal is the platform declining as designed; a failure is something broken.
+const OUTCOMES = {
+  succeeded: { label: 'Succeeded', tone: 'neutral' },
+  refused: { label: 'Refused', tone: 'warning' },
+  failed: { label: 'Failed', tone: 'error' },
+} as const satisfies Record<
+  ActivityRecord['outcome']['status'],
+  { readonly label: string; readonly tone: StatusTone }
+>;
+
+function actionWord(action: ActivityAction): string {
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
 
 const actions: readonly ActivityAction[] = [
   'authenticate',
@@ -91,40 +110,41 @@ function ActivityRecords({
     <>
       <RecordControls {...records} />
       <FailureNotice failure={records.error} />
-      <Records loading={records.loading} empty={records.page?.items.length === 0}>
+      <Table
+        label="Activity"
+        placement="operator-table"
+        columns={COLUMNS}
+        loading={records.loading}
+        loadingLabel="Loading records"
+        empty={records.page === undefined ? undefined : 'No records match these filters.'}
+      >
         {records.page?.items.map((row) => (
-          <article className="operator-record" key={row.id}>
-            <Timestamp value={row.at} />
-            <div>
-              <p>
-                {stateWord(row.action)}: {row.outcome.status}
-              </p>
-              <p className="operator-meta">
-                <span>
-                  {row.actor === null ? (
-                    'Not signed in'
-                  ) : (
-                    <>Actor {row.actor_name?.trim() || 'Name unavailable'}</>
-                  )}
-                </span>
-                {row.target === null ? null : (
-                  <span>
-                    {row.target.kind === 'subject' ? (
-                      <>User {row.target_name?.trim() || 'Name unavailable'}</>
-                    ) : (
-                      <>
-                        {row.target.kind} <code>{row.target.id}</code>
-                      </>
-                    )}
-                  </span>
-                )}
-              </p>
-              {'code' in row.outcome ? <code>{row.outcome.code}</code> : null}
-            </div>
-            <code>{row.id}</code>
-          </article>
+          <tr key={row.id}>
+            <TableCell>
+              <Timestamp value={row.at} />
+            </TableCell>
+            <TableCell>
+              {row.actor === null ? 'Not signed in' : row.actor_name?.trim() || 'Name unavailable'}
+            </TableCell>
+            <TableCell>{actionWord(row.action)}</TableCell>
+            <TableCell>
+              {row.target === null ? null : row.target.kind === 'subject' ? (
+                <>User {row.target_name?.trim() || 'Name unavailable'}</>
+              ) : (
+                <>
+                  {row.target.kind} <code className="operator-id">{row.target.id}</code>
+                </>
+              )}
+            </TableCell>
+            <TableCell>
+              <Badge tone={OUTCOMES[row.outcome.status].tone}>
+                {OUTCOMES[row.outcome.status].label}
+              </Badge>
+            </TableCell>
+            <TableCell mono>{'code' in row.outcome ? row.outcome.code : null}</TableCell>
+          </tr>
         ))}
-      </Records>
+      </Table>
     </>
   );
 }
