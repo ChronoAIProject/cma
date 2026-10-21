@@ -106,7 +106,7 @@ it('restores owner Sandbox and child details immediately but holds commands unti
   view.rerender(f.draw(false));
   view.rerender(f.draw(true));
   expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'chrono-bot' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'chrono-bot', hidden: true })).toBeInTheDocument();
   expect(screen.getByText('gpt-5')).toBeInTheDocument();
   expect(screen.queryByText('Loading workspaces')).not.toBeInTheDocument();
   expect(screen.queryByText('Opening Sandbox')).not.toBeInTheDocument();

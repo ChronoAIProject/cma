@@ -57,13 +57,26 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
 });
 
 it.each(['pausing', 'reviving', 'retiring'] as const)(
-  'keeps underlying %s activity closed until requested',
+  'reads %s activity only once the Activity tab is opened',
   async (status) => {
-    lifecyclePage(async () => sandboxFixture(status));
-    const disclosure = await screen.findByText('Sandbox operation progress');
+    const readSandboxEvents = vi.fn(async () => []);
+    render(
+      <SandboxPage
+        client={agentClient({ readSandbox: async () => sandboxFixture(status), readSandboxEvents })}
+        sandboxId="sbx_1"
+        revision={0}
+        permissions={permissions}
+        busy={false}
+        onAction={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    const tab = await screen.findByRole('tab', { name: 'Activity' });
     expect(screen.queryByRole('region', { name: 'Sandbox progress' })).not.toBeInTheDocument();
-    fireEvent.click(disclosure);
+    expect(readSandboxEvents).not.toHaveBeenCalled();
+    fireEvent.click(tab);
     expect(await screen.findByRole('region', { name: 'Sandbox progress' })).toBeInTheDocument();
+    expect(readSandboxEvents).toHaveBeenCalled();
   },
 );
 
@@ -81,6 +94,7 @@ it('explains provider persistence while workspace, pause and delete actions rema
       },
     },
   }));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Activity' }));
   expect(
     await screen.findByText(/keeps its files and installed software on its saved home/),
   ).toBeInTheDocument();
@@ -138,6 +152,7 @@ it('shows granted service names for a paused Sandbox without relying on Agent re
       />
     </NamedReferences>,
   );
+  fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
   expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
     'href',
     'https://nyx.chrono-ai.fun/services/catalog-storage',
@@ -218,6 +233,7 @@ it('keeps loaded content on a failed refresh but holds stale Pause eligibility u
     .mockResolvedValue(sandboxFixture());
   lifecyclePage(readSandbox);
   await act(async () => {});
+  fireEvent.click(screen.getByRole('tab', { name: 'Workspaces' }));
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'Agent one' })).toBeInTheDocument();
@@ -291,9 +307,14 @@ it.each(['active'] as const)(
     openMoreActions();
     fireEvent.click(menuItem('New workspace'));
     agent.click();
+    fireEvent.click(screen.getByRole('tab', { name: 'Workspaces' }));
+    const here = await screen.findByRole('button', { name: 'New agent in chrono-bot' });
+    expect(here).toBeEnabled();
+    here.click();
     expect(onAction.mock.calls).toEqual([
       [{ kind: 'new_workspace', sandboxId: 'sbx_1' }],
       [{ kind: 'new_agent', sandboxId: 'sbx_1' }],
+      [{ kind: 'new_agent', workspaceId: 'wsp_1' }],
     ]);
   },
 );
@@ -316,14 +337,22 @@ it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'
     openMoreActions();
     expect(menuItem('New workspace')).toHaveAttribute('aria-disabled', 'true');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Workspaces' }));
     if (['paused', 'pausing', 'reviving', 'rotating'].includes(status)) {
       expect(await screen.findByRole('link', { name: 'Agent one' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'New agent' })).toBeDisabled();
-      expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New agent in chrono-bot' })).toBeDisabled();
     } else {
-      expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'New agent in chrono-bot' }),
+      ).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Agent one' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: 'Workspaces' })).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          status === 'retiring'
+            ? 'Workspaces are no longer available in this Sandbox.'
+            : 'Workspaces appear here when the Sandbox is ready.',
+        ),
+      ).toBeInTheDocument();
     }
     if (status === 'paused') {
       expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
