@@ -3014,3 +3014,43 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
 | 2026-10-21 | Added one shared table (§12.6): a bordered box at radius 12 with a 40px header row, 52px rows on hairlines, a right-aligned actions column with a visually hidden header, note rows, skeleton loading and an empty row, scrolling inside its own box on narrow screens. Event Gateway channels and consumers and the Operations Sandboxes, Warm pools and Activity lists moved onto it, with status and outcome badges and SGT-labelled time columns; Operations says a missing cross-owner capability once for the page instead of on every row. Channels open on the table, endpoints gained Copy, and a 403 now says the account lacks Event Gateway permissions instead of offering sign-in again. Triggers carry their Draft, Published or Retired badge in the rail and header. Launch progress rows use state dots instead of the character, with the overall state as a badge and failures as alerts. |
 | 2026-10-21 | Rebuilt the composer as one rounded box with its controls inside: Attach files, a permission chip and, only while a turn runs, the steering chip on the left; one model and effort chip, a context ring and Send on the right. The chip opens a card with the effort word, the model list and a keyboard-operable effort slider with a reset to the confirmed settings; the explicit Apply rule is unchanged and its status sits inside the box. Context and Total tokens moved from a text row into the ring's tooltip, and a missing figure still reads not reported. The Chrono Agent avatar became the inline CMA mark on a themed circle, so light no longer shows a black square. The Agent header became one line that collapses to a 28px strip, reveals itself on hover or focus without moving the conversation and can be pinned per viewer; the Details toggle, creation origin and subscription sign-in moved into More Agent actions. |
+
+### Agent files and share links (2026-10-22)
+
+Agent Details offers Files for the mounted `/home/` directory. A Files dialog
+reuses the centered Modal and its 60vw/60dvh bounds, focus trap, dismissal and
+presence transitions. Its desktop body has a 200px directory rail and a flexible
+preview/editor; below 48rem the rail and editor stack. Directories expand on
+request, with fixed 32px rows, existing folder/code icons and ellipsis for long
+names. The path remains copyable. Show hidden defaults off and reveals dotfiles
+and hidden directories. Refresh is explicit; no background directory polling.
+
+Text is rendered as text, with a code-face editor for supported text files.
+Raster images use an isolated image preview. Other binary formats offer download.
+File content never executes scripts, HTML or SVG. Save uses the last read file
+version; a conflict retains the draft and asks the user to reload explicitly.
+New file, New folder and Upload use existing buttons and fields. Delete confirms
+inline, never with a second dialog. Unsaved changes are retained until saved or
+explicitly discarded. Read-only access hides mutations while preserving browsing
+and downloads. Requests and previews are cleared when Agent or authorization
+identity changes. Existing motion durations and reduced-motion behavior apply.
+
+Agent Details also offers Share Agent. It creates multiple independent links,
+each with View only or View and write and an audience of anyone with the link,
+an organization, or selected people. Links are accepted after sign-in and add
+only that Agent to Shared with me in Agents view. The recipient sees Shared by
+with the sharer's display name and the effective permission. View-only disables
+message input, settings and file changes; view-and-write enables those Agent
+operations, never Sandbox lifecycle or sharing management. Revoking a link
+removes access granted through it; other independently valid links remain valid.
+The sharing dialog states that Files exposes the shared Sandbox's full `/home/`
+so the owner can make an informed sharing decision. Secrets stay in URL fragments
+and are removed from the address after redemption.
+
+Returning to an Agent shows its latest authorized transcript at the conversation
+tail. Historical event pages rebuild rich state without presenting past turns as
+live Thinking or animating old messages as new arrivals. Agents navigation omits
+Workspace rows; Sandbox navigation retains them. Operations Actor is a named
+selector instead of a free-text identity field.
+
+| 2026-10-22 | Add lazy mounted-home Files browsing/editing and scoped Agent share links using existing Modal, controls, tokens and transitions; show latest conversation on return, simplify Agents navigation and select named Operations actors. |
