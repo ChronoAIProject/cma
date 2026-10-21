@@ -19,20 +19,24 @@
 .sandbox-page p {
   color: var(--dsw-alias-label-secondary);
 }
-.sandbox-page a {
+/* Links in the content; the header's breadcrumb keeps its own quieter ink. */
+.sandbox-page__band a {
   color: var(--dsw-alias-brand-primary);
 }
 .sandbox-page code {
   font-family: var(--ds-font-family-code);
   overflow-wrap: anywhere;
 }
-.sandbox-page__header,
-.sandbox-page__actions {
+.sandbox-page__header {
   display: flex;
   gap: 16px;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
+}
+/* The one alert stack under the header (§17); it hides itself when empty. */
+.sandbox-page > [data-sandbox-alerts] {
+  margin-top: 16px;
 }
 /* Why a header action is unavailable, under the header it belongs to (§17). */
 .sandbox-page__reasons {
@@ -83,6 +87,87 @@
 }
 .sandbox-page__agents > li > .sandbox-page__header {
   margin-bottom: 12px;
+}
+/*
+ * The Workspaces table. On a narrow screen it scrolls inside its own box, so
+ * the page itself never scrolls sideways.
+ */
+.sandbox-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+.sandbox-table:focus-visible {
+  border-radius: 6px;
+}
+.sandbox-table table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+}
+.sandbox-table th,
+.sandbox-table td {
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.sandbox-table thead th {
+  padding-top: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+.sandbox-table tbody th {
+  font-weight: 600;
+}
+.sandbox-table th:last-child,
+.sandbox-table td:last-child {
+  padding-right: 0;
+}
+.sandbox-table .sandbox-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+/* A path is read whole; on a phone the table scrolls rather than breaking it. */
+.sandbox-table td > code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+/* A heading with its section's own action beside it. */
+.sandbox-page__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.sandbox-page .sandbox-page__toolbar h2 {
+  margin: 0;
+}
+.sandbox-table__agents {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sandbox-table__agents li {
+  display: grid;
+  gap: 2px;
+}
+.sandbox-table__agent {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.sandbox-table__quiet {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
 }
 .sandbox-page__references {
   display: flex;

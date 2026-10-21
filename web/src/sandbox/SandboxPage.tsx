@@ -13,19 +13,17 @@ import { IconPauseOutline16, IconPlayOutline16, IconPlusOutline16 } from '../ui/
 import { MoreActions } from '../ui/MoreActions';
 import { sandboxCreateReason, sandboxHeaderMenu } from './sandboxHeaderActions';
 import {
-  sandboxUnavailableNotice,
   sandboxLifecycleAction,
   sandboxLifecycleLabel,
   sandboxRefreshDelay,
   sandboxTone,
 } from './lifecycle';
 import { Badge } from '../ui/Badge';
-import { Alert } from '../ui/Alert';
-import { SandboxOverview } from './SandboxOverview';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
-import { LifecycleProgress } from './LifecycleProgress';
-import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryNotice';
+import { SandboxAlerts } from './SandboxAlerts';
+import { SandboxSections } from './SandboxSections';
+import { readSandboxTab, rememberSandboxTab, type SandboxTab } from './sandboxTabRoute';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { SharingDialog, useSharingAllowed } from '../resources/SharingDialog';
@@ -93,7 +91,10 @@ export function SandboxPage({
   const sharingAllowed = useSharingAllowed(sharingClient, { kind: 'sandbox', id: sandboxId });
   // Opened for one client, so a changed or withdrawn client closes the dialog.
   const [sharingFor, setSharingFor] = useState<ResourceViewsClient>();
-  const [progressOpen, setProgressOpen] = useState(false);
+  // Read once: the URL names the tab a refresh or a link asked for.
+  const [chosenTab, setChosenTab] = useState(() => readSandboxTab(window.location.search));
+  // Without one, a Sandbox still being prepared opens where its progress is.
+  const [firstTab, setFirstTab] = useState<SandboxTab>();
   const [connectionScope, setConnectionScope] = useState<{
     client: CmaWebClient;
     sandboxId: string;
@@ -215,29 +216,48 @@ export function SandboxPage({
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
   const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
   const actionContext = { busy, stale, needsConnections };
-  const createReason = permissions.createAgent
-    ? sandboxCreateReason(sandbox, actionContext)
-    : undefined;
-  const notice = sandboxUnavailableNotice(sandbox);
-  const optionalProgress =
-    sandbox.lifecycle?.operation !== undefined ||
-    [
-      'paused',
-      'pausing',
-      'reviving',
-      'rotating',
-      'credential_rotating',
-      'retiring',
-      'retired',
-    ].includes(sandbox.status);
-  const progress = (
-    <LifecycleProgress
-      client={client}
-      sandbox={sandbox}
-      observedAt={state.observedAt}
-      stale={stale}
-    />
-  );
+  const childReason = sandboxCreateReason(sandbox, actionContext);
+  const createReason = permissions.createAgent ? childReason : undefined;
+  if (firstTab === undefined)
+    setFirstTab(['provisioning', 'installing'].includes(sandbox.status) ? 'activity' : 'overview');
+  const tab = chosenTab ?? firstTab ?? 'overview';
+  const selectTab = (next: SandboxTab) => {
+    setChosenTab(next);
+    rememberSandboxTab(sandboxId, next);
+  };
+  const runtime =
+    sandbox.runtimeUpdate !== undefined && viewerId !== undefined && sandbox.owner === viewerId ? (
+      <SandboxRuntimeUpdate
+        client={client}
+        sandboxId={sandboxId}
+        ownerId={viewerId}
+        revision={sandbox.revision}
+        update={sandbox.runtimeUpdate}
+        stale={stale}
+        busy={busy}
+        onAccepted={(receipt) => {
+          const cached = views?.sandboxes.get(sandboxId);
+          if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
+            views?.sandboxes.put(sandboxId, {
+              ...cached,
+              sandbox: { ...cached.sandbox, ...receipt },
+            });
+          setStored((previous) => {
+            if (
+              previous?.request !== request ||
+              previous.state.status !== 'ready' ||
+              previous.state.sandbox.owner !== viewerId ||
+              previous.state.sandbox.revision > receipt.revision
+            )
+              return previous;
+            return {
+              ...previous,
+              state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
+            };
+          });
+        }}
+      />
+    ) : undefined;
   return (
     <section className="sandbox-page">
       <PageHeader
@@ -332,79 +352,25 @@ export function SandboxPage({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      <div className="alert-stack">
-        <Presence>
-          {pollError ? (
-            <Alert tone="warning">Progress could not be refreshed. Reconnecting.</Alert>
-          ) : null}
-        </Presence>
-        {notice === undefined ? null : <Alert tone="info">{notice}</Alert>}
-      </div>
-      <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
-      {optionalProgress ? (
-        <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
-          <summary>Sandbox operation progress</summary>
-          {progressOpen ? progress : null}
-        </details>
-      ) : (
-        progress
-      )}
-      <Presence>
-        {sandbox.status === 'failed' && !sandboxRecoveryFailed(sandbox) ? (
-          <p role="alert">
-            Your sandbox needs attention.{' '}
-            {sandbox.failure?.remediation ?? 'Open Technical details for the reported failure.'}
-          </p>
-        ) : null}
-      </Presence>
-      <dl>
-        <div>
-          <dt>Owner</dt>
-          <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
-        </div>
-      </dl>
-      {sandbox.runtimeUpdate !== undefined &&
-      viewerId !== undefined &&
-      sandbox.owner === viewerId ? (
-        <SandboxRuntimeUpdate
-          client={client}
-          sandboxId={sandboxId}
-          ownerId={viewerId}
-          revision={sandbox.revision}
-          update={sandbox.runtimeUpdate}
-          stale={stale}
-          busy={busy}
-          onAccepted={(receipt) => {
-            const cached = views?.sandboxes.get(sandboxId);
-            if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
-              views?.sandboxes.put(sandboxId, {
-                ...cached,
-                sandbox: { ...cached.sandbox, ...receipt },
-              });
-            setStored((previous) => {
-              if (
-                previous?.request !== request ||
-                previous.state.status !== 'ready' ||
-                previous.state.sandbox.owner !== viewerId ||
-                previous.state.sandbox.revision > receipt.revision
-              )
-                return previous;
-              return {
-                ...previous,
-                state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
-              };
-            });
-          }}
-        />
-      ) : null}
-      <SandboxOverview
-        key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
+      <SandboxAlerts
+        sandbox={sandbox}
+        pollError={pollError}
         stale={stale}
+        onViewProgress={tab === 'activity' ? undefined : () => selectTab('activity')}
+      />
+      <SandboxSections
+        key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
         client={client}
         sandbox={sandbox}
+        observedAt={state.observedAt}
         permissions={permissions}
         busy={busy || stale}
+        stale={stale}
         readEnabled={!accessUncertain}
+        createReason={childReason}
+        runtime={runtime}
+        selected={tab}
+        onSelect={selectTab}
         onAction={onAction}
         onNavigate={onNavigate}
       />
