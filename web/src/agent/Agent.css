@@ -228,6 +228,19 @@
 }
 
 .message-stream__recovery,
+.agent-surface__alerts {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 20px 0;
+}
+
+.agent-surface__alerts:empty {
+  display: none;
+}
+
 .agent-action-error {
   display: flex;
   gap: 10px;
