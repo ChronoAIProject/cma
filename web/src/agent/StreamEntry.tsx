@@ -1,11 +1,4 @@
 import type { ApprovalDecision } from './controller';
-import type {
-  ApprovalRequest,
-  ConversationMessage,
-  ReasoningBlock,
-  RecoveryNotice,
-  ToolCall,
-} from './model';
 import { Button } from '../ui/Button';
 import {
   IconCodeOutline16,
@@ -23,13 +16,7 @@ import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
-
-export type Entry =
-  | { kind: 'message'; item: ConversationMessage }
-  | { kind: 'tool'; item: ToolCall }
-  | { kind: 'reasoning'; item: ReasoningBlock }
-  | { kind: 'approval'; item: ApprovalRequest }
-  | { kind: 'recovery'; item: RecoveryNotice };
+import type { Entry } from './timeline';
 
 export function StreamEntry({
   entry,
