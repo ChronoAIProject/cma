@@ -1,5 +1,5 @@
 //! Current policy inspection and owner share management.
-use crate::{resources::positive, Client, IdempotencyKey, Result};
+use crate::{Client, IdempotencyKey, Result, resources::positive};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
