@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['admin-runtime-update-invalid-json', 'invalid_runtime_update'],
   ['interruption-v2-invalid-revision', 'invalid_control_observation'],
   ['interruption-v2-empty-text', 'invalid_interrupt_request'],
   ['interruption-v2-whitespace-text', 'invalid_interrupt_request'],

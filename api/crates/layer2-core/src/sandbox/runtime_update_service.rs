@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::store::{SandboxStore, SandboxStoreError};
 use super::{Sandbox, SandboxStatus};
-use crate::{Caller, Capability, SandboxId};
+use crate::{Caller, Capability, SandboxId, SubjectId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxRuntimeUpdateError {
@@ -65,13 +65,35 @@ impl SandboxRuntimeUpdateService {
         if !caller.authorization.allows(Capability::UseOwnSandboxes) {
             return Err(SandboxRuntimeUpdateError::Forbidden);
         }
+        self.queue(id, target_version, Some(&caller.subject)).await
+    }
+
+    /// Queue the same retained-home update for an operator without impersonating its owner.
+    pub async fn request_as_operator(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        target_version: &str,
+    ) -> Result<Sandbox, SandboxRuntimeUpdateError> {
+        if !caller.authorization.allows(Capability::ControlAnySandbox) {
+            return Err(SandboxRuntimeUpdateError::Forbidden);
+        }
+        self.queue(id, target_version, None).await
+    }
+
+    async fn queue(
+        &self,
+        id: &SandboxId,
+        target_version: &str,
+        owner: Option<&SubjectId>,
+    ) -> Result<Sandbox, SandboxRuntimeUpdateError> {
         for _ in 0..8 {
             let mut sandbox = self
                 .store
                 .get_sandbox(id)
                 .await
                 .map_err(store_error)?
-                .filter(|sandbox| sandbox.owner == caller.subject)
+                .filter(|sandbox| owner.is_none_or(|owner| sandbox.owner == *owner))
                 .ok_or(SandboxRuntimeUpdateError::NotFound)?;
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
                 request.completed_at.is_none() && request.target_version == target_version

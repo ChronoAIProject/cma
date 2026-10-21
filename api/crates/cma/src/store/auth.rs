@@ -29,12 +29,14 @@ pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
 pub(super) const SUBJECTS: &str = "auth_subjects";
 pub(super) const API_BEARERS: &str = "auth_api_bearers";
 pub(super) const ACTOR_LINKS: &str = "auth_actor_links";
+pub(super) const PROXY_GRANTS: &str = "auth_nyxid_proxy_grants";
 pub(super) const AUTH_COLLECTIONS: &[&str] = &[
     BROWSER_LOGINS,
     LOGIN_ATTEMPTS,
     SUBJECTS,
     API_BEARERS,
     ACTOR_LINKS,
+    PROXY_GRANTS,
 ];
 const EXPIRY_INDEX: &str = "expires_at_ttl";
 const LOGIN_KIND: &str = "login-attempt";
@@ -46,6 +48,8 @@ mod actor_links;
 mod api_bearers;
 #[path = "auth_login_documents.rs"]
 mod login_documents;
+#[path = "auth_proxy_grants.rs"]
+mod proxy_grants;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserLoginDoc {
@@ -107,6 +111,7 @@ pub struct MongoAuthStore {
     subjects: Collection<SubjectDoc>,
     api_bearers: Collection<api_bearers::ApiBearerDoc>,
     actor_links: Collection<actor_links::ActorLinkDoc>,
+    proxy_grants: Collection<proxy_grants::ProxyGrantDoc>,
     cipher: AuthCipher,
 }
 
@@ -125,6 +130,7 @@ impl MongoAuthStore {
             subjects: majority_collection(&database, SUBJECTS),
             api_bearers: majority_collection(&database, API_BEARERS),
             actor_links: majority_collection(&database, ACTOR_LINKS),
+            proxy_grants: majority_collection(&database, PROXY_GRANTS),
             cipher: AuthCipher::new(deployment, encryption_key)?,
         };
         let expiry = || {
@@ -299,6 +305,20 @@ impl AuthStore for MongoAuthStore {
     }
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
         self.insert_api_bearer_record(custody).await
+    }
+
+    async fn insert_proxy_grant(
+        &self,
+        grant: crate::auth::nyxid_proxy::ProxyGrant,
+    ) -> Result<bool, StoreError> {
+        self.insert_proxy_grant_record(grant).await
+    }
+
+    async fn proxy_grant(
+        &self,
+        id: &[u8; 32],
+    ) -> Result<Option<crate::auth::nyxid_proxy::ProxyGrant>, StoreError> {
+        self.read_proxy_grant_record(id).await
     }
 
     async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError> {

@@ -22,13 +22,13 @@ curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
 printf '%s\n' '6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115  /tmp/scanner.tar.gz' | sha256sum -c -
 tar -xzf /tmp/scanner.tar.gz --strip-components=1 -C /src/gitleaks
 printf '%s\n' 'e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf  config/gitleaks.toml' | sha256sum -c -
-go get golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0
+go get golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0 github.com/klauspost/compress@v1.18.7
 go mod download all
 go mod verify
 mkdir -p /usr/local/share/gitleaks
 printf '%s\n' \
-  'e0edfb0862afb47842aee08811984801fef09c60865c77988c814a2b58450404  go.mod' \
-  '8220b35a8d9ab7e2befe8880db36aded4fc68547ce5c2b42bb28c102d933e09c  go.sum' \
+  '0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675  go.mod' \
+  'c1f21f073cc203c7678f230b9cb14131a25729f3e2fdbd73475d0de44be5711e  go.sum' \
   'e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf  config/gitleaks.toml' \
   > /usr/local/share/gitleaks/inputs.sha256
 sha256sum -c /usr/local/share/gitleaks/inputs.sha256
