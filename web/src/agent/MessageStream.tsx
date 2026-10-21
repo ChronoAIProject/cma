@@ -3,7 +3,8 @@ import type { ReactNode } from 'react';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry } from './StreamEntry';
-import type { Entry } from './timeline';
+import { groupToolCalls, type Entry } from './timeline';
+import { ToolCallGroup } from './ToolCallRows';
 import { isPendingTool } from './toolStatus';
 import type { OptimisticMessage } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
@@ -122,32 +123,37 @@ export function MessageStream({
       conversation.activeRunId === undefined ? (
         <p className="message-stream__empty">{emptyMessage}</p>
       ) : null}
-      {entries.map((entry) => (
-        <StreamEntry
-          key={`${entry.kind}:${entry.item.id}`}
-          entry={entry}
-          approvalBusy={approvalBusy}
-          approvalReadOnly={approvalReadOnly}
-          onApproval={onApproval}
-          user={user}
-          unknownUserName={unknownUserName}
-          feedback={feedback}
-          showUsage={
-            entry.kind === 'message' &&
-            entry.item.runId !== undefined &&
-            entry.item.runId !== conversation.activeRunId &&
-            finalReply.get(entry.item.runId) === entry.item.id
-          }
-          usage={
-            entry.kind === 'message' && entry.item.runId !== undefined
-              ? (conversation.turnUsage?.[entry.item.runId] ??
-                (String(conversation.usage?.currentTurn?.turnSequence) === entry.item.runId
-                  ? conversation.usage?.currentTurn
-                  : undefined))
-              : undefined
-          }
-        />
-      ))}
+      {groupToolCalls(entries).map((entry) =>
+        entry.kind === 'tools' ? (
+          <ToolCallGroup key={entry.id} group={entry} activeRunId={conversation.activeRunId} />
+        ) : (
+          <StreamEntry
+            key={`${entry.kind}:${entry.item.id}`}
+            entry={entry}
+            approvalBusy={approvalBusy}
+            approvalReadOnly={approvalReadOnly}
+            onApproval={onApproval}
+            activeRunId={conversation.activeRunId}
+            user={user}
+            unknownUserName={unknownUserName}
+            feedback={feedback}
+            showUsage={
+              entry.kind === 'message' &&
+              entry.item.runId !== undefined &&
+              entry.item.runId !== conversation.activeRunId &&
+              finalReply.get(entry.item.runId) === entry.item.id
+            }
+            usage={
+              entry.kind === 'message' && entry.item.runId !== undefined
+                ? (conversation.turnUsage?.[entry.item.runId] ??
+                  (String(conversation.usage?.currentTurn?.turnSequence) === entry.item.runId
+                    ? conversation.usage?.currentTurn
+                    : undefined))
+                : undefined
+            }
+          />
+        ),
+      )}
       <ActiveThinking conversation={conversation} />
       {optimisticMessages?.map((message) => (
         <article
