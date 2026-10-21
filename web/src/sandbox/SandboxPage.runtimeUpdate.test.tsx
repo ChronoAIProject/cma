@@ -49,10 +49,10 @@ it('retains accepted status and hierarchy through older reads, using the existin
     />,
   );
   await act(async () => {});
-  const agent = screen.getByRole('link', { name: 'Agent one' });
+  const agent = screen.getByRole('link', { name: 'Agent one', hidden: true });
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Update runtime' })));
   expect(screen.getByText('Runtime update queued')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Agent one' })).toBe(agent);
+  expect(screen.getByRole('link', { name: 'Agent one', hidden: true })).toBe(agent);
   expect(readSandbox).toHaveBeenCalledTimes(1);
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(screen.getByText('Runtime update queued')).toBeVisible();
@@ -65,7 +65,7 @@ it('retains accepted status and hierarchy through older reads, using the existin
   };
   await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(screen.getByText('Updating your runtime')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Agent one' })).toBe(agent);
+  expect(screen.getByRole('link', { name: 'Agent one', hidden: true })).toBe(agent);
   expect(readSandbox).toHaveBeenCalledTimes(3);
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(readSandbox).toHaveBeenCalledTimes(4);
@@ -119,7 +119,7 @@ it('allows retry of the retained failed target while the Sandbox remains rotatin
     />,
   );
   await act(async () => {});
-  const agent = screen.getByRole('link', { name: 'Agent one' });
+  const agent = screen.getByRole('link', { name: 'Agent one', hidden: true });
   const retry = screen.getByRole('button', { name: 'Retry runtime update' });
   expect(retry).toBeEnabled();
   await act(async () => fireEvent.click(retry));
@@ -128,5 +128,5 @@ it('allows retry of the retained failed target while the Sandbox remains rotatin
     signal: expect.any(AbortSignal),
   });
   expect(screen.getByText('Updating your runtime')).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Agent one' })).toBe(agent);
+  expect(screen.getByRole('link', { name: 'Agent one', hidden: true })).toBe(agent);
 });

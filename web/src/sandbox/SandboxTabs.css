@@ -1,0 +1,51 @@
+/*
+ * The Sandbox page's underlined tablist — `docs/Web_Style.md` §17, drawn as
+ * Operations' (§19): weight, accent ink and a 2px accent edge mark the
+ * selected tab, and the strip scrolls on its own when it cannot fit.
+ */
+.sandbox-tabs {
+  min-width: 0;
+  margin-top: 24px;
+}
+.sandbox-tabs__list {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+.sandbox-tabs__list button {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.sandbox-tabs__list button:hover {
+  color: var(--dsw-alias-label-primary);
+}
+.sandbox-tabs__list button[aria-selected='true'] {
+  border-bottom-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-text);
+  font-weight: 600;
+}
+.sandbox-tabs__list button:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -4px;
+}
+.sandbox-tabs__panel {
+  min-width: 0;
+}
+/* The tab rule already separates the first section from the strip. */
+.sandbox-tabs__panel > :first-child {
+  margin-top: 0;
+  border-top: 0;
+}
+@media (max-width: 30rem) {
+  .sandbox-tabs__list button {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+}

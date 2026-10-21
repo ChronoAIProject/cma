@@ -9,31 +9,25 @@ import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
+import { IconPauseOutline16, IconPlayOutline16, IconPlusOutline16 } from '../ui/icons';
+import { MoreActions } from '../ui/MoreActions';
+import { sandboxCreateReason, sandboxHeaderMenu } from './sandboxHeaderActions';
 import {
-  IconPauseOutline16,
-  IconPlayOutline16,
-  IconPlusOutline16,
-  IconSettingsOutline16,
-  IconTrashOutline16,
-} from '../ui/icons';
-import {
-  sandboxChildrenAvailable,
-  sandboxUnavailableNotice,
   sandboxLifecycleAction,
   sandboxLifecycleLabel,
   sandboxRefreshDelay,
   sandboxTone,
 } from './lifecycle';
 import { Badge } from '../ui/Badge';
-import { Alert } from '../ui/Alert';
-import { SandboxOverview } from './SandboxOverview';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
-import { LifecycleProgress } from './LifecycleProgress';
-import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryNotice';
+import { SandboxAlerts } from './SandboxAlerts';
+import { SandboxSections } from './SandboxSections';
+import { readSandboxTab, rememberSandboxTab, type SandboxTab } from './sandboxTabRoute';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
-import { SharingButton } from '../resources/SharingButton';
+import { SharingDialog, useSharingAllowed } from '../resources/SharingDialog';
+import type { ResourceViewsClient } from '../resources/client';
 import { useOwnerViews } from '../resources/retainedOwnerViews';
 
 type State =
@@ -93,7 +87,14 @@ export function SandboxPage({
       state.sandbox.owner !== undefined &&
       state.sandbox.owner !== viewerId);
   const [advanced, setAdvanced] = useState(false);
-  const [progressOpen, setProgressOpen] = useState(false);
+  const sharingClient = stale ? undefined : client.resourceViews;
+  const sharingAllowed = useSharingAllowed(sharingClient, { kind: 'sandbox', id: sandboxId });
+  // Opened for one client, so a changed or withdrawn client closes the dialog.
+  const [sharingFor, setSharingFor] = useState<ResourceViewsClient>();
+  // Read once: the URL names the tab a refresh or a link asked for.
+  const [chosenTab, setChosenTab] = useState(() => readSandboxTab(window.location.search));
+  // Without one, a Sandbox still being prepared opens where its progress is.
+  const [firstTab, setFirstTab] = useState<SandboxTab>();
   const [connectionScope, setConnectionScope] = useState<{
     client: CmaWebClient;
     sandboxId: string;
@@ -104,6 +105,7 @@ export function SandboxPage({
     connectionScope?.sandboxId === sandboxId &&
     connectionScope?.viewerId === viewerId;
   const lifecycleReasonId = useId();
+  const createReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
@@ -212,27 +214,50 @@ export function SandboxPage({
   const needsConnections =
     viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
-  const childrenAvailable = sandboxChildrenAvailable(sandbox);
-  const notice = sandboxUnavailableNotice(sandbox);
-  const optionalProgress =
-    sandbox.lifecycle?.operation !== undefined ||
-    [
-      'paused',
-      'pausing',
-      'reviving',
-      'rotating',
-      'credential_rotating',
-      'retiring',
-      'retired',
-    ].includes(sandbox.status);
-  const progress = (
-    <LifecycleProgress
-      client={client}
-      sandbox={sandbox}
-      observedAt={state.observedAt}
-      stale={stale}
-    />
-  );
+  const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
+  const actionContext = { busy, stale, needsConnections };
+  const childReason = sandboxCreateReason(sandbox, actionContext);
+  const createReason = permissions.createAgent ? childReason : undefined;
+  if (firstTab === undefined)
+    setFirstTab(['provisioning', 'installing'].includes(sandbox.status) ? 'activity' : 'overview');
+  const tab = chosenTab ?? firstTab ?? 'overview';
+  const selectTab = (next: SandboxTab) => {
+    setChosenTab(next);
+    rememberSandboxTab(sandboxId, next);
+  };
+  const runtime =
+    sandbox.runtimeUpdate !== undefined && viewerId !== undefined && sandbox.owner === viewerId ? (
+      <SandboxRuntimeUpdate
+        client={client}
+        sandboxId={sandboxId}
+        ownerId={viewerId}
+        revision={sandbox.revision}
+        update={sandbox.runtimeUpdate}
+        stale={stale}
+        busy={busy}
+        onAccepted={(receipt) => {
+          const cached = views?.sandboxes.get(sandboxId);
+          if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
+            views?.sandboxes.put(sandboxId, {
+              ...cached,
+              sandbox: { ...cached.sandbox, ...receipt },
+            });
+          setStored((previous) => {
+            if (
+              previous?.request !== request ||
+              previous.state.status !== 'ready' ||
+              previous.state.sandbox.owner !== viewerId ||
+              previous.state.sandbox.revision > receipt.revision
+            )
+              return previous;
+            return {
+              ...previous,
+              state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
+            };
+          });
+        }}
+      />
+    ) : undefined;
   return (
     <section className="sandbox-page">
       <PageHeader
@@ -254,33 +279,29 @@ export function SandboxPage({
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
-            {client.resourceViews === undefined || stale ? null : (
-              <SharingButton
-                client={client.resourceViews}
-                target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
-              />
-            )}
             {permissions.createAgent ? (
               <Button
+                size="sm"
+                variant="primary"
                 icon={<IconPlusOutline16 />}
-                disabled={busy || stale || needsConnections || !childrenAvailable}
+                disabled={createReason !== undefined}
+                aria-describedby={
+                  createReason === undefined
+                    ? undefined
+                    : createReason === lifecycleReason
+                      ? lifecycleReasonId
+                      : createReasonId
+                }
                 onClick={() => onAction({ kind: 'new_agent', sandboxId })}
                 aria-label="New agent in this Sandbox"
               >
                 New agent
               </Button>
             ) : null}
-            {permissions.createWorkspace ? (
-              <Button
-                icon={<IconPlusOutline16 />}
-                disabled={busy || stale || needsConnections || !childrenAvailable}
-                onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
-              >
-                New workspace
-              </Button>
-            ) : null}
             {permissions.pauseSandbox ? (
               <Button
+                size="sm"
+                variant="outline"
                 icon={
                   lifecycleAction.kind === 'revive_sandbox' ? (
                     <IconPlayOutline16 />
@@ -302,28 +323,26 @@ export function SandboxPage({
                 {lifecycleAction.label}
               </Button>
             ) : null}
-            {permissions.deleteSandbox ? (
-              <Button
-                variant="danger"
-                icon={<IconTrashOutline16 />}
-                disabled={
-                  busy ||
-                  stale ||
-                  ['retiring', 'retired'].includes(sandbox.status) ||
-                  sandbox.lifecycle?.checkpoint !== undefined ||
-                  sandbox.lifecycle?.operation !== undefined
-                }
-                onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
-              >
-                Delete
-              </Button>
-            ) : null}
-            <Button icon={<IconSettingsOutline16 />} onClick={() => setAdvanced(true)}>
-              Advanced
-            </Button>
+            <MoreActions
+              items={sandboxHeaderMenu(sandbox, permissions, actionContext, sharingAllowed)}
+              onSelect={(id) => {
+                if (id === 'new_workspace') onAction({ kind: 'new_workspace', sandboxId });
+                else if (id === 'delete_sandbox') onAction({ kind: 'delete_sandbox', sandboxId });
+                else if (id === 'sharing') setSharingFor(sharingClient);
+                else if (id === 'technical_details') setAdvanced(true);
+              }}
+            />
           </>
         }
       />
+      {lifecycleReason === undefined && createReason === undefined ? null : (
+        <div className="sandbox-page__reasons">
+          {lifecycleReason === undefined ? null : <p id={lifecycleReasonId}>{lifecycleReason}</p>}
+          {createReason === undefined || createReason === lifecycleReason ? null : (
+            <p id={createReasonId}>{createReason}</p>
+          )}
+        </div>
+      )}
       {needsConnections && !stale ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
@@ -333,85 +352,38 @@ export function SandboxPage({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      <div className="alert-stack">
-        <Presence>
-          {pollError ? (
-            <Alert tone="warning">Progress could not be refreshed. Reconnecting.</Alert>
-          ) : null}
-        </Presence>
-        {notice === undefined ? null : <Alert tone="info">{notice}</Alert>}
-      </div>
-      <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
-      {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
-        <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
-      ) : null}
-      {optionalProgress ? (
-        <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
-          <summary>Sandbox operation progress</summary>
-          {progressOpen ? progress : null}
-        </details>
-      ) : (
-        progress
-      )}
-      <Presence>
-        {sandbox.status === 'failed' && !sandboxRecoveryFailed(sandbox) ? (
-          <p role="alert">
-            Your sandbox needs attention.{' '}
-            {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
-          </p>
-        ) : null}
-      </Presence>
-      <dl>
-        <div>
-          <dt>Owner</dt>
-          <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
-        </div>
-      </dl>
-      {sandbox.runtimeUpdate !== undefined &&
-      viewerId !== undefined &&
-      sandbox.owner === viewerId ? (
-        <SandboxRuntimeUpdate
-          client={client}
-          sandboxId={sandboxId}
-          ownerId={viewerId}
-          revision={sandbox.revision}
-          update={sandbox.runtimeUpdate}
-          stale={stale}
-          busy={busy}
-          onAccepted={(receipt) => {
-            const cached = views?.sandboxes.get(sandboxId);
-            if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
-              views?.sandboxes.put(sandboxId, {
-                ...cached,
-                sandbox: { ...cached.sandbox, ...receipt },
-              });
-            setStored((previous) => {
-              if (
-                previous?.request !== request ||
-                previous.state.status !== 'ready' ||
-                previous.state.sandbox.owner !== viewerId ||
-                previous.state.sandbox.revision > receipt.revision
-              )
-                return previous;
-              return {
-                ...previous,
-                state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
-              };
-            });
-          }}
-        />
-      ) : null}
-      <SandboxOverview
-        key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
+      <SandboxAlerts
+        sandbox={sandbox}
+        pollError={pollError}
         stale={stale}
+        onViewProgress={tab === 'activity' ? undefined : () => selectTab('activity')}
+      />
+      <SandboxSections
+        key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
         client={client}
         sandbox={sandbox}
+        owner={viewerId !== undefined && sandbox.owner === viewerId ? viewerId : undefined}
+        observedAt={state.observedAt}
         permissions={permissions}
         busy={busy || stale}
+        stale={stale}
         readEnabled={!accessUncertain}
+        createReason={childReason}
+        runtime={runtime}
+        selected={tab}
+        onSelect={selectTab}
         onAction={onAction}
         onNavigate={onNavigate}
       />
+      {client.resourceViews === undefined ? null : (
+        <SharingDialog
+          key={sandboxId}
+          client={client.resourceViews}
+          target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
+          open={sharingFor !== undefined && sharingFor === sharingClient}
+          onClose={() => setSharingFor(undefined)}
+        />
+      )}
       <Presence>
         {advanced ? (
           <SandboxAdvanced client={client} sandbox={sandbox} onClose={() => setAdvanced(false)} />

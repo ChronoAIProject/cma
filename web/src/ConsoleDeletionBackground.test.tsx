@@ -42,7 +42,8 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   );
   const view = render(draw('first'));
   const remove = async () => {
-    await actor.click(await screen.findByRole('button', { name: 'Delete' }));
+    await actor.click(await screen.findByRole('button', { name: 'More actions' }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Delete Sandbox' }));
     await actor.click(
       await screen.findByRole('checkbox', {
         name: 'I understand this Sandbox will be deleted.',

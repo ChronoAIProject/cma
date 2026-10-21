@@ -2,99 +2,114 @@
   display: grid;
   gap: 18px;
 }
-.agent-lifecycle-provisioning {
+/*
+ * A summary, not a control: no hover, no chevron, nothing to press. The
+ * border only groups the defaults so they read as one fact about the Agent.
+ */
+.agent-lifecycle-settings {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  align-items: start;
-  gap: 16px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
 }
-.agent-lifecycle-provisioning__circle {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  color: var(--dsw-alias-brand-primary);
+.agent-lifecycle-settings__icon {
+  display: inline-flex;
+  color: var(--dsw-alias-label-secondary);
 }
-.agent-lifecycle-provisioning__circle svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  fill: none;
-  stroke-width: 3px;
-}
-.agent-lifecycle-provisioning__track {
-  stroke: var(--dsw-alias-border-l2);
-}
-.agent-lifecycle-provisioning__arc {
-  stroke: currentColor;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: center;
-}
-.agent-lifecycle-provisioning[data-active] .agent-lifecycle-provisioning__arc {
-  animation: agent-setup-rotation 1.2s linear infinite;
-}
-.agent-lifecycle-provisioning__details {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-.agent-lifecycle-provisioning__details h3,
-.agent-lifecycle-provisioning__details p {
+.agent-lifecycle-settings h3,
+.agent-lifecycle-settings p {
   margin: 0;
+  overflow-wrap: anywhere;
 }
-.agent-lifecycle-provisioning__details p,
-.agent-lifecycle-provisioning__details small,
-.agent-lifecycle-provisioning__details summary {
+.agent-lifecycle-settings h3 {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.agent-lifecycle-settings p,
+.agent-lifecycle-note {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
 }
-.agent-lifecycle-provisioning__details summary {
-  cursor: pointer;
+/* The note leads the footer so the actions keep their place at its end. */
+.agent-lifecycle-note {
+  flex: 1 1 220px;
+  margin: 0;
 }
-.agent-lifecycle-provisioning ol {
+.agent-lifecycle-provisioning {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+.agent-lifecycle-provisioning h3,
+.agent-lifecycle-provisioning p {
   margin: 0;
+}
+.agent-lifecycle-provisioning h3 {
+  font: var(--dsw-font-s-strong-14);
+}
+.agent-lifecycle-provisioning p {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+/*
+ * Four columns, each topped by a rule in its state's colour, so the row reads
+ * as a sequence at a glance while every step still carries its word.
+ */
+.agent-lifecycle-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 10px 0 4px;
   padding: 0;
   list-style: none;
 }
-.agent-lifecycle-provisioning li {
+.agent-lifecycle-steps li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-  padding-top: 6px;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-content: start;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding-top: 10px;
   font-size: 12px;
   line-height: 18px;
+  border-top: 2px solid var(--dsw-alias-border-l2);
 }
-@keyframes agent-setup-rotation {
-  to {
-    transform: rotate(270deg);
-  }
+.agent-lifecycle-steps li[data-state='done'] {
+  border-top-color: var(--dsw-alias-state-success-primary);
 }
-@media (prefers-reduced-motion: reduce) {
-  .agent-lifecycle-provisioning[data-active] .agent-lifecycle-provisioning__arc {
-    animation: none;
-  }
+.agent-lifecycle-steps li[data-state='ongoing'] {
+  border-top-color: var(--dsw-alias-brand-primary);
 }
-.agent-lifecycle-provisioning li span,
-.agent-lifecycle-provisioning li small,
-.agent-lifecycle-provisioning__elapsed {
-  color: var(--dsw-alias-label-secondary);
+.agent-lifecycle-steps li[data-state='warning'] {
+  border-top-color: var(--dsw-alias-state-warn-primary);
 }
-.agent-lifecycle-provisioning li strong {
+.agent-lifecycle-steps li[data-state='error'] {
+  border-top-color: var(--dsw-alias-state-error-primary);
+}
+.agent-lifecycle-steps__dot {
+  align-self: center;
+}
+.agent-lifecycle-steps strong {
   min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
-.agent-lifecycle-provisioning li small {
-  grid-column: 1 / -1;
+/* The state word and timing sit under the name, past the dot's column. */
+.agent-lifecycle-steps__state,
+.agent-lifecycle-steps small {
+  grid-column: 2;
+  color: var(--dsw-alias-label-secondary);
 }
 @media (max-width: 30rem) {
-  .agent-lifecycle-provisioning li {
+  .agent-lifecycle-steps {
     grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
+    gap: 8px;
   }
 }
