@@ -1,6 +1,30 @@
 use super::Scenario;
 use layer2_core::{Authorization, Capability};
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(mode) = name.strip_prefix("admin_runtime_update_") {
+        use super::super::admin::tests::{fixture, sandbox};
+        use layer2_core::sandbox::store::SandboxStore;
+        let f = fixture(false);
+        let version = if mode == "unavailable" {
+            "runtime-v1"
+        } else {
+            "runtime-v2"
+        };
+        f.sandboxes
+            .create_sandbox(sandbox("sbx_update", "foreign-owner", version))
+            .await
+            .unwrap();
+        return Some(Scenario {
+            router: f.app,
+            subject: (mode != "anonymous").then_some("operator-a"),
+            authorization: if mode == "forbidden" {
+                Authorization::new([Capability::UseOwnSandboxes])
+            } else {
+                Authorization::new([Capability::ControlAnySandbox])
+            },
+            symbols: Default::default(),
+        });
+    }
     let mode = name.strip_prefix("runtime_update_")?;
     let f =
         super::super::instances_tests::runtime_update_tests::update_fixture(mode != "unconfigured")

@@ -19,16 +19,17 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
-# Build the upstream GitHub release with its one vulnerable indirect module
-# refreshed. No CLI source or transport code is patched.
+# Build the upstream GitHub release with patched Go and indirect modules.
+# The toolchain includes the CVE-2026-111943 crypto/x509 fix.
+# No CLI source or transport code is patched.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
 ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
-ARG GH_GO_VERSION=1.26.9
-ARG GH_GO_SHA256_AMD64=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
-ARG GH_GO_SHA256_ARM64=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
+ARG GH_GO_VERSION=1.26.10
+ARG GH_GO_SHA256_AMD64=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+ARG GH_GO_SHA256_ARM64=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797
 ARG GH_X_MOD_VERSION=0.41.0
 ARG GH_X_NET_VERSION=0.60.0
 RUN apt-get update \

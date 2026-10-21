@@ -1255,6 +1255,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
@@ -1511,6 +1512,17 @@ Sandbox reads until completion. Busy Agents defer the update until idle, and
 eligible managed Sandboxes retain their original home and conversations. Stale
 or conflicting targets return 409; replay an uncertain request with its original
 body and key.
+
+Operators with `ControlAnySandbox` can queue the same update across owners using
+`POST /api/v1/admin/sandboxes/{id}/runtime-update` with that request body. This
+operator endpoint does not require an idempotency key: retrying the same pending
+target leaves the request unchanged. It validates the configured latest target
+or an already pinned retry target and audits the actual operator, Sandbox owner,
+and target. Queueing does not interrupt current work; the existing idle checks
+and transaction fencing retain the original PVC and conversation identities.
+Operator Sandbox detail exposes `runtime_update` with the pinned target, current
+state, and completion or failure metadata. The owner endpoint still hides
+other owners' Sandboxes, including from operators.
 
 Sandbox inventory is personal by default. `organization=<canonical ID>` selects
 current organization ownership and whole-Sandbox grants. `shared=true` selects the

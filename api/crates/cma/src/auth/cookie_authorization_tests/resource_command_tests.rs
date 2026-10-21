@@ -13,6 +13,8 @@ use super::*;
 mod admission;
 #[path = "api_bearer_command_tests.rs"]
 mod api_bearer;
+#[path = "nyxid_proxy_command_tests.rs"]
+mod nyxid_proxy;
 #[path = "sandbox_controls_tests.rs"]
 mod sandbox_controls;
 
