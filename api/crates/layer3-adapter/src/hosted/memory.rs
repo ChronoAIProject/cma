@@ -222,6 +222,12 @@ impl HostedBackend for InMemoryHostedBackend {
             RequestFrame::UploadAgentAttachment(_) => {
                 return refused(operation, "attachment_upload_unsupported")
             }
+            RequestFrame::ListAgentFiles(_)
+            | RequestFrame::ReadAgentFile(_)
+            | RequestFrame::WriteAgentFile(_)
+            | RequestFrame::DeleteAgentFile(_) => {
+                return refused(operation, "filesystem_unsupported")
+            }
             RequestFrame::CacheSkillArchive(archive) => {
                 require_credential(runtime, operation)?;
                 archive.validate()?;
