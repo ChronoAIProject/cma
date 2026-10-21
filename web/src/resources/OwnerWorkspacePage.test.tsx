@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ApiError } from '@chronoai/cma-sdk';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { CmaWebClient } from '../api/client';
@@ -59,7 +59,8 @@ it('places the Workspace in its Sandbox and states its facts', async () => {
   );
   expect(fact('Branch or ref')).toHaveTextContent('Default branch');
   expect(fact('Resolved commit')).toHaveTextContent('abc123');
-  expect(document.title).toBe('chrono-bot · CMA');
+  // The tab is named in an effect after the heading paints.
+  await waitFor(() => expect(document.title).toBe('chrono-bot · CMA'));
 });
 
 it('pairs each Agent with its Worktree', async () => {
