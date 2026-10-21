@@ -15,10 +15,12 @@ import { AgentHeader } from '../agent/AgentHeader';
 import { routePath, type AppRoute } from '../routing/routes';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { Alert } from '../ui/Alert';
-import { ActiveThinking } from '../agent/ActiveThinking';
+import { SessionSettings } from '../agent/SessionSettings';
+import type { UploadAttachment } from '../agent/attachments';
 import type { ApprovalDecision } from '../agent/controller';
 import { agentDisplayTitle } from '../agent/presentation';
 import '../agent/Agent.css';
+import './AgentShareLinks.css';
 
 interface Props {
   readonly client: ResourceViewsClient;
@@ -67,7 +69,6 @@ export function SharedAgent({
   const [command, setCommand] = useState<AbortController>();
   const busy = command !== undefined && !command.signal.aborted;
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
   const mutation = useRef<AbortController | undefined>(undefined);
   const refreshHistory = history.reload;
@@ -110,6 +111,28 @@ export function SharedAgent({
   useEffect(() => () => mutation.current?.abort(), []);
 
   const can = (capability: string) => ready?.access.capabilities.includes(capability) === true;
+  const authorizeSettings = async (signal: AbortSignal) => {
+    try {
+      const current = await client.resourceAccess.effective('agent', agentId, { signal });
+      signal.throwIfAborted();
+      if (!current.capabilities.includes('operate_agent'))
+        throw new Error('Your access no longer permits changing Agent settings.');
+    } catch (cause) {
+      if (!signal.aborted) onAccessChanged();
+      throw cause;
+    }
+  };
+  const uploadAttachment: UploadAttachment | undefined =
+    !can('operate_agent') || web.uploadAgentAttachment === undefined
+      ? undefined
+      : async (file, options) => {
+          const access = await client.resourceAccess.effective('agent', agentId, options);
+          if (!access.capabilities.includes('operate_agent')) {
+            onAccessChanged();
+            throw new Error('Your access no longer permits uploading files.');
+          }
+          return web.uploadAgentAttachment!(agentId, file, options);
+        };
   const run = async (
     capability: string,
     logicalKey: string,
@@ -120,7 +143,6 @@ export function SharedAgent({
     mutation.current = request;
     setCommand(request);
     setError(undefined);
-    setNotice(undefined);
     try {
       const current = await client.resourceAccess.effective('agent', agentId, {
         signal: request.signal,
@@ -180,6 +202,12 @@ export function SharedAgent({
         menu={[{ type: 'label', id: 'creation-origin', text: creationLabel(provenance) }]}
       />
       <div className="agent-surface__alerts">
+        {ready?.access.shared_by ? (
+          <div className="shared-agent__attribution" role="note">
+            Shared by {ready.access.shared_by.display_name?.trim() || 'the Agent owner'}
+            <span>· {can('operate_agent') ? 'View and write access' : 'View-only access'}</span>
+          </div>
+        ) : null}
         {history.state.status === 'loading' ? (
           <Alert tone="info">Loading authorized Agent history</Alert>
         ) : null}
@@ -192,7 +220,6 @@ export function SharedAgent({
           </Alert>
         ) : null}
         {error === undefined ? null : <Alert tone="error">{error}</Alert>}
-        {notice === undefined ? null : <Alert tone="success">{notice}</Alert>}
       </div>
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
@@ -208,8 +235,18 @@ export function SharedAgent({
       </div>
       {ready === undefined ? null : can('interact') ? (
         <div className="agent-surface__input">
-          {conversation === undefined ? null : <ActiveThinking conversation={conversation} />}
           <Composer
+            settings={
+              can('operate_agent') ? (
+                <SessionSettings
+                  agentId={agentId}
+                  active
+                  busy={busy || status !== 'ready'}
+                  authorizeUpdate={authorizeSettings}
+                />
+              ) : undefined
+            }
+            uploadAttachment={uploadAttachment}
             status={status}
             running={conversation?.activeRunId !== undefined}
             busy={busy}
@@ -220,7 +257,6 @@ export function SharedAgent({
               );
               if (result !== undefined) {
                 accepted();
-                setNotice('Message accepted.');
               }
             }}
             onStop={() =>

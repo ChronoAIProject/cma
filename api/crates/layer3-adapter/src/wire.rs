@@ -128,6 +128,10 @@ pub struct AgentHomeRemoveReceipt {
 #[serde(rename_all = "snake_case")]
 pub enum WireOperation {
     UploadAgentAttachment,
+    ListAgentFiles,
+    ReadAgentFile,
+    WriteAgentFile,
+    DeleteAgentFile,
     CacheSkillArchive,
     RuntimeStatus,
     ToolProxyStatus,
@@ -189,6 +193,10 @@ pub enum CheckpointUploadResponse {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum RequestFrame {
     UploadAgentAttachment(crate::AgentAttachmentUpload),
+    ListAgentFiles(crate::AgentFileListRequest),
+    ReadAgentFile(crate::AgentFileReadRequest),
+    WriteAgentFile(crate::AgentFileWriteRequest),
+    DeleteAgentFile(crate::AgentFileDeleteRequest),
     CacheSkillArchive(crate::SkillArchive),
     RuntimeStatus(crate::RuntimeStatusRequest),
     ToolProxyStatus(crate::ToolProxyRequest),
@@ -219,6 +227,10 @@ impl RequestFrame {
     pub const fn operation(&self) -> WireOperation {
         match self {
             Self::UploadAgentAttachment(_) => WireOperation::UploadAgentAttachment,
+            Self::ListAgentFiles(_) => WireOperation::ListAgentFiles,
+            Self::ReadAgentFile(_) => WireOperation::ReadAgentFile,
+            Self::WriteAgentFile(_) => WireOperation::WriteAgentFile,
+            Self::DeleteAgentFile(_) => WireOperation::DeleteAgentFile,
             Self::CacheSkillArchive(_) => WireOperation::CacheSkillArchive,
             Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
             Self::ToolProxyStatus(_) => WireOperation::ToolProxyStatus,
@@ -252,6 +264,10 @@ impl RequestFrame {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ResponseFrame {
     UploadAgentAttachment(crate::AgentAttachmentReceipt),
+    ListAgentFiles(crate::AgentFileListReceipt),
+    ReadAgentFile(crate::AgentFileReadReceipt),
+    WriteAgentFile(crate::AgentFileWriteReceipt),
+    DeleteAgentFile(crate::AgentFileDeleteReceipt),
     CacheSkillArchive { sha256: String },
     RuntimeStatus(crate::RuntimeStatus),
     ToolProxyStatus(crate::ToolProxyStatus),

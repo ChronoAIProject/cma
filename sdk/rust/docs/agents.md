@@ -427,7 +427,6 @@ Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
 Agent creation origin and user-role message position are not substitutes for it.
 A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
 
-
 `usage_updated` contains absolute lifetime input/output consumption and
 `turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
 observed turn. The usage read also exposes optional `current_turn`. Match that
@@ -454,3 +453,32 @@ These idempotent metadata writes need no command key and never create turns.
 Serialize changes to one message and avoid replaying an old write after a newer
 choice. Current owner authority is required; shared readers cannot inspect or
 change these votes.
+
+### Agent session share links
+
+`resource_access().create_agent_share_link(agent_id, &CreateAgentShareLinkRequest,
+&key)` creates an Agent-only view or view-write link. Supply a cryptographically
+random 32-byte token encoded as lowercase hex, and retain it in the share URL
+fragment. The server stores only its digest. `AgentShareAudience` selects public,
+organization, or canonical user subjects resolved with `share_recipients`.
+`agent_share_links` returns metadata without secrets; `redeem_agent_share_link`
+binds possession to the current signed-in recipient. `revoke_agent_share_link`
+uses the current revision to invalidate this link while retaining independent
+links. `EffectiveAccess.shared_by` carries public owner attribution.
+
+### Persistent-home files
+
+`client.agent_files().list(agent_id, "")` lists `/home/`, including hidden
+entries. Pass a relative path to expand a directory. `read(agent_id, path,
+max_bytes)` returns base64 content and its digest; `download(agent_id, path)`
+returns raw bytes, with a dedicated 32 MiB transfer limit.
+
+`write(agent_id, &AgentFileWrite)` uses the last-read `expected_sha256` for
+compare-and-swap saves. Omission means create-only; `directory: Some(true)` with
+empty content creates a folder. `remove(agent_id, path, recursive)` deletes one
+target, recursively only when explicitly requested. File writes and
+`redeem_agent_share_link(share_id, token)` need no idempotency key. No mutation
+is automatically retried. Retain local edits after a conflict and reread before
+an explicit retry. View links may browse/download; only owners and current
+view-write links may change files. Older runtimes return
+`file_runtime_unsupported` until updated while idle.

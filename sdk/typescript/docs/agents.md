@@ -486,3 +486,40 @@ transcript's durable message sequence. These idempotent metadata writes need no
 command key and never create turns. Serialize changes to one message and avoid
 replaying an old write after a newer choice. Current owner authority is required;
 shared readers cannot inspect or change these votes.
+
+### Agent session share links
+
+`client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
+creates an Agent-only share link. `mode` is `view` or `view_write`. `audience` is
+`{ kind: 'public' }`, `{ kind: 'organization', organization_id }`, or
+`{ kind: 'users', subjects }`. Resolve display names to canonical user subjects
+with `shareRecipients(agentId, search)` before creating a users link. The owner
+must select an existing CMA user; arbitrary usernames are not identity proofs.
+
+Generate `token` from 32 cryptographically random bytes encoded as 64 lowercase
+hex characters. Store the secret only in the share URL fragment, never a query
+parameter. Reuse the exact body and idempotency key on retry. The server retains
+only a digest and never returns the secret. `listAgentShareLinks` returns active
+link metadata. The signed-in recipient calls `redeemAgentShareLink(shareId,
+token)` once, then uses ordinary Agent APIs. `revokeAgentShareLink` takes the
+current revision and invalidates this link's recipients immediately; independent
+links remain valid. `effective(...).shared_by` provides the owner's public
+identity for a shared-session banner. No Agent link grants Sandbox lifecycle or
+sharing-management access.
+
+### Persistent-home files
+
+`client.agentFiles.list(agentId, '')` lists `/home/`; pass a relative directory
+path to lazily expand it. Hidden entries are included. `read(agentId, path,
+{ maxBytes })` returns base64 content and its SHA-256; `download(agentId, path)`
+returns bytes. Transfers are bounded to 32 MiB. File responses use their own
+bounded transport; ordinary API responses retain their existing limit.
+
+`write(agentId, { path, content_base64, expected_sha256 })` saves only if the
+last-read digest matches. Omit `expected_sha256` for create-only uploads, or use
+`directory: true` and empty content to create a folder. A conflict preserves
+server contents; retain the local draft and reread before explicitly retrying.
+`remove(agentId, path, recursive)` deletes only that target. These file mutations
+need no command key and are never retried automatically. The owner or a current
+view-write link may write; view links may browse and download. An old runtime
+returns `file_runtime_unsupported` until it is updated while idle.

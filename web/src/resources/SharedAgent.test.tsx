@@ -17,7 +17,10 @@ const detail = {
   updated_at: '2026-09-01T00:00:00Z',
 };
 
-function fixture(initial = ['view_details', 'view_history']) {
+function fixture(
+  initial = ['view_details', 'view_history'],
+  overrides: Parameters<typeof agentClient>[0] = {},
+) {
   const state = { capabilities: initial, revoked: false, policy: 1 };
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -31,6 +34,7 @@ function fixture(initial = ['view_details', 'view_history']) {
         capabilities: state.capabilities,
         revalidate_at: new Date(Date.now() + 50_000).toISOString(),
         policy_revision: state.policy,
+        shared_by: { subject: 'owner-alex', display_name: 'Alex Chen', avatar_url: null },
       });
     if (url.pathname.endsWith('/channel-usage'))
       return Response.json({
@@ -68,6 +72,7 @@ function fixture(initial = ['view_details', 'view_history']) {
     readSandbox,
     readAgentResources,
     readAgentProvenance: (id, options) => sdk.agents.provenance(id, options),
+    ...overrides,
   });
   const show = () =>
     render(
@@ -106,6 +111,9 @@ it('opens a narrow shared deep link without private ancestry, runtime or persona
     await screen.findByText(/Your current access does not allow interaction/),
   ).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('note')).toHaveTextContent('Shared by Alex Chen');
+  expect(screen.getByRole('note')).toHaveTextContent('View-only access');
+  expect(screen.queryByRole('button', { name: 'Permission mode' })).not.toBeInTheDocument();
   for (const read of [
     test.readAgent,
     test.readWorkspace,
@@ -115,6 +123,37 @@ it('opens a narrow shared deep link without private ancestry, runtime or persona
     expect(read).not.toHaveBeenCalled();
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
   expect(await within(screen.getByRole('menu')).findByText('Created manually')).toBeInTheDocument();
+});
+
+it('allows a writable shared Agent to change settings and checks current access before each update', async () => {
+  const defaults = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  } as const;
+  const update = vi.fn(async (_id, body) => body);
+  const test = fixture(['view_details', 'view_history', 'interact', 'operate_agent'], {
+    readAgentSettings: vi.fn(async () => defaults),
+    readAgentModels: vi.fn(async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }]),
+    updateAgentSettings: update,
+  });
+  test.show();
+  const user = userEvent.setup();
+  await screen.findByRole('button', { name: 'Permission mode' });
+  expect(screen.getByRole('note')).toHaveTextContent('View and write access');
+  await user.click(screen.getByRole('button', { name: 'Permission mode' }));
+  await user.click(screen.getByRole('menuitemradio', { name: 'Guarded' }));
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update).toHaveBeenCalledOnce();
+  expect(update.mock.calls[0]?.[1]).toMatchObject({ permission_mode: 'guarded' });
+  await user.click(screen.getByRole('button', { name: 'Permission mode' }));
+  await user.click(screen.getByRole('menuitemradio', { name: 'Autonomous' }));
+  test.state.capabilities = ['view_details', 'view_history'];
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText(/Your current access does not allow interaction/);
+  expect(update).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('button', { name: 'Permission mode' })).not.toBeInTheDocument();
 });
 
 it('allows current admin interaction through the public SDK and removes it on downgrade', async () => {

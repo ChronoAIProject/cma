@@ -1,9 +1,8 @@
 import { Picker } from '../ui/Picker';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ActivityAction, ActivityRecord } from '@chronoai/cma-sdk';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
 import { Table, TableCell } from '../ui/Table';
 import { IconSearchOutline16 } from '../ui/icons';
 import type { StatusTone } from '../vocabulary/status';
@@ -47,6 +46,24 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
   const [actor, setActor] = useState('');
   const [action, setAction] = useState<ActivityAction | ''>('');
   const [filters, setFilters] = useState({ actor, action });
+  // The public operator API currently returns canonical actor names alongside
+  // activity records, but has no separate actor catalogue endpoint. Accumulate
+  // actors as pages arrive so the filter is still a stable selector instead of
+  // asking an operator to type an opaque subject id.
+  const [actorOptions, setActorOptions] = useState<readonly { value: string; label: string }[]>([]);
+  const rememberActors = useCallback((items: readonly ActivityRecord[]) => {
+    setActorOptions((previous) => {
+      const known = new Map(previous.map((option) => [option.value, option]));
+      for (const row of items) {
+        if (row.actor === null || known.has(row.actor)) continue;
+        known.set(row.actor, {
+          value: row.actor,
+          label: row.actor_name?.trim() || 'Name unavailable',
+        });
+      }
+      return [...known.values()].sort((a, b) => a.label.localeCompare(b.label));
+    });
+  }, []);
   return (
     <section aria-label="Operator activity">
       <h2>Activity</h2>
@@ -59,11 +76,11 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
       >
         <label className="operator-field">
           <span>Actor</span>
-          <Input
-            aria-label="Activity actor"
+          <Picker
+            label="Activity actor"
             value={actor}
-            maxLength={255}
-            onChange={(event) => setActor(event.target.value)}
+            onChange={setActor}
+            options={[{ value: '', label: 'All actors' }, ...actorOptions]}
           />
         </label>
         <label className="operator-field">
@@ -82,7 +99,12 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
           Apply filters
         </Button>
       </form>
-      <ActivityRecords key={JSON.stringify(filters)} client={client} filters={filters} />
+      <ActivityRecords
+        key={JSON.stringify(filters)}
+        client={client}
+        filters={filters}
+        onItemsLoaded={rememberActors}
+      />
     </section>
   );
 }
@@ -90,9 +112,11 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
 function ActivityRecords({
   client,
   filters,
+  onItemsLoaded,
 }: {
   readonly client: OperatorClient;
   readonly filters: { readonly actor: string; readonly action: ActivityAction | '' };
+  readonly onItemsLoaded: (items: readonly ActivityRecord[]) => void;
 }) {
   const load = useCallback(
     (cursor: string | undefined, signal: AbortSignal) =>
@@ -106,6 +130,9 @@ function ActivityRecords({
     [client, filters],
   );
   const records = useRecords(load);
+  useEffect(() => {
+    if (records.page !== undefined) onItemsLoaded(records.page.items);
+  }, [records.page, onItemsLoaded]);
   return (
     <>
       <RecordControls {...records} />

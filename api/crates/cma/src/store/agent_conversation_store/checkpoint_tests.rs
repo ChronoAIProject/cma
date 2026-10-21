@@ -50,6 +50,7 @@ fn update(current: &Agent, content: &str) -> AgentConversationMutation {
     next.conversation.last_seq += 1;
     next.updated_at = NOW.into();
     AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,

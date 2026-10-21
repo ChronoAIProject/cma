@@ -1,0 +1,137 @@
+import { fileBytes, type AgentFileContent, type AgentFileEntry } from '../../api/agentFiles';
+import { Button } from '../../ui/Button';
+import { IconDownloadOutline16, IconTrashOutline16 } from '../../ui/icons';
+
+export function textContent(content: AgentFileContent): string | undefined {
+  try {
+    const bytes = fileBytes(content.content_base64);
+    if (bytes.includes(0)) return undefined;
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+}
+function imageType(name: string): string | undefined {
+  const extension = name.toLowerCase().split('.').at(-1);
+  return (
+    {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      avif: 'image/avif',
+    } as Record<string, string>
+  )[extension ?? ''];
+}
+function ImagePreview({
+  content,
+  name,
+}: {
+  readonly content: AgentFileContent;
+  readonly name: string;
+}) {
+  return (
+    <img
+      className="agent-files__image"
+      src={`data:${imageType(name)};base64,${content.content_base64}`}
+      alt={name}
+    />
+  );
+}
+export function FilePreview({
+  file,
+  content,
+  draft,
+  loading,
+  busy,
+  readOnly,
+  onDraft,
+  onSave,
+  onReload,
+  onDownload,
+  onDelete,
+}: {
+  readonly file?: AgentFileEntry;
+  readonly content?: AgentFileContent;
+  readonly draft?: string;
+  readonly loading: boolean;
+  readonly busy: boolean;
+  readonly readOnly: boolean;
+  readonly onDraft: (value: string) => void;
+  readonly onSave: () => void;
+  readonly onReload: () => void;
+  readonly onDownload: () => void;
+  readonly onDelete: () => void;
+}) {
+  const original = content ? textContent(content) : undefined;
+  const dirty = draft !== undefined && draft !== original;
+  return (
+    <section className="agent-files__preview" aria-label="File preview" aria-busy={loading}>
+      {!file ? (
+        <p className="agent-files__empty">Select a file to preview it.</p>
+      ) : (
+        <>
+          <header className="agent-files__file-header">
+            <code title={`/home/${file.path}`}>{file.name}</code>
+            {dirty ? <span aria-label="Unsaved changes">Unsaved</span> : null}
+            <div className="agent-files__actions">
+              <Button
+                size="sm"
+                icon={<IconDownloadOutline16 />}
+                aria-label="Download file"
+                title="Download file"
+                disabled={busy}
+                onClick={onDownload}
+              />
+              {!readOnly ? (
+                <Button
+                  size="sm"
+                  icon={<IconTrashOutline16 />}
+                  aria-label="Delete file"
+                  title="Delete file"
+                  disabled={busy}
+                  onClick={onDelete}
+                />
+              ) : null}
+            </div>
+          </header>
+          {loading ? (
+            <p role="status">Opening file…</p>
+          ) : content && imageType(file.name) ? (
+            <ImagePreview content={content} name={file.name} />
+          ) : draft !== undefined ? (
+            <>
+              <textarea
+                className="agent-files__editor"
+                aria-label={`Contents of ${file.name}`}
+                value={draft}
+                readOnly={readOnly || busy}
+                spellCheck={false}
+                onChange={(event) => onDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+                    event.preventDefault();
+                    if (!readOnly && dirty && !busy) onSave();
+                  }
+                }}
+              />
+              {!readOnly ? (
+                <div className="agent-files__editor-footer">
+                  <Button size="sm" disabled={busy || !dirty} onClick={onReload}>
+                    Reload file
+                  </Button>
+                  <Button size="sm" variant="primary" disabled={busy || !dirty} onClick={onSave}>
+                    {busy ? 'Saving…' : 'Save'}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="agent-files__empty">Download this file to view its contents.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}

@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
+  ['filesystem-write-reject-malformed-json', 'invalid_file_request'],
   ['admin-runtime-update-invalid-json', 'invalid_runtime_update'],
   ['interruption-v2-invalid-revision', 'invalid_control_observation'],
   ['interruption-v2-empty-text', 'invalid_interrupt_request'],
@@ -96,6 +98,10 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['filesystem-tree-reject-unknown-query', ['owner_access']],
+  ['filesystem-content-reject-unknown-query', ['owner_access']],
+  ['filesystem-download-reject-unknown-query', ['owner_access']],
+  ['filesystem-delete-reject-unknown-query', ['owner_access']],
   ['interruption-v2-query', ['unexpected']],
   ['queued-cancellation-v2-query-observe', ['unexpected']],
   ['queued-cancellation-v2-query-submit', ['unexpected']],
@@ -122,6 +128,14 @@ const protectedQueries = new Map([
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (fixture.id === 'filesystem-delete-reject-invalid-recursive') {
+    assert.equal(problemBody(fixture).code, 'invalid_file_request');
+    assert.equal(
+      new URL(fixture.request.path, 'https://contract.example').searchParams.get('recursive'),
+      'maybe',
+    );
+    return 'raw-wire-only';
+  }
   if (browserOperations.has(fixture.operation)) return 'browser-only';
   const body = problemBody(fixture);
   if (fixture.id === 'agent-access-deny-invalid-json') {

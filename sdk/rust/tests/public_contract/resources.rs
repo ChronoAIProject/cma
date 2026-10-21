@@ -31,6 +31,85 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/files/tree" => c.check(
+            client
+                .agent_files()
+                .list(c.param("id"), &c.q("path").unwrap_or_default())
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/files/content" => c.check(
+            client
+                .agent_files()
+                .read(
+                    c.param("id"),
+                    &c.q("path").unwrap_or_default(),
+                    c.number("max_bytes")?,
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/files/download" => c.check(
+            client
+                .agent_files()
+                .download(c.param("id"), &c.q("path").unwrap_or_default())
+                .await
+                .map(|v| String::from_utf8(v).unwrap()),
+        ),
+        "POST /api/v1/agents/{id}/files" => {
+            c.check(client.agent_files().write(c.param("id"), &c.body()?).await)
+        }
+        "DELETE /api/v1/agents/{id}/files" => c.check(
+            client
+                .agent_files()
+                .remove(
+                    c.param("id"),
+                    &c.q("path").unwrap_or_default(),
+                    c.number("recursive")?.unwrap_or(false),
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/share-links" => c.check(
+            client
+                .resource_access()
+                .agent_share_links(c.param("id"))
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/share-links" => c.check(
+            client
+                .resource_access()
+                .create_agent_share_link(
+                    c.param("id"),
+                    &cma_sdk::resource_access::CreateAgentShareLinkRequest {
+                        audience: c.field("audience")?,
+                        mode: c.field("mode")?,
+                        token: c.field("token")?,
+                    },
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "DELETE /api/v1/agents/{id}/share-links/{share_id}" => c.check(
+            client
+                .resource_access()
+                .revoke_agent_share_link(
+                    c.param("id"),
+                    c.param("share_id"),
+                    c.number("expected_revision")?.unwrap_or_default(),
+                    &c.key()?,
+                )
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/share-recipients" => c.check(
+            client
+                .resource_access()
+                .share_recipients(c.param("id"), &c.q("q").unwrap_or_default())
+                .await,
+        ),
+        "POST /api/v1/agent-share-links/{share_id}/redeem" => c.check(
+            client
+                .resource_access()
+                .redeem_agent_share_link(c.param("share_id"), &c.field::<String>("token")?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/models" => c.check(client.agents().models(c.param("id")).await),
         "GET /api/v1/agents/{id}/skills" => c.check(client.agents().skills(c.param("id")).await),
         "POST /api/v1/agents/{id}/skills" => c.check(

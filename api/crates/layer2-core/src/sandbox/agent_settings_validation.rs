@@ -53,6 +53,7 @@ pub(super) fn validate_settings_mutation(
 }
 
 pub(super) struct SettingsInputGuard {
+    pub authority: Option<super::AgentSettingsAuthorization>,
     pub store: std::sync::Arc<dyn super::AgentOperationStore>,
     pub target: super::AgentRuntimeTarget,
     pub sequence: u64,
@@ -66,6 +67,9 @@ impl layer3_adapter::ConversationInputGuard for SettingsInputGuard {
                 "agent settings authority changed before dispatch".into(),
             )
         };
+        if let Some(authority) = &self.authority {
+            authority.current_snapshot().await.map_err(|_| refused())?;
+        }
         let agent = self
             .store
             .get_agent(&self.target.agent_id)
@@ -102,6 +106,9 @@ impl layer3_adapter::ConversationInputGuard for SettingsInputGuard {
             )
             && parent.lifecycle.checkpoint_capture.is_none();
         if valid {
+            if let Some(authority) = &self.authority {
+                authority.current_snapshot().await.map_err(|_| refused())?;
+            }
             Ok(())
         } else {
             Err(refused())

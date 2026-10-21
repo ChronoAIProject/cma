@@ -25,6 +25,7 @@ mod domains;
 mod event_worker_cases;
 mod experience_cases;
 mod fault_cases;
+mod filesystem_cases;
 mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
@@ -41,6 +42,7 @@ mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
 mod share_cases;
+mod share_link_cases;
 mod shared_agent_cases;
 mod shared_hierarchy_cases;
 mod shared_source_cases;
@@ -148,6 +150,12 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = Box::pin(filesystem_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(share_link_cases::scenario(name)).await {
+        return scenario;
+    }
     if let Some(scenario) = message_feedback_cases::scenario(name).await {
         return scenario;
     }

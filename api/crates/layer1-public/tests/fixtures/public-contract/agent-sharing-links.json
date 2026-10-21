@@ -1,0 +1,837 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "typed-link-list",
+      "operation": "GET /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "shr_link_fixture",
+              "agent_id": "agt_share",
+              "audience": {
+                "kind": "public"
+              },
+              "mode": "view",
+              "shared_by": {
+                "subject": "owner-a",
+                "display_name": "Name owner-a",
+                "avatar_url": null
+              },
+              "created_at": "2026-09-05T00:00:00Z",
+              "revoked_at": null,
+              "revision": 1,
+              "accepted_count": 0
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-create",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_new_contract",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-10-22T00:00:00Z",
+          "revoked_at": null,
+          "revision": 1,
+          "accepted_count": 0
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "new_link_at": "/created_at",
+        "new_link_id": "/id"
+      }
+    },
+    {
+      "id": "typed-link-create-replay",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_new_contract",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-10-22T00:00:00Z",
+          "revoked_at": null,
+          "revision": 1,
+          "accepted_count": 0
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "new_link_at": "/created_at",
+        "new_link_id": "/id"
+      }
+    },
+    {
+      "id": "typed-link-create-key-reuse",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "The idempotency key was used for another share command.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-search",
+      "operation": "GET /api/v1/agents/{id}/share-recipients",
+      "scenario": "typed_link_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-recipients?q=recipient",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "subject": "recipient",
+              "display_name": "Name recipient",
+              "avatar_url": null
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-revoke",
+      "operation": "DELETE /api/v1/agents/{id}/share-links/{share_id}",
+      "scenario": "typed_link_revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_share/share-links/shr_link_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "typed-link-revoke"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_link_fixture",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": "2026-10-22T00:01:00Z",
+          "revision": 2,
+          "accepted_count": 0
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "revoked_at": "/revoked_at"
+      }
+    },
+    {
+      "id": "typed-link-revoke-replay",
+      "operation": "DELETE /api/v1/agents/{id}/share-links/{share_id}",
+      "scenario": "typed_link_revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_share/share-links/shr_link_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "typed-link-revoke"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_link_fixture",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": "2026-10-22T00:01:00Z",
+          "revision": 2,
+          "accepted_count": 0
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "revoked_at": "/revoked_at"
+      }
+    },
+    {
+      "id": "typed-link-revoke-stale",
+      "operation": "DELETE /api/v1/agents/{id}/share-links/{share_id}",
+      "scenario": "typed_link_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_share/share-links/shr_link_fixture?expected_revision=2",
+        "headers": {
+          "idempotency-key": "typed-link-revoke-stale"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_link_fixture",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": null,
+          "revision": 2,
+          "accepted_count": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-replay",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_link_fixture",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": null,
+          "revision": 2,
+          "accepted_count": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-wrong-token",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-selected",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_selected_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "shr_link_fixture",
+          "agent_id": "agt_share",
+          "audience": {
+            "kind": "users",
+            "subjects": [
+              "recipient"
+            ]
+          },
+          "mode": "view",
+          "shared_by": {
+            "subject": "owner-a",
+            "display_name": "Name owner-a",
+            "avatar_url": null
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revoked_at": null,
+          "revision": 2,
+          "accepted_count": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-wrong-recipient",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_selected_outsider",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-org-unavailable",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_organization_recipient",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-search-unavailable",
+      "operation": "GET /api/v1/agents/{id}/share-recipients",
+      "scenario": "typed_link_directory_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-recipients?q=recipient",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-create-unknown-recipient",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-unknown-recipient"
+        },
+        "body": {
+          "audience": {
+            "kind": "users",
+            "subjects": [
+              "unknown"
+            ]
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-list-anonymous",
+      "operation": "GET /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-list-not-owner",
+      "operation": "GET /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-create-anonymous",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-anonymous-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-create-not-owner",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_outsider",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-not-owner-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "public"
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-revoke-anonymous",
+      "operation": "DELETE /api/v1/agents/{id}/share-links/{share_id}",
+      "scenario": "typed_link_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_share/share-links/shr_link_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "typed-link-anonymous-revoke"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-revoke-not-owner",
+      "operation": "DELETE /api/v1/agents/{id}/share-links/{share_id}",
+      "scenario": "typed_link_outsider",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_share/share-links/shr_link_fixture?expected_revision=1",
+        "headers": {
+          "idempotency-key": "typed-link-not-owner-revoke"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-search-anonymous",
+      "operation": "GET /api/v1/agents/{id}/share-recipients",
+      "scenario": "typed_link_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-recipients?q=recipient",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-search-not-owner",
+      "operation": "GET /api/v1/agents/{id}/share-recipients",
+      "scenario": "typed_link_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_share/share-recipients?q=recipient",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-redeem-anonymous",
+      "operation": "POST /api/v1/agent-share-links/{share_id}/redeem",
+      "scenario": "typed_link_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/shr_link_fixture/redeem",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

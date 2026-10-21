@@ -32,6 +32,7 @@ impl AgentOperationService {
             return Err(AgentOperationError::Conflict);
         }
         let service = Self {
+            settings_authority: None,
             command_claim: Some(claim.clone()),
             execution_authority: Some(authority.clone()),
             trigger_authority: None,
@@ -85,6 +86,7 @@ impl AgentOperationService {
             return Err(AgentOperationError::Conflict);
         }
         let service = Self {
+            settings_authority: None,
             command_claim: Some(claim.clone()),
             execution_authority: None,
             trigger_authority: None,

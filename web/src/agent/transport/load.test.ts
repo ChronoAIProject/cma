@@ -2,7 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError, TransportError } from '@chronoai/cma-sdk';
 import type { AgentDetail, AgentUsage, WorkspaceDetail } from '../../api/types';
-import { AGENT_DETAIL, AGENT_USAGE } from '../../test/agent';
+import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../../test/agent';
 import { workspaceFixture } from '../../test/hierarchy';
 import { harness, item, json, page } from './controller.fixture';
 import { agentTransportJournal, clearAgentTransport } from './journal';
@@ -44,6 +44,128 @@ const lineage: AgentLoadLineage = {
   workspaceId: AGENT_DETAIL.workspace.id,
   sandboxId: AGENT_DETAIL.sandbox.id,
 };
+
+it('shows the last reply immediately without replaying historical Thinking as event pages hydrate', async () => {
+  const h = await setup();
+  const remaining = deferred<Response>();
+  vi.mocked(h.client.readAgentTranscript).mockResolvedValue(AGENT_TRANSCRIPT);
+  h.snapshot
+    .mockResolvedValueOnce(json(page([item(1, { type: 'turn_started', turn_sequence: 1 })], 4, 1)))
+    .mockReturnValueOnce(remaining.promise);
+  const result = h.start();
+  await waitFor(() => expect(h.progress).toHaveBeenCalledOnce());
+  expect(h.progress.mock.calls[0]![0]).toMatchObject({
+    historyLoading: true,
+    v2Items: [],
+    conversation: {
+      activeRunId: undefined,
+      messages: [{ content: 'Inspect this repository.' }, { content: 'The repository is ready.' }],
+      toolCalls: [],
+      approvals: [],
+    },
+  });
+  remaining.resolve(
+    json(
+      page(
+        [
+          item(2, { type: 'message', role: 'user', content: 'Inspect this repository.' }),
+          item(3, { type: 'message', role: 'assistant', content: 'The repository is ready.' }),
+          item(4, { type: 'turn_completed', turn_sequence: 1 }),
+        ],
+        4,
+      ),
+    ),
+  );
+  expect(await result).toMatchObject({
+    value: {
+      historyLoading: false,
+      conversation: { cursor: 4, activeRunId: undefined },
+      v2Items: expect.arrayContaining([expect.objectContaining({ sequence: 4 })]),
+    },
+  });
+  expect(h.progress).toHaveBeenCalledOnce();
+  expect(h.snapshot.mock.calls[1]![0]).toContain('page_cursor=ags1.');
+});
+
+it('uses the current transcript active turn rather than a historical turn start', async () => {
+  const h = await setup();
+  vi.mocked(h.client.readAgentTranscript).mockResolvedValue({
+    ...AGENT_TRANSCRIPT,
+    throughSeq: 5,
+    turns: [
+      ...AGENT_TRANSCRIPT.turns,
+      {
+        turnSequence: 5,
+        startedAt: '2026-10-22T00:00:00Z',
+        ownerMessage: '',
+        agentMessages: [],
+        messages: [],
+        outcome: { type: 'active' },
+      },
+    ],
+  });
+  h.snapshot
+    .mockResolvedValueOnce(json(page([item(1, { type: 'turn_started', turn_sequence: 1 })], 5, 1)))
+    .mockResolvedValueOnce(json(page([item(2, null)], 5, 2)))
+    .mockResolvedValueOnce(
+      json(
+        page(
+          [
+            item(3, null),
+            item(4, { type: 'turn_completed', turn_sequence: 1 }),
+            item(5, { type: 'turn_started', turn_sequence: 5 }),
+          ],
+          5,
+        ),
+      ),
+    );
+  const result = await h.start();
+  expect(result.error).toBeUndefined();
+  expect(h.progress).toHaveBeenCalledOnce();
+  expect(h.progress.mock.calls[0]![0].conversation.activeRunId).toBe('5');
+  expect(result.value?.conversation.activeRunId).toBe('5');
+  expect(result.value?.v2Items).toHaveLength(5);
+});
+
+it('refreshes a fixed event prefix if the parallel transcript read observed newer history', async () => {
+  const h = await setup();
+  vi.mocked(h.client.readAgentTranscript).mockResolvedValue(AGENT_TRANSCRIPT);
+  h.snapshot
+    .mockResolvedValueOnce(json(page([], 0)))
+    .mockResolvedValueOnce(
+      json(
+        page(
+          [
+            item(1, { type: 'turn_started', turn_sequence: 1 }),
+            item(2, { type: 'message', role: 'user', content: 'Inspect this repository.' }),
+            item(3, { type: 'message', role: 'assistant', content: 'The repository is ready.' }),
+            item(4, { type: 'turn_completed', turn_sequence: 1 }),
+          ],
+          4,
+        ),
+      ),
+    );
+  const result = await h.start();
+  expect(result.error).toBeUndefined();
+  expect(h.snapshot).toHaveBeenCalledTimes(2);
+  expect(result.value?.conversation.cursor).toBe(4);
+  expect(result.value?.conversation.activeRunId).toBeUndefined();
+});
+
+it('retains the latest transcript without starting replay if event history has not caught up', async () => {
+  const h = await setup();
+  vi.mocked(h.client.readAgentTranscript).mockResolvedValue(AGENT_TRANSCRIPT);
+  h.snapshot.mockImplementation(async () => json(page([], 0)));
+  const result = await h.start(true);
+  expect(result.error).toBeUndefined();
+  expect(result.value).toMatchObject({
+    historyUnavailable: true,
+    historyLoading: false,
+    conversation: { cursor: 4, activeRunId: undefined },
+  });
+  expect(result.value?.conversation.messages.at(-1)?.content).toBe('The repository is ready.');
+  expect(result.value?.conversation.agentCursor).toBeUndefined();
+});
 
 it('reads a hinted Workspace with fresh Agent metadata after entry authorization and preserves final authorization', async () => {
   const h = await setup(lineage);
@@ -324,7 +446,7 @@ it.each(['detail', 'usage', 'workspace'] as const)(
   },
 );
 
-it.each(['detail', 'usage', 'workspace', 'parent'] as const)(
+it.each(['detail', 'usage', 'workspace', 'parent', 'transcript'] as const)(
   'fails closed when the %s projection identity differs',
   async (branch) => {
     const h = await setup();
@@ -333,6 +455,11 @@ it.each(['detail', 'usage', 'workspace', 'parent'] as const)(
     else if (branch === 'usage')
       vi.spyOn(h.client, 'readAgentUsage').mockResolvedValue({
         ...AGENT_USAGE,
+        agentId: 'agt_other',
+      });
+    else if (branch === 'transcript')
+      vi.spyOn(h.client, 'readAgentTranscript').mockResolvedValue({
+        ...AGENT_TRANSCRIPT,
         agentId: 'agt_other',
       });
     else

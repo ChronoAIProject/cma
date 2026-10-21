@@ -976,9 +976,10 @@ the name to a single non-hidden filename. The response is
 `media_type` and `sha256`. Uploading does not submit a conversation message;
 the client may reference the returned path in a later explicit message.
 
-Uploads require current owner authority, an active Sandbox and a retained
-runtime that advertises persistent attachment support. Sharing and delegated
-conversation rights do not authorize file writes. Agent ancestry, runtime and
+Uploads require current owner authority or an accepted, active typed share link
+with `view_write` permission, an active Sandbox and a retained runtime that
+advertises persistent attachment support. Legacy sharing and delegated
+conversation rights alone do not authorize file writes. Agent ancestry, runtime and
 home identity are rechecked across the upload. Invalid metadata or incomplete
 bytes return `invalid_attachment` (400); oversized files return
 `attachment_too_large` (413). Unavailable environments, unsupported retained
@@ -1317,6 +1318,45 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+### Agent home files
+
+Paths are relative to the runtime's persistent `/home/` directory. Reading
+requires current file-view authority; creating, editing and deleting require
+owner authority or an accepted, active typed `view_write` sharing link. Each
+operation rechecks access, and protected credential paths remain unavailable.
+Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
+protects an edit against intervening changes; omit it when creating a new file.
+Directory creation uses `directory: true`. File operations do not require an
+`Idempotency-Key`.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
+| `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
+| `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
+| `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
+| `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
+
+### Agent sharing links
+
+Only the Agent owner manages links and searches the recipient directory.
+Redemption requires an authenticated recipient, the link token, and membership
+in the configured audience. Public links still require authentication. Link
+creation accepts a 32-byte cryptographically random token encoded as 64
+lowercase hexadecimal characters; only its SHA-256 digest is retained. Keep the
+token in the browser URL fragment and send it in the redemption JSON body.
+Revocation is independent for each link and uses `expected_revision`. Links
+grant Agent access without granting Sandbox inventory or lifecycle rights.
+See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/share-links` | - | - | 200 ShareLinkList |
+| `POST /api/v1/agents/{id}/share-links` | CreateLinkBody; key | - | 200 ShareLinkView |
+| `DELETE /api/v1/agents/{id}/share-links/{share_id}` | -; key | expected_revision* | 200 ShareLinkView |
+| `GET /api/v1/agents/{id}/share-recipients` | - | q* | 200 RecipientList |
+| `POST /api/v1/agent-share-links/{share_id}/redeem` | RedeemLinkBody | - | 200 ShareLinkView |
 
 ### Agent operations
 
