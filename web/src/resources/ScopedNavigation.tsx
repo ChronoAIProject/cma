@@ -46,17 +46,14 @@ export function ScopedNavigation({
           onNavigate={onNavigate}
         />
       ) : shared === true ? (
-        <>
-          <SandboxTree
-            statusFilter={statusFilter}
-            key="shared"
-            client={client}
-            route={route}
-            shared
-            onNavigate={onNavigate}
-          />
-          <SharedAgentNavigation client={client} route={route} onNavigate={onNavigate} />
-        </>
+        <SandboxTree
+          statusFilter={statusFilter}
+          key="shared"
+          client={client}
+          route={route}
+          shared
+          onNavigate={onNavigate}
+        />
       ) : organization === undefined ? (
         personal
       ) : (

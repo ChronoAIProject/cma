@@ -231,12 +231,15 @@ it.each([false, true])(
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Next Sandboxes' }));
     await screen.findByRole('link', { name: new RegExp(agent.title) });
-    expect(
-      screen.getByRole('link', {
-        name: shared ? 'All authorized Agents' : 'All authorized Agents',
-      }),
-    ).toHaveAttribute('href', shared ? '/shared/agents' : '/organizations/org_research/agents');
-    if (shared) expect(screen.getByRole('button', { name: 'Next Agents' })).toBeDisabled();
+    if (shared) {
+      expect(screen.queryByRole('link', { name: 'All authorized Agents' })).not.toBeInTheDocument();
+      expect(test.paths.some((path) => path.includes('/agents/provenance'))).toBe(false);
+    } else {
+      expect(screen.getByRole('link', { name: 'All authorized Agents' })).toHaveAttribute(
+        'href',
+        '/organizations/org_research/agents',
+      );
+    }
     expect(screen.getByRole('button', { name: 'Previous Sandboxes' })).toBeEnabled();
   },
 );
@@ -387,6 +390,7 @@ it('pages shared navigation without parent reads and clears it on revocation', a
     <ScopedNavigation
       client={sdk}
       scope="shared"
+      view="agent"
       onNavigate={vi.fn()}
       personal={<p>Personal tree</p>}
     />,
@@ -409,6 +413,56 @@ it('pages shared navigation without parent reads and clears it on revocation', a
   await user.click(screen.getByRole('button', { name: 'Refresh Agents' }));
   expect(screen.queryByText('Narrow shared Agent')).not.toBeInTheDocument();
   await screen.findByText('Access removed');
+});
+
+it('shows an Agent-only share only in Agents view while preserving shared Sandbox children', async () => {
+  const test = fixture(true);
+  const original = test.fetch.getMockImplementation()!;
+  test.fetch.mockImplementation(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/agents/provenance')) {
+      test.paths.push(url.pathname + url.search);
+      expect(url.searchParams.get('shared')).toBe('true');
+      return Response.json({
+        items: [
+          {
+            agent_id: 'agt_narrow',
+            title: 'Agent-only share',
+            status: 'ready',
+            created_at: at,
+            updated_at: at,
+            creation_origin: 'manual',
+          },
+        ],
+      });
+    }
+    return original(input);
+  });
+  const props = {
+    client: test.sdk,
+    scope: 'shared',
+    onNavigate: test.navigate,
+    personal: <p>Personal tree</p>,
+  };
+  const view = render(<ScopedNavigation {...props} view="sandbox" />);
+  await screen.findByRole('link', { name: new RegExp(agent.title) });
+  expect(screen.getByRole('link', { name: new RegExp(workspace.name) })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Agent-only share/ })).not.toBeInTheDocument();
+  expect(test.paths.some((path) => path.includes('/agents/provenance'))).toBe(false);
+
+  view.rerender(<ScopedNavigation {...props} view="agent" />);
+  await screen.findByRole('link', { name: /Agent-only share/ });
+  expect(screen.queryByRole('link', { name: new RegExp(workspace.name) })).not.toBeInTheDocument();
+  const inventoryReads = test.paths.filter((path) => path.includes('/agents/provenance')).length;
+  expect(inventoryReads).toBeGreaterThan(0);
+
+  view.rerender(<ScopedNavigation {...props} view="sandbox" />);
+  await screen.findByRole('link', { name: new RegExp(agent.title) });
+  expect(screen.queryByRole('link', { name: /Agent-only share/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Next Agents' })).not.toBeInTheDocument();
+  expect(test.paths.filter((path) => path.includes('/agents/provenance'))).toHaveLength(
+    inventoryReads,
+  );
 });
 
 function ScopedNavigation(props: Omit<ComponentProps<typeof ScopedNavigationTree>, 'choices'>) {

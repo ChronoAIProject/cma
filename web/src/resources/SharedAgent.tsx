@@ -5,7 +5,11 @@ import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
-import { loadSharedAgent } from './loadSharedAgent';
+import {
+  hydrateSharedAgent,
+  loadSharedAgent,
+  SharedAgentAccessChangedError,
+} from './loadSharedAgent';
 import { MessageStream } from '../agent/MessageStream';
 import { Composer } from '../agent/Composer';
 import { foldLiveEvent, type ConversationState } from '../agent/conversation';
@@ -51,8 +55,8 @@ export function SharedAgent({
       } catch (error) {
         if (
           !signal.aborted &&
-          error instanceof ApiError &&
-          [401, 403, 404, 409].includes(error.status)
+          (error instanceof SharedAgentAccessChangedError ||
+            (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)))
         )
           onAccessChanged();
         throw error;
@@ -62,10 +66,36 @@ export function SharedAgent({
   );
   const history = useAuthorizedRead(read);
   const ready = history.state.status === 'ready' ? history.state.value : undefined;
+  const readyRef = useRef(ready);
+  useEffect(() => {
+    readyRef.current = ready;
+  }, [ready]);
+  // Renewing unchanged access must not restart a healthy stream or replace its
+  // rich state with the transcript-only snapshot. Losing access changes the
+  // basis immediately, even while its next authorization read is pending.
+  const authority =
+    ready === undefined
+      ? undefined
+      : JSON.stringify([
+          ready.access.policy_revision,
+          [...ready.access.capabilities].sort(),
+          ready.access.shared_by?.subject,
+        ]);
+  const basis = useMemo(
+    () => (authority === undefined ? undefined : { web, client, agentId, authority }),
+    [web, client, agentId, authority],
+  );
   const [live, setLive] = useState<{
-    readonly basis: typeof ready;
+    readonly basis: typeof basis;
     readonly conversation: ConversationState;
   }>();
+  const [hydrationRevision, setHydrationRevision] = useState(0);
+  const [historyError, setHistoryError] = useState<{
+    readonly basis: typeof basis;
+    readonly revision: number;
+    readonly message: string;
+  }>();
+  const historyComplete = basis !== undefined && live?.basis === basis;
   const [command, setCommand] = useState<AbortController>();
   const busy = command !== undefined && !command.signal.aborted;
   const [error, setError] = useState<string>();
@@ -74,44 +104,65 @@ export function SharedAgent({
   const refreshHistory = history.reload;
   const provenance = useAgentProvenance(agentId, ready !== undefined);
   useEffect(() => {
-    if (ready === undefined) {
+    const snapshot = readyRef.current;
+    if (basis === undefined || snapshot === undefined) {
       mutation.current?.abort();
       mutation.current = undefined;
       return;
     }
     const stream = new AbortController();
     let retry: ReturnType<typeof setTimeout> | undefined;
-    void web
-      .replayAgent(agentId, {
-        after: ready.conversation.cursor,
-        signal: stream.signal,
-        onEvent: (event) => {
-          if (stream.signal.aborted) return;
-          setLive((current) => ({
-            basis: ready,
-            conversation: foldLiveEvent(
-              current?.basis === ready ? current.conversation : ready.conversation,
-              event,
-              new Date().toISOString(),
-            ),
-          }));
-        },
+    let hydrated = false;
+    void hydrateSharedAgent(web, client, snapshot, stream.signal)
+      .then(async (conversation) => {
+        if (stream.signal.aborted) return;
+        hydrated = true;
+        setLive({ basis, conversation });
+        await web.replayAgent(agentId, {
+          after: conversation.cursor,
+          signal: stream.signal,
+          onEvent: (event) => {
+            if (stream.signal.aborted) return;
+            setLive((current) => ({
+              basis,
+              conversation: foldLiveEvent(
+                current?.basis === basis ? current.conversation : conversation,
+                event,
+                agentId,
+              ),
+            }));
+          },
+        });
       })
       .then(() => {
         if (!stream.signal.aborted) retry = setTimeout(refreshHistory, 5_000);
       })
-      .catch(() => {
-        if (!stream.signal.aborted) onAccessChanged();
+      .catch((cause: unknown) => {
+        if (stream.signal.aborted) return;
+        if (
+          hydrated ||
+          cause instanceof SharedAgentAccessChangedError ||
+          (cause instanceof ApiError && [401, 403, 404, 409].includes(cause.status))
+        ) {
+          onAccessChanged();
+          return;
+        }
+        setHistoryError({
+          basis,
+          revision: hydrationRevision,
+          message: 'Conversation activity could not be loaded. Your recorded messages are shown.',
+        });
       });
     return () => {
       stream.abort();
       clearTimeout(retry);
     };
-  }, [web, agentId, ready, refreshHistory, onAccessChanged]);
+  }, [web, client, agentId, basis, refreshHistory, onAccessChanged, hydrationRevision]);
   useEffect(() => () => mutation.current?.abort(), []);
 
   const can = (capability: string) => ready?.access.capabilities.includes(capability) === true;
   const authorizeSettings = async (signal: AbortSignal) => {
+    if (!historyComplete) throw new Error('Agent activity is still loading. Try again shortly.');
     try {
       const current = await client.resourceAccess.effective('agent', agentId, { signal });
       signal.throwIfAborted();
@@ -123,7 +174,7 @@ export function SharedAgent({
     }
   };
   const uploadAttachment: UploadAttachment | undefined =
-    !can('operate_agent') || web.uploadAgentAttachment === undefined
+    !historyComplete || !can('operate_agent') || web.uploadAgentAttachment === undefined
       ? undefined
       : async (file, options) => {
           const access = await client.resourceAccess.effective('agent', agentId, options);
@@ -138,7 +189,7 @@ export function SharedAgent({
     logicalKey: string,
     action: (signal: AbortSignal, idempotencyKey: string) => Promise<unknown>,
   ) => {
-    if (mutation.current !== undefined || !can(capability)) return;
+    if (mutation.current !== undefined || !historyComplete || !can(capability)) return;
     const request = new AbortController();
     mutation.current = request;
     setCommand(request);
@@ -174,7 +225,7 @@ export function SharedAgent({
     );
   };
   const conversation =
-    live !== undefined && live.basis === ready ? live.conversation : ready?.conversation;
+    live !== undefined && live.basis === basis ? live.conversation : ready?.conversation;
   const status =
     conversation?.agentStatus !== undefined &&
     conversation.agentStatusAt !== undefined &&
@@ -219,6 +270,18 @@ export function SharedAgent({
             {history.state.message}
           </Alert>
         ) : null}
+        {historyError?.basis === basis && historyError?.revision === hydrationRevision ? (
+          <Alert
+            tone="error"
+            actions={
+              <Button onClick={() => setHydrationRevision((revision) => revision + 1)}>
+                Retry conversation activity
+              </Button>
+            }
+          >
+            {historyError.message}
+          </Alert>
+        ) : null}
         {error === undefined ? null : <Alert tone="error">{error}</Alert>}
       </div>
       <div className="agent-surface__conversation">
@@ -228,7 +291,8 @@ export function SharedAgent({
             emptyMessage="No messages yet."
             conversation={conversation}
             approvalBusy={busy}
-            approvalReadOnly={!can('resolve_approval')}
+            approvalReadOnly={!historyComplete || !can('resolve_approval')}
+            arrivalsEnabled={historyComplete}
             onApproval={approve}
           />
         )}
@@ -241,7 +305,7 @@ export function SharedAgent({
                 <SessionSettings
                   agentId={agentId}
                   active
-                  busy={busy || status !== 'ready'}
+                  busy={busy || !historyComplete || status !== 'ready'}
                   authorizeUpdate={authorizeSettings}
                 />
               ) : undefined
@@ -249,8 +313,8 @@ export function SharedAgent({
             uploadAttachment={uploadAttachment}
             status={status}
             running={conversation?.activeRunId !== undefined}
-            busy={busy}
-            inputAvailability={{ allowed: true }}
+            busy={busy || !historyComplete}
+            inputAvailability={{ allowed: historyComplete }}
             onSend={async (text, accepted) => {
               const result = await run('interact', `input:${text}`, (signal, idempotencyKey) =>
                 client.agents.input(agentId, { text }, { signal, idempotencyKey }),
