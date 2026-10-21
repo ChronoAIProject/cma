@@ -11,25 +11,6 @@
   background: var(--dsw-alias-bg-base);
 }
 
-.agent-header {
-  grid-row: 1;
-  padding: 16px 20px 14px;
-  background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.agent-header__source {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-
-.agent-header__source a {
-  color: var(--dsw-alias-state-business-primary);
-}
-
 .agent-quick-messages {
   position: relative;
   display: flex;
@@ -374,10 +355,6 @@
 }
 
 @media (max-width: 30rem) {
-  .agent-header {
-    padding-inline: 14px;
-  }
-
   .message-stream {
     padding: 20px 14px 32px;
   }

@@ -24,7 +24,7 @@ import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
 import { AgentOpening, AgentUnavailable } from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
-import { AgentSourceLabel, useAgentSource } from './source';
+import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessages } from './QueuedMessages';
 import type { UploadAttachment } from './attachments';
@@ -37,6 +37,9 @@ import { queuePresentation } from './queuePresentation';
 import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
+
+const SIGN_IN_AGAIN = 'subscription-sign-in';
+const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -176,6 +179,9 @@ export function AgentSurface({
     observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
     actionsBusy,
   );
+  // A subscription Agent can be signed in again from the header menu.
+  const signInAgain =
+    !readOnly && verified?.services.some((service) => service.service === subscriptionService);
   const uploadAttachment: UploadAttachment | undefined =
     readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
       ? undefined
@@ -193,6 +199,7 @@ export function AgentSurface({
         title={title}
         status={status}
         headingRef={headingRef}
+        viewerId={viewerId}
         branch={readOnly ? undefined : detail.worktree.branch}
         detailsOpen={detailsOpen}
         detailsUnavailable={accessUncertain}
@@ -200,6 +207,21 @@ export function AgentSurface({
           if (!accessUncertain) onDetailsOpenChange(open);
         }}
         breadcrumb={agentBreadcrumb(detail, title, onNavigate)}
+        menu={[
+          ...agentOriginEntries(source, provenance, originLabel),
+          ...(signInAgain ? [{ id: SIGN_IN_AGAIN, label: SIGN_IN_AGAIN_LABEL }] : []),
+        ]}
+        onMenuSelect={(id) => {
+          if (id === SIGN_IN_AGAIN)
+            connections.run(
+              { type: 'agent', id: agentId },
+              () => {
+                controller.clearActionError();
+                controller.reload();
+              },
+              true,
+            );
+        }}
         moreActions={headerMenu}
         onMoreAction={
           onAgentAction === undefined || readOnly
@@ -210,27 +232,7 @@ export function AgentSurface({
                   agentId,
                 })
         }
-      >
-        <AgentSourceLabel source={source} provenance={provenance} originLabel={originLabel} />
-        {!readOnly &&
-        verified?.services.some((service) => service.service === subscriptionService) ? (
-          <Button
-            size="sm"
-            onClick={() =>
-              connections.run(
-                { type: 'agent', id: agentId },
-                () => {
-                  controller.clearActionError();
-                  controller.reload();
-                },
-                true,
-              )
-            }
-          >
-            Sign in to your ChatGPT subscription again
-          </Button>
-        ) : null}
-      </AgentHeader>
+      />
 
       {/*
         One row for every state message, so a second message can never be

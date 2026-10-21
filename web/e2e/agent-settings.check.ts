@@ -67,7 +67,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   await expect(reply.getByText('21 Oct 2026, 00:31 SGT')).toBeVisible();
   await page.getByRole('textbox', { name: 'Message' }).fill('Preserve my unsent draft');
   const actions = reply.getByRole('group', { name: 'Message actions' });
-  await page.locator('.agent-header').hover();
+  await page.locator('.agent-header__strip').hover();
   await expect
     .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
     .toBe('0');
@@ -429,7 +429,9 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  await page.locator('.agent-header__strip').hover();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   const details = page.getByRole('complementary', { name: 'Agent details' });
   const composer = page.getByRole('form', { name: 'Message Agent' });
   await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
