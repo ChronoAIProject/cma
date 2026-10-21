@@ -1,7 +1,7 @@
 import type { ConversationState } from './model';
 import { isPendingTool } from './toolStatus';
 
-const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'recovery'] as const;
+const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'plans', 'recovery'] as const;
 
 interface Row {
   group: (typeof groups)[number];
