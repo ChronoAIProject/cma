@@ -2,7 +2,14 @@ import { useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { can, segment, ServiceError, serviceRequest, type ServiceSession } from './client';
+import {
+  can,
+  segment,
+  ServiceError,
+  serviceRequest,
+  type Denied,
+  type ServiceSession,
+} from './client';
 import { PageStatus, usePage } from './data';
 import {
   ChannelEditor,
@@ -25,7 +32,7 @@ export function EventGateway({
   onNavigate,
 }: {
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly children?: (slots: EventGatewaySlots) => ReactNode;
   readonly onNavigate?: () => void;
 }) {
@@ -183,7 +190,7 @@ function ChannelDetail({
 }: {
   readonly channel: ChannelListItem;
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly onChanged: (channel?: Channel) => void;
   readonly onDeleted: () => void;
 }) {
@@ -235,7 +242,7 @@ function AddressedChannel({
 }: {
   readonly channel: Channel;
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly onChanged: (channel?: Channel) => void;
   readonly onDeleted: () => void;
 }) {
@@ -254,7 +261,7 @@ function AddressedChannel({
       );
       setResult(value.first_text);
     } catch (error) {
-      if (error instanceof ServiceError && [401, 403].includes(error.status)) denied();
+      if (error instanceof ServiceError && [401, 403].includes(error.status)) denied(error.status);
       setResult(
         error instanceof Error && error.name !== 'TimeoutError'
           ? error.message
