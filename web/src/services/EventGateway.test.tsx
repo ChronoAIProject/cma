@@ -43,6 +43,23 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
   },
 );
 
+it.each([401, 403])('reports a refused channel read with its status %s', async (status) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status })));
+  const denied = vi.fn();
+  render(
+    <EventGateway
+      session={{
+        authenticated: true,
+        subject: 'owner',
+        permissions: ['cma-eg:admin'],
+        expires_at: 9999999999,
+      }}
+      denied={denied}
+    />,
+  );
+  await waitFor(() => expect(denied).toHaveBeenCalledWith(status));
+});
+
 it('puts channels in the sidebar and shows only the selected channel details', async () => {
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
     url === '/api/event-gateway/v1/channels'
