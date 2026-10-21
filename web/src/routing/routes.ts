@@ -11,6 +11,7 @@ export type AppRoute =
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'agent_share'; readonly shareId: string }
   | { readonly kind: 'inventory'; readonly organization?: string; readonly shared?: boolean }
   | { readonly kind: 'bots' }
   | { readonly kind: 'bot_new' }
@@ -110,6 +111,8 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 3) {
     const [resource = '', qualifier = '', id = ''] = path;
+    if (resource === 'agent-manager' && qualifier === 'share')
+      return { kind: 'agent_share', shareId: id };
     if (resource === 'organizations' && id === 'agents')
       return { kind: 'inventory', organization: qualifier };
     if (resource === 'profiles' && qualifier === 'event-workers')
@@ -158,6 +161,8 @@ export function routePath(route: AppRoute): string {
       return `/workspaces/${segment(route.workspaceId)}`;
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
+    case 'agent_share':
+      return `/agent-manager/share/${segment(route.shareId)}`;
     case 'inventory':
       if (route.shared === true) return '/shared/agents';
       return route.organization === undefined

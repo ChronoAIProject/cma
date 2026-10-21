@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
@@ -89,6 +89,27 @@ describe('the retained application shell', () => {
       'aria-disabled',
       'true',
     );
+  });
+
+  it('continues a shared Agent link after sign-in without sending its bearer fragment to OAuth', async () => {
+    const secret = 'ab'.repeat(32);
+    window.history.replaceState(null, '', `/agent-manager/share/share-one#${secret}`);
+    const provider = createMockAuthProvider();
+    const signIn = vi
+      .spyOn(provider, 'signIn')
+      .mockImplementation(() => new Promise<void>(() => undefined));
+    render(
+      <AuthContextProvider provider={provider}>
+        <App />
+      </AuthContextProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+    await waitFor(() =>
+      expect(signIn).toHaveBeenCalledWith('/agent-manager/share/share-one', undefined),
+    );
+    expect(window.location.hash).toBe('');
+    expect(sessionStorage.getItem('cma:agent-share:share-one')).toContain(secret);
+    sessionStorage.removeItem('cma:agent-share:share-one');
   });
 
   it('explains an unreachable service in plain words and offers Reload', async () => {

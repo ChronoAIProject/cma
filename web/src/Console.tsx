@@ -31,6 +31,7 @@ import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
+import { AgentShareAccept } from './resources/AgentShareAccept';
 import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
@@ -188,6 +189,14 @@ function ConsoleContent({
     deleteSandbox: !accessUncertain && user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
+  const shareAccepted = useCallback(
+    (agentId: string) => {
+      setNavigationScope('shared');
+      refreshNavigation();
+      onNavigate({ kind: 'agent', agentId });
+    },
+    [setNavigationScope, refreshNavigation, onNavigate],
+  );
   const content =
     route.kind === 'docs' ? (
       <Suspense fallback={<p role="status">Loading documentation</p>}>
@@ -199,6 +208,17 @@ function ConsoleContent({
       </Suspense>
     ) : isBotRoute(route) ? (
       <BotManagement user={user} route={route} onNavigate={onNavigate} />
+    ) : route.kind === 'agent_share' ? (
+      client.resourceViews === undefined ? (
+        <UnavailableView title="Agent sharing unavailable" />
+      ) : (
+        <AgentShareAccept
+          key={route.shareId}
+          client={client.resourceViews}
+          shareId={route.shareId}
+          onAccepted={shareAccepted}
+        />
+      )
     ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
         <UnavailableView title="Agent inventory unavailable" />
