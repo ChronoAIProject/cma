@@ -5,11 +5,14 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 mod agent_context;
+pub mod agent_filesystem;
 pub mod agent_io;
 pub mod agent_live_skills;
 mod agent_operation;
 mod agent_settings;
+mod agent_settings_authority;
 pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
+pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFence};
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
@@ -148,10 +151,10 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentDetailReading, AgentEventStreamAuthorization, AgentEventStreamHeader,
-    AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry, AgentReplayWindow,
-    AgentResponseBinding, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
-    SharedAgentDetail, SharedAgentOrigin,
+    AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry,
+    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
+    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

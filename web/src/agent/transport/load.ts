@@ -1,6 +1,7 @@
-import type { V2AgentEventItem } from '@chronoai/cma-sdk';
+import { TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
 import { conversationFromTranscript } from '../conversation';
+import { mergeTranscriptSnapshot } from '../chronology';
 import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '../loadAgent';
 import type { ConversationState } from '../model';
 import { foldV2Item } from './projection';
@@ -46,6 +47,17 @@ export async function loadV2Agent(
     if (usage.agentId !== agentId) throw new Error('Agent projections changed identity.');
     return usage;
   };
+  const readTranscript = async () => {
+    try {
+      const transcript = await client.readAgentTranscript(agentId, { signal });
+      signal.throwIfAborted();
+      if (transcript.agentId !== agentId) throw new Error('Agent projections changed identity.');
+      return transcript;
+    } catch (error) {
+      if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
+      return undefined;
+    }
+  };
   const readPage = async (pageCursor?: string) => {
     try {
       // The entry check covers the first parallel batch. Later pages follow
@@ -61,12 +73,15 @@ export async function loadV2Agent(
   };
   // Independent reads share one load, but no result is exposed until every
   // required projection has settled and the account is checked again.
-  const [{ detail, workspace }, usage, firstPage] = await Promise.all([
+  const [{ detail, workspace }, usage, transcript, firstPage] = await Promise.all([
     readHierarchy(),
     readUsage(),
+    readTranscript(),
     readPage(),
   ]);
   await v2.authorize(signal);
+  const preview =
+    transcript === undefined ? undefined : { ...conversationFromTranscript(transcript), usage };
   let conversation: ConversationState = {
     ...conversationFromTranscript({ agentId, throughSeq: 0, turns: [] }),
     usage,
@@ -74,6 +89,24 @@ export async function loadV2Agent(
   const items: V2AgentEventItem[] = [];
   let incarnation: string | undefined;
   let page = firstPage;
+  // The two projections are read concurrently. If the transcript observed a
+  // later commit, take a new fixed event prefix before displaying it so live
+  // replay can never move backwards from that preview. The SDK validates this
+  // cursor's format and sequence; it remains opaque to the request machinery.
+  if (
+    page !== undefined &&
+    preview !== undefined &&
+    preview.cursor > Number(page.through_cursor.split('.').at(-1))
+  ) {
+    page = await readPage();
+    await v2.authorize(signal);
+    if (page !== undefined && preview.cursor > Number(page.through_cursor.split('.').at(-1))) {
+      if (!allowIncomplete)
+        throw new TransportError('Agent transcript is ahead of its available event history.');
+      page = undefined;
+    }
+  }
+  let previewPublished = false;
   while (page !== undefined) {
     if (incarnation !== undefined && incarnation !== page.incarnation)
       throw new Error('Agent snapshot changed conversation identity.');
@@ -86,21 +119,36 @@ export async function loadV2Agent(
       conversation = { ...conversation, agentCursor: page.through_cursor };
       break;
     }
-    onProgress?.({
-      detail,
-      workspace,
-      conversation,
-      v2,
-      v2Items: [...items],
-      historyLoading: true,
-    });
+    // One complete transcript is the visible baseline. Historical event pages
+    // rebuild tools and approvals offscreen; replaying each page in the view
+    // briefly resurrects old turns and makes the conversation jump backwards.
+    if (!previewPublished && preview !== undefined) {
+      onProgress?.({
+        detail,
+        workspace,
+        conversation: preview,
+        v2,
+        v2Items: [],
+        historyLoading: true,
+      });
+      previewPublished = true;
+    }
     page = await readPage(pageCursor);
     await v2.authorize(signal);
   }
+  const complete = page !== undefined;
+  const visible =
+    preview === undefined
+      ? complete
+        ? conversation
+        : { ...conversationFromTranscript({ agentId, throughSeq: 0, turns: [] }), usage }
+      : complete
+        ? mergeTranscriptSnapshot(conversation, preview, conversation.cursor, true)
+        : preview;
   return {
     detail,
     workspace,
-    conversation,
+    conversation: visible,
     v2,
     v2Items: items,
     durableEvents: [],

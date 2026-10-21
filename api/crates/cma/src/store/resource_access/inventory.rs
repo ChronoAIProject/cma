@@ -89,11 +89,13 @@ async fn read_scope(
             recipient,
             organizations,
         } => {
-            if organizations.is_empty() {
-                return Ok(Vec::new());
-            }
-            doc! {"target_org_id":{"$in":organizations.iter().map(SubjectId::as_str).collect::<Vec<_>>()},
-            "revoked":false,"$nor":[{"record.owner.kind":"person","record.owner.subject":recipient.as_str()}]}
+            doc! {"$or":[
+                {"target_org_id":{"$in":organizations.iter().map(SubjectId::as_str).collect::<Vec<_>>()}},
+                {"accepted_subjects":recipient.as_str(), "$or":[
+                    {"record.link.audience.kind":{"$in":["public","users"]}},
+                    {"record.link.audience.organization_id":{"$in":organizations.iter().map(SubjectId::as_str).collect::<Vec<_>>()}}
+                ]}
+            ], "revoked":false,"$nor":[{"record.owner.kind":"person","record.owner.subject":recipient.as_str()}]}
         }
     };
     for (kind, foreign_field) in [("sandbox", "sandbox_id"), ("agent", "_id")] {

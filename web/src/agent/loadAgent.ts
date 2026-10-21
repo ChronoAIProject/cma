@@ -77,6 +77,8 @@ export async function loadAgent(
   const seen = new Set<number>([0]);
   let historyUnavailable = false;
   const snapshot = conversationFromTranscript(transcript);
+  const preview = withUsage(snapshot, usage);
+  let previewPublished = false;
   const projectedConversation = () => {
     const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
     return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;
@@ -100,21 +102,25 @@ export async function loadAgent(
     cursor = nextCursor;
     if (cursor !== undefined) {
       seen.add(cursor);
-      // One authorized event page permits a readable snapshot, not complete-history acceptance.
-      onHistoryProgress?.({
-        detail,
-        workspace,
-        conversation: projectedConversation(),
-        historyLoading: true,
-        historyUnavailable: false,
-      });
+      // Show the current transcript once, while rebuilding older rich activity
+      // offscreen. A historical tool/approval must not look newly active.
+      if (!previewPublished) {
+        onHistoryProgress?.({
+          detail,
+          workspace,
+          conversation: preview,
+          historyLoading: true,
+          historyUnavailable: false,
+        });
+        previewPublished = true;
+      }
     }
   } while (cursor !== undefined);
 
   return {
     detail,
     workspace,
-    conversation: projectedConversation(),
+    conversation: historyUnavailable ? preview : projectedConversation(),
     durableEvents,
     historyLoading: false,
     historyUnavailable,

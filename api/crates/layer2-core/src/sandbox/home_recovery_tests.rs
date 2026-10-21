@@ -288,6 +288,7 @@ async fn queued_message_and_pause_cancellation_commit_together() {
     next.revision += 1;
     next.updated_at = NOW.into();
     let request = AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,

@@ -226,6 +226,48 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// List one directory in the retained runtime home. Paths are relative to
+    /// that home and are validated by the runtime supervisor.
+    async fn list_agent_files(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileListRequest,
+    ) -> Result<crate::AgentFileListReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn read_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileReadRequest,
+    ) -> Result<crate::AgentFileReadReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn write_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileWriteRequest,
+    ) -> Result<crate::AgentFileWriteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn delete_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileDeleteRequest,
+    ) -> Result<crate::AgentFileDeleteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
     /// Run sandbox-wide installation before any credential is delivered.
     async fn run_install(
         &self,

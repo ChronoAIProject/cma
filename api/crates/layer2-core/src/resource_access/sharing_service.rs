@@ -82,6 +82,11 @@ impl ResourceAccessService {
         command: ShareCommand,
     ) -> Result<ShareMutationReceipt, ResourceAccessError> {
         let started_at = SystemTime::now();
+        // Redemption has its own caller-bound entrypoint; an owner cannot
+        // manufacture a recipient through the management API.
+        if matches!(command.change, ShareChange::RedeemLink { .. }) {
+            return Err(ResourceAccessStoreError::Invalid.into());
+        }
         if command.idempotency_key.is_empty()
             || command.idempotency_key.len() > 256
             || command
@@ -117,7 +122,12 @@ impl ResourceAccessService {
         {
             return Ok(request.replay(receipt)?);
         }
-        if let ShareChange::Create { target_org_id, .. } = &request.change {
+        let organization = match &request.change {
+            ShareChange::Create { target_org_id, .. } => Some(target_org_id),
+            ShareChange::CreateLink { audience, .. } => audience.organization(),
+            _ => None,
+        };
+        if let Some(target_org_id) = organization {
             // Only canonical current choices can be selected for a new grant.
             // Revocation and existing-grant management never depend on this IO.
             let evidence = self

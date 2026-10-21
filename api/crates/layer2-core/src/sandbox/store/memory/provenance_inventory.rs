@@ -57,7 +57,7 @@ impl AgentProvenanceInventoryStore for InMemorySandboxStore {
                 && page.cursor.as_deref().is_none_or(|cursor| agent.id.as_str() > cursor)
                 && state.resource_shares.values().any(|receipt| {
                     receipt.sandbox_id == agent.sandbox_id
-                        && organizations.contains(&receipt.share.target_org_id)
+                        && receipt.share.incoming_for(recipient, organizations)
                         && receipt.share.revoked_at.is_none()
                         && !matches!(&receipt.share.owner, ResourceOwner::Person { subject } if subject == recipient)
                         && match &receipt.share.selector {

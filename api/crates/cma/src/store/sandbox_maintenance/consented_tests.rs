@@ -184,6 +184,7 @@ async fn consented_pause_agent_fence_loses_to_a_new_turn_without_partial_pause()
     working.conversation.last_seq = turn + 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
