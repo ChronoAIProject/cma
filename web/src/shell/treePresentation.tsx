@@ -1,19 +1,14 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { StateDot } from '../ui/StateDot';
-import { statusLabel } from '../vocabulary/status';
+import { toneDot } from '../ui/Badge';
+import { statusLabel, statusTone } from '../vocabulary/status';
 
-export function stateMeta(
-  status: Parameters<typeof statusLabel>[0],
-  extra?: ReactNode,
-  resource: 'agent' | 'sandbox' | 'workspace' = 'agent',
-) {
+/** A row's status word with its dot from the shared tone (§12.1), then any facts. */
+export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: ReactNode) {
+  const tone = statusTone(status);
   return (
     <>
-      <span className="tree-row__state">
-        {(resource === 'agent' && status === 'working') ||
-        (resource === 'sandbox' && status === 'active') ? (
-          <StateDot state="done" size={8} />
-        ) : null}
+      <span className="tree-row__state" data-tone={tone}>
+        {toneDot(tone)}
         {statusLabel(status)}
       </span>
       {extra}

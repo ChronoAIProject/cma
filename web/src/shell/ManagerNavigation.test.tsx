@@ -63,35 +63,48 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('uses effective parent lifecycle status and shows green only for Working Agents or live Sandboxes', async () => {
+it('uses effective parent lifecycle status and the shared status tones for dots', async () => {
   const refresh = vi.fn();
+  const dot = () =>
+    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot');
   const view = render(
     <ManagerNavigation
       {...props}
       navigation={{ status: 'ready', items: navigationFixture('active', 'ready'), refresh }}
     />,
   );
-  expect(
-    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot'),
-  ).toBeNull();
+  // Ready is settled and usable: a quiet dot, never the success colour.
+  expect(dot()).toHaveAttribute('data-state', 'neutral');
   view.rerender(
     <ManagerNavigation
       {...props}
       navigation={{ status: 'ready', items: navigationFixture('active', 'working'), refresh }}
     />,
   );
-  expect(
-    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot'),
-  ).toHaveAttribute('data-state', 'done');
+  expect(dot()).toHaveAttribute('data-state', 'ongoing');
+  view.rerender(
+    <ManagerNavigation
+      {...props}
+      navigation={{
+        status: 'ready',
+        items: navigationFixture('active', 'waiting_approval'),
+        refresh,
+      }}
+    />,
+  );
+  expect(dot()).toHaveAttribute('data-state', 'warning');
+  expect(screen.getByText('Needs approval').closest('.tree-row__state')).toHaveAttribute(
+    'data-tone',
+    'warning',
+  );
   view.rerender(
     <ManagerNavigation
       {...props}
       navigation={{ status: 'ready', items: navigationFixture('paused', 'working'), refresh }}
     />,
   );
-  expect(
-    screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot'),
-  ).toBeNull();
+  // A held state draws no dot at all.
+  expect(dot()).toBeNull();
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Filter' }));
   await chooseOption(user, 'Agent status filter', 'Paused');
@@ -105,11 +118,9 @@ it('uses effective parent lifecycle status and shows green only for Working Agen
     />,
   );
   await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
-  expect(
-    screen
-      .getByRole('tree', { name: 'Live sandboxes' })
-      .querySelectorAll('.statedot[data-state="done"]'),
-  ).toHaveLength(1);
+  const live = screen.getByRole('tree', { name: 'Live sandboxes' });
+  expect(live.querySelector('.tree-row__state .statedot')).toHaveAttribute('data-state', 'neutral');
+  expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
 });
 
 it('groups Agents by Workspace and Sandbox, most recently active first', () => {

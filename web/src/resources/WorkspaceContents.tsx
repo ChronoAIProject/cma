@@ -5,6 +5,7 @@ import { ApiError } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';
+import { StatusBadge } from '../ui/Badge';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { loadWorkspace } from './loadHierarchy';
@@ -178,7 +179,7 @@ export function WorkspaceContents({
           { label: workspace.name },
         ]}
         title={workspace.name}
-        badge={<span role="status">{statusLabel(workspace.status)}</span>}
+        badge={<StatusBadge status={workspace.status} live />}
         description={<ResourceAccessDetails client={client} access={current.state.value.access} />}
         actions={<Button onClick={current.reload}>Refresh Workspace access</Button>}
       />
