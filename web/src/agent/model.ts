@@ -35,6 +35,20 @@ export interface ReasoningBlock {
   readonly status: 'streaming' | 'complete';
 }
 
+export interface PlanEntry {
+  readonly title: string;
+  readonly status: string;
+}
+
+/** One turn's latest reported plan; a provider restates the whole plan on every change. */
+export interface PlanSnapshot {
+  readonly order?: number;
+  readonly sequence?: number;
+  readonly id: string;
+  readonly runId?: string;
+  readonly entries: readonly PlanEntry[];
+}
+
 export interface ApprovalRequest {
   readonly order?: number;
   readonly sequence?: number;
@@ -70,6 +84,7 @@ export interface ConversationState {
   readonly toolCalls: readonly ToolCall[];
   readonly reasoning: readonly ReasoningBlock[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly plans: readonly PlanSnapshot[];
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
   readonly turnUsage?: Readonly<Record<string, NonNullable<AgentUsage['currentTurn']>>>;

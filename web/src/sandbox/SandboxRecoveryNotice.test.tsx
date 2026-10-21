@@ -2,7 +2,17 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail, SandboxLifecycle } from '../api/types';
 import { sandboxFixture } from '../test/hierarchy';
-import { SandboxRecoveryNotice } from './SandboxRecoveryNotice';
+import { SandboxInterruptionHistory, SandboxRecoveryNotice } from './SandboxRecoveryNotice';
+
+/** The Sandbox page's composition: the notice in the alerts, the history under Activity. */
+function WithHistory({ sandbox }: { readonly sandbox: SandboxDetail }) {
+  return (
+    <>
+      <SandboxRecoveryNotice sandbox={sandbox} />
+      <SandboxInterruptionHistory sandbox={sandbox} />
+    </>
+  );
+}
 
 const detectedAt = '2026-10-16T08:13:55Z';
 function recovering(
@@ -73,7 +83,7 @@ it.each(['runtime_restarted', 'runtime_unavailable'] as const)(
 it('keeps internal error history factual after recovery has finished', () => {
   const sandbox = activated();
   render(
-    <SandboxRecoveryNotice
+    <WithHistory
       sandbox={{
         ...sandbox,
         lifecycle: {
@@ -81,7 +91,6 @@ it('keeps internal error history factual after recovery has finished', () => {
           interruption: recovering('runtime_unavailable').lifecycle!.interruption,
         },
       }}
-      showHistory
     />,
   );
   expect(screen.getByText('The sandbox stopped because of an internal error.')).toBeInTheDocument();
@@ -158,13 +167,12 @@ it('shows useful recovery failure information without promising files were recov
 
 it('does not attribute an unrelated later failure to a historical interruption', () => {
   render(
-    <SandboxRecoveryNotice
+    <WithHistory
       sandbox={{
         ...activated(),
         status: 'failed',
         failure: { class: 'teardown_failed', detail: 'A later deletion failed.' },
       }}
-      showHistory
     />,
   );
   expect(screen.queryByRole('region', { name: 'Sandbox recovery' })).not.toBeInTheDocument();
@@ -190,8 +198,8 @@ it('expires success feedback and never repeats it after navigation or a new acti
 
 it('allows dismissing success and keeps the interruption available only in details', () => {
   vi.useFakeTimers();
-  const view = render(<SandboxRecoveryNotice sandbox={recovering()} showHistory />);
-  view.rerender(<SandboxRecoveryNotice sandbox={activated()} showHistory />);
+  const view = render(<WithHistory sandbox={recovering()} />);
+  view.rerender(<WithHistory sandbox={activated()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Dismiss recovery status' }));
   act(() => vi.advanceTimersByTime(200));
   expect(screen.queryByText('Sandbox ready')).not.toBeInTheDocument();

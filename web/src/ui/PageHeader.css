@@ -109,8 +109,14 @@
   white-space: nowrap;
 }
 
+/*
+ * The title takes focus only so a view can move the reader to it on open;
+ * it is not a control, so it draws no ring (the base :focus-visible rule
+ * uses both outline and box-shadow).
+ */
 .page-header h1.page-header__title:focus {
   outline: none;
+  box-shadow: none;
 }
 
 .page-header__badge,

@@ -1,0 +1,53 @@
+/*
+ * The plan card — `docs/Web_Style.md` §13.
+ *
+ * The same frame as the tool calls around it, so the timeline's non-message
+ * entries read as one family; the badges carry the only colour.
+ */
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.plan-card__eyebrow {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10px;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+
+.plan-card__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-card__step {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.plan-card__title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}

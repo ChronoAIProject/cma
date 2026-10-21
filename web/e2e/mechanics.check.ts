@@ -65,18 +65,20 @@ test('LOCAL J6 selects the admitted Workspace among duplicate names and overlapp
 }) => {
   await page.setContent(`
     <!doctype html><title>Local Workspace selection</title>
-    <section class="sandbox-page__workspace">
-      <h3>Shared profile</h3><p><code>/workspaces/lifecycle-existing</code></p>
-      <button data-workspace="wks_existing">New agent</button>
-    </section>
-    <section class="sandbox-page__workspace">
-      <h3>Shared profile</h3><p><code>/workspaces/lifecycle</code></p>
-      <button data-workspace="wks_lifecycle">New agent</button>
-    </section>
-    <section class="sandbox-page__workspace">
-      <h3>Shared profile</h3><p><code>/workspaces/lifecycle/nested</code></p>
-      <button data-workspace="wks_nested">New agent</button>
-    </section>
+    <table class="sandbox-table"><tbody>
+      <tr>
+        <th>Shared profile</th><td><code>/workspaces/lifecycle-existing</code></td>
+        <td><button aria-label="New agent in Shared profile" data-workspace="wks_existing">New agent here</button></td>
+      </tr>
+      <tr>
+        <th>Shared profile</th><td><code>/workspaces/lifecycle</code></td>
+        <td><button aria-label="New agent in Shared profile" data-workspace="wks_lifecycle">New agent here</button></td>
+      </tr>
+      <tr>
+        <th>Shared profile</th><td><code>/workspaces/lifecycle/nested</code></td>
+        <td><button aria-label="New agent in Shared profile" data-workspace="wks_nested">New agent here</button></td>
+      </tr>
+    </tbody></table>
     <output aria-label="Selected Workspace"></output>
   `);
   await page.evaluate(() => {
@@ -88,16 +90,16 @@ test('LOCAL J6 selects the admitted Workspace among duplicate names and overlapp
   });
   const workspace = { id: 'wks_lifecycle', path: '/workspaces/lifecycle' };
   const button = workspaceAgentButton(page, workspace);
-  await expect(page.getByRole('button', { name: 'New agent', exact: true })).toHaveCount(3);
+  await expect(
+    page.getByRole('button', { name: 'New agent in Shared profile', exact: true }),
+  ).toHaveCount(3);
   await expect(button).toHaveCount(1);
   await button.click();
   await expect(page.getByLabel('Selected Workspace')).toHaveText(workspace.id);
   await page.evaluate(() => {
-    document.body.append(
-      document
-        .querySelector('button[data-workspace="wks_existing"]')!
-        .closest('.sandbox-page__workspace')!,
-    );
+    document
+      .querySelector('tbody')!
+      .append(document.querySelector('button[data-workspace="wks_existing"]')!.closest('tr')!);
     document.querySelector('output')!.textContent = '';
   });
   await button.click();
