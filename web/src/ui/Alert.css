@@ -1,0 +1,94 @@
+/*
+ * The alert — `docs/Web_Style.md` §12.1.
+ *
+ * Radius 12, one hairline, a glyph, the words and any actions on one row that
+ * wraps. Only the edge, ground and glyph take the tone; the words stay in the
+ * primary ink so they are read at full contrast in every tone.
+ */
+
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: flex-start;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 12px 14px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+}
+
+.alert__icon {
+  display: inline-flex;
+  flex: none;
+  padding-top: 2px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.alert__text {
+  display: flex;
+  flex: 1 1 240px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.alert__title {
+  margin: 0;
+  font-weight: 500;
+}
+
+.alert__body {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.alert__body > p {
+  margin: 0;
+}
+
+.alert__actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.alert[data-tone='success'] .alert__icon {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.alert[data-tone='warning'] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  border-color: var(--dsw-alias-state-warn-secondary);
+}
+
+.alert[data-tone='warning'] .alert__icon {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.alert[data-tone='error'] {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-color: var(--dsw-alias-state-error-secondary);
+}
+
+.alert[data-tone='error'] .alert__icon {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* A stack of alerts under a page header: newest first, one gap apart. */
+.alert-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.alert-stack:empty {
+  display: none;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Alert } from '../ui/Alert';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -65,18 +66,21 @@ export function AgentAccessRequests({
     requests.find((item) => item.status === 'failed' && !dismissed.includes(item.id));
   return (
     <>
-      {error ? (
-        <p className="agent-action-error" role="status">
-          {error}
-        </p>
-      ) : null}
+      {error ? <Alert tone="warning">{error}</Alert> : null}
       {!request ? null : dismissed.includes(request.id) ? (
-        <div className="agent-action-error" role="status">
-          <span>Your Agent requested additional service access.</span>
-          <Button onClick={() => setDismissed((ids) => ids.filter((id) => id !== request.id))}>
-            Review access request
-          </Button>
-        </div>
+        <Alert
+          tone="info"
+          actions={
+            <Button
+              size="sm"
+              onClick={() => setDismissed((ids) => ids.filter((id) => id !== request.id))}
+            >
+              Review access request
+            </Button>
+          }
+        >
+          Your Agent requested additional service access.
+        </Alert>
       ) : (
         <AccessRequestDialog
           key={`${owner}:${agentId}:${request.id}`}

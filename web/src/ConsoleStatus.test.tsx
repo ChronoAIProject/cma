@@ -46,7 +46,7 @@ it('keeps header and selected sidebar status together across stream and navigati
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
-  const header = () => document.querySelector('.agent-header__status');
+  const header = () => document.querySelector('.agent-header .badge');
   const row = () => document.querySelector('.tree-row[data-node-id="agent:agt_1"]');
   expect(header()).toHaveTextContent('Ready');
   expect(row()).toHaveTextContent('Ready');

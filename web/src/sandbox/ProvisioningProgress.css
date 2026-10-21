@@ -15,12 +15,17 @@
 }
 .provisioning-progress li {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px;
   padding: 12px 0;
   font: var(--dsw-font-s-14);
   overflow-wrap: anywhere;
+}
+.provisioning-progress__icon {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
 }
 .provisioning-progress strong {
   color: var(--dsw-alias-label-secondary);

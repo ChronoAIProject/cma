@@ -70,7 +70,6 @@ export function SandboxBranch({
             <span>{resourceCount(sandbox.agent_count, 'Agent')}</span>
             <ResourceAccessSummary compact value={accessSummary} />
           </>,
-          'sandbox',
         )}
         onNavigate={onNavigate}
         onToggle={() => expansion.toggle(node)}
@@ -180,7 +179,7 @@ function WorkspaceTreeBranch({
         route={{ kind: 'workspace', workspaceId: id }}
         selected={route.kind === 'workspace' && route.workspaceId === id}
         expanded={open}
-        meta={stateMeta(status, undefined, 'workspace')}
+        meta={stateMeta(status)}
         onNavigate={onNavigate}
         onToggle={() => expansion.toggle(node)}
       />
