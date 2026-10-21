@@ -70,7 +70,10 @@ for (const width of [390, 360, 320]) {
         await expect(field).toBeEnabled();
         await settleShell(page, width, 56);
         await field.fill('Keep this draft while resizing the full shell.');
-        for (const element of [field, send, attach, page.locator('.agent-composer__mode')]) {
+        // Steering is offered only while a turn runs.
+        const steering = page.getByRole('button', { name: /^Steering mode/ });
+        await expect(steering).toHaveCount(running ? 1 : 0);
+        for (const element of running ? [field, send, attach, steering] : [field, send, attach]) {
           await insideViewport(element);
         }
         expect((await field.boundingBox())!.width).toBeGreaterThanOrEqual(140);
@@ -85,17 +88,20 @@ for (const width of [390, 360, 320]) {
           expect((await stop.boundingBox())!.width).toBeGreaterThanOrEqual(44);
           expect((await send.boundingBox())!.y).toBe((await stop.boundingBox())!.y);
         }
-        for (const name of ['Model', 'Reasoning effort', 'Permission mode']) {
-          await insideViewport(
-            page
-              .getByRole('form', { name: 'Message Agent' })
-              .getByRole('button', { name, exact: true }),
-          );
+        const form = page.getByRole('form', { name: 'Message Agent' });
+        const box = (await page.locator('.agent-composer__box').boundingBox())!;
+        for (const control of [
+          form.getByRole('button', { name: /^Model and reasoning effort/ }),
+          form.getByRole('button', { name: 'Permission mode', exact: true }),
+          form.getByRole('button', { name: 'Context usage', exact: true }),
+        ]) {
+          await insideViewport(control);
+          // Every control sits inside the composer box, with no row below it.
+          const bounds = (await control.boundingBox())!;
+          expect(bounds.y).toBeGreaterThanOrEqual(box.y);
+          expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
+          expect(bounds.height).toBeGreaterThanOrEqual(44);
         }
-        const inputSeat = (await page.locator('.agent-composer__capsule').boundingBox())!;
-        const usage = (await page.getByRole('region', { name: 'Agent usage' }).boundingBox())!;
-        expect(usage.x).toBe(inputSeat.x);
-        expect(usage.width).toBe(inputSeat.width);
         await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
         await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
         await expect(field).toHaveValue('Keep this draft while resizing the full shell.');
