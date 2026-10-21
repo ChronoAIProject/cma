@@ -90,3 +90,41 @@
 .agent-details__control-reason {
   margin-top: 8px;
 }
+
+/* Read-only service access; the scope itself is edited on the Sandbox page. */
+.agent-details__access {
+  margin-bottom: 16px;
+}
+
+.agent-details__access p {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
+
+.agent-details__access ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 12px;
+  padding: 0;
+  font-size: 12px;
+  list-style: none;
+}
+
+.agent-details__access li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-details__access code {
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+
+.agent-details__access a {
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 13px;
+}
