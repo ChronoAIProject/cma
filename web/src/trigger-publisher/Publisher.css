@@ -66,9 +66,15 @@
 .trigger-rail strong {
   font: var(--dsw-font-s-strong-14);
 }
-.trigger-rail span,
 .trigger-rail code {
   font-size: 12px;
+}
+.trigger-rail__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
 }
 .trigger-rail__mobile {
   display: none;
