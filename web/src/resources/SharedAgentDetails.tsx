@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import { statusLabel } from '../vocabulary/status';
 import '../agent/Details.css';
+import { AgentFiles } from '../agent/files/AgentFiles';
 
 /** Only the accessible projection is read; a narrow Agent share grants no ancestry. */
 export function SharedAgentDetails({
@@ -59,6 +60,15 @@ export function SharedAgentDetails({
         {current.state.status === 'error' ? <p role="alert">{current.state.message}</p> : null}
         {client === undefined || detail === undefined || ready?.access === undefined ? null : (
           <>
+            {ready.access.capabilities.includes('view_files') ? (
+              <AgentFiles
+                key={`files:${agent}`}
+                agentId={agent}
+                active={open}
+                readOnly={!ready.access.capabilities.includes('operate_agent')}
+                onAccessChanged={onAccessChanged}
+              />
+            ) : null}
             <section className="agent-details__band">
               <h2>Organization access</h2>
               <ResourceAccessDetails client={client} access={ready.access} />
