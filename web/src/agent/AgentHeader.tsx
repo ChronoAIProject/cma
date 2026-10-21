@@ -4,16 +4,8 @@ import { Button } from '../ui/Button';
 import type { MenuEntry } from '../ui/Menu';
 import { MoreActions } from '../ui/MoreActions';
 import { PageHeader, type Crumb } from '../ui/PageHeader';
-import { StateDot, type StateDotState } from '../ui/StateDot';
+import { StatusBadge } from '../ui/Badge';
 import { IconInspectOutline12 } from '../ui/icons';
-import { statusLabel } from '../vocabulary/status';
-
-function statusDot(status: AgentStatus): StateDotState {
-  if (status === 'failed' || status === 'deleted') return 'error';
-  if (status === 'paused' || status === 'waiting_approval') return 'warning';
-  if (status === 'working' || status === 'starting') return 'ongoing';
-  return 'done';
-}
 
 /** Presentation shared by personal and authorized organization conversations. */
 export function AgentHeader({
@@ -51,12 +43,7 @@ export function AgentHeader({
       breadcrumb={breadcrumb}
       title={title}
       headingRef={headingRef}
-      badge={
-        <span className="agent-header__status">
-          <StateDot state={statusDot(status)} size={9} />
-          {statusLabel(status)}
-        </span>
-      }
+      badge={<StatusBadge status={status} />}
       meta={
         branch === undefined || branch === '' ? undefined : (
           <span className="page-header__chip" title={`Worktree branch ${branch}`}>

@@ -1,0 +1,43 @@
+/*
+ * The status badge — `docs/Web_Style.md` §12.1.
+ *
+ * 22px, radius 6, a hairline border and the word; tone colours only the dot
+ * and, where a person must act, the word. A badge never fills, because a
+ * filled status beside a filled primary button reads as a second button.
+ */
+
+.badge {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  white-space: nowrap;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+}
+
+.badge__word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.badge[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.badge[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.badge[data-tone='muted'] {
+  color: var(--dsw-alias-label-secondary);
+}

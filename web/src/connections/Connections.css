@@ -22,12 +22,11 @@
   gap: 0.75rem;
   min-width: 0;
 }
+/* The status dot, then the connection's name taking the rest of the row. */
 .connection-wizard__row > :first-child {
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: 0 0 2.25rem;
+  flex: none;
 }
-.connection-wizard__row > span {
+.connection-wizard__row > :nth-child(2) {
   flex: 1;
   overflow-wrap: anywhere;
 }

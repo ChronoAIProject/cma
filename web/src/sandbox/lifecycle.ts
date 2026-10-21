@@ -1,5 +1,5 @@
 import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
-import { statusLabel } from '../vocabulary/status';
+import { statusLabel, statusTone, type StatusTone } from '../vocabulary/status';
 
 export function transitionRefreshDelay(startedAt: number): number {
   return Date.now() - startedAt < 10_000 ? 250 : 1500;
@@ -97,6 +97,13 @@ export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
     }
   }
   return statusLabel(sandbox.status);
+}
+
+/** The tone of the word `sandboxLifecycleLabel` gives: an operation in flight is active. */
+export function sandboxTone(sandbox: SandboxSummary): StatusTone {
+  if (['retiring', 'retired'].includes(sandbox.status)) return statusTone(sandbox.status);
+  if (sandbox.lifecycle?.operation !== undefined) return 'active';
+  return statusTone(sandbox.status);
 }
 
 export function sandboxRefreshDelay(sandbox: SandboxSummary): number {

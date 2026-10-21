@@ -1,5 +1,5 @@
 import type { Ref } from 'react';
-import { BrandLoading } from '../landing/LandingCharacter';
+import { SkeletonRows } from '../ui/Skeleton';
 import { Button } from '../ui/Button';
 import { PageHeader } from '../ui/PageHeader';
 
@@ -9,7 +9,7 @@ export function AgentOpening({ headingRef }: { readonly headingRef: Ref<HTMLHead
     <section className="agent-surface agent-surface--loading" aria-busy="true">
       <PageHeader placement="agent-header" title="Agent" headingRef={headingRef} />
       <div className="agent-loading">
-        <BrandLoading label="Opening your agent" />
+        <SkeletonRows rows={4} label="Opening your agent" />
       </div>
     </section>
   );
