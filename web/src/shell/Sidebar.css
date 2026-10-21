@@ -45,13 +45,16 @@
   display: block;
 }
 .sidebar__toggle,
-.sidebar__new {
+.sidebar__new,
+.sidebar__search,
+.sidebar__link {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: inherit;
   background: transparent;
   border: 0;
+  font: inherit;
   cursor: pointer;
   transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
@@ -64,31 +67,90 @@
   border-radius: 8px;
   color: var(--dsw-alias-label-secondary);
 }
-.sidebar__new {
+.sidebar__new,
+.sidebar__search,
+.sidebar__link {
+  box-sizing: border-box;
   min-height: 36px;
   width: 100%;
-  padding: 8px;
-  border-radius: 7px;
+  padding: 0 10px;
+  border-radius: 8px;
   text-align: left;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
-.sidebar__new svg {
+/* The view's one primary action, drawn as the shared primary button is. */
+.sidebar__new {
+  justify-content: center;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  font-weight: 500;
+}
+.sidebar__new:hover:not([aria-disabled='true']) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+.sidebar__new[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sidebar__reason {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.sidebar__reason[hidden] {
+  display: none;
+}
+/* Reads as a field, because pressing it is how searching starts. */
+.sidebar__search {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+.sidebar__search span {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar__kbd {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  font-family: var(--ds-font-family-code);
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
+}
+.sidebar__link {
+  color: var(--dsw-alias-label-secondary);
+  text-decoration: none;
+}
+.sidebar__link[aria-current='page'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  font-weight: 500;
+}
+.sidebar__link svg,
+.sidebar__new svg,
+.sidebar__search svg {
   flex: none;
 }
 .sidebar__actions {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   flex: none;
-}
-.sidebar__actions:not(:empty) {
   margin-bottom: 12px;
 }
 .sidebar__toggle:hover,
-.sidebar__new:hover {
+.sidebar__search:hover,
+.sidebar__link:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 .sidebar__toggle:focus-visible,
 .sidebar__new:focus-visible,
+.sidebar__search:focus-visible,
+.sidebar__link:focus-visible,
 .sidebar__brand:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -113,16 +175,23 @@
   flex-direction: column;
   gap: 8px;
 }
-.sidebar--collapsed .sidebar__new span {
+.sidebar--collapsed .sidebar__new span,
+.sidebar--collapsed .sidebar__search span,
+.sidebar--collapsed .sidebar__search .sidebar__kbd,
+.sidebar--collapsed .sidebar__link span {
   display: none;
 }
-.sidebar--collapsed .sidebar__new {
+.sidebar--collapsed .sidebar__new,
+.sidebar--collapsed .sidebar__search,
+.sidebar--collapsed .sidebar__link {
   justify-content: center;
   padding-inline: 0;
 }
 @media (prefers-reduced-motion: reduce) {
   .sidebar__toggle,
-  .sidebar__new {
+  .sidebar__new,
+  .sidebar__search,
+  .sidebar__link {
     transition: none;
   }
 }
@@ -269,6 +338,8 @@
 /* Touch targets, after every rule they override. */
 @media (max-width: 30rem) {
   .sidebar__new,
+  .sidebar__search,
+  .sidebar__link,
   .sidebar__toggle,
   .navigation-filters__toggle,
   .navigation-filters__clear,

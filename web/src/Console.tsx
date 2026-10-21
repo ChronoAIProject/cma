@@ -24,7 +24,10 @@ import { useNavigation } from './shell/navigation';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
-import { IconNewChatOutline16 } from './ui/icons';
+import { IconGoalOutline16, IconNewChatOutline16 } from './ui/icons';
+import { CommandMenu, useCommandShortcut } from './shell/CommandMenu';
+import { shellCommands } from './shell/commands';
+import { setAppearance } from './theme/appearance';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
@@ -157,6 +160,27 @@ function ConsoleContent({
   const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
+  const newAgentUnavailable = !scopeReady
+    ? 'Checking your access.'
+    : navigationScope !== ''
+      ? 'Switch to Personal to create an Agent.'
+      : undefined;
+  const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
+  const [commandsOpen, setCommandsOpen] = useState(false);
+  const toggleCommands = useCallback(() => setCommandsOpen((open) => !open), []);
+  useCommandShortcut(toggleCommands, !user.visitor);
+  const commands = useMemo(
+    () =>
+      shellCommands({
+        items: navigation.status === 'ready' ? navigation.items : [],
+        onNavigate,
+        onNewAgent: canCreateInScope ? () => onCreate?.({ kind: 'new_agent' }) : undefined,
+        canOpenTriggers,
+        canOpenOperations: canOpenOperations(user.capabilities),
+        onAppearance: setAppearance,
+      }),
+    [navigation, onNavigate, canCreateInScope, onCreate, canOpenTriggers, user.capabilities],
+  );
   const permissions: TreePermissions = {
     createAgent: canCreate,
     // Workspace creation is an inline Agent Manager operation. The legacy
@@ -398,13 +422,31 @@ function ConsoleContent({
             onSidebarNavigate();
             (onServiceNavigate ?? onNavigate)(next);
           }}
-          canCreateTrigger={!user.visitor && user.capabilities.includes('publish_triggers')}
-          onNewTrigger={() => {
-            onSidebarNavigate();
-            onNavigate({ kind: 'triggers' });
-          }}
-          canCreateAgent={canCreateInScope}
-          onNewAgent={() => onCreate?.({ kind: 'new_agent' })}
+          newAgent={
+            canCreate
+              ? {
+                  onCreate: () => onCreate?.({ kind: 'new_agent' }),
+                  unavailableReason: newAgentUnavailable,
+                }
+              : undefined
+          }
+          onSearch={user.visitor ? undefined : () => setCommandsOpen(true)}
+          links={
+            canOpenTriggers
+              ? [
+                  {
+                    id: 'triggers',
+                    label: 'Triggers',
+                    icon: <IconGoalOutline16 />,
+                    route: { kind: 'triggers' },
+                    current:
+                      route.kind === 'triggers' ||
+                      route.kind === 'trigger' ||
+                      route.kind === 'trigger_embed',
+                  },
+                ]
+              : []
+          }
           onHome={() => {
             setDetailsOpen(false);
             onSidebarNavigate();
@@ -447,6 +489,11 @@ function ConsoleContent({
       )}
       center={
         <main className="console__surface" ref={surfaceRef}>
+          <CommandMenu
+            open={commandsOpen}
+            onClose={() => setCommandsOpen(false)}
+            commands={commands}
+          />
           {actions.notice}
           <Presence>
             {actions.error === undefined ? null : (
