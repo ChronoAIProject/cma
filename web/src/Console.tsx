@@ -35,7 +35,7 @@ import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
-import { WorkspaceContents } from './resources/WorkspaceContents';
+import { WorkspaceAccessPage } from './resources/WorkspaceAccessPage';
 import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
@@ -288,16 +288,16 @@ function ConsoleContent({
         )}
       />
     ) : route.kind === 'workspace' ? (
-      client.resourceViews === undefined ? (
-        <UnavailableView title="Workspace unavailable" />
-      ) : (
-        <WorkspaceContents
-          key={route.workspaceId}
-          client={client.resourceViews}
-          id={route.workspaceId}
-          onNavigate={onNavigate}
-        />
-      )
+      <WorkspaceAccessPage
+        key={route.workspaceId}
+        client={client}
+        id={route.workspaceId}
+        revision={revision}
+        permissions={permissions}
+        busy={actions.pending}
+        onAction={actions.select}
+        onNavigate={onNavigate}
+      />
     ) : route.kind === 'event_worker_profiles' ||
       route.kind === 'event_worker_profile' ||
       route.kind === 'profiles' ||
