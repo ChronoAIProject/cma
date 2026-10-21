@@ -379,6 +379,7 @@ function ConsoleContent({
 
   return (
     <AppFrame
+      phoneTitle="Agent Manager"
       detailsOpen={
         !accessUncertain && (personalAgentId !== undefined || shared !== undefined) && detailsOpen
       }
