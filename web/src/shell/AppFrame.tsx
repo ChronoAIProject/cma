@@ -11,6 +11,7 @@ import {
   clampWidth,
   computeColumns,
 } from './columns';
+import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
 
 /**
@@ -57,6 +58,8 @@ interface AppFrameProps {
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   /** Things that float over every column — a banner, a dialog's own layer. */
   readonly overlay?: ReactNode;
+  /** What the phone top bar names, beside its navigation button. */
+  readonly phoneTitle?: string;
 }
 
 export function AppFrame({
@@ -68,6 +71,7 @@ export function AppFrame({
   overlay,
   sidebarCollapsed = false,
   onSidebarCollapsedChange,
+  phoneTitle = 'CMA',
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
@@ -155,8 +159,17 @@ export function AppFrame({
    */
   const effectiveSidebarCollapsed = sidebarCollapsed || (narrow && !expandedAnyway);
   const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
-  const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
-  const sidebarOverlay = viewport > 0 && viewport < CENTER_MIN && !effectiveSidebarCollapsed;
+  /*
+   * A phone has no room for a permanent rail: 56px is a seventh of a 375px
+   * screen. Below the centre's floor the sidebar is therefore either gone or
+   * a sheet over the page, and a top bar holds the way back to it.
+   */
+  const phone = viewport > 0 && viewport < CENTER_MIN;
+  const solved = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const columns = phone
+    ? { sidebar: effectiveSidebarCollapsed ? 0 : solved.sidebar, center: viewport, details: 0 }
+    : solved;
+  const sidebarOverlay = phone && !effectiveSidebarCollapsed;
 
   const toggleSidebar = useCallback(() => {
     if (effectiveSidebarCollapsed) {
@@ -182,6 +195,16 @@ export function AppFrame({
       })
     : sidebar;
 
+  /* Escape closes the sheet, as it closes any other layer over the page. */
+  useEffect(() => {
+    if (!sidebarOverlay) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) toggleSidebar();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [sidebarOverlay, toggleSidebar]);
+
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
   }, []);
@@ -199,17 +222,44 @@ export function AppFrame({
         detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
       }
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
+      data-phone={phone ? '' : undefined}
       style={{
-        gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
+        gridTemplateColumns: sidebarOverlay
+          ? `0px ${String(viewport)}px 0px`
+          : `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
       }}
     >
       <div
         className="frame__sidebar"
-        style={sidebarOverlay ? { width: Math.min(columns.sidebar, viewport) } : undefined}
+        hidden={phone && effectiveSidebarCollapsed}
+        style={
+          sidebarOverlay
+            ? { width: Math.min(columns.sidebar, Math.max(0, viewport - 48)) }
+            : undefined
+        }
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center">{center}</div>
+      <div className="frame__center" inert={sidebarOverlay || undefined}>
+        {phone && sidebarOwnsToggle ? (
+          <div className="frame__topbar">
+            <button
+              type="button"
+              className="frame__menu"
+              aria-label="Show navigation"
+              aria-expanded={!effectiveSidebarCollapsed}
+              onClick={toggleSidebar}
+            >
+              <IconPanelLeftOutline16 />
+            </button>
+            <span className="frame__title">{phoneTitle}</span>
+          </div>
+        ) : null}
+        {center}
+      </div>
+      {sidebarOverlay ? (
+        <div className="frame__scrim" aria-hidden="true" onClick={toggleSidebar} />
+      ) : null}
       <div className="frame__details">{details}</div>
 
       {/*

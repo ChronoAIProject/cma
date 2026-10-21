@@ -26,26 +26,37 @@
   background: var(--dsw-alias-bg-base);
 }
 
+/* What happened, in words a person can act on. */
+.app-error__title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+
+/* The recovery line, with the action right under it. */
+.app-error__next {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+
 /*
- * The control plane's own sentence, at the interface body size. It says which
- * part failed, and rewording it into a category would lose the one detail
- * worth having.
+ * The control plane's own sentence, kept as the detail rather than the
+ * headline: it says which part failed, and rewording it into a category would
+ * lose the one detail worth having for whoever reads a report.
  */
 .app-error__what {
   max-width: 34rem;
   margin: 0;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  line-height: 1.55;
-  text-wrap: pretty;
-}
-
-/* The recovery line sits under it and quieter — it is the same sentence every
-   time, so it should not compete with the one that is not. */
-.app-error__next {
-  margin: 0;
   color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
   font-size: 12px;
+  line-height: 18px;
 }
 
 .auth-gate {

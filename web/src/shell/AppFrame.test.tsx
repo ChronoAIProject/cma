@@ -240,10 +240,11 @@ describe('the page frame', () => {
     );
   });
 
-  it('gives its sidebar subtree the derived rail state and overlays it below the centre floor', () => {
+  it('replaces the rail on a phone with a top bar and opens the sidebar as a sheet', () => {
     render(
       <AppFrame
         detailsOpen={false}
+        phoneTitle="Agent Manager"
         sidebar={({ collapsed, onToggle }) => (
           <>
             <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
@@ -257,20 +258,48 @@ describe('the page frame', () => {
     );
     measure(390);
 
-    expect(screen.getByText('sidebar rail')).toBeInTheDocument();
+    // No rail: the collapsed sidebar takes no width and leaves the tab order.
+    expect(tracks().startsWith('0px')).toBe(true);
+    expect(document.querySelector('.frame__sidebar')).toHaveAttribute('hidden');
+    expect(screen.getByText('Agent Manager')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Show navigation' })).toHaveLength(1);
     act(() => {
       screen.getByRole('button', { name: 'Show navigation' }).click();
     });
 
     expect(screen.getByText('sidebar panel')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Hide navigation' })).toHaveLength(1);
     expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__center')).toHaveAttribute('inert');
+    expect(screen.getAllByRole('button', { name: 'Hide navigation' })).toHaveLength(1);
 
-    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
-    expect(css).toMatch(
-      /\.frame\[data-sidebar-overlay\] \.frame__center,\s*\.frame\[data-sidebar-overlay\] \.frame__details\s*\{[^}]*visibility: hidden/,
+    // The scrim closes it, as does Escape.
+    act(() => {
+      (document.querySelector('.frame__scrim') as HTMLElement).click();
+    });
+    expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__center')).not.toHaveAttribute('inert');
+    act(() => {
+      screen.getByRole('button', { name: 'Show navigation' }).click();
+    });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__scrim')).toBeNull();
+  });
+
+  it('keeps the rail and no top bar between the phone and the auto-collapse widths', () => {
+    render(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={({ collapsed }) => <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>}
+        center={<p>surface</p>}
+      />,
     );
+    measure(800);
+    expect(tracks().startsWith(`${SIDEBAR_COLLAPSED}px`)).toBe(true);
+    expect(document.querySelector('.frame__topbar')).toBeNull();
+    expect(document.querySelector('.frame__sidebar')).not.toHaveAttribute('hidden');
   });
 
   it('offers no way back when the sidebar has not collapsed', () => {

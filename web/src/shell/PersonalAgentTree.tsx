@@ -4,7 +4,57 @@ import { agentActions } from './treeActions';
 import { activityLabel, keyboardNavigation, stateMeta } from './treePresentation';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { agentDisplayTitle } from '../agent/presentation';
-import { IconAgentPresetOutline16 } from '../ui/icons';
+import type { AgentSummary, SandboxDetail, WorkspaceDetail } from '../api/types';
+import {
+  IconAgentPresetOutline16,
+  IconBranchOutline16,
+  IconFolderOpenOutline16,
+} from '../ui/icons';
+
+export interface AgentGroup {
+  readonly sandbox: SandboxDetail;
+  readonly workspace: WorkspaceDetail;
+  readonly agents: readonly AgentSummary[];
+}
+
+function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
+  const at = Date.parse(agent.updatedAt);
+  return Number.isFinite(at) ? at : 0;
+}
+
+/**
+ * Agents grouped by where they live, most recently active first.
+ *
+ * A flat list gave two Agents with the same title no way to be told apart.
+ * Grouping by Workspace and Sandbox answers "which one is this" without
+ * opening it, and ordering by recency puts the conversation somebody is most
+ * likely returning to at the top.
+ */
+export function groupAgents(
+  items: TreeProps['items'],
+  statusFilter: string,
+): readonly AgentGroup[] {
+  const groups = items.flatMap(({ sandbox, workspaces }) =>
+    workspaces
+      .filter((workspace) => workspace.status !== 'removed')
+      .map((workspace) => ({
+        sandbox,
+        workspace,
+        agents: workspace.agents
+          .filter(
+            (agent) =>
+              agent.status !== 'deleted' &&
+              (statusFilter === 'all' ||
+                sandboxChildStatus(sandbox, agent.status) === statusFilter),
+          )
+          .sort((a, b) => updated(b) - updated(a)),
+      }))
+      .filter(({ agents }) => agents.length > 0),
+  );
+  const latest = (group: AgentGroup) =>
+    group.agents[0] === undefined ? 0 : updated(group.agents[0]);
+  return [...groups].sort((a, b) => latest(b) - latest(a));
+}
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
@@ -29,53 +79,59 @@ export function PersonalAgentTree({
   | 'onNavigate'
   | 'onAction'
 >) {
-  const agents = items.flatMap(({ sandbox, workspaces }) =>
-    workspaces
-      .filter((workspace) => workspace.status !== 'removed')
-      .flatMap((workspace) =>
-        workspace.agents
-          .filter(
-            (agent) =>
-              agent.status !== 'deleted' &&
-              (statusFilter === 'all' ||
-                sandboxChildStatus(sandbox, agent.status) === statusFilter),
-          )
-          .map((agent) => ({ agent, sandbox })),
-      ),
-  );
+  const groups = groupAgents(items, statusFilter ?? 'all');
   return (
     <div role="tree" aria-label="Personal Agents" onKeyDown={keyboardNavigation}>
-      {agents.map(({ agent, sandbox }) => (
-        <TreeRow
-          key={agent.id}
-          nodeId={`agent:${agent.id}`}
-          level={1}
-          label={agentDisplayTitle(agent)}
-          icon={<IconAgentPresetOutline16 />}
-          route={{ kind: 'agent', agentId: agent.id }}
-          selected={route.kind === 'agent' && route.agentId === agent.id}
-          meta={stateMeta(
-            sandboxChildStatus(sandbox, agent.status),
-            <time dateTime={agent.updatedAt}>{activityLabel(agent.updatedAt)}</time>,
-          )}
-          actions={agentActions(
-            agent.status,
-            permissions,
-            !lifecycleBusy &&
-              !busySandboxIds?.has(sandbox.id) &&
-              !refreshError &&
-              sandboxChildrenAvailable(sandbox),
-          )}
-          onNavigate={onNavigate}
-          onAction={(kind) =>
-            onAction({
-              kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
-              agentId: agent.id,
-            })
-          }
-        />
+      {groups.map(({ sandbox, workspace, agents }) => (
+        <div
+          key={workspace.id}
+          className="agent-group"
+          role="group"
+          aria-label={`${workspace.name} · ${sandbox.name}`}
+        >
+          <div className="agent-group__heading" aria-hidden="true">
+            {workspace.source.type === 'git_repository' ? (
+              <IconBranchOutline16 />
+            ) : (
+              <IconFolderOpenOutline16 />
+            )}
+            <span className="agent-group__name">{workspace.name}</span>
+            <span className="agent-group__sandbox">{sandbox.name}</span>
+          </div>
+          {agents.map((agent) => (
+            <TreeRow
+              key={agent.id}
+              nodeId={`agent:${agent.id}`}
+              level={1}
+              label={agentDisplayTitle(agent)}
+              icon={<IconAgentPresetOutline16 />}
+              route={{ kind: 'agent', agentId: agent.id }}
+              selected={route.kind === 'agent' && route.agentId === agent.id}
+              dimmed={sandbox.status === 'paused'}
+              meta={stateMeta(
+                sandboxChildStatus(sandbox, agent.status),
+                <time dateTime={agent.updatedAt}>{activityLabel(agent.updatedAt)}</time>,
+              )}
+              actions={agentActions(
+                agent.status,
+                permissions,
+                !lifecycleBusy &&
+                  !busySandboxIds?.has(sandbox.id) &&
+                  !refreshError &&
+                  sandboxChildrenAvailable(sandbox),
+              )}
+              onNavigate={onNavigate}
+              onAction={(kind) =>
+                onAction({
+                  kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
+                  agentId: agent.id,
+                })
+              }
+            />
+          ))}
+        </div>
       ))}
-      {agents.length === 0 ? (
+      {groups.length === 0 ? (
         <p className="resource-tree__empty">No Agents match this scope and status.</p>
       ) : null}
     </div>

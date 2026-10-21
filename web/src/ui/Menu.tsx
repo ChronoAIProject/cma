@@ -40,6 +40,14 @@ export interface MenuItem {
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
   readonly danger?: boolean;
+  /**
+   * Where choosing this row goes, when it is navigation.
+   *
+   * The row becomes a real link, so a modified click or a middle click opens
+   * the destination in a new tab as any other link does; an ordinary click
+   * still reports the selection and leaves navigation to the owner.
+   */
+  readonly href?: string;
 }
 
 /** A hairline between groups. Not selectable, not focusable. */
@@ -261,7 +269,7 @@ export function Menu({
     if (rows.length === 0) {
       return;
     }
-    const here = rows.indexOf(document.activeElement as HTMLButtonElement);
+    const here = rows.indexOf(document.activeElement as HTMLElement);
     const move = (to: number) => {
       event.preventDefault();
       rows[(to + rows.length) % rows.length]?.focus();
@@ -349,8 +357,8 @@ export function Menu({
 }
 
 /** Every focusable row, in order. Separators and headings are neither. */
-function rowsIn(list: HTMLElement | null): HTMLButtonElement[] {
-  return list === null ? [] : [...list.querySelectorAll<HTMLButtonElement>('button.menu__item')];
+function rowsIn(list: HTMLElement | null): HTMLElement[] {
+  return list === null ? [] : [...list.querySelectorAll<HTMLElement>('.menu__item')];
 }
 
 function MenuRow({
@@ -404,35 +412,8 @@ function MenuRow({
   }
 
   const unavailable = entry.disabled === true;
-  return (
-    <button
-      type="button"
-      /*
-       * A menu with a current value is a set of alternatives, not a list of
-       * actions, and `menuitemradio` is what says so — it is also the role
-       * `aria-checked` is actually defined for.
-       */
-      role={choosing ? 'menuitemradio' : 'menuitem'}
-      data-id={entry.id}
-      data-has-reason={entry.reason === undefined ? undefined : ''}
-      className={['menu__item', entry.danger === true ? 'menu__item--danger' : '']
-        .filter(Boolean)
-        .join(' ')}
-      /*
-       * `aria-disabled` rather than `disabled`, so the row keeps its place in
-       * the keyboard order. A row that cannot be reached cannot have its
-       * reason read, and the reason is the whole point of listing something
-       * that cannot be chosen (§12.3).
-       */
-      aria-disabled={unavailable}
-      aria-checked={choosing ? selected : undefined}
-      onClick={() => {
-        if (unavailable) {
-          return;
-        }
-        onSelect(entry.id);
-      }}
-    >
+  const content = (
+    <>
       {entry.icon === undefined ? null : (
         <span className="menu__icon" aria-hidden="true">
           {entry.icon}
@@ -449,6 +430,66 @@ function MenuRow({
         )}
       </span>
       {selected ? <IconCheckOutline16 className="menu__check" /> : null}
+    </>
+  );
+  const shared = {
+    /*
+     * A menu with a current value is a set of alternatives, not a list of
+     * actions, and `menuitemradio` is what says so — it is also the role
+     * `aria-checked` is actually defined for.
+     */
+    role: choosing ? 'menuitemradio' : 'menuitem',
+    'data-id': entry.id,
+    'data-has-reason': entry.reason === undefined ? undefined : '',
+    className: ['menu__item', entry.danger === true ? 'menu__item--danger' : '']
+      .filter(Boolean)
+      .join(' '),
+    /*
+     * `aria-disabled` rather than `disabled`, so the row keeps its place in
+     * the keyboard order. A row that cannot be reached cannot have its
+     * reason read, and the reason is the whole point of listing something
+     * that cannot be chosen (§12.3).
+     */
+    'aria-disabled': unavailable,
+    'aria-checked': choosing ? selected : undefined,
+  } as const;
+  if (entry.href !== undefined && !unavailable) {
+    return (
+      <a
+        {...shared}
+        href={entry.href}
+        onClick={(event) => {
+          // A modified click is the browser's: a new tab or window, not a
+          // selection in this one.
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          ) {
+            return;
+          }
+          event.preventDefault();
+          onSelect(entry.id);
+        }}
+      >
+        {content}
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      {...shared}
+      onClick={() => {
+        if (unavailable) {
+          return;
+        }
+        onSelect(entry.id);
+      }}
+    >
+      {content}
     </button>
   );
 }

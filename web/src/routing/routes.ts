@@ -31,7 +31,6 @@ export type AppRoute =
   | { readonly kind: 'public_trigger'; readonly publicId: string; readonly placementId?: string }
   | { readonly kind: 'launch'; readonly launchId: string }
   | { readonly kind: 'operations' }
-  | { readonly kind: 'developer' }
   | { readonly kind: 'not_found'; readonly pathname: string };
 
 const PROFILE_KINDS: readonly ProfileKind[] = ['agent', 'workspace', 'sandbox'];
@@ -86,7 +85,9 @@ export function parseRoute(pathname: string): AppRoute {
       case 'operations':
         return { kind: 'operations' };
       case 'developer':
-        return { kind: 'developer' };
+        // Retired: the SDK reader it named no longer exists. Old links land on
+        // the documentation that replaced it, and the address is rewritten.
+        return { kind: 'docs' };
       default:
         return { kind: 'not_found', pathname };
     }
@@ -194,8 +195,6 @@ export function routePath(route: AppRoute): string {
       return `/launches/${segment(route.launchId)}`;
     case 'operations':
       return '/operations';
-    case 'developer':
-      return '/developer';
     case 'not_found':
       return route.pathname;
   }
@@ -206,12 +205,29 @@ export interface AppRouter {
   readonly navigate: (route: AppRoute, options?: { readonly replace?: boolean }) => void;
 }
 
+/** Addresses that still parse, to their replacement, but are never shown. */
+const RETIRED_PATHS: ReadonlySet<string> = new Set(['/developer']);
+
+/**
+ * Read the address bar, rewriting a retired path to the one that replaced it.
+ *
+ * Replace rather than push: the retired address was never a place somebody
+ * chose to be, so Back should not return to it.
+ */
+function currentRoute(): AppRoute {
+  const route = parseRoute(window.location.pathname);
+  if (RETIRED_PATHS.has(window.location.pathname)) {
+    window.history.replaceState(window.history.state, '', routePath(route));
+  }
+  return route;
+}
+
 export function useAppRouter(): AppRouter {
-  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname));
+  const [route, setRoute] = useState<AppRoute>(currentRoute);
 
   useEffect(() => {
     const onPopState = () => {
-      setRoute(parseRoute(window.location.pathname));
+      setRoute(currentRoute());
     };
     window.addEventListener('popstate', onPopState);
     return () => {

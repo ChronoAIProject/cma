@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
+import { chooseService } from './test/services';
 
 function show(path = '/') {
   window.history.replaceState(null, '', path);
@@ -43,7 +44,7 @@ it.each([
   const home = show();
   await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
   expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
-  fireEvent.click(screen.getByRole('link', { name: service }));
+  chooseService(service as 'Agent Manager' | 'Event Gateway');
   await screen.findByRole('heading', { name: heading });
   expect(window.location.pathname).toBe(path);
   expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
@@ -59,15 +60,15 @@ it('retains manual toggles across service navigation and resets on home visits a
   await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
   fireEvent.click(screen.getByRole('button', { name: 'Show navigation' }));
   expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
-  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  chooseService('Agent Manager');
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   fireEvent.click(screen.getByRole('button', { name: 'Hide navigation' }));
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  chooseService('Event Gateway');
   await screen.findByRole('heading', { name: 'Event Gateway' });
   expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Show navigation' }));
-  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  chooseService('Agent Manager');
   expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
   fireEvent.click(screen.getByRole('link', { name: 'CMA home' }));
   expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
