@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
-import { PageHeader } from '../ui/PageHeader';
+import { routePath } from '../routing/routes';
+import { PageHeader, type Crumb } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import {
   can,
@@ -18,6 +19,8 @@ import {
   type Channel,
   type ChannelListItem,
 } from './ChannelEditor';
+import { ChannelEndpoints } from './ChannelEndpoints';
+import { ChannelTable } from './ChannelTable';
 import { ExistingChannel } from './ExistingChannel';
 import './EventGateway.css';
 
@@ -47,15 +50,35 @@ export function EventGateway({
   const items = (
     created && !rows.some((row) => row.record_id === created.record_id) ? [created, ...rows] : rows
   ).filter((row) => !deleted.includes(row.record_id));
-  const current = items.find((row) => row.record_id === selected) ?? items[0];
+  // Nothing is open until somebody chooses a channel: the page opens on the
+  // table of every channel, which a collapsed sidebar cannot hide.
+  const current = items.find((row) => row.record_id === selected);
+  const canCreate = can(session, 'event-gateway', 'channels:create');
   useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
+  const retain = () => {
+    if (current) setVisited((previous) => [...new Set([...previous, current.record_id])]);
+  };
   const select = (id: string) => {
-    setVisited((previous) => [
-      ...new Set([...previous, ...(current ? [current.record_id] : []), id]),
-    ]);
+    retain();
+    setVisited((previous) => [...new Set([...previous, id])]);
     setSelected(id);
     setCreating(false);
     onNavigate?.();
+  };
+  const startCreate = () => {
+    retain();
+    setCreateStarted(true);
+    setCreating(true);
+    onNavigate?.();
+  };
+  // A channel's breadcrumb returns to the table; its editor stays mounted.
+  const channelsCrumb: Crumb = {
+    label: 'Channels',
+    href: routePath({ kind: 'event_gateway' }),
+    onSelect: () => {
+      retain();
+      setSelected(undefined);
+    },
   };
   const sidebar = (
     <section className="gateway-sidebar" aria-label="Channels">
@@ -65,23 +88,9 @@ export function EventGateway({
           Refresh
         </Button>
       </div>
-      {can(session, 'event-gateway', 'channels:create') ? (
-        <Button
-          onClick={() => {
-            if (current) setVisited((previous) => [...new Set([...previous, current.record_id])]);
-            setCreateStarted(true);
-            setCreating(true);
-            onNavigate?.();
-          }}
-        >
-          New channel
-        </Button>
-      ) : null}
-      <PageStatus
-        busy={channels.busy && !channels.value}
-        error={channels.error}
-        retry={channels.refresh}
-      />
+      {canCreate ? <Button onClick={startCreate}>New channel</Button> : null}
+      {/* The page's table already says it is loading; the rail keeps the failure. */}
+      <PageStatus error={channels.error} retry={channels.refresh} />
       {channels.value && items.length === 0 ? (
         <p className="gateway-sidebar__empty">No channels yet.</p>
       ) : null}
@@ -146,6 +155,7 @@ export function EventGateway({
           >
             <ChannelDetail
               channel={channel}
+              channelsCrumb={channelsCrumb}
               session={session}
               denied={denied}
               onChanged={(updated) => {
@@ -167,6 +177,16 @@ export function EventGateway({
             title="Event Gateway"
             description="Choose a channel to view its endpoints, configure event delivery, or send a test."
           />
+          <ChannelTable
+            channels={items}
+            loading={channels.busy && !channels.value}
+            unavailable={
+              channels.value === undefined && channels.error !== undefined
+                ? 'Channels could not be loaded.'
+                : undefined
+            }
+            onSelect={select}
+          />
         </section>
       ) : null}
     </div>
@@ -183,12 +203,14 @@ export function EventGateway({
 
 function ChannelDetail({
   channel,
+  channelsCrumb,
   session,
   denied,
   onChanged,
   onDeleted,
 }: {
   readonly channel: ChannelListItem;
+  readonly channelsCrumb: Crumb;
   readonly session: ServiceSession;
   readonly denied: Denied;
   readonly onChanged: (channel?: Channel) => void;
@@ -197,11 +219,7 @@ function ChannelDetail({
   return (
     <>
       <PageHeader
-        breadcrumb={[
-          { label: 'Event Gateway' },
-          { label: 'Channels' },
-          { label: channel.definition.name },
-        ]}
+        breadcrumb={[{ label: 'Event Gateway' }, channelsCrumb, { label: channel.definition.name }]}
         title={channel.definition.name}
         meta={
           <span className="page-header__chip">
@@ -273,27 +291,7 @@ function AddressedChannel({
   }
   return (
     <>
-      <section className="gateway-detail__section">
-        <h2>Endpoints</h2>
-        <dl>
-          <dt>Event endpoint</dt>
-          <dd>
-            <code>{channel.endpoints.custom_event_url}</code>
-          </dd>
-          <dt>Callback endpoint</dt>
-          <dd>
-            <code>{channel.endpoints.nyxid_callback_url}</code>
-          </dd>
-          {channel.endpoints.telegram_webhook_url ? (
-            <>
-              <dt>Telegram webhook</dt>
-              <dd>
-                <code>{channel.endpoints.telegram_webhook_url}</code>
-              </dd>
-            </>
-          ) : null}
-        </dl>
-      </section>
+      <ChannelEndpoints endpoints={channel.endpoints} />
       <div className="service-actions">
         {can(session, 'event-gateway', 'channels:update') ? (
           <Button

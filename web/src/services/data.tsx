@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
+import { SkeletonRows } from '../ui/Skeleton';
 import { Input } from '../ui/Input';
 import { ServiceError, serviceRequest, type Denied, type Service } from './client';
 export interface Page<T> {
@@ -61,22 +63,21 @@ export function usePage<T>(service: Service, path: string, denied: Denied) {
   };
 }
 export function PageStatus({
-  busy,
+  busy = false,
   error,
   retry,
 }: {
-  readonly busy: boolean;
+  readonly busy?: boolean;
   readonly error?: string;
   readonly retry: () => void;
 }) {
   return (
     <>
-      {busy ? <p role="status">Loading…</p> : null}
+      {busy ? <SkeletonRows label="Loading" /> : null}
       {error ? (
-        <div role="alert">
-          <p>{error}</p>
-          <Button onClick={retry}>Try again</Button>
-        </div>
+        <Alert tone="error" actions={<Button onClick={retry}>Try again</Button>}>
+          {error}
+        </Alert>
       ) : null}
     </>
   );
