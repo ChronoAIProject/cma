@@ -73,7 +73,8 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
       />
     </CmaClientProvider>,
   );
-  await actor.click(await screen.findByRole('button', { name: 'Delete' }));
+  await actor.click(await screen.findByRole('button', { name: 'More actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Delete Sandbox' }));
   await actor.click(
     await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
   );

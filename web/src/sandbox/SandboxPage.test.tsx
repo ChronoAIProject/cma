@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createClient } from '@chronoai/cma-sdk';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
@@ -17,6 +18,15 @@ const permissions: TreePermissions = {
   deleteAgent: true,
   exportHistory: true,
 };
+
+function openMoreActions() {
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+}
+
+/** A More actions row; its accessible name also carries any unavailable reason. */
+function menuItem(name: string) {
+  return screen.getByRole('menuitem', { name: new RegExp(`^${name}`) });
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -75,9 +85,10 @@ it('explains provider persistence while workspace, pause and delete actions rema
     await screen.findByText(/keeps its files and installed software on its saved home/),
   ).toBeInTheDocument();
   expect(screen.queryByText(/S3 transfers/)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  openMoreActions();
+  expect(menuItem('New workspace')).not.toHaveAttribute('aria-disabled', 'true');
+  expect(menuItem('Delete Sandbox')).not.toHaveAttribute('aria-disabled', 'true');
   expect(screen.queryByText('Profile')).not.toBeInTheDocument();
   expect(screen.queryByText('Profile:')).not.toBeInTheDocument();
   expect(document.querySelector('a[href^="/profiles/"]')).toBeNull();
@@ -139,7 +150,7 @@ it('shows granted service names for a paused Sandbox without relying on Agent re
   expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
 });
 
-it('explains persistent PV storage in Advanced and exposes no snapshot controls', async () => {
+it('explains persistent PV storage in Technical details and exposes no snapshot controls', async () => {
   const sandbox = savingSandbox('capture');
   lifecyclePage(async () => ({
     ...sandbox,
@@ -147,7 +158,9 @@ it('explains persistent PV storage in Advanced and exposes no snapshot controls'
   }));
   await act(async () => {});
   expect(screen.queryByText('Latest snapshot')).not.toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
+  openMoreActions();
+  await act(async () => fireEvent.click(menuItem('Technical details')));
+  expect(screen.getByRole('dialog', { name: 'Technical details' })).toBeInTheDocument();
   expect(screen.getByText('Persistent storage')).toBeInTheDocument();
   expect(
     screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
@@ -175,13 +188,16 @@ it('refreshes lifecycle phases and restores Pause only after authoritative eligi
     /Progress is being saved/,
   );
   expect(screen.queryByText(/Saving started/)).not.toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
+  openMoreActions();
+  await act(async () => fireEvent.click(menuItem('Technical details')));
   expect(
     screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
   ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
-  expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'New agent in this Sandbox' })).toBeEnabled();
+  openMoreActions();
+  expect(menuItem('New workspace')).not.toHaveAttribute('aria-disabled', 'true');
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(
     screen.getByText('Live', { selector: '[role="status"] .badge__word' }),
@@ -269,11 +285,11 @@ it.each(['active'] as const)(
         onNavigate={vi.fn()}
       />,
     );
-    const workspace = await screen.findByRole('button', { name: 'New workspace' });
-    const agent = await screen.findByRole('button', { name: 'New agent' });
-    expect(workspace).toBeEnabled();
+    const agent = await screen.findByRole('button', { name: 'New agent in this Sandbox' });
     expect(agent).toBeEnabled();
-    workspace.click();
+    expect(agent).not.toHaveAttribute('aria-describedby');
+    openMoreActions();
+    fireEvent.click(menuItem('New workspace'));
     agent.click();
     expect(onAction.mock.calls).toEqual([
       [{ kind: 'new_workspace', sandboxId: 'sbx_1' }],
@@ -296,7 +312,10 @@ it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'
         onNavigate={vi.fn()}
       />,
     );
-    expect(await screen.findByRole('button', { name: 'New workspace' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'New agent in this Sandbox' })).toBeDisabled();
+    openMoreActions();
+    expect(menuItem('New workspace')).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     if (['paused', 'pausing', 'reviving', 'rotating'].includes(status)) {
       expect(await screen.findByRole('link', { name: 'Agent one' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'New agent' })).toBeDisabled();
@@ -339,9 +358,10 @@ it('pages the complete Sandbox event timeline before displaying it', async () =>
       onNavigate={vi.fn()}
     />,
   );
-  const advanced = await screen.findByRole('button', { name: 'Advanced' });
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const technical = menuItem('Technical details');
   expect(readSandboxEvents).not.toHaveBeenCalled();
-  fireEvent.click(advanced);
+  fireEvent.click(technical);
   expect(await screen.findByText('Workspace created')).toBeInTheDocument();
   expect(screen.getByText('Sandbox created')).toBeInTheDocument();
   expect(readSandboxEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 1, 2]);
@@ -364,8 +384,110 @@ it('fails closed for a nonadvancing Sandbox event page', async () => {
       onNavigate={vi.fn()}
     />,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'Advanced' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  fireEvent.click(menuItem('Technical details'));
   expect(await screen.findByRole('alert')).toHaveTextContent('Sandbox events did not advance.');
   expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
   expect(readSandboxEvents).toHaveBeenCalledTimes(2);
+});
+
+function sharingViews(capabilities: readonly string[]) {
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input)).pathname;
+    if (path.includes('/resource-access/'))
+      return Response.json({ capabilities, revalidate_at: null, policy_revision: 1 });
+    if (path.endsWith('/organizations')) return Response.json({ items: [] });
+    if (path.includes('/resource-shares/')) return Response.json({ items: [] });
+    throw new Error(`Unexpected resource request ${path}`);
+  });
+  return { fetch, client: createClient({ baseUrl: 'https://fixture.invalid', fetch }) };
+}
+
+it.each([
+  [['view_details', 'manage_sharing'], true],
+  [['view_details'], false],
+] as const)(
+  'lists Sharing in More actions only with current authority (%j)',
+  async (capabilities, allowed) => {
+    const views = sharingViews(capabilities);
+    render(
+      <SandboxPage
+        client={agentClient({ resourceViews: views.client })}
+        sandboxId="sbx_1"
+        revision={0}
+        permissions={permissions}
+        busy={false}
+        onAction={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    await screen.findByRole('button', { name: 'More actions' });
+    await waitFor(() => expect(views.fetch).toHaveBeenCalled());
+    await act(async () => {});
+    openMoreActions();
+    if (!allowed) {
+      expect(screen.queryByRole('menuitem', { name: 'Sharing' })).not.toBeInTheDocument();
+      return;
+    }
+    fireEvent.click(menuItem('Sharing'));
+    expect(await screen.findByRole('dialog', { name: 'Sandbox sharing' })).toBeInTheDocument();
+    expect(screen.getByText('Sharing applies to the whole Sandbox.')).toBeInTheDocument();
+  },
+);
+
+it('deletes from the last More actions row and explains held header actions', async () => {
+  const onAction = vi.fn();
+  render(
+    <SandboxPage
+      client={agentClient({
+        readSandbox: async () => ({
+          ...sandboxFixture(),
+          lifecycle: {
+            pause: { allowed: false, reason: 'work_in_progress' },
+            revive: { allowed: false, reason: 'not_paused' },
+            operation: { purpose: 'pause', phase: 'capture', startedAt: '2026-10-21T00:00:00Z' },
+          },
+        }),
+      })}
+      sandboxId="sbx_1"
+      revision={0}
+      permissions={{ ...permissions, createAgent: true, createWorkspace: true }}
+      busy={false}
+      onAction={onAction}
+      onNavigate={vi.fn()}
+    />,
+  );
+  const agent = await screen.findByRole('button', { name: 'New agent in this Sandbox' });
+  expect(agent).toBeDisabled();
+  expect(agent).toHaveAccessibleDescription('Wait for the current Sandbox operation to finish.');
+  expect(screen.getByRole('button', { name: 'Pause' })).toHaveAccessibleDescription(
+    'Sandbox work is in progress. This action will be available when it finishes.',
+  );
+  openMoreActions();
+  const items = screen.getAllByRole('menuitem');
+  expect(items.at(-1)).toBe(menuItem('Delete Sandbox'));
+  expect(menuItem('Delete Sandbox')).toHaveAttribute('aria-disabled', 'true');
+  expect(menuItem('Delete Sandbox')).toHaveTextContent(
+    'Wait for the current Sandbox operation to finish.',
+  );
+  fireEvent.click(menuItem('Delete Sandbox'));
+  expect(onAction).not.toHaveBeenCalled();
+});
+
+it('dispatches Delete Sandbox for an available Sandbox', async () => {
+  const onAction = vi.fn();
+  render(
+    <SandboxPage
+      client={agentClient()}
+      sandboxId="sbx_1"
+      revision={0}
+      permissions={permissions}
+      busy={false}
+      onAction={onAction}
+      onNavigate={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  fireEvent.click(menuItem('Delete Sandbox'));
+  expect(onAction).toHaveBeenCalledWith({ kind: 'delete_sandbox', sandboxId: 'sbx_1' });
 });
