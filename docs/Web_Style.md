@@ -563,8 +563,8 @@ state is this in, what can I do — are answered in the same place on every page
 The header has no padding or border of its own; each view places it in its own gutter. Breadcrumbs
 by view: Agent — `<Sandbox> / <Workspace> / <Agent title>` with the Worktree branch as a chip (a
 shared reader, authorized for the Agent but not its parents, sees `Agent Manager / <Agent title>`);
-Sandbox — `Agent Manager / <Sandbox>` with its id as a chip; Workspace — `Agent Manager /
-<Workspace>`; Agents — `Agent Manager / Agents`; Operations — `Operations / <tab>`; Triggers —
+Sandbox — `Agent Manager / <Sandbox>` with its id as a chip; Workspace — `<Sandbox> / <Workspace>`
+for its owner (a shared reader sees `Agent Manager / <Workspace>`); Agents — `Agent Manager / Agents`; Operations — `Operations / <tab>`; Triggers —
 `Triggers / <Trigger title>`; Event Gateway — `Event Gateway / Channels / <channel>` and `Event
 Gateway / Consumers / <consumer>`; Docs — `Docs / <document>`.
 
@@ -1146,6 +1146,13 @@ Profile model, effort, permission and skills; first-message state; and the
 separately confirmed Stop/Delete controls. No credential, provider token, private
 runtime authority, or internal checkpoint writer identifier is displayed.
 
+**Service access** in the drawer is read-only. The NyxID key belongs to the
+Sandbox, not to one Agent, so it is edited in one place, the Sandbox page's
+Access tab (§17). The drawer lists the effective services as catalog-name links,
+with chrono-llm-public and ornn-api marked Required, and ends with **Manage on
+Sandbox**, a real link to `/sandboxes/<id>?tab=access`. **Sandbox operation
+progress** opens the same page's Activity tab.
+
 Usage and context sit below the composer with tabular figures. Missing usage is
 not zero. A context ceiling adds a neutral 2px track no wider than 240px, with
 accessible numeric values. Without a reported ceiling, show only the known
@@ -1210,8 +1217,8 @@ Keep personal lifecycle pages behind their own accessible-resource classificatio
 
 ### Owner sharing
 
-The existing **Sharing** button in personal Agent Details and Sandbox actions
-appears only after current effective permission allows sharing management. Use
+The existing **Sharing** button in personal Agent Details, and the **Sharing** row
+of the Sandbox page's More actions, appear only after current effective permission allows sharing management. Use
 the existing Modal, Picker and Button primitives. The dialog starts on the Agent
 when opened from Agent Details. Whole-Sandbox scope is a separate explicit
 selection; creation requires acknowledging its current and future children.
@@ -1236,7 +1243,9 @@ cancellation and keeps every control within phone and desktop viewports.
 ## 13a. Agent resources
 
 Machine resources are public point reads scoped to the Agent's Sandbox and
-appear only in Sandbox details, never below the conversation. RAM, CPU and
+appear only in the Sandbox page's Overview tab (§17), never below the conversation
+or in Agent Details. The read goes through one of the Sandbox's Agents; a Sandbox
+without an Agent says so instead of showing figures. RAM, CPU and
 network share a three-column row. The already observed Sandbox lifecycle gates
 samples: only a fresh Active state with a runtime version and no operation or
 checkpoint permits reads. Paused and unavailable runtimes show written states,
@@ -1380,8 +1389,8 @@ time. No elapsed-time heuristic changes a server state.
 
 During Sandbox preparation, the sandbox row also shows the public Sandbox's
 current operation in plain language, total elapsed time from its recorded start,
-and the last successful status check. The same unframed status band appears on
-the Sandbox page. A native Activity details disclosure contains the ordered
+and the last successful status check. The same unframed status band appears in
+the Sandbox page's Activity tab. A native Activity details disclosure contains the ordered
 operation stages and recorded start time, using existing 14/13px type, secondary
 ink, level-2 separators and 16/12/8px spacing. Completed stages derive only from
 the server's sequential phase contract. Unknown phases have no guessed steps.
@@ -1392,7 +1401,7 @@ visible-only every 1.5 seconds, and recover after transient failure. Authorizati
 or visibility denial clears the last observation. Raw runtime logs, credentials,
 commands and paths never enter the activity summary.
 
-Lifecycle screens also show **Live activity** outside Advanced: a keyboard-focusable
+Lifecycle screens also show **Live activity** outside Technical details: a keyboard-focusable
 scroll region, 180px high and at most 30vh, with a 1px level-2 border, 6px radius,
 12px padding, 8px row gap and existing 13/20 secondary text. Timestamp and message
 use a two-column grid that wraps text; the region cannot widen or lengthen the
@@ -1557,7 +1566,7 @@ Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
 
 Paused, pausing and reviving Sandboxes keep retained Workspace and Agent navigation,
-including the Workspace band on the Sandbox page. Child rows show the parent's
+including the Workspaces tab of the Sandbox page. Child rows show the parent's
 actual Pausing, Paused or Resuming state while preserving terminal child failures
 and stops. Opening an Agent shows its existing conversation and history; pending
 lifecycle work holds Send, approval decisions and runtime mutations without
@@ -1566,11 +1575,12 @@ Preparing, rotating and deleting Sandboxes keep their existing navigation limits
 An ordinary checkpoint save on an active Sandbox retains its readable children.
 Resume availability still comes from the public lifecycle record. The Sandbox
 page names the current state and the available history. Pause, Resume and deletion
-show a brief state by default; their
-plain-language stages, activity and elapsed time are inside a closed
-**Sandbox operation progress** disclosure. Agent Details includes a standard
-Button to reach this Sandbox page. Initial creation progress remains visible.
-Raw phase names and other technical facts belong in Advanced.
+show a brief state in the page's alert stack by default; their
+plain-language stages, activity and elapsed time are in the page's **Activity**
+tab, which reads nothing until it is first opened, and the state alert offers
+**View progress** to open it. Agent Details includes a standard Button,
+**Sandbox operation progress**, that opens this tab. Initial creation progress remains visible.
+Raw phase names and other technical facts belong in Technical details.
 No guessed readiness percentage.
 
 Deletion uses the existing risk confirmation, followed in the same overlay seat
@@ -1626,8 +1636,8 @@ including on initial load and explicit refresh. Their retained conversation
 history remains available through direct Agent reads, independently of navigation.
 
 An actual save reports **Saving progress** during capture and **Finishing save**
-while writers resume within operation progress and Advanced, not the resource
-state seat. The Advanced dialog includes the recorded start time;
+while writers resume within operation progress and Technical details, not the
+resource state seat. The Technical details dialog includes the recorded start time;
 there is no guessed percentage. Pause remains unavailable until the public
 eligibility permits it. These fields govern no Workspace or Agent creation rule.
 Tree menu reasons sit beneath their labels using the existing 13/20 voice and
@@ -1636,46 +1646,103 @@ Written tree states also use secondary ink so small status text remains readable
 
 ## 17. Sandbox and Agent details
 
-The Sandbox page serves the ordinary owner: current state and permitted actions,
-named profile, agent provider, own versus ChronoAI-managed model access, effective
-NyxID service scope, then Workspaces and each Agent's model, Guarded or Autonomous
-permission, profile and skills. Profile settings come from the exact pinned
-revision. Effective reach comes from the public Sandbox service list, including
-explicit owner grants, with public Agent lineage as an older-server fallback.
-Requested profile scope never substitutes for effective reach; unconfirmed
-access is explicitly unconfirmed. Optional metadata
-failures preserve the main status and actions and offer retry.
+The Sandbox page serves the ordinary owner: keeping an Agent environment healthy.
+It starts with the §11 header: `Agent Manager / <Sandbox>`, the name with its
+lifecycle badge (Live, Pausing, Resuming, Updating runtime, Needs attention,
+Deleting) and its id as a chip. The header holds one primary action, **New agent**
+(named *New agent in this Sandbox*); one secondary, **Pause** or **Resume**; and
+**More actions** with **New workspace**, **Sharing** when current access allows
+sharing management, **Technical details**, a separator and **Delete Sandbox**
+last. Pause and Resume take their eligibility from the public lifecycle record,
+never from the status alone. When either is unavailable its reason is one line of
+13/20 secondary text under the header, which the button's description points at.
+New agent's reason joins that line, and every unavailable menu row keeps its reason
+beneath its label, such as *Wait for the current Sandbox operation to finish.*, *Agents
+and Workspaces can start when the Sandbox is active.*, *Checking your service
+connections.* or *Checking the current Sandbox status.*
 
-An Advanced icon-and-text command opens the shared wide Modal. Runtime version
-also appears in the ordinary owner Runtime band when the public update projection
-is available. IDs, profile revisions, limits, paths, recorded preparation, operation phases,
-technical timestamps and Events appear only there, except for the ordinary
-operation progress, its recorded start time and translated Live activity. Raw
-technical Events load only while that dialog is open and never hold the ordinary
-page hostage. The dialog scrolls its body,
-traps focus, closes with Escape and returns focus to Advanced.
+One alert stack under the header holds every message about the Sandbox, each in
+its §12.1 tone: the reconnecting warning (content stays), the recovery notice,
+*Your sandbox needs attention.* with the reported remediation, and one information
+line for a paused, pausing, resuming, updating, preparing or deleting Sandbox. When
+the Activity tab has recorded progress to show, that line offers **View progress**,
+which opens it. No paragraph repeats what the header badge already says.
 
-The owner Runtime band uses the existing unframed Sandbox band, definition list,
-buttons and recovery status seat. Show current and latest image references exactly
-as reported, wrapping long references without inventing semantic versions. Display
-the server's daily 02:00 Asia/Singapore schedule and idle deferral. Manual updates
-retain their exact target and command key while an outcome is uncertain, including
-navigation away and back. Queued, updating, completed and failed states reuse the
-44px character, stage fade and reduced-motion behavior. Show same-home preservation
-only when the server confirms it. A rotating Sandbox keeps its Workspaces, Agents
-and conversation history readable. Update progress uses the existing detail refresh;
-it must not reload the page, reset drafts, or add a separate polling loop.
+Below the alerts an underlined tablist, drawn as in §19, offers **Overview**,
+**Workspaces**, **Access** and **Activity**. Arrow keys move between tabs and select
+them, Home and End go to the first and last, only the selected tab is in the tab
+order, and each tab names the panel it controls, which is labelled by it. The
+selected tab is the `tab` query of the Sandbox URL (`?tab=workspaces`), rewritten
+in place so a refresh keeps it and Back does not step through tabs; Overview has no
+query and an unknown value opens Overview, except that a Sandbox still being prepared
+opens on Activity, where its progress is. Panels stay mounted while hidden, so an
+unsaved scope selection or a connection check survives switching tabs; Activity
+starts its event reads only when it is first opened.
 
-Advanced also shows the latest completed snapshot's recorded timestamp and an
-owner-authenticated download link. The link resolves the actual whole-home archive,
-not a multipart manifest or runtime-local path. Before the first completed save,
-show the absence explicitly. Ongoing capture never changes the last completed time.
+- **Overview** holds the Runtime card, Machine resources (§13a) and an
+  **Environment** list: Owner, Model access, Workspaces as a count of the limit, and
+  Agents per workspace. Model access comes from the exact pinned settings; when they
+  cannot be read the list says so and offers retry.
+- **Workspaces** holds **New workspace** and a table with Workspace, Path, Agents and
+  an actions column. The Workspace name links to its Workspace page; Agents are links
+  with their status badges, labelled by the shared Agent title selector, and once read
+  show their model and Guarded or Autonomous permission beneath. **New agent
+  here** starts an Agent in that Workspace and is available only when the Workspace is
+  Ready inside an Active Sandbox with no operation. Paused, pausing, resuming and
+  rotating parents keep the rows and links readable; children show the parent's state.
+  Empty states read *No workspaces* and *No agents*. On a phone the table scrolls
+  inside its own box rather than widening the page.
+- **Access** holds the NyxID service scope editor, *These services are shared by all
+  Agents in this Sandbox.*, with chrono-llm-public and ornn-api locked as Required and
+  the other services marked Already granted or Requested. The save path is the public
+  Agent service-access command of one Agent in the Sandbox, which is notified when the
+  key changes: the Agent holding a retained unsent or unconfirmed update first, then a
+  running Agent, then any Agent. Same-key retries, connection prompts and the paused
+  note are the editor's own. Without an Agent to carry the command, the tab lists the
+  effective services read-only and says that adding an Agent enables changes.
+  Effective reach comes from the public Sandbox service list, including explicit owner
+  grants, with public Agent lineage as an older-server fallback. Requested profile
+  scope never substitutes for effective reach; unconfirmed access is explicitly
+  unconfirmed.
+- **Activity** holds the recorded operation progress, the Live activity feed and the
+  last recorded interruption.
 
-Workspaces and Agents use unframed bands with existing 24/16/12/8px rhythm,
-definition lists and wrapping linked lists. Each Agent is separated by the
-existing level-2 border, without floating or nested cards. Paused or reviving
-parents still hide their children until ready. A successful create followed by
-a failed detail read recovers the created resource, not another creation.
+Optional metadata failures preserve the header, the alerts and the actions and offer
+retry. Loading draws a skeleton in the page's own gutter.
+
+**Technical details** opens the shared wide Modal of the same name. IDs, limits,
+paths, recorded preparation, operation phases, technical timestamps and Events
+appear only there, except for the ordinary operation progress, its recorded start
+time and translated Live activity. Raw technical Events load only while that dialog
+is open and never hold the ordinary page hostage. The dialog scrolls its body, traps
+focus and closes with Escape. It states that the Sandbox keeps its home on persistent
+storage and offers no snapshot download.
+
+The owner Runtime card uses the Sandbox band, definition list, buttons and status
+seat. Show current and latest image references exactly as reported, wrapping long
+references without inventing semantic versions. Display the server's daily 02:00
+Asia/Singapore schedule and idle deferral. Manual updates retain their exact target
+and command key while an outcome is uncertain, including navigation away and back.
+Queued, updating, completed and failed states use the status dot, stage fade and
+reduced-motion behavior. Show same-home preservation only when the server confirms
+it. A rotating Sandbox keeps its Workspaces, Agents and conversation history
+readable. Update progress uses the existing detail refresh; it must not reload the
+page, reset drafts, or add a separate polling loop.
+
+The **owner Workspace page** (`/workspaces/<id>` for the Workspace's owner) starts
+with the header `<Sandbox> / <Workspace>`, the Sandbox step a link to the Sandbox
+page, the Workspace status badge, **New agent** as its primary action (an Agent in
+this Workspace, under the same availability as New agent here) and **More actions**
+with **Delete workspace**, which uses the existing Workspace deletion flow. Facts:
+Path, Source (the repository as a link, or Empty directory), Branch or ref, and
+Resolved commit. A table, **Agents and Worktrees**, pairs each Agent (link and status
+badge) with its Worktree branch and Worktree status, since each Worktree has exactly
+one Agent. The page refreshes on the Sandbox page's cadence and keeps its last
+content through a transient failure, marked as reconnecting; a refusal replaces it
+with the unavailable state. A viewer who does not own the Workspace keeps the shared
+projection: safe names, status, the access summary, authorized Agents with their
+access and channel lines, and Worktrees. A successful create followed by a failed
+detail read recovers the created resource, not another creation.
 
 All profile, service and skill references use their original catalog names and
 are links. Profiles open their canonical own-profile or public Marketplace page;
@@ -2695,3 +2762,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
 | 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
 | 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
+| 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
