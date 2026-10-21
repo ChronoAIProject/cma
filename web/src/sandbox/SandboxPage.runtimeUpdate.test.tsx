@@ -6,7 +6,6 @@ import { sandboxFixture } from '../test/hierarchy';
 import { SandboxPage } from './SandboxPage';
 
 vi.mock('../connections/ConnectionWizard', () => ({ ConnectionWizard: () => null }));
-vi.mock('../landing/LandingCharacter', () => ({ LandingCharacter: () => null }));
 afterEach(() => vi.useRealTimers());
 
 const update: SandboxRuntimeUpdate = {

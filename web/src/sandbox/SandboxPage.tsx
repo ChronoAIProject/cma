@@ -1,4 +1,5 @@
 import { Presence } from '../ui/Presence';
+import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -21,7 +22,10 @@ import {
   sandboxLifecycleAction,
   sandboxLifecycleLabel,
   sandboxRefreshDelay,
+  sandboxTone,
 } from './lifecycle';
+import { Badge } from '../ui/Badge';
+import { Alert } from '../ui/Alert';
 import { SandboxOverview } from './SandboxOverview';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
@@ -191,6 +195,7 @@ export function SandboxPage({
         <h1 ref={heading} tabIndex={-1}>
           Sandbox
         </h1>
+        <SkeletonRows rows={4} label="Loading Sandbox" />
       </section>
     );
   if (state.status === 'error')
@@ -241,7 +246,11 @@ export function SandboxPage({
         ]}
         title={sandbox.name}
         headingRef={heading}
-        badge={<span role="status">{sandboxLifecycleLabel(sandbox)}</span>}
+        badge={
+          <Badge tone={sandboxTone(sandbox)} live>
+            {sandboxLifecycleLabel(sandbox)}
+          </Badge>
+        }
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
@@ -324,14 +333,18 @@ export function SandboxPage({
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}
-      {notice === undefined ? null : <p>{notice}</p>}
+      <div className="alert-stack">
+        <Presence>
+          {pollError ? (
+            <Alert tone="warning">Progress could not be refreshed. Reconnecting.</Alert>
+          ) : null}
+        </Presence>
+        {notice === undefined ? null : <Alert tone="info">{notice}</Alert>}
+      </div>
       <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
       {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
         <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
       ) : null}
-      <Presence>
-        {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
-      </Presence>
       {optionalProgress ? (
         <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
           <summary>Sandbox operation progress</summary>
