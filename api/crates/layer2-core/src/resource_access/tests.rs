@@ -68,6 +68,7 @@ fn share(mode: ShareMode) -> ResourceShare {
             agent_id: crate::AgentId("agent".into()),
         },
         target_org_id: SubjectId::new("org"),
+        link: None,
         mode,
         issuer_actor: ResourceActor::Human {
             subject: SubjectId::new("owner"),

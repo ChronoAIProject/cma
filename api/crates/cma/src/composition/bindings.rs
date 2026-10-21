@@ -80,7 +80,8 @@ pub(super) fn resource_access(
         )
         .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
             stores.sandbox_model.clone(),
-        )),
+        ))
+        .with_directory(layer2_core::UserDirectory::new(stores.users.clone())),
     )
 }
 

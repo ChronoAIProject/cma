@@ -104,8 +104,10 @@ async fn apply(
     let snapshot = snapshot::read(store, &request.target(), session).await?;
     let sandbox_id = &snapshot.lineage.sandbox.id;
     let id = match &request.change {
-        ShareChange::Create { .. } => &request.proposed_id,
-        ShareChange::SetMode { share_id, .. } | ShareChange::Revoke { share_id } => share_id,
+        ShareChange::Create { .. } | ShareChange::CreateLink { .. } => &request.proposed_id,
+        ShareChange::SetMode { share_id, .. }
+        | ShareChange::Revoke { share_id }
+        | ShareChange::RedeemLink { share_id, .. } => share_id,
     };
     let previous = store
         .resource_shares
