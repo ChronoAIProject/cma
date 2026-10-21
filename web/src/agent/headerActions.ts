@@ -45,22 +45,16 @@ export function agentHeaderMenu(
 
 /** Where an owner's Agent lives, ending at the Agent itself. */
 export function agentBreadcrumb(
-  detail: Pick<AgentDetail, 'sandbox' | 'workspace'>,
+  detail: Pick<AgentDetail, 'sandbox'>,
   title: string,
   onNavigate: (route: AppRoute) => void,
 ): Crumb[] {
   const sandbox = { kind: 'sandbox', sandboxId: detail.sandbox.id } as const;
-  const workspace = { kind: 'workspace', workspaceId: detail.workspace.id } as const;
   return [
     {
       label: detail.sandbox.name,
       href: routePath(sandbox),
       onSelect: () => onNavigate(sandbox),
-    },
-    {
-      label: detail.workspace.name,
-      href: routePath(workspace),
-      onSelect: () => onNavigate(workspace),
     },
     { label: title },
   ];

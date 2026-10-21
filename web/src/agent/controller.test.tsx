@@ -23,7 +23,7 @@ function readableClient(overrides = {}) {
 }
 
 describe('Agent controller loading', () => {
-  it('keeps the authorized transcript and partial tools visible after a failed event page, then retries from zero', async () => {
+  it('keeps the current transcript without replaying incomplete historical tools, then recovers tools on retry', async () => {
     vi.useFakeTimers();
     let failSecondPage = true;
     const events: AgentEvent[] = [
@@ -68,7 +68,8 @@ describe('Agent controller loading', () => {
         messages: expect.arrayContaining([
           expect.objectContaining({ content: 'The repository is ready.' }),
         ]),
-        toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })],
+        toolCalls: [],
+        activeRunId: undefined,
       },
     });
     expect(client.replayAgent).not.toHaveBeenCalled();
@@ -83,6 +84,7 @@ describe('Agent controller loading', () => {
       conversation: {
         cursor: 4,
         toolCalls: [expect.objectContaining({ id: 'read', status: 'completed' })],
+        activeRunId: undefined,
       },
     });
     expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 4 }));

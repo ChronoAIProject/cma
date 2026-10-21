@@ -55,6 +55,7 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
+  expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('chrono-bot');
   await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
   await user.click(screen.getByRole('button', { name: 'Agents' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
@@ -123,7 +124,7 @@ it('uses effective parent lifecycle status and the shared status tones for dots'
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
 });
 
-it('groups Agents by Workspace and Sandbox, most recently active first', () => {
+it('groups Agents by Sandbox without Workspace rows, most recently active first', () => {
   const [item] = navigationFixture();
   if (item === undefined) throw new Error('fixture');
   const [workspace] = item.workspaces;
@@ -164,14 +165,17 @@ it('groups Agents by Workspace and Sandbox, most recently active first', () => {
       }}
     />,
   );
-  const groups = screen.getAllByRole('group', { name: / · Atlas$/ });
-  expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
-    'chrono-bot · Atlas',
-    'quiet-workspace · Atlas',
-  ]);
+  const groups = screen.getAllByRole('group', { name: 'Atlas' });
+  expect(groups).toHaveLength(1);
+  expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
+  expect(screen.queryByText('quiet-workspace')).not.toBeInTheDocument();
   expect(
     [...(groups[0]?.querySelectorAll('[role="treeitem"]') ?? [])].map((row) => row.textContent),
-  ).toEqual([expect.stringContaining('Newer'), expect.stringContaining('Older')]);
+  ).toEqual([
+    expect.stringContaining('Newer'),
+    expect.stringContaining('Older'),
+    expect.stringContaining('Quiet'),
+  ]);
 });
 
 it('clears status and scope together and names the scope in the summary', async () => {

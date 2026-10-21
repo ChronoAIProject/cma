@@ -184,7 +184,7 @@
   }
 }
 
-/* Agents view: one group per Workspace, named with its Sandbox. */
+/* Agents view: one group per Sandbox. Workspace rows belong in Sandboxes. */
 .agent-group + .agent-group {
   margin-top: 8px;
 }
@@ -209,16 +209,6 @@
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.agent-group__sandbox {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-group__sandbox::before {
-  content: '· ';
 }
 .resource-tree__empty {
   padding: 16px 8px;

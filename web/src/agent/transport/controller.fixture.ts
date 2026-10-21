@@ -142,7 +142,7 @@ export function harness(storage: Storage = sessionStorage) {
     runAgent: vi.fn(),
     interruptAgent: vi.fn(),
     replayAgent: vi.fn(),
-    readAgentTranscript: vi.fn(),
+    readAgentTranscript: vi.fn(async () => ({ agentId: 'agt_1', throughSeq: 0, turns: [] })),
     readAgentEvents: vi.fn(),
   });
   const emit = (type: string, data: unknown, id?: string) => {
