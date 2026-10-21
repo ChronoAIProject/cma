@@ -1,6 +1,6 @@
 import { test, expect } from './harness';
 import { identifier, object, required } from './environment';
-import { createToRevive, workspaceAgentButton } from './lifecycle-creation';
+import { createToRevive, openWorkspacesTab, workspaceAgentButton } from './lifecycle-creation';
 
 test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work', async ({
   harness: h,
@@ -52,6 +52,7 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
   const agentIds: string[] = [];
   for (let index = 0; index < 2; index++) {
     await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
+    await openWorkspacesTab(page);
     await workspaceAgentButton(page, workspace).click();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
