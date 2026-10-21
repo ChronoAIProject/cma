@@ -20,8 +20,8 @@ not overrideable build arguments.
 | Upstream commit | `83d9cd684c87d95d656c1458ef04895a7f1cbd8e` |
 | Source archive SHA-256 | `6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115` |
 | Embedded `config/gitleaks.toml` SHA-256 | `e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf` |
-| Go toolchain | `1.26.9` |
-| Go builder | `golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c` |
+| Go toolchain | `1.26.10` |
+| Go builder | `golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0` |
 | Resolved `go.mod` SHA-256 | `e0edfb0862afb47842aee08811984801fef09c60865c77988c814a2b58450404` |
 | Resolved `go.sum` SHA-256 | `8220b35a8d9ab7e2befe8880db36aded4fc68547ce5c2b42bb28c102d933e09c` |
 
