@@ -6,6 +6,8 @@ mod hierarchy;
 mod inventory;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
+#[path = "resource_access_tests/share_links.rs"]
+mod share_links;
 use layer2_core::resource_access::*;
 use sha2::{Digest as _, Sha256};
 
