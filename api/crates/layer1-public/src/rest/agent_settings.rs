@@ -2,6 +2,7 @@
 
 use axum::{
     extract::{Path, State},
+    http::header,
     response::{IntoResponse, Response},
     Json,
 };
@@ -19,7 +20,7 @@ use super::{
     instance_problem::InstanceProblem,
     BodyProblem,
 };
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -95,15 +96,34 @@ impl From<Agent> for AgentSettingsView {
 pub(crate) async fn read(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<AgentSettingsView>, InstanceProblem> {
-    state
-        .reads
-        .lineage(&caller, &AgentId(id))
-        .await
-        .map(|lineage| AgentSettingsView::from(lineage.agent))
-        .map(Json)
-        .map_err(InstanceProblem::from)
+) -> Result<
+    (
+        [(header::HeaderName, &'static str); 1],
+        Json<AgentSettingsView>,
+    ),
+    InstanceProblem,
+> {
+    let id = AgentId(id);
+    let agent = if let Some(resource) = &resource {
+        let read = state
+            .reads
+            .configuration_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &id,
+            )
+            .await?;
+        state.reads.validate_configuration_read(&read).await?;
+        read.lineage.agent
+    } else {
+        state.reads.lineage(&caller, &id).await?.agent
+    };
+    Ok((
+        [(header::CACHE_CONTROL, "private, no-store")],
+        Json(agent.into()),
+    ))
 }
 
 #[utoipa::path(patch, operation_id = "update_agent_settings", path = "/api/v1/agents/{id}/settings", tag = "agents",
@@ -114,13 +134,32 @@ pub(crate) async fn read(
 pub(crate) async fn update(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     key: IdempotencyKey,
     body: Result<RequestBody<UpdateAgentSettingsRequest>, BodyProblem>,
 ) -> Response {
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
-    execute_command(
+    // Every request, including cached success replay, needs current permission.
+    let read = if let Some(resource) = &resource {
+        match state
+            .reads
+            .configuration_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &AgentId(id.clone()),
+            )
+            .await
+        {
+            Ok(read) => Some(read),
+            Err(error) => return InstanceProblem::from(error).into_response(),
+        }
+    } else {
+        None
+    };
+    let reads = state.reads.clone();
+    let mut response = execute_command(
         &state,
         &caller,
         key,
@@ -128,11 +167,33 @@ pub(crate) async fn update(
         body,
         move |body| async move {
             let settings = body.try_into()?;
-            let agent = service
-                .update_settings(&operation_caller, &AgentId(id), settings)
-                .await?;
+            let agent = if let Some(resource) = resource {
+                let authority = reads
+                    .authorize_settings_update(
+                        &resource.context,
+                        resource.credential.as_ref().map(DelegatedCredential::value),
+                        &AgentId(id),
+                        &settings,
+                    )
+                    .await?;
+                service.update_settings_authorized(&authority).await?
+            } else {
+                service
+                    .update_settings(&operation_caller, &AgentId(id), settings)
+                    .await?
+            };
             Ok(Json(AgentSettingsView::from(agent)).into_response())
         },
     )
-    .await
+    .await;
+    if let Some(read) = &read {
+        if let Err(error) = state.reads.validate_configuration_read(read).await {
+            return InstanceProblem::from(error).into_response();
+        }
+    }
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("private, no-store"),
+    );
+    response
 }

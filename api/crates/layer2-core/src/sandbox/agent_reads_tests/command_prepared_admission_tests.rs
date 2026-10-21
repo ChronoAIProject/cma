@@ -53,6 +53,7 @@ pub(super) async fn complete_then_change_model(store: &InMemorySandboxStore) {
     let log = operation_log(&next, sequence).unwrap();
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

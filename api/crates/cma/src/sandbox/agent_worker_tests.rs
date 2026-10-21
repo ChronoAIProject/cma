@@ -914,6 +914,7 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
     harness
         .store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

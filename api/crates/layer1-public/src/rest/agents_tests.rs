@@ -9,6 +9,7 @@ mod lifecycle;
 pub(super) mod message_feedback;
 mod models;
 mod settings;
+mod shared_settings;
 mod skills;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 

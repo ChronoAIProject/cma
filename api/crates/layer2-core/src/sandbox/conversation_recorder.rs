@@ -351,6 +351,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             };
             checkpoint.validate().map_err(store_error)?;
             let mutation = (!logs.is_empty()).then(|| AgentConversationMutation {
+                settings_fence: None,
                 command_claim: None,
                 execution_fence: None,
                 trigger_execution_fence: None,

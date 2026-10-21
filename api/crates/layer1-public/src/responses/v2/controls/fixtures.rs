@@ -207,6 +207,7 @@ pub(crate) async fn pending_approval(f: &Fixture, approval_id: &str) {
     agent.conversation.last_seq += 2;
     f.store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
