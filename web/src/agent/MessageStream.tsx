@@ -103,6 +103,10 @@ export function MessageStream({
       )
       .map((item) => ({ kind: 'tool' as const, item })),
     ...conversation.approvals.map((item) => ({ kind: 'approval' as const, item })),
+    // An emptied plan has nothing left to show; its slot returns if the turn reports again.
+    ...conversation.plans
+      .filter((item) => item.entries.length > 0)
+      .map((item) => ({ kind: 'plan' as const, item })),
     ...conversation.recovery.map((item) => ({ kind: 'recovery' as const, item })),
   ];
   entries.sort((left, right) => (left.item.order ?? 0) - (right.item.order ?? 0));
