@@ -23,7 +23,8 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
     )
     .toBe('active');
   await page.reload();
-  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New workspace', exact: true }).click();
   await page.getByRole('radio', { name: 'Public', exact: true }).check();
   await page
     .getByRole('button', {
