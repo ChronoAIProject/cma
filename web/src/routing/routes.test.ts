@@ -30,7 +30,6 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'public_trigger', publicId: 'pub_123', placementId: 'plc_123' },
   { kind: 'launch', launchId: 'lch_123' },
   { kind: 'operations' },
-  { kind: 'developer' },
 ];
 
 describe('application routes', () => {
@@ -90,10 +89,27 @@ describe('application routes', () => {
     expect(result.current.route).toEqual({ kind: 'sandbox', sandboxId: 'sbx_1' });
 
     act(() => {
-      result.current.navigate({ kind: 'developer' }, { replace: true });
+      result.current.navigate({ kind: 'operations' }, { replace: true });
     });
-    expect(window.location.pathname).toBe('/developer');
-    expect(result.current.route).toEqual({ kind: 'developer' });
+    expect(window.location.pathname).toBe('/operations');
+    expect(result.current.route).toEqual({ kind: 'operations' });
+  });
+
+  it('rewrites the retired Developer address to Docs without a history entry', () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    window.history.pushState(null, '', '/developer');
+    const entries = window.history.length;
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'docs' });
+    expect(window.location.pathname).toBe('/docs');
+    expect(window.history.length).toBe(entries);
+  });
+
+  it('leaves an unknown address as written', () => {
+    window.history.replaceState(null, '', '/developers');
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/developers' });
+    expect(window.location.pathname).toBe('/developers');
   });
 });
 
