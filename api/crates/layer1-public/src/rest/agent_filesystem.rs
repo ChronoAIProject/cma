@@ -32,14 +32,16 @@ struct FileQuery {
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-struct WriteFileRequest {
+pub(crate) struct WriteFileRequest {
     path: String,
     #[serde(default)]
     expected_sha256: Option<String>,
     content_base64: String,
+    #[serde(default)]
+    directory: bool,
 }
 #[derive(Serialize, ToSchema)]
-struct FileEntryView {
+pub(crate) struct FileEntryView {
     path: String,
     name: String,
     kind: String,
@@ -49,19 +51,19 @@ struct FileEntryView {
     hidden: bool,
 }
 #[derive(Serialize, ToSchema)]
-struct FileListView {
+pub(crate) struct FileListView {
     path: String,
     entries: Vec<FileEntryView>,
 }
 #[derive(Serialize, ToSchema)]
-struct FileReadView {
+pub(crate) struct FileReadView {
     path: String,
     size_bytes: u64,
     sha256: String,
     content_base64: String,
 }
 #[derive(Serialize, ToSchema)]
-struct FileMutationView {
+pub(crate) struct FileMutationView {
     path: String,
     size_bytes: Option<u64>,
     sha256: Option<String>,
@@ -70,12 +72,52 @@ struct FileMutationView {
 
 pub fn agent_filesystem_router(service: Arc<AgentFileService>) -> Router {
     Router::new()
-        .route("/api/v1/agents/{id}/files", post(write).delete(remove))
+        .route(
+            "/api/v1/agents/{id}/files",
+            post(write)
+                .delete(remove)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    (MAX_AGENT_FILE_BYTES.div_ceil(3) * 4 + 4096) as usize,
+                )),
+        )
         .route("/api/v1/agents/{id}/files/tree", get(list))
         .route("/api/v1/agents/{id}/files/content", get(read))
         .route("/api/v1/agents/{id}/files/download", get(download))
+        .layer(axum::middleware::from_fn(bounded_request))
         .layer(axum::middleware::from_fn(private_headers))
         .with_state(service)
+}
+async fn bounded_request(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    static CAPACITY: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    let Ok(_permit) = CAPACITY
+        .get_or_init(|| tokio::sync::Semaphore::new(2))
+        .try_acquire()
+    else {
+        return super::problem_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            super::problem_document(
+                StatusCode::TOO_MANY_REQUESTS,
+                "file_capacity",
+                "File operations are busy. Retry shortly.",
+                "file_capacity",
+            ),
+        );
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(60), next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => super::problem_response(
+            StatusCode::GATEWAY_TIMEOUT,
+            super::problem_document(
+                StatusCode::GATEWAY_TIMEOUT,
+                "file_timeout",
+                "File operation timed out. Refresh the file before retrying a save.",
+                "file_timeout",
+            ),
+        ),
+    }
 }
 async fn private_headers(
     request: axum::extract::Request,
@@ -186,10 +228,7 @@ async fn download(
             (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
             (
                 header::CONTENT_DISPOSITION,
-                format!(
-                    "attachment; filename=\"{}\"",
-                    value.path.rsplit('/').next().unwrap_or("download")
-                ),
+                download_name(&value.path, &value.sha256),
             ),
         ],
         bytes,
@@ -207,7 +246,13 @@ async fn write(
     Path(id): Path<String>,
     body: Result<Json<WriteFileRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<FileMutationView>, FileProblem> {
-    let Json(body) = body.map_err(|_| FileProblem(AgentFileError::Invalid))?;
+    let Json(body) = body.map_err(|e| {
+        FileProblem(if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AgentFileError::TooLarge
+        } else {
+            AgentFileError::Invalid
+        })
+    })?;
     let value = service
         .write(
             &caller,
@@ -217,6 +262,7 @@ async fn write(
             &body.path,
             body.expected_sha256,
             body.content_base64,
+            body.directory,
         )
         .await?;
     Ok(Json(FileMutationView {
@@ -256,6 +302,20 @@ async fn remove(
     }))
 }
 
+fn download_name(path: &str, sha256: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or("download");
+    let encoded: String = name
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect();
+    format!("attachment; filename=\"file-{sha256}\"; filename*=UTF-8''{encoded}")
+}
 fn context(
     resource: &Option<AuthenticatedResourceCaller>,
 ) -> Option<&layer2_core::resource_access::CallerContext> {
@@ -280,6 +340,16 @@ impl IntoResponse for FileProblem {
             return super::resource_access_problem::ResourceProblem(error).into_response();
         }
         let (status, code, detail) = match self.0 {
+            AgentFileError::NotFound => (
+                StatusCode::NOT_FOUND,
+                "file_not_found",
+                "File or directory does not exist.",
+            ),
+            AgentFileError::TooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "file_too_large",
+                "File exceeds the selected size limit.",
+            ),
             AgentFileError::Invalid => (
                 StatusCode::BAD_REQUEST,
                 "invalid_file_request",
@@ -308,5 +378,88 @@ impl IntoResponse for FileProblem {
             AgentFileError::Access(_) => unreachable!(),
         };
         super::problem_response(status, super::problem_document(status, code, detail, code))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        extract::DefaultBodyLimit,
+        http::{Method, Request},
+    };
+    use serde_json::json;
+    use tower::ServiceExt as _;
+
+    #[test]
+    fn filesystem_openapi_contains_the_editor_and_download_contracts() {
+        let document = serde_json::to_value(super::super::openapi::document()).unwrap();
+        for (path, method) in [
+            ("/api/v1/agents/{id}/files", "post"),
+            ("/api/v1/agents/{id}/files", "delete"),
+            ("/api/v1/agents/{id}/files/tree", "get"),
+            ("/api/v1/agents/{id}/files/content", "get"),
+            ("/api/v1/agents/{id}/files/download", "get"),
+        ] {
+            assert!(
+                document["paths"][path][method].is_object(),
+                "{method} {path}"
+            );
+        }
+        assert!(
+            document["components"]["schemas"]["WriteFileRequest"]["properties"]["expected_sha256"]
+                .is_object()
+        );
+        assert!(
+            document["components"]["schemas"]["WriteFileRequest"]["properties"]["directory"]
+                .is_object()
+        );
+    }
+
+    #[tokio::test]
+    async fn filesystem_route_has_a_dedicated_body_limit_and_never_caches_denials() {
+        let (_, access, _, _) = super::super::shared_agent_tests::fixture(
+            super::super::shared_agent_tests::Reply::Member,
+        )
+        .await;
+        let router = agent_filesystem_router(AgentFileService::for_route_tests(access))
+            .layer(DefaultBodyLimit::max(2 * 1024 * 1024));
+        let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0; 3 * 1024 * 1024]);
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/agents/agt_shared_read/files")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::to_vec(&json!({"path":"photo.bin","content_base64":encoded})).unwrap(),
+            ))
+            .unwrap();
+        let caller = super::super::resource_access_tests::context("owner-a");
+        request
+            .extensions_mut()
+            .insert(crate::AuthenticatedSubject(caller.caller.subject.clone()));
+        request
+            .extensions_mut()
+            .insert(caller.caller.authorization.clone());
+        request.extensions_mut().insert(caller);
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        assert_eq!(
+            response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+            "nosniff"
+        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert!(
+            matches!(
+                value["code"].as_str(),
+                Some("file_runtime_not_ready" | "file_runtime_unsupported")
+            ),
+            "{value}"
+        );
     }
 }

@@ -689,3 +689,6 @@ fn agent_limits_count_only_live_agents_in_the_selected_workspace() {
 
 #[path = "agent_attachments_tests.rs"]
 mod attachments;
+
+#[path = "agent_filesystem_tests.rs"]
+mod filesystem;
