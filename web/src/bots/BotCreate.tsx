@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { ApiError, type CreateBot } from '@chronoai/cma-sdk';
+import type { CreateBot } from '@chronoai/cma-sdk';
 import { routePath, type AppRoute } from '../routing/routes';
 import type { CreationClient, CreationProfile } from '../create/client';
 import '../create/Create.css';
@@ -16,6 +16,7 @@ import { ServicePicker } from '../profiles/pickers/ServicePicker';
 import { SkillPicker } from '../profiles/pickers/SkillPicker';
 import type { SkillReference } from '../profiles/client';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { connectionTargetFrom } from './connectionTarget';
 import type { ConnectionTarget } from '../connections/client';
 import {
   imageVisibilityLabel,
@@ -29,35 +30,6 @@ const SYSTEM_IMAGE: AgentImageChoice = {
   description: 'Maintained by Agent Manager and kept compatible with the default runtime.',
 };
 const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
-
-function connectionTargetFrom(error: unknown): ConnectionTarget | undefined {
-  if (!(error instanceof ApiError) || error.code !== 'connection_required') return undefined;
-  const value = error.extensions.connection_target;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  const target = value as { type?: unknown; id?: unknown; profile?: unknown };
-  if (target.type === 'sandbox_profile') {
-    if (typeof target.profile !== 'object' || target.profile === null) return undefined;
-    const profile = target.profile as { id?: unknown; revision?: unknown };
-    return typeof profile.id === 'string' &&
-      Number.isSafeInteger(profile.revision) &&
-      (profile.revision as number) > 0
-      ? {
-          type: 'sandbox_profile',
-          profile: { id: profile.id, revision: profile.revision as number },
-        }
-      : undefined;
-  }
-  if (
-    (target.type === 'sandbox' ||
-      target.type === 'workspace' ||
-      target.type === 'agent' ||
-      target.type === 'launch') &&
-    typeof target.id === 'string'
-  ) {
-    return { type: target.type, id: target.id };
-  }
-  return undefined;
-}
 
 export interface CreationIntent {
   readonly body: CreateBot;
