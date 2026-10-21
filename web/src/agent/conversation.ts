@@ -9,6 +9,7 @@ import { orderEntries } from './chronology';
 import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
+import { setPlan } from './plans';
 import { descriptionSource, mergeRuntimeMetadata } from './runtimeMetadata';
 import { sessionCommands } from './slashCommands';
 import { number, object, text } from './conversationValues';
@@ -70,6 +71,7 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
     toolCalls: [],
     reasoning: [],
     approvals: [],
+    plans: [],
     recovery,
     activeRunId: activeTurn === undefined ? undefined : String(activeTurn.turnSequence),
     activeRunStartedAt: activeTurn?.startedAt,
@@ -184,6 +186,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         }),
       };
     }
+    case 'plan_set':
+      return setPlan(next, next.activeRunId, kind.entries);
     case 'usage':
       return durableUsage(next, {
         ...kind,
@@ -304,6 +308,7 @@ function patchState(
   state: ConversationState,
   patch: unknown,
   timestamp?: string,
+  runId?: string,
 ): ConversationState {
   const item = object(patch);
   if (item === undefined) return state;
@@ -315,6 +320,7 @@ function patchState(
       ...state,
       availableCommands: operation === 'remove' ? undefined : sessionCommands(item.value),
     };
+  if (path === '/plan') return setPlan(state, runId, operation === 'remove' ? [] : item.value);
   if (path.startsWith('/pendingApprovals/')) {
     const id = path.slice('/pendingApprovals/'.length).replaceAll('~1', '/').replaceAll('~0', '~');
     if (operation === 'remove') {
@@ -424,7 +430,7 @@ function patchState(
 function liveState(state: ConversationState, event: AgentLiveEvent): ConversationState {
   const delta = Array.isArray(event.delta) ? event.delta : [];
   return delta.reduce<ConversationState>(
-    (current, patch) => patchState(current, patch, event.timestamp),
+    (current, patch) => patchState(current, patch, event.timestamp, event.runId),
     state,
   );
 }
