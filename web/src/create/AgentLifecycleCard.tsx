@@ -7,6 +7,7 @@ import type {
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { IconAgentPresetOutline16 } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
@@ -174,6 +175,9 @@ function AgentLifecycleForm({
             </>
           ) : (
             <>
+              <p className="agent-lifecycle-note">
+                Includes chrono-llm-public and ornn-api access.
+              </p>
               <Button disabled={pending} onClick={onClose}>
                 Cancel
               </Button>
@@ -239,6 +243,20 @@ function AgentLifecycleForm({
                 </p>
               ) : null}
             </div>
+            {/*
+             * Read-only on purpose: the lifecycle request sends no inline
+             * settings, so the summary states the server's defaults rather
+             * than offering a choice it would not honour.
+             */}
+            <section className="agent-lifecycle-settings" aria-labelledby="agent-settings-title">
+              <span className="agent-lifecycle-settings__icon" aria-hidden="true">
+                <IconAgentPresetOutline16 />
+              </span>
+              <div>
+                <h3 id="agent-settings-title">Agent settings</h3>
+                <p>gpt-6 · High · Autonomous</p>
+              </div>
+            </section>
           </div>
         ) : null}
         {lifecycle.intent && !createdReceipt ? (
