@@ -101,7 +101,8 @@
   font-weight: 500;
   overflow-wrap: anywhere;
 }
-.agent-lifecycle-steps span,
+/* The state word and timing sit under the name, past the dot's column. */
+.agent-lifecycle-steps__state,
 .agent-lifecycle-steps small {
   grid-column: 2;
   color: var(--dsw-alias-label-secondary);

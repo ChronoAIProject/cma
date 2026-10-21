@@ -91,7 +91,7 @@ export function AgentProvisioningProgress({
           >
             <StateDot state={provisioningStepDot(state)} placement="agent-lifecycle-steps__dot" />
             <strong>{label}</strong>
-            <span>{state}</span>
+            <span className="agent-lifecycle-steps__state">{state}</span>
             {duration === undefined ? null : <small>{duration} elapsed</small>}
           </li>
         ))}
