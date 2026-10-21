@@ -1,6 +1,26 @@
 use super::*;
 
 #[tokio::test]
+async fn proxy_execution_credential_cannot_become_renewable_personal_bot_consent() {
+    let fixture = Fixture::new().await;
+    *fixture.control.introspection.write().await =
+        Reply::json(json!({"active":true,"sub":"owner","permissions":["cma:*"]}));
+    let original = fixture.seed().await;
+    let mut request = fixture.request(original.clone()).await.unwrap();
+    assert!(fixture.auth.authorize_bot_request(&request).await.unwrap());
+    request.credential_source = layer2_core::resource_access::CredentialSource::IdentityProxy {
+        grant_digest: [1; 32],
+    };
+    assert_eq!(
+        request.delegated_credential.as_deref(),
+        Some("must-not-leak-access-token")
+    );
+    assert!(request.authorization.allows(Capability::ManageOwnBots));
+    assert!(!fixture.auth.authorize_bot_request(&request).await.unwrap());
+    fixture.assert_unchanged(&original).await;
+}
+
+#[tokio::test]
 async fn bot_admission_requires_the_actual_renewable_login_and_current_permission() {
     let f = Fixture::new().await;
     *f.control.introspection.write().await =

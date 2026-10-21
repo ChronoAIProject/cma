@@ -10,7 +10,11 @@ import type { ResolvedConfig } from '../config.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
-import type { SandboxStatus } from '../instances/types.js';
+import { sandbox, type SandboxStatus } from '../instances/types.js';
+import {
+  updateSandboxRuntimeRequest,
+  type UpdateSandboxRuntimeRequest,
+} from '../instances/runtime-update.js';
 import { profileKind, type ProfileKind, type ProfileVisibility } from '../profiles/types.js';
 import {
   identity,
@@ -171,6 +175,29 @@ export class Administration {
       `/api/v1/admin/sandboxes/${segment(id)}/retire`,
       identity(adminSandbox, id),
       { ...options, method: 'POST' },
+    );
+  }
+  /** Queue the managed runtime update across owners without interrupting active work. */
+  updateSandboxRuntime(
+    id: string,
+    body: UpdateSandboxRuntimeRequest,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/runtime-update`,
+      (value) => {
+        const result = identity(sandbox, id)(value);
+        if (result.runtime_update === undefined)
+          throw new ProtocolError('Runtime update response omitted its status');
+        return { ...result, runtime_update: result.runtime_update };
+      },
+      {
+        ...options,
+        method: 'POST',
+        expectedStatus: 202,
+        body: input(updateSandboxRuntimeRequest, body),
+      },
     );
   }
   listProfiles(options: AdminProfileListOptions = {}) {

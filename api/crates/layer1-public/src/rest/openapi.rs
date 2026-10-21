@@ -188,6 +188,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
         super::admin::sandboxes::retire,
+        super::admin::runtime_update::update,
         super::admin::profiles::list,
         super::admin::profiles::retire,
         super::admin::triggers::pause,
