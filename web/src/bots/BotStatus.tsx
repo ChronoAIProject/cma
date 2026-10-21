@@ -1,13 +1,13 @@
 import type { Bot, BotTest } from '@chronoai/cma-sdk';
-import { Pill } from '../ui/Pill';
-import { creationStepIndex, setupSteps, operationLabel, stateLabels } from './model';
+import { Alert } from '../ui/Alert';
+import { creationStepIndex, setupSteps, operationLabel } from './model';
 
+/** Progress of the consumer's current operation; its state badge sits in the page header. */
 export function BotStatus({ bot }: { readonly bot: Bot }) {
   const progress = operationLabel(bot);
   const current = creationStepIndex(bot);
   return (
     <div role="status" aria-live="polite">
-      <Pill>{stateLabels[bot.state]}</Pill>
       {progress === undefined ? null : <p>{progress}</p>}
       {current === undefined ? null : (
         <ol aria-label="Consumer setup progress">
@@ -18,7 +18,7 @@ export function BotStatus({ bot }: { readonly bot: Bot }) {
           ))}
         </ol>
       )}
-      {bot.failure === null ? null : <p role="alert">{bot.failure}</p>}
+      {bot.failure === null ? null : <Alert tone="error">{bot.failure}</Alert>}
     </div>
   );
 }

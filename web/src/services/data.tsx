@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
+import { SkeletonRows } from '../ui/Skeleton';
 import { Input } from '../ui/Input';
-import { ServiceError, serviceRequest, type Service } from './client';
+import { ServiceError, serviceRequest, type Denied, type Service } from './client';
 export interface Page<T> {
   items: T[];
   next_cursor: string | null;
 }
-export function usePage<T>(service: Service, path: string, denied: () => void) {
+export function usePage<T>(service: Service, path: string, denied: Denied) {
   const [value, setValue] = useState<Page<T>>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
@@ -36,7 +38,7 @@ export function usePage<T>(service: Service, path: string, denied: () => void) {
         if (!controller.signal.aborted) {
           if (e instanceof ServiceError && [401, 403].includes(e.status)) {
             setValue(undefined);
-            if ([401, 403].includes(e.status)) denied();
+            if ([401, 403].includes(e.status)) denied(e.status);
           }
           setError(e instanceof Error ? e.message : 'Service unavailable.');
         }
@@ -61,22 +63,21 @@ export function usePage<T>(service: Service, path: string, denied: () => void) {
   };
 }
 export function PageStatus({
-  busy,
+  busy = false,
   error,
   retry,
 }: {
-  readonly busy: boolean;
+  readonly busy?: boolean;
   readonly error?: string;
   readonly retry: () => void;
 }) {
   return (
     <>
-      {busy ? <p role="status">Loading…</p> : null}
+      {busy ? <SkeletonRows label="Loading" /> : null}
       {error ? (
-        <div role="alert">
-          <p>{error}</p>
-          <Button onClick={retry}>Try again</Button>
-        </div>
+        <Alert tone="error" actions={<Button onClick={retry}>Try again</Button>}>
+          {error}
+        </Alert>
       ) : null}
     </>
   );
@@ -108,7 +109,7 @@ export function WriteForm({
   readonly label: string;
   readonly fields: readonly Field[];
   readonly onDone: () => void;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly method?: string;
   readonly revision?: number;
 }) {
@@ -131,7 +132,7 @@ export function WriteForm({
     } catch (e) {
       if (e instanceof ServiceError && e.status >= 400 && e.status < 500) {
         setPending(undefined);
-        if ([401, 403].includes(e.status)) denied();
+        if ([401, 403].includes(e.status)) denied(e.status);
       }
       setError(e instanceof Error ? e.message : 'The outcome is unknown. Retry this request.');
     }

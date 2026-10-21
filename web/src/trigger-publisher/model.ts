@@ -1,4 +1,10 @@
-import type { ProfileKind, TriggerContent, TriggerInlineTarget } from '@chronoai/cma-sdk';
+import type {
+  ProfileKind,
+  TriggerContent,
+  TriggerDocument,
+  TriggerInlineTarget,
+} from '@chronoai/cma-sdk';
+import type { StatusTone } from '../vocabulary/status';
 import type { PublisherProfile } from './client';
 
 export type SelectedProfiles = Partial<Record<ProfileKind, PublisherProfile>>;
@@ -9,6 +15,18 @@ export const STEP_NAMES = [
   'Where it lives',
   'Publish',
 ] as const;
+/**
+ * A Trigger's status as a word and tone — `docs/Web_Style.md` §12.1. Only a
+ * published Trigger is live for visitors; a draft and a retired one are not.
+ */
+export const AVAILABILITY = {
+  draft: { label: 'Draft', tone: 'muted' },
+  published: { label: 'Published', tone: 'neutral' },
+  retired: { label: 'Retired', tone: 'muted' },
+} as const satisfies Record<
+  TriggerDocument['availability'],
+  { readonly label: string; readonly tone: StatusTone }
+>;
 export const LABELS = {
   open_in_cma: 'Open in CMA',
   chat_with_this: 'Chat with this',
