@@ -39,6 +39,7 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
     let hierarchy = rest::instances_tests::fixture(3);
     let events = crate::agent_v2::fixtures::fixture(false, false).await;
     let access = rest::agent_access_requests_tests::app().0;
+    let (files, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
     let router = agents
         .router
         .merge(hierarchy.router)
@@ -54,8 +55,9 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
             AgentAttachmentService::with_writer(events.access.clone(), Arc::new(NoProviderCalls)),
         ))
         .merge(rest::agent_filesystem_router(
-            layer2_core::sandbox::agent_filesystem::AgentFileService::for_route_tests(
+            layer2_core::sandbox::agent_filesystem::AgentFileService::new(
                 events.access.clone(),
+                Arc::new(files),
             ),
         ))
         .merge(rest::agent_artifacts_router(AgentArtifactService::new(
