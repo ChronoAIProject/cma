@@ -48,7 +48,11 @@ impl AuthState {
         if !matches!(
             envelope.source.kind,
             AgentSourceKind::Api | AgentSourceKind::UserInterface
-        ) || (envelope.authorization.authority_id.starts_with("api:")
+        ) || ((envelope.authorization.authority_id.starts_with("api:")
+            || envelope
+                .authorization
+                .authority_id
+                .starts_with("nyxid-proxy:"))
             && envelope.source.kind != AgentSourceKind::Api)
             || (matches!(
                 &envelope.actor,

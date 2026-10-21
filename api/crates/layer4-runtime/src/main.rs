@@ -38,6 +38,7 @@ mod snapshot_export;
 mod supervisor;
 mod tool_proxy;
 mod upstream;
+mod upstream_compaction;
 mod upstream_guard;
 mod upstream_target;
 mod wire_operation;

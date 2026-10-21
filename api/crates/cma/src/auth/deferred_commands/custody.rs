@@ -5,6 +5,7 @@ pub(super) enum CommandCustody {
     Personal(SubjectAuthState),
     Api(ApiBearerCustody),
     Delegated(Box<super::delegated::DelegatedCommandCustody>),
+    Proxy(Box<crate::auth::nyxid_proxy::commands::ProxyCustody>),
 }
 
 impl AuthState {
@@ -31,7 +32,20 @@ impl AuthState {
             | AgentActor::Human { subject } => subject,
             _ => return Err(CommandAuthorizationError::Revoked),
         };
-        if authority.authority_id.starts_with("api:") {
+        if authority.authority_id.starts_with("nyxid-proxy:") {
+            if !matches!(
+                actor,
+                AgentActor::Api {
+                    delegation_id: None,
+                    ..
+                }
+            ) {
+                return Err(CommandAuthorizationError::Revoked);
+            }
+            self.retained_proxy_custody(subject, authority)
+                .await
+                .map(|custody| CommandCustody::Proxy(Box::new(custody)))
+        } else if authority.authority_id.starts_with("api:") {
             if !matches!(
                 actor,
                 AgentActor::Api {
@@ -59,6 +73,7 @@ impl AuthState {
             CommandCustody::Personal(state) => self.verify_human_state(state.clone()).await,
             CommandCustody::Api(record) => self.verify_api_custody(record).await,
             CommandCustody::Delegated(custody) => self.verify_delegated_custody(custody).await,
+            CommandCustody::Proxy(custody) => self.verify_proxy_custody(custody).await,
         }
     }
 
@@ -74,6 +89,7 @@ impl AuthState {
             }
             CommandCustody::Api(record) => self.require_api_custody(record).await,
             CommandCustody::Delegated(custody) => self.require_delegated_custody(custody).await,
+            CommandCustody::Proxy(custody) => self.require_proxy_custody(custody).await,
         }
     }
 }
