@@ -73,7 +73,8 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
       />
     </CmaClientProvider>,
   );
-  await actor.click(await screen.findByRole('button', { name: 'Delete' }));
+  await actor.click(await screen.findByRole('button', { name: 'More actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Delete Sandbox' }));
   await actor.click(
     await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
   );
@@ -118,13 +119,16 @@ it('keeps composer settings available while Details and tree navigation remain u
   const composer = within(screen.getByRole('form', { name: 'Message Agent' }));
   expect(await composer.findByLabelText('Model')).toHaveTextContent('gpt-6');
   expect(composer.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(composer.getByLabelText('Permission mode')).toHaveTextContent('YOLO');
+  expect(composer.getByLabelText('Permission mode')).toHaveTextContent('Autonomous');
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
   expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
   expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
   expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
-  expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
+  expect(panel.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_1?tab=access',
+  );
   expect(panel.getByRole('button', { name: 'Sandbox operation progress' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
   expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();

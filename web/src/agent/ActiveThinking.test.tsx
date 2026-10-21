@@ -62,7 +62,7 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   expect(within(dock).getAllByRole('listitem')).toHaveLength(1);
   expect(within(dock).queryByText(/Read package/)).not.toBeInTheDocument();
   expect(screen.getByRole('article', { name: 'Tool call: Read package' })).toHaveTextContent(
-    'completed',
+    'Completed',
   );
   expect(
     screen.getByText('The first check is ready.').compareDocumentPosition(dock) &
@@ -80,7 +80,11 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
     'Tool call: Read package',
     'Tool call: Run tests',
   ]);
-  expect(cards[1]).toHaveTextContent('failed');
+  expect(cards[1]).toHaveTextContent('Failed');
+  expect(screen.getByRole('button', { name: /^2 tool calls/ })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
   fireEvent.click(within(cards[1]!).getByText('Details'));
   expect(within(cards[1]!).getByText('One assertion failed')).toBeVisible();
   expect(within(dock).queryByRole('list')).not.toBeInTheDocument();

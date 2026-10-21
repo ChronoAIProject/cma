@@ -354,7 +354,7 @@ export function Tree({
                                         }
                                         onAction={(kind) =>
                                           kind === 'new_agent'
-                                            ? onAction({ kind, sandboxId: sandbox.id })
+                                            ? onAction({ kind, workspaceId: workspace.id })
                                             : onAction({
                                                 kind: 'remove_workspace',
                                                 workspaceId: workspace.id,
