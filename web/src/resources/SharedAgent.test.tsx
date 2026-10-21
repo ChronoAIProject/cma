@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
@@ -311,6 +311,96 @@ it('preserves a new turn admitted after the transcript snapshot when selecting t
     'The repository is ready.',
     'Continue.',
   ]);
+});
+
+it('retains hydrated tools, approvals, live text and the composer across unchanged access refreshes', async () => {
+  vi.useFakeTimers();
+  let onEvent: ((event: AgentLiveEvent) => void) | undefined;
+  const streams: AbortSignal[] = [];
+  const replayAgent = vi.fn((_id, options) => {
+    onEvent = options.onEvent;
+    streams.push(options.signal);
+    return new Promise<void>(() => {});
+  });
+  const readAgentEvents = vi.fn().mockResolvedValueOnce({
+    items: [
+      ...sharedHistoryEvents,
+      { seq: 9, appendedAt: detail.created_at, kind: { type: 'turn_started', turn_sequence: 9 } },
+      {
+        seq: 10,
+        appendedAt: detail.created_at,
+        kind: { type: 'owner_message', content: 'Continue.' },
+      },
+      {
+        seq: 11,
+        appendedAt: detail.created_at,
+        kind: { type: 'approval_requested', approval_id: 'current', action: 'Current command' },
+      },
+    ],
+  });
+  const readAgentTranscript = vi.fn(async () => sharedHistoryTranscript);
+  const test = fixture(['view_details', 'view_history', 'interact', 'resolve_approval'], {
+    readAgentTranscript,
+    readAgentEvents,
+    replayAgent,
+  });
+  const shown = test.show();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  await act(async () =>
+    onEvent?.({
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: '9',
+      threadId: 'agt_1',
+      messageId: 'shared-live',
+      delta: 'A live partial answer',
+      'cma:live': true,
+    }),
+  );
+  const composer = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(composer, { target: { value: 'Keep this draft' } });
+  expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  let refresh!: (transcript: typeof sharedHistoryTranscript) => void;
+  readAgentTranscript.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        refresh = resolve;
+      }),
+  );
+  // Any redundant rich-history reload would remain pending and expose a reset.
+  readAgentEvents.mockImplementation(() => new Promise(() => {}));
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(readAgentTranscript).toHaveBeenCalledTimes(2);
+  await act(async () => refresh(sharedHistoryTranscript));
+  expect(readAgentEvents).toHaveBeenCalledOnce();
+  expect(replayAgent).toHaveBeenCalledOnce();
+  expect(streams[0]?.aborted).toBe(false);
+  expect(screen.getByText('A live partial answer')).toBeInTheDocument();
+  expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  expect(composer).toHaveValue('Keep this draft');
+  await act(async () =>
+    onEvent?.({
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: '9',
+      threadId: 'agt_1',
+      messageId: 'shared-live',
+      delta: ' continues.',
+      'cma:live': true,
+    }),
+  );
+  expect(screen.getByText('A live partial answer continues.')).toBeInTheDocument();
+  test.state.policy += 1;
+  test.state.capabilities = ['view_details', 'view_history'];
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(streams[0]?.aborted).toBe(true);
+  expect(screen.queryByText('A live partial answer continues.')).not.toBeInTheDocument();
+  expect(screen.queryByRole('article', { name: 'Tool call: Read files' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  shown.unmount();
 });
 
 it('applies shared live events only for the current Agent after rich history is ready', async () => {

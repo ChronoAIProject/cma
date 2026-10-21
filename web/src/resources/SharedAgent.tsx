@@ -66,17 +66,36 @@ export function SharedAgent({
   );
   const history = useAuthorizedRead(read);
   const ready = history.state.status === 'ready' ? history.state.value : undefined;
+  const readyRef = useRef(ready);
+  useEffect(() => {
+    readyRef.current = ready;
+  }, [ready]);
+  // Renewing unchanged access must not restart a healthy stream or replace its
+  // rich state with the transcript-only snapshot. Losing access changes the
+  // basis immediately, even while its next authorization read is pending.
+  const authority =
+    ready === undefined
+      ? undefined
+      : JSON.stringify([
+          ready.access.policy_revision,
+          [...ready.access.capabilities].sort(),
+          ready.access.shared_by?.subject,
+        ]);
+  const basis = useMemo(
+    () => (authority === undefined ? undefined : { web, client, agentId, authority }),
+    [web, client, agentId, authority],
+  );
   const [live, setLive] = useState<{
-    readonly basis: typeof ready;
+    readonly basis: typeof basis;
     readonly conversation: ConversationState;
   }>();
   const [hydrationRevision, setHydrationRevision] = useState(0);
   const [historyError, setHistoryError] = useState<{
-    readonly basis: typeof ready;
+    readonly basis: typeof basis;
     readonly revision: number;
     readonly message: string;
   }>();
-  const historyComplete = ready !== undefined && live?.basis === ready;
+  const historyComplete = basis !== undefined && live?.basis === basis;
   const [command, setCommand] = useState<AbortController>();
   const busy = command !== undefined && !command.signal.aborted;
   const [error, setError] = useState<string>();
@@ -85,7 +104,8 @@ export function SharedAgent({
   const refreshHistory = history.reload;
   const provenance = useAgentProvenance(agentId, ready !== undefined);
   useEffect(() => {
-    if (ready === undefined) {
+    const snapshot = readyRef.current;
+    if (basis === undefined || snapshot === undefined) {
       mutation.current?.abort();
       mutation.current = undefined;
       return;
@@ -93,20 +113,20 @@ export function SharedAgent({
     const stream = new AbortController();
     let retry: ReturnType<typeof setTimeout> | undefined;
     let hydrated = false;
-    void hydrateSharedAgent(web, client, ready, stream.signal)
+    void hydrateSharedAgent(web, client, snapshot, stream.signal)
       .then(async (conversation) => {
         if (stream.signal.aborted) return;
         hydrated = true;
-        setLive({ basis: ready, conversation });
+        setLive({ basis, conversation });
         await web.replayAgent(agentId, {
           after: conversation.cursor,
           signal: stream.signal,
           onEvent: (event) => {
             if (stream.signal.aborted) return;
             setLive((current) => ({
-              basis: ready,
+              basis,
               conversation: foldLiveEvent(
-                current?.basis === ready ? current.conversation : conversation,
+                current?.basis === basis ? current.conversation : conversation,
                 event,
                 agentId,
               ),
@@ -128,7 +148,7 @@ export function SharedAgent({
           return;
         }
         setHistoryError({
-          basis: ready,
+          basis,
           revision: hydrationRevision,
           message: 'Conversation activity could not be loaded. Your recorded messages are shown.',
         });
@@ -137,7 +157,7 @@ export function SharedAgent({
       stream.abort();
       clearTimeout(retry);
     };
-  }, [web, client, agentId, ready, refreshHistory, onAccessChanged, hydrationRevision]);
+  }, [web, client, agentId, basis, refreshHistory, onAccessChanged, hydrationRevision]);
   useEffect(() => () => mutation.current?.abort(), []);
 
   const can = (capability: string) => ready?.access.capabilities.includes(capability) === true;
@@ -205,7 +225,7 @@ export function SharedAgent({
     );
   };
   const conversation =
-    live !== undefined && live.basis === ready ? live.conversation : ready?.conversation;
+    live !== undefined && live.basis === basis ? live.conversation : ready?.conversation;
   const status =
     conversation?.agentStatus !== undefined &&
     conversation.agentStatusAt !== undefined &&
@@ -250,7 +270,7 @@ export function SharedAgent({
             {history.state.message}
           </Alert>
         ) : null}
-        {historyError?.basis === ready && historyError?.revision === hydrationRevision ? (
+        {historyError?.basis === basis && historyError?.revision === hydrationRevision ? (
           <Alert
             tone="error"
             actions={
