@@ -97,7 +97,7 @@ function SandboxTreePage({
           {current.state.value.items.length === 0 ? (
             <p>
               {shared === true
-                ? 'No shared Sandboxes on this page. Individually shared Agents appear below.'
+                ? 'No shared Sandboxes on this page. Individually shared Agents appear in Agents view.'
                 : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
             </p>
           ) : (
