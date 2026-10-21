@@ -140,6 +140,83 @@ it('creates folders with create-only intent', async () => {
     ),
   );
 });
+it('preserves an unrelated file and its unsaved draft when deleting a folder', async () => {
+  let folderExists = true;
+  const folder = { ...hidden, path: 'unrelated', name: 'unrelated', hidden: false };
+  const { client } = fixture(false, {
+    list: vi.fn(async (_id, path) =>
+      path === '' ? [file, ...(folderExists ? [folder] : [])] : [],
+    ),
+    remove: vi.fn(async () => {
+      folderExists = false;
+    }),
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
+  const editor = await screen.findByRole('textbox', { name: 'Contents of hello.txt' });
+  fireEvent.change(editor, { target: { value: 'Keep my unsaved work' } });
+  await userEvent.click(screen.getByRole('button', { name: 'unrelated' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'unrelated' })).not.toBeInTheDocument(),
+  );
+  expect(editor).toBeInTheDocument();
+  expect(editor).toHaveValue('Keep my unsaved work');
+  expect(screen.getByLabelText('Unsaved changes')).toBeInTheDocument();
+  expect(client.remove).toHaveBeenCalledWith('agent-one', 'unrelated', true, expect.any(Object));
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() =>
+    expect(client.write).toHaveBeenCalledWith(
+      'agent-one',
+      expect.objectContaining({
+        path: file.path,
+        content_base64: encode('Keep my unsaved work'),
+        expected_sha256: original.sha256,
+      }),
+      expect.any(Object),
+    ),
+  );
+});
+it('lets an unrelated file read finish after a folder is deleted', async () => {
+  let finish!: (content: typeof original) => void;
+  let signal: AbortSignal | undefined;
+  fixture(false, {
+    read: vi.fn((_id, _path, options) => {
+      signal = options?.signal;
+      return new Promise<typeof original>((resolve) => {
+        finish = resolve;
+      });
+    }),
+  });
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Show hidden' }));
+  await userEvent.click(await screen.findByRole('button', { name: '.codex' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+  // The current selection can change while the inline confirmation remains open.
+  await userEvent.click(screen.getByRole('button', { name: 'hello.txt' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await screen.findByText('Deleted.');
+  expect(signal?.aborted).toBe(false);
+  finish(original);
+  expect(await screen.findByRole('textbox', { name: 'Contents of hello.txt' })).toHaveValue(
+    'hello',
+  );
+});
+it('clears the selected preview when its containing folder is deleted', async () => {
+  const nested = { ...file, path: '.codex/hello.txt' };
+  const { client } = fixture(false, {
+    list: vi.fn(async (_id, path) => (path === '' ? [hidden] : [nested])),
+    read: vi.fn(async () => ({ ...original, path: nested.path })),
+  });
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Show hidden' }));
+  await userEvent.click(await screen.findByRole('button', { name: '.codex' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
+  await screen.findByRole('textbox', { name: 'Contents of hello.txt' });
+  await userEvent.click(screen.getByRole('button', { name: 'Delete folder' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  await screen.findByText('Deleted.');
+  expect(screen.queryByRole('textbox', { name: 'Contents of hello.txt' })).not.toBeInTheDocument();
+  expect(client.remove).toHaveBeenCalledWith('agent-one', '.codex', true, expect.any(Object));
+});
 it('clears file data and mutations after access revocation', async () => {
   const { onAccessChanged } = fixture(false, {
     read: vi.fn().mockRejectedValue(new AgentFileError('Access removed.', 403)),

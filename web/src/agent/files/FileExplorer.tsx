@@ -48,7 +48,10 @@ export function FileExplorer({
   const [notice, setNotice] = useState<string>();
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [name, setName] = useState('');
-  const [confirm, setConfirm] = useState<{ text: string; action: () => void }>();
+  const [confirm, setConfirm] = useState<{
+    text: string;
+    action: (currentFile?: AgentFileEntry) => void;
+  }>();
   const lifetime = useRef<AbortController | undefined>(undefined);
   const readRequest = useRef<AbortController | undefined>(undefined);
   const mutation = useRef(false);
@@ -213,14 +216,19 @@ export function FileExplorer({
     if (blocked) return;
     setConfirm({
       text: `Delete /home/${path}${folder ? ' and everything inside it' : ''}? This cannot be undone.`,
-      action: () => {
+      action: (currentFile) => {
+        const clearsSelection =
+          currentFile?.path === path ||
+          (folder && currentFile?.path.startsWith(`${path}/`) === true);
         void run(async (signal) => {
           await client.remove(agentId, path, folder, { signal });
           if (signal.aborted) return;
-          readRequest.current?.abort();
-          setSelected(undefined);
-          setContent(undefined);
-          setDraft(undefined);
+          if (clearsSelection) {
+            readRequest.current?.abort();
+            setSelected(undefined);
+            setContent(undefined);
+            setDraft(undefined);
+          }
           const parent = path.split('/').slice(0, -1).join('/');
           if (folder) {
             setDirectory(parent);
@@ -355,7 +363,7 @@ export function FileExplorer({
                 onClick={() => {
                   const action = confirm.action;
                   setConfirm(undefined);
-                  action();
+                  action(selected);
                 }}
               >
                 Confirm
