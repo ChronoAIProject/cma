@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useAuth } from '../auth/context';
 import { ProfileMenu } from '../profile/ProfileMenu';
 import type { AppRoute } from '../routing/routes';
+import { serviceFor } from '../services/ServiceMenu';
 import { AppFrame } from './AppFrame';
 import { Sidebar } from './Sidebar';
 
@@ -26,6 +27,13 @@ export function PortalFrame({
   const { state, signOut, signIn } = useAuth();
   return (
     <AppFrame
+      phoneTitle={
+        landing || route.kind === 'home'
+          ? 'ChronoAI Managed Agent'
+          : serviceFor(route) === 'event_gateway'
+            ? 'Event Gateway'
+            : 'Agent Manager'
+      }
       detailsOpen={false}
       sidebarCollapsed={sidebarCollapsed}
       onSidebarCollapsedChange={onSidebarCollapsedChange}
