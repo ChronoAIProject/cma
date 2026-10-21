@@ -79,13 +79,37 @@ describe('the retained application shell', () => {
       'aria-expanded',
       'false',
     );
-    const services = screen.getByRole('navigation', { name: 'CMA services' });
     expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+    const services = screen.getByRole('menu', { name: 'CMA services' });
     for (const name of ['Agent Manager', 'Event Gateway']) {
-      expect(within(services).getByRole('link', { name })).toHaveAttribute('href');
+      expect(within(services).getByRole('menuitemradio', { name })).toHaveAttribute('href');
     }
+    expect(within(services).getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('explains an unreachable service in plain words and offers Reload', async () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload, pathname: '/agent-manager' });
+    render(
+      <AuthContextProvider
+        provider={createMockAuthProvider({ failCurrent: 'identity check failed with 503' })}
+      >
+        <App />
+      </AuthContextProvider>,
+    );
     expect(
-      within(services).getByRole('button', { name: 'Image Manager (coming soon)' }),
-    ).toBeDisabled();
+      await screen.findByRole('heading', { name: 'CMA could not reach its service' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('It may be starting up. Reload to try again.')).toBeInTheDocument();
+    // The control plane's own sentence stays as the detail for a report.
+    expect(screen.getByText('identity check failed with 503')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 });

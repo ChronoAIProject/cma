@@ -79,10 +79,10 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
-  expect(screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ })).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
-  expect(screen.queryByRole('treeitem', { name: /Sandbox Machine - 1/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await actor.click(screen.getByText('Deletion progress (1)'));
   await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
@@ -137,8 +137,8 @@ it('keeps composer settings available while Details and tree navigation remain u
   );
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
-  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
-  const sandbox = screen.getByRole('treeitem', { name: /Sandbox Machine - 1/ });
+  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
   expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
@@ -200,7 +200,7 @@ it('hides creation controls for visitors while retaining their trigger-created h
   expect(screen.getByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
 });
 
-it('hides personal creation in organization scope without replacing the open conversation or draft', async () => {
+it('disables personal creation with a reason in organization scope without replacing the open conversation or draft', async () => {
   const fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     if (url.pathname === '/api/v1/organizations')
@@ -248,16 +248,28 @@ it('hides personal creation in organization scope without replacing the open con
   const actor = userEvent.setup();
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   await actor.type(composer, 'Retain my personal draft');
-  expect(await screen.findByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'New agent' })).not.toHaveAttribute('aria-disabled'),
+  );
+  await actor.click(screen.getByRole('button', { name: /^Filter/ }));
   await chooseOption(actor, 'Navigation scope', 'Research (Organization)');
   await waitFor(() =>
-    expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument(),
+    expect(screen.getByRole('button', { name: 'New agent' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    ),
   );
+  expect(screen.getByRole('button', { name: 'New agent' })).toHaveAccessibleDescription(
+    'Switch to Personal to create an Agent.',
+  );
+  await actor.click(screen.getByRole('button', { name: 'New agent' }));
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Retain my personal draft');
   expect(create).not.toHaveBeenCalled();
   await chooseOption(actor, 'Navigation scope', 'Personal');
-  expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'New agent' })).not.toHaveAttribute('aria-disabled'),
+  );
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
 });
 import './test/connectedAccounts';

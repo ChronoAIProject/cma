@@ -232,7 +232,7 @@ export function Tree({
                           <TreeRow
                             nodeId={sandboxNode}
                             level={1}
-                            label={`Sandbox Machine - ${sandbox.id.replace(/^sbx_/, '')}`}
+                            label={sandbox.name}
                             icon={<IconDataOutline16 />}
                             route={{ kind: 'sandbox', sandboxId: sandbox.id }}
                             selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}

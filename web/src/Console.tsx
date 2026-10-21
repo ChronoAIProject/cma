@@ -2,7 +2,6 @@ import { Presence } from './ui/Presence';
 import { Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { LandingCharacter } from './landing/LandingCharacter';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
@@ -24,7 +23,9 @@ import { useNavigation } from './shell/navigation';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
-import { IconNewChatOutline16 } from './ui/icons';
+import { IconGoalOutline16 } from './ui/icons';
+import { ShellCommandMenu } from './shell/ShellCommandMenu';
+import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
@@ -157,6 +158,14 @@ function ConsoleContent({
   const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
+  const newAgentUnavailable = !scopeReady
+    ? 'Checking your access.'
+    : navigationScope !== ''
+      ? 'Switch to Personal to create an Agent.'
+      : undefined;
+  const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
+  const [commandsOpen, setCommandsOpen] = useState(false);
+  const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
   const permissions: TreePermissions = {
     createAgent: canCreate,
     // Workspace creation is an inline Agent Manager operation. The legacy
@@ -183,9 +192,7 @@ function ConsoleContent({
       <BotManagement user={user} route={route} onNavigate={onNavigate} />
     ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
-        <section className="console__empty">
-          <h1>Agent inventory unavailable</h1>
-        </section>
+        <UnavailableView title="Agent inventory unavailable" />
       ) : (
         <AgentInventory
           client={client.resourceViews}
@@ -267,9 +274,7 @@ function ConsoleContent({
       />
     ) : route.kind === 'workspace' ? (
       client.resourceViews === undefined ? (
-        <section className="console__empty">
-          <h1>Workspace unavailable</h1>
-        </section>
+        <UnavailableView title="Workspace unavailable" />
       ) : (
         <WorkspaceContents
           key={route.workspaceId}
@@ -297,9 +302,7 @@ function ConsoleContent({
           <Operations client={operator} capabilities={user.capabilities} />
         </Suspense>
       ) : (
-        <section className="console__empty">
-          <h1>Operations unavailable</h1>
-        </section>
+        <UnavailableView title="Operations unavailable" />
       )
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
@@ -319,42 +322,28 @@ function ConsoleContent({
           />
         </Suspense>
       ) : (
-        <section className="console__empty">
-          <h1>Publishing unavailable</h1>
-        </section>
+        <UnavailableView title="Publishing unavailable" />
       )
     ) : route.kind === 'not_found' ? (
-      <section className="console__empty" aria-labelledby="not-found-title">
-        <p className="console__eyebrow">404</p>
-        <h1 id="not-found-title">Page not found</h1>
-        <a href="/">Return to CMA</a>
-      </section>
+      <NotFoundView />
     ) : (
-      <section className="console__empty" aria-labelledby="empty-title">
-        <div className="brand-home brand-home--compact">
-          <LandingCharacter autoRotate />
-        </div>
-        <h1 id="empty-title">
-          {route.kind === 'home' || route.kind === 'agent_manager'
+      <WelcomeView
+        heading={
+          route.kind === 'home' || route.kind === 'agent_manager'
             ? 'Welcome to CMA'
-            : route.kind.replaceAll('_', ' ')}
-        </h1>
-        {(route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope ? (
-          <div className="console__empty-actions">
-            <Button
-              variant="primary"
-              icon={<IconNewChatOutline16 />}
-              onClick={() => onCreate?.({ kind: 'new_agent' })}
-            >
-              New agent
-            </Button>
-          </div>
-        ) : null}
-      </section>
+            : route.kind.replaceAll('_', ' ')
+        }
+        onNewAgent={
+          (route.kind === 'home' || route.kind === 'agent_manager') && canCreateInScope
+            ? newAgent
+            : undefined
+        }
+      />
     );
 
   return (
     <AppFrame
+      phoneTitle="Agent Manager"
       detailsOpen={
         !accessUncertain && (personalAgentId !== undefined || shared !== undefined) && detailsOpen
       }
@@ -398,13 +387,31 @@ function ConsoleContent({
             onSidebarNavigate();
             (onServiceNavigate ?? onNavigate)(next);
           }}
-          canCreateTrigger={!user.visitor && user.capabilities.includes('publish_triggers')}
-          onNewTrigger={() => {
-            onSidebarNavigate();
-            onNavigate({ kind: 'triggers' });
-          }}
-          canCreateAgent={canCreateInScope}
-          onNewAgent={() => onCreate?.({ kind: 'new_agent' })}
+          newAgent={
+            canCreate
+              ? {
+                  onCreate: () => onCreate?.({ kind: 'new_agent' }),
+                  unavailableReason: newAgentUnavailable,
+                }
+              : undefined
+          }
+          onSearch={user.visitor ? undefined : () => setCommandsOpen(true)}
+          links={
+            canOpenTriggers
+              ? [
+                  {
+                    id: 'triggers',
+                    label: 'Triggers',
+                    icon: <IconGoalOutline16 />,
+                    route: { kind: 'triggers' },
+                    current:
+                      route.kind === 'triggers' ||
+                      route.kind === 'trigger' ||
+                      route.kind === 'trigger_embed',
+                  },
+                ]
+              : []
+          }
           onHome={() => {
             setDetailsOpen(false);
             onSidebarNavigate();
@@ -447,6 +454,16 @@ function ConsoleContent({
       )}
       center={
         <main className="console__surface" ref={surfaceRef}>
+          <ShellCommandMenu
+            open={commandsOpen}
+            onOpenChange={setCommandsOpen}
+            enabled={!user.visitor}
+            navigation={navigation}
+            onNavigate={onNavigate}
+            onNewAgent={canCreateInScope ? newAgent : undefined}
+            canOpenTriggers={canOpenTriggers}
+            canOpenOperations={canOpenOperations(user.capabilities)}
+          />
           {actions.notice}
           <Presence>
             {actions.error === undefined ? null : (

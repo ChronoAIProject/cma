@@ -54,10 +54,20 @@ export function ManagerNavigation({
             <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
           )
         }
+        scopeSummary={
+          client === undefined
+            ? undefined
+            : (choices.options.find((option) => option.value === scope)?.label ?? 'Personal')
+        }
+        scopeActive={client !== undefined && scope !== ''}
         view={view}
         status={status}
         onView={setView}
         onStatus={(next) => setStatuses((previous) => ({ ...previous, [view]: next }))}
+        onClear={() => {
+          setStatuses({ agent: 'all', sandbox: 'all' });
+          if (scope !== '') onScope('');
+        }}
       />
       <ScopedNavigation
         route={route}

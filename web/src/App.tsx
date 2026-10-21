@@ -13,6 +13,7 @@ import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
 import { Presence } from './ui/Presence';
+import { Button } from './ui/Button';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
@@ -29,7 +30,6 @@ import type { AppRouter, AppRoute } from './routing/routes';
 import { EventGatewayPortal } from './services/EventGatewayPortal';
 import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
-import { ServiceSwitchMotion } from './services/ServiceSwitchMotion';
 import { PortalFrame } from './shell/PortalFrame';
 
 export function App() {
@@ -67,35 +67,33 @@ export function App() {
   const navigateService = (next: AppRoute) =>
     router.navigate(next.kind === 'agent_manager' ? lastAgentRoute : next);
   return (
-    <ServiceSwitchMotion current={service ? 'gateway' : 'agent'}>
-      <div className="service-shell">
-        {home ? (
-          <ServiceBody>
-            <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
-              <HomeLanding router={router} />
-            </PortalFrame>
-          </ServiceBody>
-        ) : null}
-        {agentVisible || visitedAgent ? (
-          <ServiceBody visible={agentVisible}>
-            <AgentApp
-              router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
-              onServiceNavigate={navigateService}
-              {...sidebar}
-            />
-          </ServiceBody>
-        ) : null}
-        {visitedGateway ? (
-          <EventGatewayPortal
-            key={`event-gateway:${identityKey}`}
-            visible={service === 'event-gateway'}
-            route={service ? router.route : lastGatewayRoute}
-            onNavigate={navigateService}
+    <div className="service-shell">
+      {home ? (
+        <ServiceBody>
+          <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
+            <HomeLanding router={router} />
+          </PortalFrame>
+        </ServiceBody>
+      ) : null}
+      {agentVisible || visitedAgent ? (
+        <ServiceBody visible={agentVisible}>
+          <AgentApp
+            router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
+            onServiceNavigate={navigateService}
             {...sidebar}
           />
-        ) : null}
-      </div>
-    </ServiceSwitchMotion>
+        </ServiceBody>
+      ) : null}
+      {visitedGateway ? (
+        <EventGatewayPortal
+          key={`event-gateway:${identityKey}`}
+          visible={service === 'event-gateway'}
+          route={service ? router.route : lastGatewayRoute}
+          onNavigate={navigateService}
+          {...sidebar}
+        />
+      ) : null}
+    </div>
   );
 }
 function HomeLanding({ router }: { readonly router: AppRouter }) {
@@ -165,8 +163,12 @@ function AgentApp({
   if (state.status === 'error') {
     return (
       <main className="app-error" role="alert">
+        <h1 className="app-error__title">CMA could not reach its service</h1>
+        <p className="app-error__next">It may be starting up. Reload to try again.</p>
+        <Button variant="primary" onClick={() => window.location.reload()}>
+          Reload
+        </Button>
         <p className="app-error__what">{state.message}</p>
-        <p className="app-error__next">Reload the page to try again.</p>
       </main>
     );
   }
@@ -244,7 +246,7 @@ function AgentApp({
 function ConnectionReturnPage() {
   return (
     <main className="app-error">
-      <p className="app-error__what">Returning to CMA</p>
+      <h1 className="app-error__title">Returning to CMA</h1>
       <p className="app-error__next">
         CMA is checking your connection. Your next sign-in will open here, or this window will close
         when all services are ready. If nothing happens, return to the CMA window to continue.

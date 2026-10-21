@@ -77,7 +77,10 @@ it.each([
       await actor.click(screen.getByRole('button', { name: 'Show navigation' }));
     }
     const frame = document.querySelector('.frame') as HTMLElement;
-    if (width === 390) expect(frame).toHaveAttribute('data-sidebar-overlay');
+    if (width === 390) {
+      expect(frame).toHaveAttribute('data-sidebar-overlay');
+      expect(document.querySelector('.frame__center')).toHaveAttribute('inert');
+    }
     await actor.click(await screen.findByRole('link', { name: /Agent one/ }));
 
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agt_1' });
@@ -86,7 +89,8 @@ it.each([
     await waitFor(() =>
       expect(
         frame.style.gridTemplateColumns.startsWith(
-          `${width < 1024 ? SIDEBAR_COLLAPSED : SIDEBAR_DEFAULT}px`,
+          // A phone has no rail: the top bar is the way back to navigation.
+          `${width < 640 ? 0 : width < 1024 ? SIDEBAR_COLLAPSED : SIDEBAR_DEFAULT}px`,
         ),
       ).toBe(true),
     );

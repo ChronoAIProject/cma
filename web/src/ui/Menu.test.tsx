@@ -118,3 +118,45 @@ it('makes a portalled menu inert when its enclosing surface begins to exit', () 
   act(() => vi.advanceTimersByTime(200));
   expect(document.querySelector('.menu')).toBeNull();
 });
+
+it('draws a navigation row as a real link that leaves modified clicks to the browser', async () => {
+  const onSelect = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Menu
+      open
+      anchor={<button>Services</button>}
+      selectedId="here"
+      items={[
+        { id: 'here', label: 'Here', href: '/here' },
+        { id: 'there', label: 'There', href: '/there' },
+        { id: 'later', label: 'Later', href: '/later', disabled: true, reason: 'Not yet.' },
+      ]}
+      onSelect={onSelect}
+      onClose={vi.fn()}
+    />,
+  );
+  const there = screen.getByRole('menuitemradio', { name: 'There' });
+  expect(there.tagName).toBe('A');
+  expect(there).toHaveAttribute('href', '/there');
+  expect(screen.getByRole('menuitemradio', { name: 'Here' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  // A disabled row is never a link, so it cannot be followed by any click.
+  const later = screen.getByRole('menuitemradio', { name: 'Later Not yet.' });
+  expect(later.tagName).toBe('BUTTON');
+  expect(later).not.toHaveAttribute('href');
+
+  const modified = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+  there.dispatchEvent(modified);
+  expect(modified.defaultPrevented).toBe(false);
+  expect(onSelect).not.toHaveBeenCalled();
+
+  // Arrow keys reach link rows as they reach buttons.
+  expect(screen.getByRole('menuitemradio', { name: 'Here' })).toHaveFocus();
+  await user.keyboard('{ArrowDown}');
+  expect(there).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(onSelect).toHaveBeenCalledWith('there');
+});

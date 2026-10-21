@@ -1,24 +1,52 @@
-import { IconNewChatOutline16, IconPanelLeftOutline16, IconGoalOutline16 } from '../ui/icons';
+import { IconPanelLeftOutline16, IconPlusOutline16, IconSearchOutline16 } from '../ui/icons';
 import type { ReactNode } from 'react';
 import type { AppRoute } from '../routing/routes';
-import { ServiceTabs } from '../services/ServiceTabs';
+import { routePath } from '../routing/routes';
+import { ServiceMenu } from '../services/ServiceMenu';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
-import { BUILD } from './build';
 import './Sidebar.css';
 const markHtml = { __html: markMarkup };
+
+/** One navigation row under the action row, such as Triggers. */
+export interface SidebarLink {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly route: AppRoute;
+  readonly current: boolean;
+}
+
+/**
+ * New agent, shown whenever the caller could ever create one.
+ *
+ * A reason makes it disabled rather than absent (§12.4): in Shared or
+ * Organization scope the control used to vanish, which read as the feature
+ * having gone away rather than as "switch scope first".
+ */
+export interface SidebarNewAgent {
+  readonly onCreate: () => void;
+  readonly unavailableReason?: string;
+}
 
 interface SidebarProps {
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
   readonly account: ReactNode;
   readonly navigation?: ReactNode;
-  readonly canCreateAgent?: boolean;
-  readonly canCreateTrigger?: boolean;
-  readonly onNewAgent?: () => void;
-  readonly onNewTrigger?: () => void;
+  readonly newAgent?: SidebarNewAgent;
+  /** Opens the command menu. Absent where there is nothing to search. */
+  readonly onSearch?: () => void;
+  readonly links?: readonly SidebarLink[];
   readonly onHome?: () => void;
   readonly route?: AppRoute;
   readonly onNavigate?: (route: AppRoute) => void;
+}
+
+const SHORTCUT_HINT =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K';
+
+function plainClick(event: React.MouseEvent) {
+  return !(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 }
 
 export function Sidebar({
@@ -26,14 +54,14 @@ export function Sidebar({
   onToggleCollapsed,
   account,
   navigation,
-  canCreateAgent = false,
-  canCreateTrigger = false,
-  onNewAgent,
-  onNewTrigger,
+  newAgent,
+  onSearch,
+  links = [],
   onHome,
   route = { kind: 'agent_manager' },
   onNavigate,
 }: SidebarProps) {
+  const unavailableId = 'sidebar-new-agent-reason';
   return (
     <aside
       className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}
@@ -44,15 +72,9 @@ export function Sidebar({
           className="sidebar__brand"
           href="/"
           aria-label="CMA home"
+          title="ChronoAI Managed Agent"
           onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
+            if (!plainClick(event)) return;
             if (!onHome && !onNavigate) return;
             event.preventDefault();
             if (onHome) onHome();
@@ -60,17 +82,8 @@ export function Sidebar({
           }}
         >
           <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-          <span className="sidebar__name" title="ChronoAI Managed Agent">
-            ChronoAI Managed Agent
-          </span>
         </a>
-        <span
-          className="sidebar__build"
-          aria-label={`Build ${BUILD}`}
-          title={`Build revision: ${BUILD}`}
-        >
-          {BUILD.replace(/^trureturing-/, '')}
-        </span>
+        <ServiceMenu route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
         <button
           type="button"
           className="sidebar__toggle"
@@ -81,33 +94,66 @@ export function Sidebar({
           <IconPanelLeftOutline16 />
         </button>
       </div>
-      <ServiceTabs route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
-      <div className="sidebar__actions">
-        {canCreateAgent ? (
-          <button
-            type="button"
-            className="sidebar__new"
-            aria-label="New agent"
-            title="New agent"
-            onClick={onNewAgent}
-          >
-            <IconNewChatOutline16 />
-            <span>New agent</span>
-          </button>
-        ) : null}
-        {canCreateTrigger ? (
-          <button
-            type="button"
-            className="sidebar__new"
-            aria-label="New agent trigger"
-            title="New agent trigger"
-            onClick={onNewTrigger}
-          >
-            <IconGoalOutline16 />
-            <span>New agent trigger</span>
-          </button>
-        ) : null}
-      </div>
+      {newAgent === undefined && onSearch === undefined && links.length === 0 ? null : (
+        <div className="sidebar__actions">
+          {newAgent === undefined ? null : (
+            <>
+              <button
+                type="button"
+                className="sidebar__new"
+                aria-label="New agent"
+                title={collapsed ? 'New agent' : undefined}
+                aria-disabled={newAgent.unavailableReason === undefined ? undefined : true}
+                aria-describedby={
+                  newAgent.unavailableReason === undefined ? undefined : unavailableId
+                }
+                onClick={() => {
+                  if (newAgent.unavailableReason === undefined) newAgent.onCreate();
+                }}
+              >
+                <IconPlusOutline16 />
+                <span>New agent</span>
+              </button>
+              {newAgent.unavailableReason === undefined ? null : (
+                <p id={unavailableId} className="sidebar__reason" hidden={collapsed}>
+                  {newAgent.unavailableReason}
+                </p>
+              )}
+            </>
+          )}
+          {onSearch === undefined ? null : (
+            <button
+              type="button"
+              className="sidebar__search"
+              aria-label="Search"
+              aria-keyshortcuts="Meta+K Control+K"
+              title={collapsed ? `Search (${SHORTCUT_HINT})` : undefined}
+              onClick={onSearch}
+            >
+              <IconSearchOutline16 />
+              <span>Search</span>
+              <kbd className="sidebar__kbd">{SHORTCUT_HINT}</kbd>
+            </button>
+          )}
+          {links.map((link) => (
+            <a
+              key={link.id}
+              className="sidebar__link"
+              href={routePath(link.route)}
+              aria-current={link.current ? 'page' : undefined}
+              title={collapsed ? link.label : undefined}
+              onClick={(event) => {
+                if (!plainClick(event) || onNavigate === undefined) return;
+                event.preventDefault();
+                onNavigate(link.route);
+              }}
+            >
+              {link.icon}
+              <span>{link.label}</span>
+            </a>
+          ))}
+        </div>
+      )}
       <div className="sidebar__navigation" hidden={collapsed}>
         {navigation}
       </div>
