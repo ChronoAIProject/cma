@@ -70,7 +70,7 @@
 }
 .sign-in-landing .sign-in-landing__brand {
   width: min(100%, 560px);
-  padding-top: 0;
+  padding-top: 144px;
   align-items: flex-start;
 }
 .sign-in-landing .sign-in-landing__brand h1 {
@@ -79,7 +79,7 @@
   font-synthesis: weight;
   font-size: clamp(18px, 4.8vw, 40px);
   line-height: 1.2;
-  white-space: nowrap;
+  text-wrap: balance;
 }
 .sign-in-landing__layout {
   display: grid;
