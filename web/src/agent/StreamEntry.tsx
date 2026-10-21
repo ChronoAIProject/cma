@@ -4,6 +4,7 @@ import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
 import { ToolCallRow } from './ToolCallRows';
+import { PlanCard } from './PlanCard';
 import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
@@ -87,6 +88,7 @@ export function StreamEntry({
     );
   }
   if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
+  if (entry.kind === 'plan') return <PlanCard plan={entry.item} />;
   if (entry.kind === 'recovery') {
     const notice = entry.item;
     if (notice.clearsOn !== undefined)
