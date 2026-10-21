@@ -22,7 +22,7 @@ describe('operator capabilities and record views', () => {
       ],
     });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    expect(await screen.findByText('Owner Alex Chen')).toBeInTheDocument();
+    expect(await screen.findByRole('cell', { name: 'Alex Chen' })).toBeInTheDocument();
     expect(screen.queryByText('owner-1')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Details for Research Sandbox' }));
     const drawer = screen.getByRole('dialog');
@@ -53,7 +53,7 @@ describe('operator capabilities and record views', () => {
       next: null,
     });
     render(<Operations client={client} capabilities={['read_activity_log']} />);
-    expect(await screen.findByText('Actor Name unavailable')).toBeInTheDocument();
+    expect(await screen.findByRole('cell', { name: 'Name unavailable' })).toBeInTheDocument();
     expect(screen.getByText('User Name unavailable')).toBeInTheDocument();
     expect(screen.queryByText('unknown-person-id')).not.toBeInTheDocument();
     expect(screen.queryByText('unknown-target-id')).not.toBeInTheDocument();
@@ -97,12 +97,12 @@ describe('operator capabilities and record views', () => {
     expect(screen.queryByRole('tab', { name: 'Platform settings' })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Sandboxes' }), { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: 'Activity' })).toHaveFocus();
-    await screen.findByText('Actor Morgan Park');
+    await screen.findByRole('cell', { name: 'Morgan Park' });
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Activity' }), { key: 'ArrowLeft' });
     expect(screen.getByRole('tab', { name: 'Sandboxes' })).toHaveFocus();
     await screen.findByText('Research Sandbox');
     rerender(<Operations client={client} capabilities={['read_activity_log']} />);
-    await screen.findByText('Actor Morgan Park');
+    await screen.findByRole('cell', { name: 'Morgan Park' });
     expect(screen.getAllByRole('tab')).toHaveLength(1);
     expect(client.admin.readSettings).not.toHaveBeenCalled();
     expect(client.admin.listProfiles).not.toHaveBeenCalled();
@@ -223,7 +223,7 @@ describe('operator capabilities and record views', () => {
     render(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByText('No records match these filters.');
     await user.click(screen.getByRole('button', { name: 'Next page' }));
-    await screen.findByText('Actor Morgan Park');
+    await screen.findByRole('cell', { name: 'Morgan Park' });
     expect(client.admin.listActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'page-2' }),
     );
@@ -241,5 +241,103 @@ describe('operator capabilities and record views', () => {
         expect.objectContaining({ actor: 'operator-2', action: 'delete' }),
       ),
     );
+  });
+});
+
+describe('operator record tables', () => {
+  const headers = (name: string) =>
+    within(screen.getByRole('table', { name }))
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent);
+
+  it('lists Sandboxes with labelled columns, a status badge and an SGT time', async () => {
+    const client = operatorClient();
+    client.admin.listSandboxes.mockResolvedValue({
+      items: [sandboxRow, { ...sandboxRow, id: 'sbx-failed', name: 'Broken', status: 'failed' }],
+      next: null,
+    });
+    render(
+      <Operations client={client} capabilities={['read_all_sandboxes', 'control_any_sandbox']} />,
+    );
+    await screen.findByRole('cell', { name: /Broken/ });
+    expect(headers('Sandboxes')).toEqual([
+      'Sandbox',
+      'Owner',
+      'Status',
+      'Runtime',
+      'Agents',
+      'Last activity (SGT)',
+      'Actions',
+    ]);
+    const [, live, broken] = within(screen.getByRole('table')).getAllByRole('row');
+    expect(within(live!).getByText('Live').closest('.badge')).toHaveAttribute(
+      'data-tone',
+      'neutral',
+    );
+    expect(within(broken!).getByText('Needs attention').closest('.badge')).toHaveAttribute(
+      'data-tone',
+      'error',
+    );
+    expect(within(live!).getByText(sandboxRow.id).tagName).toBe('CODE');
+    expect(within(live!).getByText(/\d{4}/).tagName).toBe('TIME');
+    // Holding the capability, nothing on the page says it is missing.
+    expect(screen.queryByText('Cross-owner control is required.')).not.toBeInTheDocument();
+    expect(within(live!).getByRole('button', { name: 'Retire' })).toBeEnabled();
+  });
+
+  it('says once for the page that Retire needs cross-owner control', async () => {
+    const client = operatorClient();
+    client.admin.listSandboxes.mockResolvedValue({
+      items: [sandboxRow, { ...sandboxRow, id: 'sbx-2', name: 'Second' }],
+      next: null,
+    });
+    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
+    await screen.findByRole('cell', { name: /Second/ });
+    expect(screen.getAllByText('Cross-owner control is required.')).toHaveLength(1);
+    // Information, not an alarm: the reader can still review every Sandbox.
+    expect(screen.getByText('Cross-owner control is required.').closest('.alert')).toHaveAttribute(
+      'data-tone',
+      'info',
+    );
+    for (const button of screen.getAllByRole('button', { name: 'Retire' }))
+      expect(button).toBeDisabled();
+  });
+
+  it('keeps an unread list from claiming no records', async () => {
+    const client = operatorClient();
+    client.admin.listSandboxes.mockRejectedValue(
+      new ApiError(503, 'Unavailable', 'operator_service_unavailable'),
+    );
+    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
+    await screen.findByText('operator_service_unavailable');
+    expect(screen.queryByText('No records match these filters.')).not.toBeInTheDocument();
+  });
+
+  it('draws each Activity outcome in its own tone under an SGT time column', async () => {
+    const client = operatorClient();
+    const base = (await client.admin.listActivity({})).items[0]!;
+    client.admin.listActivity.mockResolvedValue({
+      items: [
+        base,
+        { ...base, id: 'act-2', outcome: { status: 'refused', code: 'quota_exceeded' } },
+        { ...base, id: 'act-3', outcome: { status: 'failed', code: 'internal' } },
+      ],
+      next: null,
+    });
+    render(<Operations client={client} capabilities={['read_activity_log']} />);
+    await screen.findByText('Refused');
+    expect(headers('Activity')).toEqual([
+      'Time (SGT)',
+      'Actor',
+      'Action',
+      'Target',
+      'Outcome',
+      'Code',
+    ]);
+    const tones = ['Succeeded', 'Refused', 'Failed'].map((word) =>
+      screen.getByText(word).closest('.badge')?.getAttribute('data-tone'),
+    );
+    expect(tones).toEqual(['neutral', 'warning', 'error']);
+    expect(screen.getByRole('cell', { name: 'quota_exceeded' })).toHaveAttribute('data-mono');
   });
 });
