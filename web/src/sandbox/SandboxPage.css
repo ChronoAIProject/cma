@@ -34,6 +34,15 @@
   justify-content: space-between;
   flex-wrap: wrap;
 }
+/* Why a header action is unavailable, under the header it belongs to (§17). */
+.sandbox-page__reasons {
+  margin-top: 8px;
+}
+.sandbox-page__reasons p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
 .sandbox-page__band {
   margin-top: 24px;
   padding-top: 24px;
