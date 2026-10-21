@@ -65,13 +65,6 @@ pub struct AgentFileService {
     adapter: Arc<dyn SandboxAdapter>,
 }
 impl AgentFileService {
-    /// Build actual route authorization with an isolated, non-network runtime.
-    #[cfg(feature = "test-support")]
-    pub fn for_route_tests(access: Arc<ResourceAccessService>) -> Arc<Self> {
-        let (adapter, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
-        Self::new(access, Arc::new(adapter))
-    }
-
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
         Arc::new(Self { access, adapter })
     }

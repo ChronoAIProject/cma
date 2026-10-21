@@ -244,7 +244,7 @@ async fn owner_can_manage_files_and_cross_owner_has_no_access() {
         .await
         .unwrap();
     files
-        .read(&owner.caller, Some(&owner), None, &id, ".codex/state", 1024)
+        .read(&owner.caller, Some(&owner), None, &id, ".agent/state", 1024)
         .await
         .unwrap();
     files
@@ -322,7 +322,7 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
                 Some(&viewer),
                 None,
                 &id,
-                ".codex/state",
+                ".agent/state",
                 1024,
             )
             .await
@@ -379,7 +379,7 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
                     Some(&viewer),
                     None,
                     &id,
-                    ".codex/state",
+                    ".agent/state",
                     1024
                 )
                 .await,

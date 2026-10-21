@@ -1893,6 +1893,7 @@ dependencies = [
  "futures-util",
  "json-patch",
  "layer2-core",
+ "layer3-adapter",
  "meteroid-utoipa",
  "meteroid-utoipa-axum",
  "mime",

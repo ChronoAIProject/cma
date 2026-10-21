@@ -423,7 +423,8 @@ mod tests {
             super::super::shared_agent_tests::Reply::Member,
         )
         .await;
-        let router = agent_filesystem_router(AgentFileService::for_route_tests(access))
+        let (adapter, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
+        let router = agent_filesystem_router(AgentFileService::new(access, Arc::new(adapter)))
             .layer(DefaultBodyLimit::max(2 * 1024 * 1024));
         let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0; 3 * 1024 * 1024]);
         let mut request = Request::builder()
