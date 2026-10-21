@@ -89,7 +89,7 @@ function ComposerCommands({
   useLayoutEffect(() => {
     if (!open || !present) return;
     const place = () => {
-      const anchor = input.current?.closest('.agent-composer__editor');
+      const anchor = input.current?.closest('.agent-composer__box');
       const element = panel.current;
       if (!anchor || !element) return;
       const rect = anchor.getBoundingClientRect();

@@ -43,12 +43,12 @@ it('places settings between composer input and actions and preserves draft and b
   const model = await screen.findByRole('button', { name: 'Model' });
   expect(model).toHaveTextContent('GPT-6');
   const form = screen.getByRole('form', { name: 'Message Agent' });
-  expect(form.querySelector('.agent-composer__capsule')?.nextElementSibling).toBe(
-    form.querySelector('.agent-composer__settings'),
-  );
-  expect(form.querySelector('.agent-composer__settings')?.nextElementSibling).toBe(
-    form.querySelector('.agent-composer__actions'),
-  );
+  // Settings sit inside the composer box, in the row of controls under the draft.
+  const controls = form.querySelector('.agent-composer__box > .agent-composer__controls');
+  expect(controls).not.toBeNull();
+  expect(controls!.previousElementSibling).toBe(screen.getByRole('textbox', { name: 'Message' }));
+  expect(controls!.querySelector('.agent-composer__settings')).not.toBeNull();
+  expect(controls!.querySelector('.agent-composer__actions')).not.toBeNull();
   expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Retain this draft' },
