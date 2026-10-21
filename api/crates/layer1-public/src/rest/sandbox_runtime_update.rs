@@ -163,7 +163,7 @@ pub(super) async fn update(
     .await
 }
 
-fn problem(error: SandboxRuntimeUpdateError) -> HierarchyProblem {
+pub(super) fn problem(error: SandboxRuntimeUpdateError) -> HierarchyProblem {
     match error {
         SandboxRuntimeUpdateError::Forbidden => HierarchyProblem::Forbidden,
         SandboxRuntimeUpdateError::NotFound => HierarchyProblem::SandboxNotFound,

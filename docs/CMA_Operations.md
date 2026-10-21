@@ -1600,6 +1600,53 @@ with such commands require this version or a compatible successor for rollback.
 Bot creation still requires the actual owner's renewable human login; accepting
 an agent key does not authorize borrowing that owner's stored login.
 
+### NyxID proxy access to the CMA API
+
+`CHRONO_NYXID_PROXY_ENABLED` defaults to `false` in application code. The
+production manifest enables the existing NyxID service identity protocol:
+`X-NyxID-Identity-Token`, RS256, with a maximum 60-second assertion lifetime.
+Configure `CHRONO_NYXID_PROXY_ISSUER` to the exact discovery issuer and
+`CHRONO_NYXID_PROXY_JWKS_URL` to its trusted HTTPS signing-key endpoint. The
+production issuer is `https://nyx-api.chrono-ai.fun`, not the login frontend.
+CMA requires the exact `CHRONO_NYXID_SERVICE_ID` and an audience equal to
+`CHRONO_SERVER_PUBLIC_URL` without its trailing slash. It never follows a
+signing-key URL supplied by a token. Invalid or duplicate identity headers
+cannot fall back to a browser cookie or unrelated bearer token.
+
+In NyxID, set only the CMA catalog connection's `identity_propagation_mode` to
+`jwt` and `identity_jwt_audience` to `https://bot.chrono-ai.fun`, and verify that
+existing user connections inherited both values. Retain access-token forwarding
+for existing CLI consumers. This uses existing NyxID behavior; it requires no
+NyxID code change or deployment. The separate request-bound-read feature below
+remains disabled.
+
+NyxID verifies the Agent Key, service scope and applicable action approval before
+forwarding. CMA verifies the signed identity and maps its permissions through
+the same ownership and resource policies as normal API requests. This includes
+lifecycle mutations and message/queue/interrupt commands, not just reads. The
+existing browser-only consent gates for key-scope approval and Bot provisioning
+remain the same as for independent CLI credentials. Managed runtime provisioning
+still requires the owner's existing renewable CMA credential setup.
+
+Accepted asynchronous commands retain a separate `nyxid-proxy:` admission and
+its permission ceiling in the encrypted `auth_nyxid_proxy_grants` collection.
+They use only the same subject's exact credential incarnation as execution
+custody; they are never converted into personal/browser authorization. Workers
+recheck current owner permissions and custody, intersected with that ceiling.
+Token refresh within the same incarnation is allowed. Loss of token custody or
+a new credential incarnation invalidates earlier admissions. Browser-cookie
+logout alone does not revoke stored renewable credentials. Ending a NyxBot turn
+or expiry of its 60-second assertion does not cancel already accepted work.
+NyxID enforces key revocation on new requests; its identity assertion has no
+original-key revocation handle for cancelling already accepted CMA commands.
+
+Deploy CMA before enabling the connection setting. Roll back connection settings
+before disabling proxy authentication. Retain a compatible CMA worker while
+proxy commands are queued; older workers cannot execute `nyxid-proxy:` authority.
+The collection is additive and contains no raw access tokens or refresh tokens.
+It currently retains admissions for reads as well as writes; do not apply an
+expiry policy that could remove authority for pending commands.
+
 ### NyxID request-bound reads
 
 `CHRONO_NYXID_RESOURCE_REQUEST_ENABLED` defaults to `false`. Enable it only after

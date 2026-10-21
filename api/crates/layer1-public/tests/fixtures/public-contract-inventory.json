@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 198,
+  "openapi_operations": 199,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -882,6 +882,19 @@
         "operator_conflict",
         "operator_service_unavailable",
         "sandbox_not_found"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/runtime-update": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_update.rs# Operator runtime updates require control capability and retain exact managed target and audit identity.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "invalid_runtime_update",
+        "runtime_update_target_changed",
+        "hierarchy_service_unavailable",
+        "runtime_update_not_available"
       ]
     },
     "POST /api/v1/admin/settings/reset": {

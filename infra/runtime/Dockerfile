@@ -19,8 +19,9 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
-# Build the upstream GitHub release with its one vulnerable indirect module
-# refreshed. No CLI source or transport code is patched.
+# Build the upstream GitHub release with patched Go and indirect modules.
+# The toolchain includes the CVE-2026-111943 crypto/x509 fix.
+# No CLI source or transport code is patched.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
