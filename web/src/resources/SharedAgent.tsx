@@ -14,6 +14,7 @@ import { Button } from '../ui/Button';
 import { AgentHeader } from '../agent/AgentHeader';
 import { routePath, type AppRoute } from '../routing/routes';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
+import { Alert } from '../ui/Alert';
 import { ActiveThinking } from '../agent/ActiveThinking';
 import type { ApprovalDecision } from '../agent/controller';
 import { agentDisplayTitle } from '../agent/presentation';
@@ -179,16 +180,22 @@ export function SharedAgent({
       >
         <p className="agent-header__source">{creationLabel(provenance)}</p>
       </AgentHeader>
-      <div className="agent-surface__conversation">
+      <div className="agent-surface__alerts">
         {history.state.status === 'loading' ? (
-          <p role="status">Loading authorized Agent history</p>
+          <Alert tone="info">Loading authorized Agent history</Alert>
         ) : null}
         {history.state.status === 'error' ? (
-          <div role="alert">
-            <p>{history.state.message}</p>
-            <Button onClick={onAccessChanged}>Check access again</Button>
-          </div>
+          <Alert
+            tone="error"
+            actions={<Button onClick={onAccessChanged}>Check access again</Button>}
+          >
+            {history.state.message}
+          </Alert>
         ) : null}
+        {error === undefined ? null : <Alert tone="error">{error}</Alert>}
+        {notice === undefined ? null : <Alert tone="success">{notice}</Alert>}
+      </div>
+      <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
             unknownUserName="Participant"
@@ -200,16 +207,6 @@ export function SharedAgent({
           />
         )}
       </div>
-      {error === undefined ? null : (
-        <p className="agent-action-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice === undefined ? null : (
-        <p className="agent-action-error" role="status">
-          {notice}
-        </p>
-      )}
       {ready === undefined ? null : can('interact') ? (
         <div className="agent-surface__input">
           {conversation === undefined ? null : <ActiveThinking conversation={conversation} />}

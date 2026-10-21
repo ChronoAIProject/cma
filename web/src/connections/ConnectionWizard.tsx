@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import {
@@ -335,9 +335,15 @@ function ConnectionSequence({
                 .filter((row) => row.kind === kind)
                 .map((row) => (
                   <div className="connection-wizard__row" key={row.service}>
-                    <LandingCharacter
-                      compact
-                      state={row.state === 'satisfied' ? 'completed' : 'pending'}
+                    <StateDot
+                      size={10}
+                      state={
+                        row.state === 'satisfied'
+                          ? 'done'
+                          : row.service === handoff?.service_id
+                            ? 'ongoing'
+                            : 'warning'
+                      }
                     />
                     <span>{connectionName(row)}</span>
                     <small>

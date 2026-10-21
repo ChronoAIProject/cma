@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 import './Thinking.css';
 import { TurnUsage } from './TurnUsage';
 import type { VisibleText } from './tokenEstimate';
@@ -101,7 +101,7 @@ export function Thinking({
         aria-controls={open ? bodyId : undefined}
         onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
-        <LandingCharacter compact state="running" />
+        <StateDot state="ongoing" size={10} />
         <span className="thinking__title">Thinking</span>
         {seconds === undefined ? null : <span className="thinking__elapsed">for {seconds}s</span>}
         <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />

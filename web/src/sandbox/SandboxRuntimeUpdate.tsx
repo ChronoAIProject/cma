@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxRuntimeUpdate as RuntimeUpdate } from '../api/types';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import { useRuntimeUpdate } from './useRuntimeUpdate';
@@ -109,19 +109,19 @@ export function SandboxRuntimeUpdate({
         </div>
       </dl>
       <div className="sandbox-recovery" data-state={submitting ? 'requesting' : state}>
-        <div className="sandbox-recovery__character" aria-hidden="true">
-          <LandingCharacter
-            compact
+        <div className="sandbox-recovery__icon" aria-hidden="true">
+          <StateDot
+            size={10}
             state={
               animate
-                ? 'running'
+                ? 'ongoing'
                 : state === 'queued'
-                  ? 'pending'
+                  ? 'neutral'
                   : state === 'failed'
-                    ? 'failed'
+                    ? 'error'
                     : state === 'up_to_date'
-                      ? 'completed'
-                      : 'brand'
+                      ? 'done'
+                      : 'warning'
             }
           />
         </div>

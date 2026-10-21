@@ -1,10 +1,12 @@
 import { useAccessSummaries } from './useAccessSummaries';
+import { SkeletonRows } from '../ui/Skeleton';
 import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';
+import { StatusBadge } from '../ui/Badge';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { loadWorkspace } from './loadHierarchy';
@@ -115,7 +117,8 @@ export function WorkspaceContents({
       ? current.state.value.detail.name
       : undefined,
   );
-  if (current.state.status === 'loading') return <p role="status">Loading authorized Workspace</p>;
+  if (current.state.status === 'loading')
+    return <SkeletonRows rows={2} label="Loading authorized Workspace" />;
   if (current.state.status === 'error')
     return (
       <div role="alert">
@@ -178,7 +181,7 @@ export function WorkspaceContents({
           { label: workspace.name },
         ]}
         title={workspace.name}
-        badge={<span role="status">{statusLabel(workspace.status)}</span>}
+        badge={<StatusBadge status={workspace.status} live />}
         description={<ResourceAccessDetails client={client} access={current.state.value.access} />}
         actions={<Button onClick={current.reload}>Refresh Workspace access</Button>}
       />

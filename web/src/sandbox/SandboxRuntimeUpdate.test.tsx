@@ -5,11 +5,7 @@ import type { SandboxRuntimeUpdate as Update } from '../api/types';
 import { agentClient } from '../test/agent';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 
-vi.mock('../landing/LandingCharacter', () => ({
-  LandingCharacter: ({ state }: { state: string }) => (
-    <span data-testid="character" data-state={state} />
-  ),
-}));
+const icon = () => document.querySelector('.sandbox-recovery__icon .statedot');
 
 const available: Update = {
   currentVersion: 'registry.example/runtime@sha256:old',
@@ -147,7 +143,7 @@ describe('owner runtime update control', () => {
       />,
     );
     expect(screen.getByRole('status')).toHaveTextContent('Updating your runtime');
-    expect(screen.getByTestId('character')).toHaveAttribute('data-state', 'running');
+    expect(icon()).toHaveAttribute('data-state', 'ongoing');
     expect(screen.queryByText(/existing home disk/)).not.toBeInTheDocument();
     view.rerender(
       <SandboxRuntimeUpdate
@@ -162,7 +158,7 @@ describe('owner runtime update control', () => {
     );
     expect(screen.getByText('Not reported')).toBeVisible();
     expect(screen.getByRole('alert')).toHaveTextContent('Restore needs attention.');
-    expect(screen.getByTestId('character')).toHaveAttribute('data-state', 'failed');
+    expect(icon()).toHaveAttribute('data-state', 'error');
     view.rerender(
       <SandboxRuntimeUpdate
         {...input}
@@ -175,7 +171,7 @@ describe('owner runtime update control', () => {
       />,
     );
     expect(screen.getByRole('status')).toHaveTextContent('Runtime updated');
-    expect(screen.getByTestId('character')).toHaveAttribute('data-state', 'completed');
+    expect(icon()).toHaveAttribute('data-state', 'done');
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

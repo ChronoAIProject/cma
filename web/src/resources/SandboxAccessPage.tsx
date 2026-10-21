@@ -1,15 +1,16 @@
 import { ResourceAccessDetails } from './ResourceAccessSummary';
+import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useOwnerViews } from './retainedOwnerViews';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';
+import { StatusBadge } from '../ui/Badge';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { loadSandbox } from './loadHierarchy';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { WorkspaceBranch } from './WorkspaceContents';
 import { Button } from '../ui/Button';
-import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
 import { useSandboxControl } from './useSandboxControl';
 import { SandboxControls } from './SandboxControls';
@@ -93,8 +94,9 @@ export function SandboxAccessPage({
       : personal;
   if (current.state.status === 'loading')
     return (
-      <section className="console__empty" role="status">
+      <section className="console__empty">
         <h1>Opening Sandbox</h1>
+        <SkeletonRows rows={3} label="Opening Sandbox" />
       </section>
     );
   if (current.state.status === 'error')
@@ -118,7 +120,7 @@ export function SandboxAccessPage({
           { label: sandbox.name },
         ]}
         title={sandbox.name}
-        badge={<span>{statusLabel(sandbox.status)}</span>}
+        badge={<StatusBadge status={sandbox.status} />}
         description={
           <>
             <ResourceAccessDetails client={client} access={current.state.value.access} />

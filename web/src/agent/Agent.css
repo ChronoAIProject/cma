@@ -18,11 +18,6 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.agent-header__status {
-  display: flex;
-  align-items: center;
-}
-
 .agent-header__source {
   margin-top: 4px;
   font-size: 12px;
@@ -84,13 +79,6 @@
   .agent-quick-message .button {
     min-height: 44px;
   }
-}
-
-.agent-header__status {
-  gap: 6px;
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
 }
 
 .agent-surface__conversation {
@@ -240,6 +228,19 @@
 }
 
 .message-stream__recovery,
+.agent-surface__alerts {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 20px 0;
+}
+
+.agent-surface__alerts:empty {
+  display: none;
+}
+
 .agent-action-error {
   display: flex;
   gap: 10px;
@@ -532,11 +533,6 @@
   gap: 16px;
   width: min(100% - 48px, 720px);
   margin: 64px auto;
-}
-
-.agent-loading__row {
-  height: 70px;
-  border-radius: 7px;
 }
 
 .agent-surface--error {

@@ -10,8 +10,11 @@
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-s-14);
 }
-.sandbox-recovery__character {
-  flex: 0 0 44px;
+.sandbox-recovery__icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  height: 20px;
 }
 .sandbox-recovery__content {
   flex: 1;
