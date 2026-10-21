@@ -310,6 +310,14 @@ describe('the page frame', () => {
     expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull();
   });
 
+  it('clips rather than scrolls, so bringing content into view never shifts the page', () => {
+    // A scrollable frame moved 16px sideways when a header was scrolled into
+    // view, because the closed details column still counted toward its width.
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(/\.frame\s*\{[^}]*overflow: clip/);
+    expect(css).not.toMatch(/\.frame\s*\{[^}]*overflow: hidden/);
+  });
+
   it('gives each resizable border one named handle', () => {
     // Named, because a bare strip is invisible to anybody not using a pointer.
     renderFrame();

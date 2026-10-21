@@ -512,7 +512,8 @@ that becomes a still glyph under reduced motion. Loading and failed child reads 
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
-Workspace New agent/Remove, Agent Stop/Delete. Destructive operations use §12.4.
+Workspace New agent/Remove, Agent Stop/Delete. A Workspace's New agent opens New
+agent in that Workspace rather than a new one. Destructive operations use §12.4.
 Visitors see their own hierarchy but no creation controls. Capabilities are read
 from the authenticated public snapshot, not inferred from a role label.
 
@@ -683,7 +684,40 @@ bounds and converts to wire units at the boundary. Creation may select the
 exact pinned deployment-default profile, never an unrecorded resource default.
 Paired fields stack below 30rem.
 
-New Agent creation names **Sandbox environment** and **Project workspace**, with
+**New agent** is one step in one dialog titled *New agent*. Its description names
+where the Agent will work: *Start an Agent in a new Sandbox with an empty
+workspace.*, *Start an Agent with a new workspace in this Sandbox.* or *Start an
+Agent in the selected workspace.* **Where it works** is a radio group of bordered
+choice rows at radius 10 with 12px padding, two columns from 30rem and one below:
+*New Sandbox* (second line *Latest CMA runtime image*), then *New workspace in
+<Sandbox>* for each of the owner's Sandboxes, then *<Sandbox> / <Workspace>* for
+each of their Workspaces. A Sandbox or Workspace row shows its status badge as its
+second line. The selected row takes the accent edge and the accent wash. A row
+that cannot be used now stays listed and `aria-disabled`, with its reason as its
+second line: *Available when the Sandbox is active.* for a Sandbox that is not
+Active with no pending operation, *The Workspace is not ready.* for a Workspace
+that is not Ready, and *You don’t have permission to create a Sandbox.* for New
+Sandbox without that capability. Arrow keys move between rows and select a usable
+one. The rows come from the same public Sandbox and Workspace reads as the
+sidebar; until they arrive the target the dialog was opened for is still
+selected. Opening New agent from a Sandbox selects its new-workspace row, and
+from a Workspace selects that Workspace, whose Agent is created there through the
+lifecycle request's `workspace_id`.
+
+**GitHub repository (optional)** keeps its strict HTTPS github.com rules. It is
+checked when the field loses focus and on Create agent, never while typing; the
+error *Enter an HTTPS GitHub repository URL.* is announced once when it appears
+and leaves as soon as the value is valid. A read-only **Agent settings** summary
+reads *gpt-6 · High · Autonomous*; there is no control to change it here. The
+footer starts with the note *Includes chrono-llm-public and ornn-api access.* and
+ends with Cancel and the primary Create agent, which reads *Starting
+provisioning…* while the request is pending and *Recover creation* while a
+retained request is unconfirmed. Each location keeps its own retained request,
+so choosing a location with an unconfirmed one shows its recovery. The choice is
+locked while a request is pending and once a receipt exists. Labels and help use
+the shared field label and hint voices.
+
+The profile-based compatibility creation names **Sandbox environment** and **Project workspace**, with
 short 13px secondary explanations of the environment and the project folder.
 The profile step explains model, skills and independence; optional title and
 first-message fields explain their effect. Deleted and deleting resources are
@@ -759,7 +793,9 @@ long contents scroll inside the body. Radius remains 16px. The overlay portals
 to the document root and locks background scrolling. Anchored selection menus
 and tooltips retain their menu semantics and are not modal dialogs.
 
-At viewport widths or heights of 480px or less, the entire card scrolls instead
+At a viewport width of 480px or less the card takes the full width less a 16px
+gutter on each side: 60% of a 320px phone is 192px, too narrow for a form's fields
+or its footer keys. At viewport widths or heights of 480px or less, the entire card scrolls instead
 of shrinking the body between the header and footer. Content keeps its natural
 height so every field, close control and footer action remains reachable. The
 same centered card bounds, padding, radius and 20% margins still apply.
@@ -888,16 +924,52 @@ turn token reporting retain their existing sources and do not reset on relocatio
 On narrow screens the token line wraps within the message content width so actual
 counts and explicitly labelled estimates remain readable.
 
-Each settled tool call has its own neutral, 8px-radius bordered container in the
-message timeline, inserted at its completion position and retained on reload.
-Use 12px padding and the existing 16px entry rhythm. Show the recorded title,
-kind, written status and reported duration with wrapping text; failed and stopped
-calls remain individually inspectable. A call left pending by an ended turn
-states that its outcome was not reported, without inventing success or failure.
-Tool activity never invents missing arguments or results. Tool bodies are absent
-unless the public contract supplies them, use bounded disclosure when present,
-and unknown duration is not zero. Live and replayed activity reconcile by call
-identity without duplicate cards or regression to pending after completion.
+Each settled tool call is a neutral, 8px-radius bordered row in the message
+timeline, inserted at its completion position and retained on reload, named
+**Tool call: <title>**. Use 12px padding and the existing 16px entry rhythm. The
+row leads with a state dot and pairs it with a plain word: **In progress** (the
+pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
+(error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
+or stopped, and **Outcome not reported (last status: <status>)** (neutral dot)
+for a call left pending by an ended turn, without inventing success or failure.
+The recorded title and kind wrap beside the word. A duration appears only when
+the public contract reports one; it reports none today, so no row carries a
+duration or a "not reported" filler, and unknown duration is never zero. Tool
+activity never invents missing arguments or results: the recorded detail sits
+behind a bounded **Details** disclosure only when the contract supplies it.
+
+Two or more consecutive tool calls, with no message, approval, plan or notice
+between them, form one group in the same bordered container. Its header is a
+real button with `aria-expanded`, reading **<n> tool calls** and a one-line
+summary of the latest call (its title and word). A collapsed group hides its rows;
+an expanded one lists every row with the same dot, word and disclosure. A group
+containing a failure starts expanded, and stays so until the reader collapses it;
+otherwise it starts collapsed. A single call stays a single row. Live and
+replayed activity reconcile by call identity without duplicate rows or
+regression to pending after completion.
+
+A plan the Agent reports through the public stream (`plan_set` in the durable
+history and Responses v2, the `/plan` state on AG-UI) renders as a **Plan** card
+in the timeline: an eyebrow "Plan" and one row per entry, its title wrapping
+beside a status badge. The badge reads **Done** (neutral), **In progress**
+(active) or **Waiting** (muted); an unfamiliar status is shown verbatim, muted,
+rather than mapped to a guess. Each turn has at most one card, placed where that
+turn first reported a plan and replaced in place by the turn's latest report,
+because a provider restates the whole plan on every change. Plans render when
+the public stream carries them; history read from the transcript alone has no
+plan, and no card is invented for it.
+
+An approval is a card in the timeline at the point of interruption, on the
+layer-1 ground with a warning-toned hairline and radius 8. An eyebrow reads
+**Approval**; the request's action reason is the heading and its detail the
+body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
+one-line caption that states its effect: Deny refuses this request and lets the
+Agent continue another way; Abort cancels the request without an answer; Allow
+lets the Agent go ahead. The captions describe the buttons, they do not rename
+them. The buttons hold while an approval command is pending or input is not
+allowed. A viewer without authority reads **Waiting for an authorized
+participant to answer this approval.** in place of the buttons. A resolved
+approval shows its recorded decision instead.
 
 AG-UI identifies the thread by Agent id and the run by durable turn sequence.
 Live content can arrive without a preceding START frame. It must be visible
@@ -2245,13 +2317,20 @@ the consent gesture to a second click on the CMA landing page.
 
 ### Confirmed Agent creation and retained navigation
 
-New Agent preparation uses one 64px circle with a 3px stroke and a 1.2s linear
-rotation while pending. Reduced motion stops rotation. The percentage and
-current phase sit to its right with a 16px gap and 12px/18px detail copy.
-The four reported preparation stages contribute 20% each; 100% requires the
-successful operation plus its actual Agent identity. Elapsed time cannot raise
-the percentage. Full phase facts remain in an initially closed Setup details
-disclosure with 6px internal gaps.
+New Agent preparation replaces the dialog's form with a heading, one status
+line and a four-step stepper with no percentage: **Sandbox**, **Workspace**,
+**Service access** and **Agent startup**. Each step shows a state dot, its name
+and its state word: Waiting, Queued, In progress, Ready, Waiting for connection,
+Needs attention or Not reported. Ready takes the done dot, In progress the
+ongoing dot (whose ring stops under reduced motion), Waiting for connection the
+warning dot, Needs attention the error dot and the rest the neutral dot; the step
+in progress is the current step. Steps sit in four columns from 30rem and stack
+below. The heading reads *Preparing your Agent*, *Agent ready* or *Agent
+provisioning needs attention*; *Agent ready* requires the successful operation
+plus its actual Agent identity, even when all four steps are Ready. Provisioning
+and per-step elapsed times are information only and never advance a step. The
+same stepper is the one setup band above a starting Agent's conversation. This
+replaces the 64px percentage circle and its closed Setup details disclosure.
 
 Agent key scope rows are 64px high. Skill rows are 112px, with 18px / 18px / 40px
 internal tracks and 6px gaps. Text is single-line ellipsis with full hover text;
@@ -2725,6 +2804,9 @@ The row sits before usage, leaving Send/Stop and steering aligned in their actio
 column, so the draft always keeps the full flexible column. At 30rem or less, retain 44px touch targets and let the
 three controls share the full input row. Preserve typed drafts, attachments,
 queue/interrupt behavior, and input-aligned Context/Total tokens.
+The permission picker reads **Guarded** and **Autonomous**, in the compact
+composer and the full settings alike; the wire values `guarded` and `autonomous`
+are unchanged. No other name for the unrestricted mode appears in the UI.
 
 Each normal message always shows its recorded timestamp as a semantic time in
 Asia/Singapore, with an explicit SGT suffix, using existing 12/18 caption text
@@ -2762,4 +2844,7 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
 | 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
 | 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
+| 2026-10-21 | Gave dialogs on a phone the full width less a 16px gutter instead of 60% of the viewport, which left a 192px card whose footer overflowed at 320px. Stopped the frame from ever scrolling sideways: as a clipping box it no longer shifts when a closed details column's content would otherwise count toward its width, which put a phone's page off its left edge. |
+| 2026-10-21 | Made the conversation say what the Agent is doing and what it needs. Consecutive tool calls form one group headed "<n> tool calls" with the latest call's summary, and every row carries a state dot with a plain word (In progress, Completed, Failed, Cancelled, or Outcome not reported) instead of the raw status; the "Duration not reported" filler is gone because no duration is reported. Groups with a failure open themselves. Plans reported through the public stream render as a per-turn Plan card with Done, In progress and Waiting badges. The approval card gained a one-line caption under Deny, Abort and Allow. The permission picker reads Guarded and Autonomous. |
+| 2026-10-21 | Made New agent one step that creates the Agent where the owner asked. A Workspace's New agent used to create another Workspace in its Sandbox, so a Workspace made with New workspace could never receive an Agent; it now opens the dialog on that Workspace and sends its `workspace_id`. §12.2 specifies the Where it works choice (New Sandbox, a Sandbox's new workspace, or a Workspace; unusable rows `aria-disabled` with their reasons), repository validation on blur and submit instead of on every keystroke, the read-only Agent settings summary and the access note. The preparation section replaces the percentage circle, which read 80% with every listed step Ready, with a four-step stepper (Sandbox, Workspace, Service access, Agent startup) that is also the setup band above the conversation. |
 | 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
