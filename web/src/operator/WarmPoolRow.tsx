@@ -3,7 +3,6 @@ import type { WarmPoolView } from '@chronoai/cma-sdk';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Pill } from '../ui/Pill';
 import { TableActions, TableCell, TableNote } from '../ui/Table';
 import type { StatusTone } from '../vocabulary/status';
 import type { OperatorClient } from './client';
@@ -117,7 +116,9 @@ export function WarmPoolRow({
         <TableCell>
           <span className="warm-pool-size">{label}</span>
           {previousRuntime ? <code className="warm-pool-reference">{pool.image}</code> : null}
-          {currentDefault ? <Pill>Current default configuration</Pill> : null}
+          {currentDefault ? (
+            <span className="warm-pool-tag">Current default configuration</span>
+          ) : null}
           {pool.config_sha256 ? (
             <details className="warm-pool-config">
               <summary>Pool configuration</summary>
