@@ -286,9 +286,10 @@ for (const width of [1440, 390]) {
     });
     boundary.sandbox = { ...boundary.sandbox, status: 'installing' };
     await page.reload();
-    const advanced = page.getByRole('button', { name: 'Advanced', exact: true });
-    await advanced.click();
-    const dialog = page.getByRole('dialog', { name: 'Advanced sandbox details' });
+    const more = page.getByRole('button', { name: 'More actions', exact: true });
+    await more.click();
+    await page.getByRole('menuitem', { name: 'Technical details', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Technical details' });
     await expect(dialog.getByText('Workspace limit', { exact: true })).toBeVisible();
     for (const state of ['pending', 'completed']) {
       const logo = dialog.locator(`.landing__character[data-state="${state}"]`).first();
@@ -348,7 +349,7 @@ for (const width of [1440, 390]) {
     }
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
-    await expect(advanced).toBeFocused();
+    await expect(more).toBeFocused();
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.errors).toEqual([]);
@@ -475,10 +476,11 @@ for (const width of [1440, 390]) {
     await page.reload();
     await expect(page.getByRole('status').filter({ hasText: 'Resuming' })).toBeVisible();
     await expect(page.getByText(/Current step: home restore/)).toHaveCount(0);
-    await page.getByRole('button', { name: 'Advanced', exact: true }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Technical details', exact: true }).click();
     await expect(
       page
-        .getByRole('dialog', { name: 'Advanced sandbox details' })
+        .getByRole('dialog', { name: 'Technical details' })
         .getByText(/Current step: home restore/),
     ).toBeVisible();
     await page.getByRole('button', { name: 'Close', exact: true }).click();

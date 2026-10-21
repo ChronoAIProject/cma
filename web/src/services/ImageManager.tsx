@@ -2,7 +2,14 @@ import { Picker } from '../ui/Picker';
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { can, segment, serviceRequest, ServiceError, type ServiceSession } from './client';
+import {
+  can,
+  segment,
+  serviceRequest,
+  ServiceError,
+  type Denied,
+  type ServiceSession,
+} from './client';
 import { PageStatus, usePage, WriteForm } from './data';
 import { imageVisibilityLabel } from '../create/imageCatalog';
 interface Image {
@@ -28,7 +35,7 @@ export function ImageManager({
   denied,
 }: {
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
 }) {
   const [scope, setScope] = useState('all');
   return (
@@ -59,7 +66,7 @@ function ImageCatalog({
 }: {
   readonly scope: string;
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
 }) {
   const catalog = usePage<Image>('image-manager', `/v1/images?scope=${scope}`, denied);
   const [selected, setSelected] = useState<string>();
@@ -137,7 +144,7 @@ function ImageDetails({
 }: {
   readonly image: Image;
   readonly session: ServiceSession;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly changed: () => void;
 }) {
   const owner = image.owner === session.subject;
@@ -175,7 +182,7 @@ function ImageDetails({
       setRetiring(false);
       changed();
     } catch (e) {
-      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
       setError(
         e instanceof Error ? e.message : 'Request failed. Refresh the image before trying again.',
       );
@@ -273,7 +280,8 @@ function ImageDetails({
                     )
                       .then((value) => setLogs(JSON.stringify(value, null, 2)))
                       .catch((e: unknown) => {
-                        if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+                        if (e instanceof ServiceError && [401, 403].includes(e.status))
+                          denied(e.status);
                         setError(e instanceof Error ? e.message : 'Logs unavailable.');
                       })
                       .finally(() => setBusy(false));

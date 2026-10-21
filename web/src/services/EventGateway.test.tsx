@@ -43,6 +43,23 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
   },
 );
 
+it.each([401, 403])('reports a refused channel read with its status %s', async (status) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status })));
+  const denied = vi.fn();
+  render(
+    <EventGateway
+      session={{
+        authenticated: true,
+        subject: 'owner',
+        permissions: ['cma-eg:admin'],
+        expires_at: 9999999999,
+      }}
+      denied={denied}
+    />,
+  );
+  await waitFor(() => expect(denied).toHaveBeenCalledWith(status));
+});
+
 it('puts channels in the sidebar and shows only the selected channel details', async () => {
   const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) =>
     url === '/api/event-gateway/v1/channels'
@@ -83,12 +100,38 @@ it('puts channels in the sidebar and shows only the selected channel details', a
       denied={vi.fn()}
     />,
   );
+  const sidebar = screen.getByRole('region', { name: 'Channels' });
+  // Nothing is opened for the reader: the page starts on the table of every channel.
+  const table = await screen.findByRole('table', { name: 'Your channels' });
+  expect(
+    within(table)
+      .getAllByRole('columnheader')
+      .map((header) => header.textContent),
+  ).toEqual(['Name', 'Provider', 'Level', 'Sources', 'Version']);
+  expect(
+    within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole('cell')
+          .map((cell) => cell.textContent),
+      ),
+  ).toEqual([
+    ['Existing channel', 'cma', 'L3', '1', '4'],
+    ['Modern channel', 'cma', 'L3', '0', '1'],
+  ]);
+  expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
+  await userEvent.click(within(table).getByRole('button', { name: 'Existing channel' }));
   await screen.findByRole('heading', { name: 'Existing channel' });
   expect(
     await screen.findByRole('link', { name: 'Open existing channel console' }),
   ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/legacy-record');
   expect(screen.queryByRole('button', { name: 'Send test event' })).not.toBeInTheDocument();
-  const sidebar = screen.getByRole('region', { name: 'Channels' });
+  expect(within(sidebar).getByRole('button', { name: /Existing channel/ })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await userEvent.click(within(sidebar).getByRole('button', { name: /Modern channel/ }));
   expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Modern channel' })).toBeVisible();
@@ -141,6 +184,7 @@ it.each(['completed', 'timeout'] as const)(
         denied={vi.fn()}
       />,
     );
+    await userEvent.click(await screen.findByRole('button', { name: 'Cold channel' }));
     const send = await screen.findByRole('button', { name: 'Send test event' });
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
