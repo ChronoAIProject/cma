@@ -231,6 +231,7 @@ function ConsoleContent({
         onAccessChanged={agentAccess.reload}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
+        onNavigate={onNavigate}
       />
     ) : route.kind === 'agent' &&
       client.resourceViews !== undefined &&
@@ -262,6 +263,9 @@ function ConsoleContent({
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
+        permissions={permissions}
+        actionsBusy={actions.pending}
+        onAgentAction={actions.select}
       />
     ) : route.kind === 'sandbox' ? (
       <SandboxAccessPage
