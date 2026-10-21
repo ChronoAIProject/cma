@@ -33,12 +33,10 @@ export function sandboxRecoveryFailed(sandbox: SandboxDetail): boolean {
 export function SandboxRecoveryNotice({
   sandbox,
   stale = false,
-  showHistory = false,
   onDetails,
 }: {
   readonly sandbox: SandboxDetail;
   readonly stale?: boolean;
-  readonly showHistory?: boolean;
   readonly onDetails?: () => void;
 }) {
   const completion = useRecoveryCompletion(sandbox, stale);
@@ -117,18 +115,31 @@ export function SandboxRecoveryNotice({
           </section>
         ) : null}
       </Presence>
-      {showHistory && interruption !== undefined && !recovering && !failed ? (
-        <details className="sandbox-recovery-history">
-          <summary>Last sandbox interruption</summary>
-          <p>{cause}</p>
-          <p>
-            Detected{' '}
-            <time dateTime={interruption.detectedAt}>
-              {new Date(interruption.detectedAt).toLocaleString()}
-            </time>
-          </p>
-        </details>
-      ) : null}
     </>
+  );
+}
+
+/**
+ * The last recorded interruption once the Sandbox has recovered from it.
+ *
+ * While recovery is still running or has failed, the notice above already
+ * names the cause, so the history stays out of the way until then.
+ */
+export function SandboxInterruptionHistory({ sandbox }: { readonly sandbox: SandboxDetail }) {
+  const interruption = sandbox.lifecycle?.interruption;
+  const recovering =
+    sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive';
+  if (interruption === undefined || recovering || sandboxRecoveryFailed(sandbox)) return null;
+  return (
+    <details className="sandbox-recovery-history">
+      <summary>Last sandbox interruption</summary>
+      <p>{interruptionReason(sandbox)}</p>
+      <p>
+        Detected{' '}
+        <time dateTime={interruption.detectedAt}>
+          {new Date(interruption.detectedAt).toLocaleString()}
+        </time>
+      </p>
+    </details>
   );
 }
