@@ -9,15 +9,10 @@ import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
+import { IconPauseOutline16, IconPlayOutline16, IconPlusOutline16 } from '../ui/icons';
+import { MoreActions } from '../ui/MoreActions';
+import { sandboxCreateReason, sandboxHeaderMenu } from './sandboxHeaderActions';
 import {
-  IconPauseOutline16,
-  IconPlayOutline16,
-  IconPlusOutline16,
-  IconSettingsOutline16,
-  IconTrashOutline16,
-} from '../ui/icons';
-import {
-  sandboxChildrenAvailable,
   sandboxUnavailableNotice,
   sandboxLifecycleAction,
   sandboxLifecycleLabel,
@@ -109,6 +104,7 @@ export function SandboxPage({
     connectionScope?.sandboxId === sandboxId &&
     connectionScope?.viewerId === viewerId;
   const lifecycleReasonId = useId();
+  const createReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
@@ -217,7 +213,11 @@ export function SandboxPage({
   const needsConnections =
     viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
-  const childrenAvailable = sandboxChildrenAvailable(sandbox);
+  const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
+  const actionContext = { busy, stale, needsConnections };
+  const createReason = permissions.createAgent
+    ? sandboxCreateReason(sandbox, actionContext)
+    : undefined;
   const notice = sandboxUnavailableNotice(sandbox);
   const optionalProgress =
     sandbox.lifecycle?.operation !== undefined ||
@@ -259,30 +259,29 @@ export function SandboxPage({
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
-            {sharingAllowed ? (
-              <Button onClick={() => setSharingFor(sharingClient)}>Sharing</Button>
-            ) : null}
             {permissions.createAgent ? (
               <Button
+                size="sm"
+                variant="primary"
                 icon={<IconPlusOutline16 />}
-                disabled={busy || stale || needsConnections || !childrenAvailable}
+                disabled={createReason !== undefined}
+                aria-describedby={
+                  createReason === undefined
+                    ? undefined
+                    : createReason === lifecycleReason
+                      ? lifecycleReasonId
+                      : createReasonId
+                }
                 onClick={() => onAction({ kind: 'new_agent', sandboxId })}
                 aria-label="New agent in this Sandbox"
               >
                 New agent
               </Button>
             ) : null}
-            {permissions.createWorkspace ? (
-              <Button
-                icon={<IconPlusOutline16 />}
-                disabled={busy || stale || needsConnections || !childrenAvailable}
-                onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
-              >
-                New workspace
-              </Button>
-            ) : null}
             {permissions.pauseSandbox ? (
               <Button
+                size="sm"
+                variant="outline"
                 icon={
                   lifecycleAction.kind === 'revive_sandbox' ? (
                     <IconPlayOutline16 />
@@ -304,28 +303,26 @@ export function SandboxPage({
                 {lifecycleAction.label}
               </Button>
             ) : null}
-            {permissions.deleteSandbox ? (
-              <Button
-                variant="danger"
-                icon={<IconTrashOutline16 />}
-                disabled={
-                  busy ||
-                  stale ||
-                  ['retiring', 'retired'].includes(sandbox.status) ||
-                  sandbox.lifecycle?.checkpoint !== undefined ||
-                  sandbox.lifecycle?.operation !== undefined
-                }
-                onClick={() => onAction({ kind: 'delete_sandbox', sandboxId })}
-              >
-                Delete
-              </Button>
-            ) : null}
-            <Button icon={<IconSettingsOutline16 />} onClick={() => setAdvanced(true)}>
-              Advanced
-            </Button>
+            <MoreActions
+              items={sandboxHeaderMenu(sandbox, permissions, actionContext, sharingAllowed)}
+              onSelect={(id) => {
+                if (id === 'new_workspace') onAction({ kind: 'new_workspace', sandboxId });
+                else if (id === 'delete_sandbox') onAction({ kind: 'delete_sandbox', sandboxId });
+                else if (id === 'sharing') setSharingFor(sharingClient);
+                else if (id === 'technical_details') setAdvanced(true);
+              }}
+            />
           </>
         }
       />
+      {lifecycleReason === undefined && createReason === undefined ? null : (
+        <div className="sandbox-page__reasons">
+          {lifecycleReason === undefined ? null : <p id={lifecycleReasonId}>{lifecycleReason}</p>}
+          {createReason === undefined || createReason === lifecycleReason ? null : (
+            <p id={createReasonId}>{createReason}</p>
+          )}
+        </div>
+      )}
       {needsConnections && !stale ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
@@ -344,9 +341,6 @@ export function SandboxPage({
         {notice === undefined ? null : <Alert tone="info">{notice}</Alert>}
       </div>
       <SandboxRecoveryNotice sandbox={sandbox} stale={stale} showHistory />
-      {permissions.pauseSandbox && lifecycleAction.reason !== undefined ? (
-        <p id={lifecycleReasonId}>{lifecycleAction.reason}</p>
-      ) : null}
       {optionalProgress ? (
         <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
           <summary>Sandbox operation progress</summary>
@@ -359,7 +353,7 @@ export function SandboxPage({
         {sandbox.status === 'failed' && !sandboxRecoveryFailed(sandbox) ? (
           <p role="alert">
             Your sandbox needs attention.{' '}
-            {sandbox.failure?.remediation ?? 'Open Advanced for the reported failure.'}
+            {sandbox.failure?.remediation ?? 'Open Technical details for the reported failure.'}
           </p>
         ) : null}
       </Presence>
