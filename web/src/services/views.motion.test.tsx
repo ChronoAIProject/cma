@@ -37,11 +37,11 @@ it('fades the existing console center between routes within Agent Manager, only 
   const surface = screen.getByRole('main');
   const reads = navigationReads.mock.calls.length;
   expect(motion.records).toHaveLength(0);
-  rerender(draw({ kind: 'developer' }));
+  rerender(draw({ kind: 'operations' }));
   expect(screen.getByRole('main')).toBe(surface);
   expect(motion.records).toHaveLength(1);
   expect(motion.records[0]?.element).toBe(surface);
-  rerender(draw({ kind: 'developer' }));
+  rerender(draw({ kind: 'operations' }));
   expect(motion.records).toHaveLength(1);
   rerender(draw({ kind: 'profiles' }));
   expect(motion.records).toHaveLength(2);
