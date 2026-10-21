@@ -2,7 +2,9 @@
  * The dialog — `docs/Web_Style.md` §12.4.
  *
  * One centered card size across surfaces. Each edge stays at least 20%
- * inside the viewport; long content scrolls within the same shell.
+ * inside the viewport; long content scrolls within the same shell. On a
+ * phone, 60% of the width is too narrow to hold a form or its footer, so
+ * the card takes the width less a 16px gutter on each side instead.
  */
 
 .modal {
@@ -122,6 +124,17 @@
   .modal__card {
     overflow: auto;
     overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 480px) {
+  .modal {
+    padding-inline: 16px;
+  }
+
+  .modal__card {
+    width: 100%;
+    max-width: 100%;
   }
 
   .modal__content,

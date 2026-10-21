@@ -45,8 +45,8 @@ it('continues observation after reload without resubmitting, and clears only con
     await screen.findByRole('region', { name: 'Agent provisioning progress' }),
   ).toBeInTheDocument();
   expect(screen.getByText('Sandbox')).toBeInTheDocument();
-  expect(screen.getByText('Workspace provisioning')).toBeInTheDocument();
-  expect(screen.getByText('Key permissions')).toBeInTheDocument();
+  expect(screen.getByText('Workspace')).toBeInTheDocument();
+  expect(screen.getByText('Service access')).toBeInTheDocument();
   expect(screen.getByText('Agent startup')).toBeInTheDocument();
   expect(sessionStorage.getItem(key)).toContain('original-key');
   first.unmount();

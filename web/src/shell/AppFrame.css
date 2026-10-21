@@ -12,7 +12,14 @@
   display: grid;
   grid-template-rows: 100%;
   height: 100%;
-  overflow: hidden;
+  /*
+   * Clip, never scroll. With \`hidden\`, the frame was still a scroll
+   * container: the closed details column's content counted toward its
+   * scroll width, and bringing a header into view scrolled the whole frame
+   * 16px sideways. On a phone, where no rail absorbs that, the page started
+   * off the left edge.
+   */
+  overflow: clip;
   background: var(--dsw-alias-bg-base);
   transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
