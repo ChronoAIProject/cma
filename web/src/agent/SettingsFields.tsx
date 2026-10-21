@@ -73,8 +73,8 @@ export function SettingsFields({
           value={value.permission_mode}
           disabled={disabled}
           options={[
-            { value: 'autonomous', label: compact ? 'YOLO' : 'YOLO (autonomous)' },
             { value: 'guarded', label: 'Guarded' },
+            { value: 'autonomous', label: 'Autonomous' },
           ]}
           onChange={(permission_mode) => onChange({ ...value, permission_mode })}
         />
