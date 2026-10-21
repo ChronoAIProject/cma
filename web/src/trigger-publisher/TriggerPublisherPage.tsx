@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import {
   IconPlusOutline16,
   IconRefreshOutline16,
@@ -128,22 +130,41 @@ export function TriggerPublisherPage({
     }
   };
   const selectedId = document?.id ?? triggerId ?? '';
+  const currentTitle =
+    items.find((item) => item.id === selectedId)?.draft.presentation.title ??
+    (selectedId === '' ? 'New Trigger' : 'Trigger');
+  useDocumentTitle(selectedId === '' ? 'Triggers' : currentTitle);
   return (
     <section className="trigger-publisher" aria-labelledby="trigger-publisher-title">
-      <header className="trigger-publisher__header">
-        <h1 id="trigger-publisher-title">CMA Trigger</h1>
-        <Button
-          icon={<IconPlusOutline16 />}
-          disabled={locked}
-          onClick={() => {
-            setReadResult(undefined);
-            setNewVersion((value) => value + 1);
-            navigate('');
-          }}
-        >
-          New Trigger
-        </Button>
-      </header>
+      <div className="trigger-publisher__header">
+        <PageHeader
+          breadcrumb={[
+            {
+              label: 'Triggers',
+              href: '/triggers/manage',
+              onSelect: locked ? undefined : () => navigate(''),
+            },
+            { label: currentTitle },
+          ]}
+          title="Triggers"
+          headingId="trigger-publisher-title"
+          description="A Trigger is a button that brings each visitor to an Agent of their own."
+          actions={
+            <Button
+              variant="primary"
+              icon={<IconPlusOutline16 />}
+              disabled={locked}
+              onClick={() => {
+                setReadResult(undefined);
+                setNewVersion((value) => value + 1);
+                navigate('');
+              }}
+            >
+              New Trigger
+            </Button>
+          }
+        />
+      </div>
       <div className="trigger-publisher__body">
         <nav className="trigger-rail" aria-label="Your Triggers">
           <label className="trigger-rail__mobile">

@@ -4,7 +4,6 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
 import type { AppRoute } from '../routing/routes';
-import { SandboxLink } from './SandboxLink';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
@@ -15,10 +14,14 @@ import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
 import { AgentHeader } from './AgentHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
+import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
+import type { TreeAction, TreePermissions } from '../shell/Tree';
+import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
-import { BrandLoading } from '../landing/LandingCharacter';
+import { AgentOpening, AgentUnavailable } from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
@@ -48,6 +51,11 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  /** What the viewer may do to this Agent from its header. */
+  readonly permissions?: TreePermissions;
+  /** Another resource action is still being confirmed. */
+  readonly actionsBusy?: boolean;
+  readonly onAgentAction?: (action: TreeAction) => void;
 }
 
 export function AgentSurface({
@@ -63,6 +71,9 @@ export function AgentSurface({
   user,
   accessUncertain = false,
   accessAuthorized = false,
+  permissions,
+  actionsBusy = false,
+  onAgentAction,
 }: AgentSurfaceProps) {
   const [steeringMode, setSteeringMode] = useState<SteeringMode>('queue');
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -70,8 +81,7 @@ export function AgentSurface({
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
-  const documentTitle =
-    state.status === 'ready' ? `${agentDisplayTitle(state.detail)} · CMA` : undefined;
+  useDocumentTitle(state.status === 'ready' ? agentDisplayTitle(state.detail) : undefined);
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -121,46 +131,16 @@ export function AgentSurface({
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
 
-  useEffect(() => {
-    if (documentTitle === undefined) return;
-    document.title = documentTitle;
-    return () => {
-      document.title = 'CMA';
-    };
-  }, [documentTitle]);
-
-  if (state.status === 'idle' || state.status === 'loading') {
+  if (state.status === 'idle' || state.status === 'loading')
+    return <AgentOpening headingRef={headingRef} />;
+  if (state.status === 'error')
     return (
-      <section className="agent-surface agent-surface--loading" aria-busy="true">
-        <header className="agent-header">
-          <p className="agent-header__lineage">CMA</p>
-          <h1 ref={headingRef} tabIndex={-1}>
-            Agent
-          </h1>
-        </header>
-        <div className="agent-loading">
-          <BrandLoading label="Opening your agent" />
-        </div>
-      </section>
+      <AgentUnavailable
+        message={state.message}
+        headingRef={headingRef}
+        onRetry={controller.reload}
+      />
     );
-  }
-
-  if (state.status === 'error') {
-    return (
-      <section className="agent-surface agent-surface--error" role="alert">
-        <div>
-          <p className="eyebrow">Agent</p>
-          <h1 ref={headingRef} tabIndex={-1}>
-            Agent unavailable
-          </h1>
-          <p>{state.message}</p>
-          <Button variant="outline" onClick={controller.reload}>
-            Try again
-          </Button>
-        </div>
-      </section>
-    );
-  }
 
   const { detail, conversation } = state;
   const messageQueue = queuePresentation(
@@ -188,6 +168,13 @@ export function AgentSurface({
       ? 'Conversation activity is unavailable. Reconnecting.'
       : (connectionError ?? connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
+  const observed = controller.progressObservation;
+  const headerMenu = agentHeaderMenu(
+    status,
+    permissions,
+    observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
+    actionsBusy,
+  );
   const uploadAttachment: UploadAttachment | undefined =
     readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
       ? undefined
@@ -213,29 +200,29 @@ export function AgentSurface({
         title={title}
         status={status}
         headingRef={headingRef}
+        branch={readOnly ? undefined : detail.worktree.branch}
         detailsOpen={detailsOpen}
         detailsUnavailable={accessUncertain}
         onDetailsOpenChange={(open) => {
           if (!accessUncertain) onDetailsOpenChange(open);
         }}
-        lineage={
-          <>
-            <SandboxLink
-              id={detail.sandbox.id}
-              name={detail.sandbox.name}
-              onNavigate={onNavigate}
-            />
-            <span aria-hidden="true">/</span>
-            <span>{detail.runtimeMetadata?.workingDirectory || detail.workspace.path}</span>
-            <span aria-hidden="true">/</span>
-            <span>Agent</span>
-          </>
+        breadcrumb={agentBreadcrumb(detail, title, onNavigate)}
+        moreActions={headerMenu}
+        onMoreAction={
+          onAgentAction === undefined || readOnly
+            ? undefined
+            : (id) =>
+                onAgentAction({
+                  kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
+                  agentId,
+                })
         }
       >
         <AgentSourceLabel source={source} provenance={provenance} originLabel={originLabel} />
         {!readOnly &&
         verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
+            size="sm"
             onClick={() =>
               connections.run(
                 { type: 'agent', id: agentId },
@@ -247,7 +234,7 @@ export function AgentSurface({
               )
             }
           >
-            Re-login with Codex subscription
+            Sign in to your ChatGPT subscription again
           </Button>
         ) : null}
       </AgentHeader>

@@ -14,6 +14,8 @@ import { Button } from '../ui/Button';
 import { Picker } from '../ui/Picker';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import './AgentInventory.css';
 import { scopeValue, scopeRoute } from './scope';
 import { ExportInventoryPage } from './ExportInventoryPage';
@@ -65,6 +67,7 @@ export function AgentInventory({ client, organization, shared, onNavigate }: Pro
 }
 
 function Inventory({ client, organization, shared, onNavigate }: Props) {
+  useDocumentTitle('Agents');
   const [category, setCategory] = useState<Category>('all');
   const [status, setStatus] = useState<Status>('all');
   const [channel, setChannel] = useState<ChannelFilter>('all');
@@ -135,9 +138,21 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
   );
   return (
     <section className="agent-inventory" aria-labelledby="inventory-title">
-      <header className="agent-inventory__header">
-        <h1 id="inventory-title">Agents</h1>
-        <p>Browse current and retained Agents by creation source and channel activity.</p>
+      <div className="agent-inventory__header">
+        <PageHeader
+          breadcrumb={[
+            {
+              label: 'Agent Manager',
+              href: routePath({ kind: 'agent_manager' }),
+              onSelect: () => onNavigate({ kind: 'agent_manager' }),
+            },
+            { label: 'Agents' },
+          ]}
+          title="Agents"
+          headingId="inventory-title"
+          description="Browse current and retained Agents by creation source and channel activity."
+          actions={<Button onClick={inventory.reload}>Refresh</Button>}
+        />
         <div className="agent-inventory__filters">
           <Picker
             label="Resource scope"
@@ -172,7 +187,6 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
               setCursors([undefined]);
             }}
           />
-          <Button onClick={inventory.reload}>Refresh</Button>
         </div>
         <p className="agent-inventory__scope">
           {scopeLabel}
@@ -188,7 +202,7 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
             </Button>
           </p>
         ) : null}
-      </header>
+      </div>
       <div className="agent-inventory__body">
         {inventory.state.status === 'loading' ? <p role="status">Loading Agents</p> : null}
         {inventory.state.status === 'error' ? (
