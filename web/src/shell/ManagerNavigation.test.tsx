@@ -112,6 +112,57 @@ it('uses effective parent lifecycle status and shows green only for Working Agen
   ).toHaveLength(1);
 });
 
+it('groups Agents by Workspace and Sandbox, most recently active first', () => {
+  const [item] = navigationFixture();
+  if (item === undefined) throw new Error('fixture');
+  const [workspace] = item.workspaces;
+  if (workspace === undefined) throw new Error('fixture');
+  const older = {
+    ...workspace.agents[0]!,
+    id: 'agt_old',
+    title: 'Older',
+    updatedAt: '2026-09-01T00:00:00Z',
+  };
+  const newer = {
+    ...workspace.agents[0]!,
+    id: 'agt_new',
+    title: 'Newer',
+    updatedAt: '2026-09-07T00:00:00Z',
+  };
+  const quiet = {
+    ...workspace,
+    id: 'wsp_quiet',
+    name: 'quiet-workspace',
+    agents: [
+      {
+        ...workspace.agents[0]!,
+        id: 'agt_quiet',
+        title: 'Quiet',
+        workspaceId: 'wsp_quiet',
+        updatedAt: '2026-08-01T00:00:00Z',
+      },
+    ],
+  };
+  render(
+    <ManagerNavigation
+      {...props}
+      navigation={{
+        status: 'ready',
+        items: [{ ...item, workspaces: [quiet, { ...workspace, agents: [older, newer] }] }],
+        refresh: vi.fn(),
+      }}
+    />,
+  );
+  const groups = screen.getAllByRole('group', { name: / · Atlas$/ });
+  expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
+    'chrono-bot · Atlas',
+    'quiet-workspace · Atlas',
+  ]);
+  expect(
+    [...(groups[0]?.querySelectorAll('[role="treeitem"]') ?? [])].map((row) => row.textContent),
+  ).toEqual([expect.stringContaining('Newer'), expect.stringContaining('Older')]);
+});
+
 it('clears status and scope together and names the scope in the summary', async () => {
   const onScope = vi.fn();
   render(

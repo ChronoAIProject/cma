@@ -175,6 +175,42 @@
   }
 }
 
+/* Agents view: one group per Workspace, named with its Sandbox. */
+.agent-group + .agent-group {
+  margin-top: 8px;
+}
+.agent-group__heading {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.agent-group__heading svg {
+  flex: none;
+}
+.agent-group__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-group__sandbox {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-group__sandbox::before {
+  content: '· ';
+}
 .resource-tree__empty {
   padding: 16px 8px;
   color: var(--dsw-alias-label-tertiary);
