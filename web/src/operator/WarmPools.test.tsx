@@ -6,13 +6,81 @@ import { Operations } from './Operations';
 import { WarmPools } from './WarmPools';
 import { operatorClient, warmPool } from './testFixtures';
 
+/** The cell of `row` under the column headed `header`. */
+function cell(row: HTMLElement, header: string) {
+  const table = row.closest('table')!;
+  const index = within(table)
+    .getAllByRole('columnheader')
+    .findIndex((column) => column.textContent === header);
+  return within(row).getAllByRole('cell')[index]!;
+}
+
+describe('warm pool tables', () => {
+  it('names each column, draws the status badge and edits the target in its own cell', async () => {
+    render(<WarmPools client={operatorClient()} />);
+    const row = await screen.findByRole('row', { name: 'Warm pool 1000 millicores / 4096 MiB' });
+    const table = screen.getByRole('table', { name: 'Current runtime pools' });
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((column) => column.textContent),
+    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Pending', 'Target', 'Actions']);
+    expect(within(cell(row, 'Status')).getByText('Pending').closest('.badge')).toHaveAttribute(
+      'data-tone',
+      'active',
+    );
+    expect(within(cell(row, 'Target')).getByLabelText('Ready Sandbox target')).toHaveValue(3);
+    expect(within(row).getByRole('button', { name: 'Disable pool' })).toBeEnabled();
+    // A settled, observed pool has nothing to say beneath its row.
+    expect(table.querySelector('.table__note')).toBeNull();
+    expect(screen.getAllByText(/Set a target to 0 to disable spare capacity/)).toHaveLength(1);
+  });
+
+  it('says what the controller has not confirmed in the pool’s note row', async () => {
+    const client = operatorClient();
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [{ ...warmPool, observed: false, ready_replicas: null, status: 'unavailable' }],
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      default_image: warmPool.image,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
+    const row = await screen.findByRole('row', { name: /Warm pool/ });
+    expect(within(cell(row, 'Status')).getByText('Unavailable').closest('.badge')).toHaveAttribute(
+      'data-tone',
+      'warning',
+    );
+    const note = row.nextElementSibling!;
+    expect(note).toHaveClass('table__note');
+    expect(note).toHaveTextContent('Waiting for the controller to confirm current capacity.');
+  });
+
+  it('says an empty current runtime has no pools in the table, keeping its headers', async () => {
+    const client = operatorClient();
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [],
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      default_image: warmPool.image,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
+    expect(
+      await screen.findByRole('cell', { name: /No warm pools configured for the current runtime/ }),
+    ).toBeVisible();
+    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
+  });
+});
+
 describe('native warm pool operations', () => {
   it('gates the view by platform configuration capability and revokes the form immediately', async () => {
     const client = operatorClient();
     const { rerender } = render(
       <Operations client={client} capabilities={['configure_platform']} />,
     );
-    expect(await screen.findByRole('article')).toHaveTextContent(warmPool.image);
+    expect(await screen.findByRole('row', { name: /Warm pool/ })).toBeInTheDocument();
+    expect(screen.getAllByText(warmPool.image).length).toBeGreaterThan(0);
     expect(screen.getByRole('tab', { name: 'Warm pools' })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -35,11 +103,11 @@ describe('native warm pool operations', () => {
       available: true,
     });
     render(<WarmPools client={client} />);
-    const [observed, waiting] = await screen.findAllByRole('article');
+    const [observed, waiting] = await screen.findAllByRole('row', { name: /Warm pool/ });
     expect(observed).toHaveTextContent(warmPool.image);
-    expect(within(observed!).getByText('Desired').nextElementSibling).toHaveTextContent('3');
-    expect(within(observed!).getByText('Ready').nextElementSibling).toHaveTextContent('2');
-    expect(within(observed!).getByText('Pending').nextElementSibling).toHaveTextContent('1');
+    expect(cell(observed!, 'Desired')).toHaveTextContent('3');
+    expect(cell(observed!, 'Ready')).toHaveTextContent('2');
+    expect(cell(observed!, 'Pending')).toHaveTextContent('1');
     expect(within(waiting!).getAllByText('Unknown')).toHaveLength(2);
   });
 
@@ -70,14 +138,14 @@ describe('native warm pool operations', () => {
     await screen.findByText('Current default configuration');
     const summary = screen.getByText('Previous runtime pools (1)');
     expect(summary.closest('details')).not.toHaveAttribute('open');
-    const cards = screen.getAllByRole('article');
+    const cards = screen.getAllByRole('row', { name: /Warm pool/ });
     expect(cards[0]).toBeVisible();
     expect(cards[1]).toBeVisible();
     expect(cards[2]).not.toBeVisible();
     expect(screen.queryByText(/Previous runtime pools still/)).not.toBeInTheDocument();
     await user.click(summary);
     const previous = screen
-      .getAllByRole('article')
+      .getAllByRole('row', { name: /Warm pool/ })
       .find((row) => row.textContent?.includes(oldImage))!;
     expect(within(previous).queryByLabelText('Ready Sandbox target')).not.toBeInTheDocument();
     expect(
@@ -109,7 +177,7 @@ describe('native warm pool operations', () => {
     await screen.findByText(/Previous runtime pools still have spare capacity/);
     const history = screen.getByText('Previous runtime pools (1)').closest('details')!;
     expect(history).toHaveAttribute('open');
-    const card = within(history).getByRole('article');
+    const card = within(history).getByRole('row', { name: /Warm pool/ });
     expect(within(card).queryByRole('button', { name: 'Update target' })).not.toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: 'Disable pool' }));
     expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('previous', {
@@ -120,7 +188,7 @@ describe('native warm pool operations', () => {
       expect(within(card).getByRole('button', { name: 'Disable pool' })).toBeDisabled(),
     );
     expect(history).toHaveAttribute('open');
-    expect(within(card).getByText('Ready').nextElementSibling).toHaveTextContent('2');
+    expect(cell(card, 'Ready')).toHaveTextContent('2');
     expect(
       screen.getByText(/Previous runtime pools still have spare capacity/),
     ).toBeInTheDocument();
@@ -151,8 +219,9 @@ describe('native warm pool operations', () => {
     expect(screen.getByText('Previous runtime pools (1)').closest('details')).toHaveAttribute(
       'open',
     );
-    expect(screen.getByRole('article')).toBeVisible();
-    if (observation.error) expect(screen.getByRole('alert')).toHaveTextContent(observation.error);
+    expect(screen.getByRole('row', { name: /Warm pool/ })).toBeVisible();
+    if (observation.error)
+      expect(screen.getByText(observation.error)).toHaveAttribute('role', 'alert');
     expect(
       screen.getByText(/No warm pools configured for the current runtime/),
     ).toBeInTheDocument();
@@ -214,7 +283,7 @@ describe('native warm pool operations', () => {
       new ApiError(409, 'Pool target changed', 'warm_pool_conflict'),
     );
     render(<WarmPools client={client} />);
-    const card = await screen.findByRole('article');
+    const card = await screen.findByRole('row', { name: /Warm pool/ });
     fireEvent.change(within(card).getByLabelText('Ready Sandbox target'), {
       target: { value: '5' },
     });
@@ -230,15 +299,20 @@ describe('native warm pool operations', () => {
       default_image: warmPool.image,
       available: true,
     });
-    await user.click(within(card).getByRole('button', { name: 'Read current target' }));
+    await user.click(screen.getByRole('button', { name: 'Read current target' }));
     await waitFor(() =>
       expect(
-        within(screen.getByRole('article')).getByLabelText('Ready Sandbox target'),
+        within(screen.getByRole('row', { name: /Warm pool/ })).getByLabelText(
+          'Ready Sandbox target',
+        ),
       ).toHaveValue(6),
     );
-    fireEvent.change(within(screen.getByRole('article')).getByLabelText('Ready Sandbox target'), {
-      target: { value: '8' },
-    });
+    fireEvent.change(
+      within(screen.getByRole('row', { name: /Warm pool/ })).getByLabelText('Ready Sandbox target'),
+      {
+        target: { value: '8' },
+      },
+    );
     await user.click(screen.getByRole('button', { name: 'Update target' }));
     await waitFor(() =>
       expect(client.admin.resizeWarmPool).toHaveBeenLastCalledWith('pool-1', {
@@ -255,7 +329,7 @@ describe('native warm pool operations', () => {
     render(<WarmPools client={client} />);
     await user.click(await screen.findByRole('button', { name: 'Disable pool' }));
     await screen.findByText(/Read the current target before/);
-    expect(screen.getByRole('article')).toHaveTextContent(warmPool.image);
+    expect(screen.getByRole('row', { name: /Warm pool/ })).toHaveTextContent('Pending');
     expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled();
     client.admin.listWarmPools.mockRejectedValueOnce(new Error('Read unavailable'));
     await user.click(screen.getByRole('button', { name: 'Read current target' }));
@@ -270,7 +344,7 @@ describe('native warm pool operations', () => {
     const client = operatorClient();
     const user = userEvent.setup();
     render(<WarmPools client={client} />);
-    const card = await screen.findByRole('article');
+    const card = await screen.findByRole('row', { name: /Warm pool/ });
     fireEvent.change(within(card).getByLabelText('Ready Sandbox target'), {
       target: { value: '9' },
     });
@@ -312,7 +386,7 @@ describe('native warm pool operations', () => {
       )
       .mockResolvedValue(current);
     render(<WarmPools client={client} />);
-    await screen.findByRole('article');
+    await screen.findByRole('row', { name: /Warm pool/ });
     await user.click(screen.getByRole('button', { name: 'Refresh pools' }));
     await user.click(screen.getByRole('button', { name: 'Disable pool' }));
     await waitFor(() =>
@@ -323,8 +397,8 @@ describe('native warm pool operations', () => {
     });
     await waitFor(() => expect(client.admin.listWarmPools).toHaveBeenCalledTimes(3));
     expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled();
-    expect(within(screen.getByRole('article')).getByLabelText('Ready Sandbox target')).toHaveValue(
-      0,
-    );
+    expect(
+      within(screen.getByRole('row', { name: /Warm pool/ })).getByLabelText('Ready Sandbox target'),
+    ).toHaveValue(0);
   });
 });
