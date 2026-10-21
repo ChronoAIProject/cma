@@ -387,5 +387,5 @@ it.each([
   });
   test.show();
   await screen.findByText(/Your current access does not allow interaction/);
-  expect(document.querySelector('.agent-header__status')).toHaveTextContent(label);
+  expect(document.querySelector('.agent-header .badge')).toHaveTextContent(label);
 });

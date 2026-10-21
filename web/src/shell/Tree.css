@@ -157,6 +157,15 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* A person must act: the word takes the tone as well as the dot. */
+.tree-row__state[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.tree-row__state[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .tree-row__paused {
   display: inline-flex;
   width: 14px;
