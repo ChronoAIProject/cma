@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { hasChannelAddress, type Channel, type ChannelListItem } from './ChannelEditor';
-import { segment, ServiceError, serviceRequest } from './client';
+import { segment, ServiceError, serviceRequest, type Denied } from './client';
 
 /** Legacy records retain their original opaque address; never invent a replacement ID. */
 export function ExistingChannel({
@@ -11,7 +11,7 @@ export function ExistingChannel({
   children,
 }: {
   readonly channel: ChannelListItem;
-  readonly denied: () => void;
+  readonly denied: Denied;
   readonly children: (channel: Channel) => ReactNode;
 }) {
   const [resolved, setResolved] = useState<Channel>();
@@ -43,7 +43,7 @@ export function ExistingChannel({
           reason instanceof ServiceError &&
           [401, 403].includes(reason.status)
         )
-          denied();
+          denied(reason.status);
       })
       .finally(() => {
         if (!controller.signal.aborted) setBusy(false);
@@ -79,7 +79,8 @@ export function ExistingChannel({
                 setResolved(value);
               })
               .catch((reason: unknown) => {
-                if (reason instanceof ServiceError && [401, 403].includes(reason.status)) denied();
+                if (reason instanceof ServiceError && [401, 403].includes(reason.status))
+                  denied(reason.status);
                 setError(
                   reason instanceof Error ? reason.message : 'The channel could not be opened.',
                 );

@@ -51,10 +51,12 @@
   margin: 0;
 }
 
+/* Capped at the alert's width, so several actions wrap instead of running out of it. */
 .alert__actions {
   display: flex;
   flex: none;
   flex-wrap: wrap;
+  max-width: 100%;
   gap: 8px;
   align-items: center;
 }

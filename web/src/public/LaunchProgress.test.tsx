@@ -161,3 +161,47 @@ describe('three provisioning phases', () => {
     },
   );
 });
+
+describe('state dots', () => {
+  const dot = (element: HTMLElement) =>
+    element.querySelector('.statedot')?.getAttribute('data-state');
+  const word = (element: HTMLElement) => element.querySelector('.public-step__state');
+
+  it.each([
+    ['completed', 'done', 'Done', null],
+    ['running', 'ongoing', 'In progress', null],
+    ['pending', 'neutral', 'Waiting', null],
+    ['retryable', 'neutral', 'Waiting', null],
+    ['failed', 'error', "Didn't work", 'error'],
+  ] satisfies [LaunchStepStatus, string, string, string | null][])(
+    'draws a %s step with the %s dot beside its word',
+    (status, state, label, tone) => {
+      render(
+        <LaunchProgress
+          record={{ ...PUBLIC_RECORD, steps: [{ key: 'sandbox', status, safe_detail: '' }] }}
+        />,
+      );
+      const row = rows()[0]!;
+      expect(dot(row)).toBe(state);
+      expect(word(row)).toHaveTextContent(label);
+      expect(word(row)?.getAttribute('data-tone')).toBe(tone);
+      expect(row.querySelector('.landing__character')).toBeNull();
+    },
+  );
+
+  it('marks a step that needs the visitor with the warning dot and ink', () => {
+    render(
+      <LaunchProgress
+        record={{
+          ...PUBLIC_RECORD,
+          blocked_reason: { type: 'recovery_required' },
+          steps: [{ key: 'signing_in', status: 'blocked', safe_detail: '' }],
+        }}
+      />,
+    );
+    const notice = screen.getByRole('region', { name: 'Signing you in' });
+    expect(dot(notice)).toBe('warning');
+    expect(word(notice)).toHaveTextContent('Needs you');
+    expect(word(notice)).toHaveAttribute('data-tone', 'warning');
+  });
+});

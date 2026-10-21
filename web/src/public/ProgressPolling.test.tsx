@@ -169,13 +169,13 @@ describe('recorded progress polling', () => {
 
 describe('blocked preparation state', () => {
   it.each([
-    [{ type: 'sandbox_paused_reviving' }, 'In progress', 'running'],
-    [{ type: 'orchestration_paused' }, 'Paused by CMA', 'pending'],
-    [{ type: 'recovery_required' }, 'Needs you', 'pending'],
-    [{ type: 'connection_required', service: 'code' }, 'Needs you', 'pending'],
+    [{ type: 'sandbox_paused_reviving' }, 'In progress', 'ongoing'],
+    [{ type: 'orchestration_paused' }, 'Paused by CMA', 'neutral'],
+    [{ type: 'recovery_required' }, 'Needs you', 'warning'],
+    [{ type: 'connection_required', service: 'code' }, 'Needs you', 'warning'],
   ] satisfies [LaunchBlockedReason, string, string][])(
     'shows %j as %s without requesting visitor action for automatic revival',
-    async (blockedReason, label, characterState) => {
+    async (blockedReason, label, dotState) => {
       const client = publicClient();
       vi.mocked(client.requests.read).mockResolvedValue({
         ...PUBLIC_RECORD,
@@ -189,11 +189,71 @@ describe('blocked preparation state', () => {
       const row = (await screen.findByRole('heading', { name: 'Sandbox ready' })).closest('li');
       expect(row).not.toBeNull();
       expect(within(row!).getByText(label)).toBeInTheDocument();
-      expect(row?.querySelector('.landing__character')).toHaveAttribute(
-        'data-state',
-        characterState,
-      );
+      // Rows draw the in-app state dot, never the brand character.
+      expect(row?.querySelector('.landing__character')).toBeNull();
+      expect(row?.querySelector('.statedot')).toHaveAttribute('data-state', dotState);
       unmount();
     },
   );
+});
+
+describe('overall state and failure', () => {
+  it.each([
+    [{ state: 'sandbox_pending' }, 'In progress', 'active'],
+    [{ state: 'draft' }, 'Needs you', 'warning'],
+    [{ state: 'cancelled' }, 'Cancelled', 'muted'],
+    [{ state: 'failed_terminal' }, "Didn't work", 'error'],
+    [
+      { state: 'sandbox_pending', blocked_reason: { type: 'orchestration_paused' } },
+      'Paused by CMA',
+      'muted',
+    ],
+  ] satisfies [Partial<Launch>, string, string][])(
+    'announces %j as a %s badge',
+    async (change, word, tone) => {
+      const client = publicClient();
+      vi.mocked(client.requests.read).mockResolvedValue({ ...PUBLIC_RECORD, ...change });
+      const { unmount } = render(
+        <Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />,
+      );
+      await screen.findByRole('heading', { name: 'Sandbox ready' });
+      const badge = screen
+        .getAllByRole('status')
+        .find((element) => element.classList.contains('badge'));
+      expect(badge).toHaveTextContent(word);
+      expect(badge).toHaveAttribute('data-tone', tone);
+      unmount();
+    },
+  );
+
+  it('puts every recovery action on the failure alert, in visitor words', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.read).mockResolvedValue({
+      ...PUBLIC_RECORD,
+      state: 'failed_terminal',
+      failure: {
+        code: 'launch_failed',
+        safe_detail: 'internal detail',
+        retryable: false,
+        occurred_at: PUBLIC_RECORD.updated_at,
+      },
+    });
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveAttribute('data-tone', 'error');
+    for (const name of ['Check again', 'Start over', 'Copy support code'])
+      expect(within(alert).getByRole('button', { name })).toBeInTheDocument();
+    expect(alert).not.toHaveTextContent('internal detail');
+    expect(alert).not.toHaveTextContent(/launch/i);
+  });
+
+  it('reserves the timeline while the first read is pending', () => {
+    const client = publicClient();
+    vi.mocked(client.requests.read).mockReturnValue(new Promise(() => undefined));
+    const { container } = render(
+      <Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />,
+    );
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(container.querySelector('.landing__character')).toBeNull();
+  });
 });

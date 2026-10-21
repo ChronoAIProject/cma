@@ -1,4 +1,5 @@
 import { ApiError, type Bot, type BotAdmission, type Cma } from '@chronoai/cma-sdk';
+import type { StatusTone } from '../vocabulary/status';
 
 export interface BotClient {
   readonly eventWorkerProfiles?: Cma['eventWorkerProfiles'];
@@ -22,6 +23,18 @@ export const stateLabels: Record<Bot['state'], string> = {
   failed: 'Needs attention',
   deleting: 'Deleting',
   deleted: 'Deleted',
+};
+/**
+ * How each consumer state is drawn — `docs/Web_Style.md` §12.1. An Active
+ * consumer is settled, like a Ready Agent, not the accent of one that is busy.
+ */
+export const stateTones: Record<Bot['state'], StatusTone> = {
+  creating: 'active',
+  active: 'neutral',
+  disabled: 'muted',
+  failed: 'error',
+  deleting: 'active',
+  deleted: 'muted',
 };
 const steps: Record<string, string> = {
   admitted: 'Waiting to start',
