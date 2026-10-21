@@ -22,6 +22,8 @@ mod agent_access_requests_tests;
 mod agent_artifacts;
 mod agent_attachments;
 pub use agent_attachments::agent_attachments_router;
+mod agent_filesystem;
+pub use agent_filesystem::agent_filesystem_router;
 mod agent_observation_shapes;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;
@@ -51,6 +53,7 @@ mod agent_history;
 mod agent_lifecycle;
 #[cfg(test)]
 mod agent_provenance_tests;
+mod agent_share_links;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;

@@ -7,6 +7,7 @@
 mod adapter;
 mod agent;
 mod agent_attachment;
+mod agent_filesystem;
 mod agent_skill_install;
 pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
@@ -122,4 +123,10 @@ pub use workspace_removal::{
 pub use agent_attachment::{
     AgentAttachmentReceipt, AgentAttachmentRequest, AgentAttachmentUpload,
     AGENT_ATTACHMENT_DIRECTORY, MAX_AGENT_ATTACHMENT_BYTES,
+};
+pub use agent_filesystem::{
+    valid_identity as valid_agent_filesystem_identity, valid_path as valid_agent_file_path,
+    AgentFileDeleteReceipt, AgentFileDeleteRequest, AgentFileEntry, AgentFileKind,
+    AgentFileListReceipt, AgentFileListRequest, AgentFileReadReceipt, AgentFileReadRequest,
+    AgentFileWriteReceipt, AgentFileWriteRequest, MAX_AGENT_FILE_BYTES, MAX_AGENT_FILE_ENTRIES,
 };

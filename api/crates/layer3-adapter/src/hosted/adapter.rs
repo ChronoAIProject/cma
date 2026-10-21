@@ -32,6 +32,8 @@ mod checkpoint;
 mod context;
 #[path = "adapter_exchange.rs"]
 mod exchange;
+#[path = "adapter_filesystem.rs"]
+mod filesystem;
 #[path = "adapter_install.rs"]
 mod install;
 #[path = "adapter_provider_tools.rs"]

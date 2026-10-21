@@ -25,3 +25,81 @@ async fn attachment_upload_reaches_the_hosted_authority_checks() {
         crate::AdapterError::Unavailable(_) | crate::AdapterError::Rejected(_)
     ));
 }
+
+#[tokio::test]
+async fn filesystem_operations_reach_hosted_authority_checks() {
+    let (adapter, _) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let handle = RuntimeHandle::new("unadopted");
+    let errors = [
+        adapter
+            .list_agent_files(
+                &handle,
+                &crate::AgentFileListRequest {
+                    owner_access: true,
+                    protected_paths: Vec::new(),
+                    sandbox_id: "sandbox".into(),
+                    runtime_generation: 1,
+                    boot_id: "a".repeat(32),
+                    path: String::new(),
+                },
+            )
+            .await
+            .unwrap_err(),
+        adapter
+            .read_agent_file(
+                &handle,
+                &crate::AgentFileReadRequest {
+                    owner_access: true,
+                    protected_paths: Vec::new(),
+                    sandbox_id: "sandbox".into(),
+                    runtime_generation: 1,
+                    boot_id: "a".repeat(32),
+                    path: "file".into(),
+                    max_bytes: 1024,
+                },
+            )
+            .await
+            .unwrap_err(),
+        adapter
+            .write_agent_file(
+                &handle,
+                &crate::AgentFileWriteRequest {
+                    owner_access: true,
+                    protected_paths: Vec::new(),
+                    sandbox_id: "sandbox".into(),
+                    runtime_generation: 1,
+                    boot_id: "a".repeat(32),
+                    path: "file".into(),
+                    expected_sha256: None,
+                    content_base64: String::new(),
+                    directory: false,
+                },
+            )
+            .await
+            .unwrap_err(),
+        adapter
+            .delete_agent_file(
+                &handle,
+                &crate::AgentFileDeleteRequest {
+                    owner_access: true,
+                    protected_paths: Vec::new(),
+                    sandbox_id: "sandbox".into(),
+                    runtime_generation: 1,
+                    boot_id: "a".repeat(32),
+                    path: "file".into(),
+                    recursive: false,
+                },
+            )
+            .await
+            .unwrap_err(),
+    ];
+    for error in errors {
+        assert!(
+            matches!(
+                error,
+                crate::AdapterError::Unavailable(_) | crate::AdapterError::Rejected(_)
+            ),
+            "{error:?}"
+        );
+    }
+}

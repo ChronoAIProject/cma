@@ -44,6 +44,7 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
         .merge(hierarchy.router)
         .merge(events.router)
         .merge(access)
+        .merge(rest::resource_access_router(events.access.clone()))
         .merge(rest::agent_models_router(
             agents.state.reads.clone(),
             Arc::new(NoProviderCalls),
@@ -51,6 +52,11 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
         ))
         .merge(rest::agent_attachments_router(
             AgentAttachmentService::with_writer(events.access.clone(), Arc::new(NoProviderCalls)),
+        ))
+        .merge(rest::agent_filesystem_router(
+            layer2_core::sandbox::agent_filesystem::AgentFileService::for_route_tests(
+                events.access.clone(),
+            ),
         ))
         .merge(rest::agent_artifacts_router(AgentArtifactService::new(
             events.store,
