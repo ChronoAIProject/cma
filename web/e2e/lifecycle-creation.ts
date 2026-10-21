@@ -7,11 +7,17 @@ export interface LifecycleWorkspace {
   path: string;
 }
 
+/** The Workspaces tab row whose path is exactly this Workspace's, and its New agent here. */
 export function workspaceAgentButton(page: Page, workspace: LifecycleWorkspace) {
   return page
-    .locator('.sandbox-page__workspace')
+    .locator('.sandbox-table tbody tr')
     .filter({ has: page.getByText(workspace.path, { exact: true }) })
-    .getByRole('button', { name: 'New agent', exact: true });
+    .getByRole('button', { name: /^New agent in / });
+}
+
+/** Workspace rows live in the Sandbox page's Workspaces tab. */
+export async function openWorkspacesTab(page: Page) {
+  await page.getByRole('tab', { name: 'Workspaces', exact: true }).click();
 }
 
 export async function createToRevive(
@@ -44,6 +50,7 @@ export async function createToRevive(
   });
   try {
     await page.reload();
+    await openWorkspacesTab(page);
     await workspaceAgentButton(page, workspace).click();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await dialog.getByRole('button', { name: 'Continue', exact: true }).click();

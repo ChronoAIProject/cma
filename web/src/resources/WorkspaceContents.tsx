@@ -1,7 +1,7 @@
 import { useAccessSummaries } from './useAccessSummaries';
 import { SkeletonRows } from '../ui/Skeleton';
 import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSummary';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
@@ -71,12 +71,18 @@ export function WorkspaceContents({
   client,
   id,
   sandboxId,
+  personal,
   onNavigate,
   onAccessChanged,
 }: {
   readonly client: ResourceViewsClient;
   readonly id: string;
   readonly sandboxId?: string;
+  /**
+   * The owner's own page, shown instead of this shared projection once the
+   * accessible read classifies the Workspace as the viewer's own.
+   */
+  readonly personal?: ReactNode;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAccessChanged?: () => void;
 }) {
@@ -97,26 +103,41 @@ export function WorkspaceContents({
     [client, id, sandboxId, onAccessChanged],
   );
   const current = useAuthorizedRead(read);
-  const accessSummaries = useAccessSummaries(
-    client,
-    'agent',
-    current.state.status === 'ready'
+  // Once classified as the viewer's own, stay on the owner page while access
+  // is revalidated, so its state and reads are not torn down each time; only
+  // a failed check returns to this classification.
+  const [knownPersonal, setKnownPersonal] = useState<{ client: ResourceViewsClient; id: string }>();
+  const owned =
+    personal !== undefined &&
+    sandboxId === undefined &&
+    current.state.status === 'ready' &&
+    current.state.value.detail.access !== 'shared';
+  if (owned && (knownPersonal?.client !== client || knownPersonal.id !== id))
+    setKnownPersonal({ client, id });
+  if (knownPersonal !== undefined && current.state.status === 'error') setKnownPersonal(undefined);
+  const showPersonal =
+    owned ||
+    (knownPersonal?.client === client &&
+      knownPersonal.id === id &&
+      current.state.status !== 'error');
+  // The shared projection's per-Agent facts are not read for the owner page.
+  const sharedAgents =
+    current.state.status === 'ready' && !showPersonal
       ? current.state.value.detail.agents.map((agent) => agent.id)
-      : [],
-    id,
-  );
+      : [];
+  const accessSummaries = useAccessSummaries(client, 'agent', sharedAgents, id);
   const channelFacts = useChannelFacts(
     client,
-    current.state.status === 'ready'
-      ? current.state.value.detail.agents.map((agent) => agent.id)
-      : [],
-    current.state.status === 'ready',
+    sharedAgents,
+    current.state.status === 'ready' && !showPersonal,
   );
+  // The owner page names its own tab.
   useDocumentTitle(
-    sandboxId === undefined && current.state.status === 'ready'
+    sandboxId === undefined && !showPersonal && current.state.status === 'ready'
       ? current.state.value.detail.name
       : undefined,
   );
+  if (showPersonal) return personal;
   if (current.state.status === 'loading')
     return <SkeletonRows rows={2} label="Loading authorized Workspace" />;
   if (current.state.status === 'error')
