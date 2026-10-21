@@ -124,7 +124,8 @@ export function ServicePage({
           </a>
         </section>
       ) : state.forbidden ? (
-        <section className="service-panel">
+        // The alert is the whole answer; a panel around it would draw a second edge.
+        <section className="service-forbidden">
           <Alert
             tone="warning"
             title={`Your account doesn't have ${name} permissions.`}
