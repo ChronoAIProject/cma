@@ -2560,16 +2560,16 @@ never an increase. Disabling spare capacity does not interrupt claimed Sandboxes
 
 ### Composer settings and message feedback (2026-10-20)
 
-Model, reasoning effort and permission mode belong beside the composer, between
-its text input and the Send/Stop column, rather than in Agent Details. Use the
+Model, reasoning effort and permission mode belong with the composer, in a
+dedicated row directly below its text input at every width, rather than in Agent
+Details. Use the
 shared small value pickers, with the selected value visible and full accessible
 labels. Arrange them in a compact horizontal group with existing 4px gaps;
 truncate long model names within 120px. Keep the current owner, runtime capability,
 turn-idle, explicit Apply and same-request recovery rules. Only a changed draft
 or retained update shows Apply/Retry; changes never submit conversation input.
-At Agent panel widths of 48rem or less, the controls wrap into a dedicated row
-below the text input, before usage, leaving Send/Stop and steering aligned in
-their action column. At 30rem or less, retain 44px touch targets and let the
+The row sits before usage, leaving Send/Stop and steering aligned in their action
+column, so the draft always keeps the full flexible column. At 30rem or less, retain 44px touch targets and let the
 three controls share the full input row. Preserve typed drafts, attachments,
 queue/interrupt behavior, and input-aligned Context/Total tokens.
 
@@ -2597,12 +2597,12 @@ timestamps but cannot vote as the owner. Honor reduced motion and preserve focus
 
 | 2026-10-20 | Request negotiated server live-fragment observation timestamps for streaming message footers, preserve the first observation during text growth, and replace it with recorded message time on commit. Existing strict clients keep their prior wire shape; older servers without timestamps retain the explicit unavailable-time fallback. |
 
-The desktop composer settings group is capped at 320px so catalog errors and
-long values wrap without pushing the message field out of view. Its narrow-screen
-row uses the available width. In the smallest layout the settings row follows
+The composer settings row uses the available input width, so catalog errors and
+long values wrap below the controls without narrowing the message field. In the smallest layout the settings row follows
 input-aligned usage, allowing all three controls their full touch targets.
 
 | 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
 | 2026-10-21 | Moved both appearances onto a shadcn/ui-based neutral system: one `zinc` ramp for grounds, borders and labels, Chrono lime kept as the brand and accent (`lime 800` in light, where the bright step cannot carry text), a `zinc 900` light primary and lime dark primary, neutral low-alpha light shadows, inverted tooltips, and one interface/code pairing, Geist and Geist Mono, in both appearances. Kept every alias and specific name and the three-tier architecture so every surface re-inks without a migration vocabulary; the earlier ramps and faces stay declared only for remaining static and brand-asset consumers. Regenerated the §2 alias contract from the shipped sheet so the tables cannot drift from it. |
 | 2026-10-21 | Let the signed-out product name wrap with balanced lines when its column is narrower than the name. The unbroken line overflowed its 360px grid column between 761px and about 1040px, where the services cards covered it, and widened a phone's grid past the viewport. Restored the lockup's documented 144px top reservation so the cloud invitation no longer clips above the viewport. |
 | 2026-10-21 | Rebuilt the signed-out home around one visible primary action. The character had been the only way in, its Get Started name never appeared on screen and its invitation waited five seconds, so §20 now specifies a hero with the product name as `h1`, a one-sentence value line, Get Started, a NyxID caption that announces progress, three How it works steps and service cards that return to their service after sign-in. Image Manager is marked Coming soon until its route exists. The character stays as a companion without the cloud. Copy never names the agent provider. |
+| 2026-10-21 | Moved the composer settings into their own row under the input at every width. Beside the input, an `auto` grid track grew to the longest settings explanation and squeezed a 1440px desktop draft to about 120px; below the input the draft keeps the full flexible column, as narrow layouts already did. |
