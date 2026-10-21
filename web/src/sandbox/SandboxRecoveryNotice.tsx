@@ -1,5 +1,5 @@
 import type { SandboxDetail } from '../api/types';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import { Presence } from '../ui/Presence';
@@ -69,10 +69,10 @@ export function SandboxRecoveryNotice({
             aria-label="Sandbox recovery"
             data-state={failed ? 'failed' : completion.completed ? 'complete' : 'recovering'}
           >
-            <div className="sandbox-recovery__character" aria-hidden="true">
-              <LandingCharacter
-                compact
-                state={failed ? 'failed' : completion.completed ? 'completed' : 'running'}
+            <div className="sandbox-recovery__icon" aria-hidden="true">
+              <StateDot
+                size={10}
+                state={failed ? 'error' : completion.completed ? 'done' : 'ongoing'}
               />
             </div>
             <div className="sandbox-recovery__content">
