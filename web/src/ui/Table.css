@@ -43,7 +43,12 @@
 .table__grid td {
   height: 52px;
   padding: 8px 16px;
-  overflow-wrap: anywhere;
+  /*
+   * Break only a word that cannot fit at all. "anywhere" also shrinks each
+   * column's minimum width, so words and numbers split mid-letter ("Unknow n")
+   * instead of the box scrolling; an opaque id that should break opts in.
+   */
+  overflow-wrap: break-word;
   vertical-align: middle;
 }
 
@@ -71,10 +76,12 @@
   font-size: 0.8125rem;
 }
 
+/* A row's commands stay on its one line; the box scrolls before they stack. */
 .table__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  white-space: nowrap;
   align-items: center;
   justify-content: flex-end;
 }
