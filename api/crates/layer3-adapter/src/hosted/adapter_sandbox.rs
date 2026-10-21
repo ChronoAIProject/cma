@@ -11,6 +11,38 @@ impl SandboxAdapter for HostedAdapter {
         self.upload_attachment(handle, request, content).await
     }
 
+    async fn list_agent_files(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileListRequest,
+    ) -> crate::Result<crate::AgentFileListReceipt> {
+        self.list_files(handle, request).await
+    }
+
+    async fn read_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileReadRequest,
+    ) -> crate::Result<crate::AgentFileReadReceipt> {
+        self.read_file(handle, request).await
+    }
+
+    async fn write_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileWriteRequest,
+    ) -> crate::Result<crate::AgentFileWriteReceipt> {
+        self.write_file(handle, request).await
+    }
+
+    async fn delete_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileDeleteRequest,
+    ) -> crate::Result<crate::AgentFileDeleteReceipt> {
+        self.delete_file(handle, request).await
+    }
+
     async fn reserve_home_request(
         &self,
         runtime: &RuntimeProvisionRequest,
@@ -170,35 +202,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &RestoreBootstrapRequest,
     ) -> crate::Result<RestoreBootstrapReceipt> {
-        let state = self.known_state(handle).await?;
-        if request.sandbox_id != state.provision.sandbox_id
-            || request.operation_id.trim().is_empty()
-            || request.operation_id.len() > 256
-            || request.operation_id.chars().any(char::is_control)
-            || !request.has_valid_sha256()
-            || !request.checkpoint.has_valid_reference()
-        {
-            return Err(AdapterError::Rejected(
-                "restore bootstrap identity is invalid".into(),
-            ));
-        }
-        match self
-            .exchange(handle, RequestFrame::BootstrapRestore(request.clone()))
-            .await?
-        {
-            ResponseFrame::BootstrapRestore(receipt)
-                if receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256
-                    && receipt.restore_request_sha256 == request.checkpoint.computed_sha256()
-                    && receipt.installation_inherited =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::BootstrapRestore(_) => Err(AdapterError::Rejected(
-                "runtime did not acknowledge the exact restore bootstrap".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        self.bootstrap_restore_exact(handle, request).await
     }
 
     async fn deliver_credential(
@@ -425,23 +429,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         request: &CheckpointRequest,
     ) -> crate::Result<CheckpointReceipt> {
-        self.known_state(handle).await?;
-        match self
-            .exchange(handle, RequestFrame::Checkpoint(request.clone()))
-            .await?
-        {
-            ResponseFrame::Checkpoint(receipt)
-                if receipt.epoch == request.epoch
-                    && valid_checkpoint_reference(&receipt.object_reference, &receipt.sha256)
-                    && receipt.writers == WriterState::Resumed =>
-            {
-                Ok(receipt)
-            }
-            ResponseFrame::Checkpoint(_) => Err(AdapterError::Rejected(
-                "runtime returned an invalid checkpoint receipt".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        self.checkpoint_exact(handle, request).await
     }
 
     async fn checkpoint_for_teardown(
