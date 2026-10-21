@@ -1,6 +1,7 @@
 import { Console } from './Console';
 import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
+import { ShellLoading } from './ui/Skeleton';
 import { SignInLanding } from './landing/SignInLanding';
 import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
@@ -158,7 +159,7 @@ function AgentApp({
   }
 
   if (state.status === 'checking') {
-    return <BrandLoading label="Signing you in" />;
+    return <ShellLoading label="Signing you in" />;
   }
   if (state.status === 'error') {
     return (

@@ -1,4 +1,5 @@
 import { useAccessSummaries } from './useAccessSummaries';
+import { SkeletonRows } from '../ui/Skeleton';
 import { ResourceAccessSummary } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
 import type {
@@ -204,7 +205,9 @@ function Inventory({ client, organization, shared, onNavigate }: Props) {
         ) : null}
       </div>
       <div className="agent-inventory__body">
-        {inventory.state.status === 'loading' ? <p role="status">Loading Agents</p> : null}
+        {inventory.state.status === 'loading' ? (
+          <SkeletonRows rows={5} label="Loading Agents" />
+        ) : null}
         {inventory.state.status === 'error' ? (
           <div role="alert">
             <p>{inventory.state.message}</p>

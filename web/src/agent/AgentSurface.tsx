@@ -1,4 +1,5 @@
 import { Presence } from '../ui/Presence';
+import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
@@ -23,7 +24,6 @@ import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
-import { BrandLoading } from '../landing/LandingCharacter';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
@@ -138,7 +138,7 @@ export function AgentSurface({
       <section className="agent-surface agent-surface--loading" aria-busy="true">
         <PageHeader placement="agent-header" title="Agent" headingRef={headingRef} />
         <div className="agent-loading">
-          <BrandLoading label="Opening your agent" />
+          <SkeletonRows rows={4} label="Opening your agent" />
         </div>
       </section>
     );
