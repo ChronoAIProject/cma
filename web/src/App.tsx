@@ -13,6 +13,7 @@ import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useState } from 'react';
 import { Presence } from './ui/Presence';
+import { Button } from './ui/Button';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
@@ -165,8 +166,12 @@ function AgentApp({
   if (state.status === 'error') {
     return (
       <main className="app-error" role="alert">
+        <h1 className="app-error__title">CMA could not reach its service</h1>
+        <p className="app-error__next">It may be starting up. Reload to try again.</p>
+        <Button variant="primary" onClick={() => window.location.reload()}>
+          Reload
+        </Button>
         <p className="app-error__what">{state.message}</p>
-        <p className="app-error__next">Reload the page to try again.</p>
       </main>
     );
   }
@@ -244,7 +249,7 @@ function AgentApp({
 function ConnectionReturnPage() {
   return (
     <main className="app-error">
-      <p className="app-error__what">Returning to CMA</p>
+      <h1 className="app-error__title">Returning to CMA</h1>
       <p className="app-error__next">
         CMA is checking your connection. Your next sign-in will open here, or this window will close
         when all services are ready. If nothing happens, return to the CMA window to continue.
