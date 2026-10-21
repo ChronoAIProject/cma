@@ -96,9 +96,9 @@
   display: inline-flex;
 }
 
+/* The settings place their own pieces in this grid (ComposerSettings.css). */
 .agent-composer__settings {
-  grid-area: model;
-  min-width: 0;
+  display: contents;
 }
 
 .agent-composer__steering {

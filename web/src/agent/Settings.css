@@ -1,9 +1,3 @@
-.agent-settings,
-.agent-settings-fields {
-  display: grid;
-  gap: 14px;
-}
-.agent-settings-fields label,
 .agent-settings-scopes {
   display: grid;
   gap: 6px;
@@ -56,52 +50,4 @@
 }
 .agent-settings-scopes small {
   color: var(--dsw-alias-label-secondary);
-}
-
-.agent-settings-fields > label {
-  min-width: 0;
-}
-.agent-settings-fields__picker {
-  display: flex;
-  min-width: 0;
-}
-.agent-settings-fields__picker > button {
-  width: 100%;
-}
-
-.agent-settings--compact {
-  gap: 8px;
-  min-width: 0;
-  font-size: 12px;
-  line-height: 18px;
-}
-.agent-settings--compact > p,
-.agent-settings--compact > div[role] > p {
-  margin: 0;
-  color: var(--dsw-alias-label-caption);
-  overflow-wrap: anywhere;
-}
-.agent-settings-fields--compact {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-}
-.agent-settings-fields--compact > label {
-  max-width: 120px;
-}
-
-@container agent-conversation (max-width: 48rem) {
-  .agent-settings-fields--compact {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .agent-settings-fields--compact > label {
-    max-width: none;
-  }
-}
-
-@container agent-conversation (max-width: 30rem) {
-  .agent-settings-fields--compact .button {
-    min-height: 44px;
-  }
 }
