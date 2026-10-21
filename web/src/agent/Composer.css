@@ -1,0 +1,242 @@
+/*
+ * The composer — `docs/Web_Style.md` §13.
+ *
+ * One rounded box holds the draft and, along its bottom edge, every control
+ * that acts on it. The box grows upward with a long draft and pushes the
+ * conversation rather than covering it, so nothing the owner is reading is
+ * hidden by what they are typing.
+ */
+
+.agent-composer {
+  grid-row: 4;
+  padding: 8px 15% 16px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.agent-composer__notice {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-left: 2px solid var(--dsw-alias-state-warn-primary);
+  border-radius: 6px;
+}
+
+.agent-composer__form {
+  min-width: 0;
+}
+
+/*
+ * The floating-card ground: white in light, layer 2 in dark — the composer
+ * reads as a raised surface on both, as the menu card does.
+ */
+.agent-composer__box {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dsw-specific-menu);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  box-shadow: var(--dsw-shadow-lv1);
+  transition: border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.agent-composer__box:focus-within {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.agent-composer textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  max-height: min(336px, 40dvh);
+  padding: 8px 16px;
+  overflow-y: auto;
+  resize: none;
+  color: var(--dsw-alias-label-primary);
+  caret-color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-family);
+  font-size: 16px;
+  line-height: 24px;
+  background: transparent;
+  border: 0;
+}
+
+.agent-composer textarea:focus-visible {
+  box-shadow: none;
+}
+
+.agent-composer textarea::placeholder {
+  color: var(--dsw-alias-label-caption);
+}
+
+/*
+ * Grid areas rather than source order, so a narrow row can wrap into two
+ * lines while Send stays at the far end. Absent controls leave their auto
+ * track empty.
+ */
+.agent-composer__controls {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas:
+    'attach permission steering . model ring send'
+    'status status status status status status status';
+  align-items: center;
+  column-gap: 4px;
+  min-width: 0;
+  padding: 0 8px 8px;
+}
+
+.agent-composer__attach {
+  grid-area: attach;
+  display: inline-flex;
+}
+
+/* The settings place their own pieces in this grid (ComposerSettings.css). */
+.agent-composer__settings {
+  display: contents;
+}
+
+.agent-composer__steering {
+  grid-area: steering;
+}
+
+.agent-composer__ring {
+  grid-area: ring;
+  display: inline-flex;
+}
+
+.agent-composer__actions {
+  grid-area: send;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-composer .agent-composer__submit {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+/* Nothing to send yet: a neutral circle, not a faded accent. */
+.agent-composer .agent-composer__submit:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.agent-composer .agent-composer__submit--stop {
+  background: var(--dsw-alias-label-primary);
+}
+
+/* A chip is a quiet control inside the box: no border, a hover wash. */
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.composer-chip:hover:not(:disabled),
+.composer-chip[aria-expanded='true'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.composer-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.composer-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.composer-chip svg {
+  flex: none;
+}
+
+.composer-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-chip__caret {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Use the space left by the sidebar, not only the browser viewport. */
+@container agent-conversation (max-width: 48rem) {
+  .agent-composer {
+    padding-inline: 24px;
+  }
+}
+
+@container agent-conversation (max-width: 30rem) {
+  .agent-composer {
+    padding: 8px 14px 10px;
+  }
+
+  /* Icons carry the chips here; their names stay their accessible names. */
+  .agent-composer__steering .composer-chip__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .agent-composer__controls[data-steering] {
+    grid-template-areas:
+      'attach permission steering . . . .'
+      '. . . . model ring send'
+      'status status status status status status status';
+  }
+}
+
+@media (max-width: 30rem) {
+  .agent-composer .agent-composer__submit,
+  .composer-chip {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .agent-composer .agent-composer__submit {
+    width: 44px;
+  }
+
+  .composer-chip {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-composer__box,
+  .composer-chip {
+    transition: none;
+  }
+}

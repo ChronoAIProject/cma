@@ -177,9 +177,8 @@ export function SharedAgent({
         ]}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={onDetailsOpenChange}
-      >
-        <p className="agent-header__source">{creationLabel(provenance)}</p>
-      </AgentHeader>
+        menu={[{ type: 'label', id: 'creation-origin', text: creationLabel(provenance) }]}
+      />
       <div className="agent-surface__alerts">
         {history.state.status === 'loading' ? (
           <Alert tone="info">Loading authorized Agent history</Alert>

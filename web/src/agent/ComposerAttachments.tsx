@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
-import { IconCloseOutline16, IconPaperclipOutline16 } from '../ui/icons';
+import { IconCloseOutline16, IconPaperclipOutline16, IconPlusOutline16 } from '../ui/icons';
 import type { DraftAttachment } from './attachments';
 import './ComposerAttachments.css';
 
@@ -116,7 +116,7 @@ export function ComposerAttachmentPicker({
       />
       <Button
         size="sm"
-        icon={<IconPaperclipOutline16 />}
+        icon={<IconPlusOutline16 />}
         disabled={!enabled || locked}
         aria-label="Attach files"
         title="Attach files, paste images or drop files (up to 20 MiB each)"

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Menu } from '../ui/Menu';
-import { IconChevronDownOutline14 } from '../ui/icons';
+import { IconChevronDownOutline14, IconQueueOutline14, IconSendOutline14 } from '../ui/icons';
 
 export type SteeringMode = 'interrupt' | 'queue';
 
@@ -18,7 +18,7 @@ export function SteeringModePicker({
   return (
     <Menu
       open={open && !disabled}
-      placement="agent-composer__mode"
+      placement="agent-composer__steering"
       side="top"
       align="end"
       dense
@@ -40,7 +40,7 @@ export function SteeringModePicker({
       anchor={
         <button
           type="button"
-          className="agent-composer__mode-button"
+          className="composer-chip"
           aria-label={`Steering mode: ${label}`}
           aria-haspopup="menu"
           aria-expanded={open && !disabled}
@@ -52,8 +52,9 @@ export function SteeringModePicker({
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}
         >
-          {label}
-          <IconChevronDownOutline14 />
+          {value === 'queue' ? <IconQueueOutline14 /> : <IconSendOutline14 />}
+          <span className="composer-chip__label">{label}</span>
+          <IconChevronDownOutline14 className="composer-chip__caret" />
         </button>
       }
     />

@@ -34,51 +34,85 @@ describe('conversation geometry with readable labels', () => {
     );
   });
 
-  it('centers the compact composer field and lets its editor expand upward', () => {
-    const rules = sheet('Agent.css');
-    const capsule = declaration(rules, '.agent-composer__capsule');
-    expect(capsule.getPropertyValue('height')).toBe('38px');
-    expect(capsule.getPropertyValue('position')).toBe('relative');
-    const editor = declaration(rules, '.agent-composer__editor');
-    expect(editor.getPropertyValue('position')).toBe('absolute');
-    expect(editor.getPropertyValue('bottom')).toBe('0px');
-    expect(editor.getPropertyValue('background')).toBe('var(--dsw-specific-input-major)');
+  it('draws the composer as one rounded box whose draft grows to a cap and scrolls', () => {
+    const rules = sheet('Composer.css');
+    const box = declaration(rules, '.agent-composer__box');
+    expect(box.getPropertyValue('border-radius')).toBe('16px');
+    expect(box.getPropertyValue('border')).toBe('1px solid var(--dsw-alias-border-l2)');
+    expect(box.getPropertyValue('background')).toBe('var(--dsw-specific-menu)');
+    expect(box.getPropertyValue('box-shadow')).toBe('var(--dsw-shadow-lv1)');
     const field = declaration(rules, '.agent-composer textarea');
-    expect(field.getPropertyValue('max-height')).toBe('36px');
-    expect(field.getPropertyValue('padding')).toBe('6px 12px 6px 16px');
+    expect(field.getPropertyValue('min-height')).toBe('40px');
+    expect(field.getPropertyValue('max-height')).toBe('min(336px, 40dvh)');
+    expect(field.getPropertyValue('overflow-y')).toBe('auto');
+    expect(field.getPropertyValue('padding')).toBe('8px 16px');
     expect(field.getPropertyValue('font-size')).toBe('16px');
     expect(field.getPropertyValue('line-height')).toBe('24px');
     expect(
       declaration(rules, '.agent-composer textarea::placeholder').getPropertyValue('color'),
     ).toBe('var(--dsw-alias-label-caption)');
+    expect(
+      declaration(rules, '.agent-composer__controls')
+        .getPropertyValue('grid-template-areas')
+        .replace(/\s+/g, ' '),
+    ).toBe(
+      "'attach permission steering . model ring send' 'status status status status status status status'",
+    );
   });
 
-  it('uses compact 32px Send and Stop controls with 44px mobile targets', () => {
-    const rules = sheet('Agent.css');
+  it('uses a 28px Send circle with 44px mobile targets and a neutral empty state', () => {
+    const rules = sheet('Composer.css');
     const submit = declaration(rules, '.agent-composer .agent-composer__submit');
-    expect(submit.getPropertyValue('width')).toBe('32px');
-    expect(submit.getPropertyValue('height')).toBe('32px');
+    expect(submit.getPropertyValue('width')).toBe('28px');
+    expect(submit.getPropertyValue('height')).toBe('28px');
     expect(submit.getPropertyValue('border-radius')).toBe('50%');
+    const empty = declaration(rules, '.agent-composer .agent-composer__submit:disabled');
+    expect(empty.getPropertyValue('background')).toBe('var(--dsw-alias-bg-layer-3)');
+    expect(empty.getPropertyValue('opacity')).toBe('1');
     const media = Array.from(rules).find(
       (rule) => rule instanceof CSSMediaRule && rule.conditionText === '(max-width: 30rem)',
     ) as CSSMediaRule;
     const narrow = declaration(media.cssRules, '.agent-composer .agent-composer__submit');
     expect(narrow.getPropertyValue('width')).toBe('44px');
-    expect(narrow.getPropertyValue('height')).toBe('44px');
-    expect(narrow.getPropertyValue('justify-self')).toBe('center');
   });
 
-  it('retains the original 12px gaps in both metrics rows', () => {
+  it('retains the original 12px gap and track in the resource metrics row', () => {
     const rules = sheet('Resources.css');
-    const usage = declaration(rules, '.agent-instruments__usage');
     const resources = declaration(rules, '.resources');
-    expect(usage.getPropertyValue('grid-template-columns')).toBe('repeat(2, minmax(0, 1fr))');
     expect(resources.getPropertyValue('grid-template-columns')).toBe('repeat(3, minmax(0, 1fr))');
-    expect(usage.getPropertyValue('gap')).toBe('12px');
     expect(resources.getPropertyValue('gap')).toBe('12px');
     expect(declaration(rules, '.resources__track').getPropertyValue('height')).toBe('2px');
-    expect(declaration(rules, '.agent-instruments').getPropertyValue('color')).toBe(
-      'var(--dsw-alias-label-caption)',
+  });
+
+  it('draws the context ring with a neutral track, an accent arc and an inverted tooltip', () => {
+    const rules = sheet('ContextRing.css');
+    expect(declaration(rules, '.context-ring__track').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-border-l2)',
     );
+    expect(declaration(rules, '.context-ring__arc').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-state-business-primary)',
+    );
+    const tooltip = declaration(rules, '.context-ring__tooltip');
+    expect(tooltip.getPropertyValue('background')).toBe('var(--dsw-alias-tooltip-bg)');
+    expect(tooltip.getPropertyValue('color')).toBe('var(--dsw-alias-label-primary-inverted)');
+    expect(tooltip.getPropertyValue('font-variant-numeric')).toBe('tabular-nums');
+  });
+
+  it('keeps a 28px seat for the collapsed header and draws the revealed one over the conversation', () => {
+    const rules = sheet('AgentHeader.css');
+    expect(declaration(rules, '.agent-header-seat').getPropertyValue('height')).toBe('28px');
+    expect(declaration(rules, '.agent-header-seat[data-pinned]').getPropertyValue('height')).toBe(
+      'auto',
+    );
+    const collapsed = declaration(rules, '.agent-header-seat:not([data-pinned]) > .agent-header');
+    expect(collapsed.getPropertyValue('position')).toBe('absolute');
+    expect(collapsed.getPropertyValue('opacity')).toBe('0');
+    expect(collapsed.getPropertyValue('pointer-events')).toBe('none');
+    const revealed = declaration(
+      rules,
+      '.agent-header-seat[data-revealed]:not([data-pinned]) > .agent-header',
+    );
+    expect(revealed.getPropertyValue('opacity')).toBe('1');
+    expect(revealed.getPropertyValue('pointer-events')).toBe('auto');
   });
 });

@@ -1,0 +1,153 @@
+/*
+ * The Agent header — `docs/Web_Style.md` §13.
+ *
+ * The shared page header's parts are restyled here through attribute
+ * selectors, so this sheet never declares a class PageHeader.css owns.
+ */
+
+/* The loading and error states reuse the bare header in the same row. */
+.agent-header {
+  grid-row: 1;
+  padding: 16px 20px 14px;
+  background: var(--dsw-alias-bg-base);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+/*
+ * The seat keeps a 28px strip in the layout whatever the header shows, so
+ * revealing the full line never moves the conversation.
+ */
+.agent-header-seat {
+  position: relative;
+  z-index: 20;
+  grid-row: 1;
+  min-width: 0;
+  height: 28px;
+}
+
+.agent-header-seat[data-pinned] {
+  height: auto;
+}
+
+.agent-header__strip {
+  box-sizing: border-box;
+  height: 28px;
+  margin: 0;
+  padding: 5px 20px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption);
+  background: var(--dsw-alias-bg-base);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One line: breadcrumb, title, status and branch, then the actions. */
+.agent-header-seat > .agent-header {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 8px 20px;
+}
+
+/* Collapsed: drawn over the conversation, hidden until revealed, still focusable. */
+.agent-header-seat:not([data-pinned]) > .agent-header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: var(--dsw-shadow-lv1);
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.agent-header-seat[data-revealed]:not([data-pinned]) > .agent-header {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-header-seat > .agent-header > [class~='page-header__crumbs'] {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The title follows in the same line, so the crumb that repeats it is not drawn. */
+.agent-header-seat [class~='page-header__crumbs'] li:last-child {
+  display: none;
+}
+
+.agent-header-seat [class~='page-header__crumbs'] ol::after {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  content: '/';
+}
+
+.agent-header-seat > .agent-header > [class~='page-header__row'] {
+  flex: 1 1 240px;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.agent-header-seat [class~='page-header__heading'] {
+  flex: 1 1 auto;
+}
+
+.agent-header-seat [class~='page-header__titleline'] {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.agent-header-seat .agent-header h1[class~='page-header__title'] {
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+/* The status keeps its word; the title and then the branch give way first. */
+.agent-header-seat [class~='page-header__badge'] {
+  flex: none;
+}
+
+.agent-header-seat [class~='page-header__meta'] {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.agent-header-seat [class~='page-header__actions'] {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.agent-header-seat [aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+/* Narrow: the breadcrumb takes its own line above the title and actions. */
+@container agent-conversation (max-width: 30rem) {
+  .agent-header-seat > .agent-header > [class~='page-header__crumbs'] {
+    flex-basis: 100%;
+  }
+
+  .agent-header__strip,
+  .agent-header-seat > .agent-header {
+    padding-inline: 14px;
+  }
+
+  .agent-header {
+    padding-inline: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-header-seat:not([data-pinned]) > .agent-header {
+    transition: none;
+  }
+}
