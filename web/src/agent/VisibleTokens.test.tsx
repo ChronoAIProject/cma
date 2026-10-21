@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { TurnUsage } from './TurnUsage';
-import { UsageFooter } from './UsageFooter';
+import { ContextRing } from './ContextRing';
 import { AGENT_USAGE } from '../test/agent';
 import type { VisibleTokenEstimate } from './tokenEstimate';
 
@@ -38,7 +38,7 @@ it('shows live estimates at most five times a second and replaces them with actu
         animateInitial={false}
         visibleAnchor={actual === undefined ? undefined : [{ id: 'reply', text: 'Hello world!' }]}
       />
-      <UsageFooter usage={AGENT_USAGE} />
+      <ContextRing usage={AGENT_USAGE} />
     </>
   );
   const view = render(draw('Hello'));
@@ -61,7 +61,9 @@ it('shows live estimates at most five times a second and replaces them with actu
   });
   act(() => worker.answer(3));
   expect(screen.getByLabelText('Estimated visible output tokens: 3')).toBeInTheDocument();
-  expect(screen.getByLabelText('Total output tokens: 60')).toHaveTextContent('60 output');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /120 input · 60 output/,
+  );
   view.rerender(draw('Hello world!', { inputTokens: 100, outputTokens: 8 }));
   expect(screen.queryByLabelText(/Estimated visible output/)).not.toBeInTheDocument();
   act(() => worker.answer(999));
@@ -78,7 +80,9 @@ it('shows live estimates at most five times a second and replaces them with actu
   expect(screen.getByLabelText('Estimated visible output tokens: 3')).toHaveTextContent(
     '+ ≈ 3 newly visible output tokens',
   );
-  expect(screen.getByLabelText('Total output tokens: 60')).toHaveTextContent('60 output');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /120 input · 60 output/,
+  );
 });
 
 it('keeps one worker request in flight and releases it on navigation', async () => {

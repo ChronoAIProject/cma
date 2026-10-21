@@ -1,19 +1,3 @@
-.agent-instruments {
-  grid-row: 5;
-  width: min(100%, var(--read-column));
-  margin: 0 auto;
-  padding: 0 24px 12px;
-  color: var(--dsw-alias-label-caption);
-  font-size: 12px;
-  line-height: 20px;
-  font-variant-numeric: tabular-nums;
-}
-.agent-instruments__usage {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 8px;
-}
 .sandbox-instruments {
   min-width: 0;
   color: var(--dsw-alias-label-caption);
@@ -55,60 +39,8 @@
   border-radius: inherit;
   transition: width var(--ds-transition-duration) var(--ds-ease-in-out);
 }
-@media (max-width: 30rem) {
-  .agent-instruments {
-    padding: 0 14px 10px;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .resources__fill {
     transition: none;
-  }
-}
-
-.agent-instruments {
-  grid-column: 1;
-  grid-row: usage;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  align-self: start;
-}
-
-.agent-instruments__usage {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  margin: 0;
-}
-
-.agent-instruments__usage > :first-child {
-  align-items: flex-start;
-}
-
-.agent-instruments__usage > :first-child .resources__figure {
-  text-align: left;
-}
-
-.agent-instruments__usage > :last-child {
-  align-items: flex-end;
-}
-
-.agent-instruments__usage > :last-child .resources__figure {
-  text-align: right;
-}
-
-@media (max-width: 30rem) {
-  .agent-instruments__usage {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-  }
-
-  .agent-instruments .resources__figure {
-    overflow-wrap: normal;
-  }
-}
-
-@container agent-conversation (max-width: 20rem) {
-  .agent-instruments {
-    grid-column: 1 / -1;
   }
 }

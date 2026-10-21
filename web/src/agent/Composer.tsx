@@ -18,7 +18,7 @@ import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachm
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
-import { UsageFooter } from './UsageFooter';
+import { ContextRing } from './ContextRing';
 
 interface ComposerProps {
   readonly draft?: AgentDraft;
@@ -383,6 +383,7 @@ export function Composer({
         </div>
         {settings ? <div className="agent-composer__settings">{settings}</div> : null}
         <div className="agent-composer__actions">
+          {showUsage ? <ContextRing usage={usage} /> : null}
           {!running || queueWhileRunning ? (
             <Button
               placement="agent-composer__submit"
@@ -433,7 +434,6 @@ export function Composer({
             />
           ) : null}
         </div>
-        {showUsage ? <UsageFooter usage={usage} /> : null}
         {onSteeringModeChange === undefined ? null : (
           <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
         )}

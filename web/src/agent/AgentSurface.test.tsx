@@ -334,7 +334,7 @@ it('holds approval and Stop response controls during history hydration', async (
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
@@ -372,7 +372,7 @@ it('holds approvals while saving and distinguishes pending admission from an act
     savingStartedAt: '2026-09-08T00:00:00Z',
   };
   const { rerender } = render(draw({ inputAvailability }));
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Keep my draft' } });
@@ -421,7 +421,7 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
 });
 
@@ -474,7 +474,9 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(tool).not.toHaveTextContent(/duration/i);
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
-  expect(screen.getByLabelText('Agent usage')).toHaveTextContent('120 input');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /120 input/,
+  );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
   expect(approve).toHaveBeenCalledWith('approval_1', 'allow');
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
@@ -499,7 +501,7 @@ it('removes completed preparation while preserving active and failed preparation
     />
   );
   const { rerender } = render(draw(AGENT_DETAIL));
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
   rerender(
