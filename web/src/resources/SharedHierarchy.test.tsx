@@ -293,7 +293,8 @@ it.each([false, true])(
     const user = userEvent.setup();
     const composer = await screen.findByRole('textbox', { name: 'Message' });
     await user.type(composer, 'Keep my personal draft');
-    await user.click(screen.getByRole('button', { name: 'Sandbox' }));
+    await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
+    await user.click(screen.getByRole('button', { name: /^Filter/ }));
     await chooseOption(user, 'Navigation scope', shared ? 'Shared' : 'Research (Organization)');
     await screen.findByRole('link', { name: new RegExp(sandbox.name) });
     test.state.revoked = true;
