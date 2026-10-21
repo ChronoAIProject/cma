@@ -50,9 +50,9 @@
 
 /*
  * Below the centre's own floor, opening the sidebar cannot consume another
- * 280px without turning the work into a column a word wide. It therefore sits
- * over the still-mounted grid; the hidden columns return exactly as they were
- * when the drawer closes.
+ * 280px without turning the work into a column a word wide. It is therefore a
+ * sheet over the still-mounted page, behind a scrim that closes it; the page
+ * returns exactly as it was when the sheet closes.
  */
 .frame[data-sidebar-overlay] .frame__sidebar {
   position: absolute;
@@ -63,9 +63,70 @@
   box-shadow: var(--dsw-shadow-lv3);
 }
 
-.frame[data-sidebar-overlay] .frame__center,
 .frame[data-sidebar-overlay] .frame__details {
   visibility: hidden;
+}
+
+.frame__sidebar[hidden] {
+  display: none;
+}
+
+.frame__scrim {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+}
+
+/*
+ * The phone's only bar. It exists because the rail does not: something on
+ * screen has to lead back to navigation, and the top edge is where a phone
+ * looks for it.
+ */
+.frame__topbar {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  height: 48px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+}
+
+.frame__menu {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.frame__menu:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.frame__menu:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.frame__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*
