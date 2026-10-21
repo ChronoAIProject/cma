@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Presence } from '../ui/Presence';
+import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import {
   IconChevronLeftOutline14,
@@ -65,20 +66,25 @@ export function FailureNotice({ failure }: { readonly failure?: OperatorFailure 
   return (
     <Presence>
       {failure === undefined ? null : (
-        <div className="operator-failure" role="alert">
-          <p>{failure.message}</p>
-          {failure.field === undefined ? null : (
-            <p>
-              Field: <code>{failure.field}</code>
-            </p>
+        <Alert tone="error" title={failure.message}>
+          {failure.field === undefined &&
+          failure.code === undefined &&
+          failure.requestId === undefined ? undefined : (
+            <>
+              {failure.field === undefined ? null : (
+                <p>
+                  Field: <code>{failure.field}</code>
+                </p>
+              )}
+              {failure.code === undefined ? null : <code>{failure.code}</code>}
+              {failure.requestId === undefined ? null : (
+                <p>
+                  Request <code>{failure.requestId}</code>
+                </p>
+              )}
+            </>
           )}
-          {failure.code === undefined ? null : <code>{failure.code}</code>}
-          {failure.requestId === undefined ? null : (
-            <p>
-              Request <code>{failure.requestId}</code>
-            </p>
-          )}
-        </div>
+        </Alert>
       )}
     </Presence>
   );
@@ -121,33 +127,6 @@ export function RecordControls({
         icon={<IconChevronRightOutline14 />}
         onClick={next}
       />
-    </div>
-  );
-}
-
-export function Records({
-  loading,
-  empty,
-  children,
-}: {
-  readonly loading: boolean;
-  readonly empty: boolean;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="operator-records" aria-busy={loading}>
-      {loading ? (
-        <div className="operator-skeleton" role="status" aria-label="Loading records">
-          <span />
-          <span />
-          <span />
-        </div>
-      ) : null}
-      {!loading && empty ? (
-        <p className="operator-empty">No records match these filters.</p>
-      ) : (
-        children
-      )}
     </div>
   );
 }
