@@ -403,6 +403,55 @@ it('retains hydrated tools, approvals, live text and the composer across unchang
   shown.unmount();
 });
 
+it('reconnects a cleanly ended shared stream after refreshing authorized history', async () => {
+  vi.useFakeTimers();
+  let finish!: () => void;
+  const streams: AbortSignal[] = [];
+  const replayAgent = vi.fn((_id, options) => {
+    streams.push(options.signal);
+    return new Promise<void>((resolve) => {
+      if (streams.length === 1) finish = resolve;
+    });
+  });
+  const readAgentEvents = vi
+    .fn()
+    .mockResolvedValueOnce({ items: sharedHistoryEvents })
+    .mockResolvedValueOnce({
+      items: [
+        ...sharedHistoryEvents,
+        { seq: 9, appendedAt: detail.created_at, kind: { type: 'turn_started', turn_sequence: 9 } },
+        {
+          seq: 10,
+          appendedAt: detail.created_at,
+          kind: { type: 'owner_message', content: 'Continue after the stream ended.' },
+        },
+      ],
+    });
+  const readAgentTranscript = vi.fn(async () => sharedHistoryTranscript);
+  const test = fixture(['view_details', 'view_history', 'interact'], {
+    readAgentTranscript,
+    readAgentEvents,
+    replayAgent,
+  });
+  const shown = test.show();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 8 }));
+  await act(async () => finish());
+  await act(() => vi.advanceTimersByTimeAsync(4_999));
+  expect(replayAgent).toHaveBeenCalledOnce();
+  expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readAgentTranscript).toHaveBeenCalledTimes(2);
+  expect(readAgentEvents).toHaveBeenCalledTimes(2);
+  expect(replayAgent).toHaveBeenCalledTimes(2);
+  expect(replayAgent).toHaveBeenLastCalledWith('agt_1', expect.objectContaining({ after: 10 }));
+  expect(streams[0]?.aborted).toBe(true);
+  expect(streams[1]?.aborted).toBe(false);
+  expect(screen.getByText('Continue after the stream ended.')).toBeInTheDocument();
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+  shown.unmount();
+});
+
 it('applies shared live events only for the current Agent after rich history is ready', async () => {
   let onEvent: ((event: AgentLiveEvent) => void) | undefined;
   const test = fixture(['view_details', 'view_history'], {
