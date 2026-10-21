@@ -33,7 +33,8 @@ import { LifecycleProgress } from './LifecycleProgress';
 import { SandboxRecoveryNotice, sandboxRecoveryFailed } from './SandboxRecoveryNotice';
 import './SandboxPage.css';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
-import { SharingButton } from '../resources/SharingButton';
+import { SharingDialog, useSharingAllowed } from '../resources/SharingDialog';
+import type { ResourceViewsClient } from '../resources/client';
 import { useOwnerViews } from '../resources/retainedOwnerViews';
 
 type State =
@@ -93,6 +94,10 @@ export function SandboxPage({
       state.sandbox.owner !== undefined &&
       state.sandbox.owner !== viewerId);
   const [advanced, setAdvanced] = useState(false);
+  const sharingClient = stale ? undefined : client.resourceViews;
+  const sharingAllowed = useSharingAllowed(sharingClient, { kind: 'sandbox', id: sandboxId });
+  // Opened for one client, so a changed or withdrawn client closes the dialog.
+  const [sharingFor, setSharingFor] = useState<ResourceViewsClient>();
   const [progressOpen, setProgressOpen] = useState(false);
   const [connectionScope, setConnectionScope] = useState<{
     client: CmaWebClient;
@@ -254,12 +259,9 @@ export function SandboxPage({
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
-            {client.resourceViews === undefined || stale ? null : (
-              <SharingButton
-                client={client.resourceViews}
-                target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
-              />
-            )}
+            {sharingAllowed ? (
+              <Button onClick={() => setSharingFor(sharingClient)}>Sharing</Button>
+            ) : null}
             {permissions.createAgent ? (
               <Button
                 icon={<IconPlusOutline16 />}
@@ -412,6 +414,15 @@ export function SandboxPage({
         onAction={onAction}
         onNavigate={onNavigate}
       />
+      {client.resourceViews === undefined ? null : (
+        <SharingDialog
+          key={sandboxId}
+          client={client.resourceViews}
+          target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
+          open={sharingFor !== undefined && sharingFor === sharingClient}
+          onClose={() => setSharingFor(undefined)}
+        />
+      )}
       <Presence>
         {advanced ? (
           <SandboxAdvanced client={client} sandbox={sandbox} onClose={() => setAdvanced(false)} />
