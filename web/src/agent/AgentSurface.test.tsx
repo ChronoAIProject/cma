@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
 import { ApiError } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
-import { workspaceFixture } from '../test/hierarchy';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript, type ConversationState } from './conversation';
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
@@ -210,6 +210,109 @@ function controller(
   };
 }
 
+const ALL_ACTIONS = {
+  createWorkspace: true,
+  createAgent: true,
+  pauseSandbox: true,
+  deleteSandbox: true,
+  removeWorkspace: true,
+  stopAgent: true,
+  deleteAgent: true,
+  exportHistory: true,
+};
+
+it('offers Stop, Export and Delete from the header, with the reason Delete is unavailable', async () => {
+  const onAgentAction = vi.fn();
+  const actor = userEvent.setup();
+  const ready = controller(
+    {
+      status: 'ready',
+      detail: AGENT_DETAIL,
+      workspace: workspaceFixture(),
+      conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+    },
+    undefined,
+    { progressObservation: { sandbox: sandboxFixture(), stale: false } },
+  );
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={ready}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+      permissions={ALL_ACTIONS}
+      onAgentAction={onAgentAction}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(
+    screen.getByRole('menuitem', {
+      name: 'Delete agent Stop this Agent before deleting it and its Worktree.',
+    }),
+  ).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeInTheDocument();
+  // Destructive last, after a separator.
+  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Stop agent',
+    'Export history',
+    'Delete agent Stop this Agent before deleting it and its Worktree.',
+  ]);
+  expect(screen.getByRole('menu').querySelector('[role="separator"]')).not.toBeNull();
+  await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
+  expect(onAgentAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
+});
+
+it('holds every header action while another action is being confirmed', async () => {
+  const onAgentAction = vi.fn();
+  const actor = userEvent.setup();
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller(
+        {
+          status: 'ready',
+          detail: AGENT_DETAIL,
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        },
+        undefined,
+        { progressObservation: { sandbox: sandboxFixture(), stale: false } },
+      )}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+      permissions={ALL_ACTIONS}
+      actionsBusy
+      onAgentAction={onAgentAction}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  const stop = screen.getByRole('menuitem', {
+    name: 'Stop agent Another action is still being confirmed.',
+  });
+  await actor.click(stop);
+  expect(onAgentAction).not.toHaveBeenCalled();
+});
+
+it('offers no header actions to a reader without them', () => {
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller({
+        status: 'ready',
+        detail: AGENT_DETAIL,
+        workspace: workspaceFixture(),
+        conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+      })}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole('button', { name: 'More Agent actions' })).toBeNull();
+});
+
 it('holds approval and Stop response controls during history hydration', async () => {
   const conversation: ConversationState = {
     ...conversationFromTranscript(AGENT_TRANSCRIPT),
@@ -351,9 +454,17 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
       onNavigate={vi.fn()}
     />,
   );
-  expect(screen.getByRole('navigation', { name: 'Agent location' })).toHaveTextContent(
-    'Atlas//workspaces/chrono-bot/Agent',
+  const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
+  expect(within(crumbs).getByRole('link', { name: 'Atlas' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_1',
   );
+  expect(within(crumbs).getByRole('link', { name: 'chrono-bot' })).toHaveAttribute(
+    'href',
+    '/workspaces/wsp_1',
+  );
+  expect(within(crumbs).getByText('Agent one')).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByTitle('Worktree branch agent/one')).toHaveTextContent('agent/one');
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();

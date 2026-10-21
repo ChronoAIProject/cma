@@ -18,29 +18,6 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
-.agent-header__lineage {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  margin-bottom: 5px;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.agent-header__lineage a {
-  color: var(--dsw-alias-label-secondary);
-  text-decoration: none;
-}
-
-.agent-header__lineage a:hover {
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.agent-header__title,
-.agent-header__title > div,
 .agent-header__status {
   display: flex;
   align-items: center;
@@ -107,25 +84,6 @@
   .agent-quick-message .button {
     min-height: 44px;
   }
-}
-
-.agent-header__title {
-  gap: 16px;
-  justify-content: space-between;
-}
-
-.agent-header__title > div {
-  gap: 10px;
-  min-width: 0;
-}
-
-.agent-header h1 {
-  overflow: hidden;
-  font-size: 20px;
-  line-height: 26px;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-header__status {
@@ -615,14 +573,6 @@
 @media (max-width: 30rem) {
   .agent-header {
     padding-inline: 14px;
-  }
-
-  .agent-header__title > div {
-    display: block;
-  }
-
-  .agent-header__status {
-    margin-top: 2px;
   }
 
   .message-stream {
