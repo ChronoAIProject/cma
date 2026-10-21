@@ -465,10 +465,10 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
     'href',
     '/sandboxes/sbx_1',
   );
-  expect(within(crumbs).getByRole('link', { name: 'chrono-bot' })).toHaveAttribute(
-    'href',
-    '/workspaces/wsp_1',
-  );
+  // Workspace details remain available from the Sandbox view. The Agent view
+  // intentionally omits the Workspace crumb because several Sandboxes can
+  // share the same workspace directory.
+  expect(within(crumbs).queryByRole('link', { name: 'chrono-bot' })).not.toBeInTheDocument();
   expect(within(crumbs).getByText('Agent one')).toHaveAttribute('aria-current', 'page');
   expect(screen.getByTitle('Worktree branch agent/one')).toHaveTextContent('agent/one');
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();

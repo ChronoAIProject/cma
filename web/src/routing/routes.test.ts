@@ -14,6 +14,7 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'sandbox', sandboxId: 'sbx_123' },
   { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
+  { kind: 'agent_share', shareId: 'shr_123' },
   { kind: 'inventory' },
   { kind: 'inventory', shared: true },
   { kind: 'inventory', organization: 'org_123' },

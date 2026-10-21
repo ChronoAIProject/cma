@@ -126,6 +126,13 @@ fn apply_conversation(
         return Err(SandboxStoreError::AgentLogCapacityExceeded);
     }
     validate_mutation(candidate, &mutation)?;
+    if let Some(fence) = &mutation.settings_fence {
+        let snapshot = super::resource_access::snapshot(candidate, fence.target())
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
     super::agent_command_work::bind_dispatch(candidate, &mutation)?;
     if mutation.admission_guard.is_some() {
         candidate
@@ -162,6 +169,11 @@ fn apply_conversation(
         mutation.agent_logs,
     )?;
     if let Some(fence) = &mutation.execution_fence {
+        fence
+            .require_current()
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
+    if let Some(fence) = &mutation.settings_fence {
         fence
             .require_current()
             .map_err(|_| SandboxStoreError::Conflict)?;

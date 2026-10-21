@@ -7,6 +7,8 @@ import './Details.css';
 import { DetailsServiceAccess } from './DetailsServiceAccess';
 import { openSandboxTab } from '../sandbox/sandboxTabRoute';
 import { SkillsSettings } from './SkillsSettings';
+import { AgentFiles } from './files/AgentFiles';
+import { AgentShareLinks } from '../resources/AgentShareLinks';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
@@ -56,6 +58,8 @@ export function AgentDetails({
         )}
       </header>
       <div className="agent-details__scroll">
+        <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />
+        <AgentShareLinks key={`sharing:${detail.id}`} agentId={detail.id} active={open} />
         <div className="agent-details__band">
           <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
           <SkillsSettings

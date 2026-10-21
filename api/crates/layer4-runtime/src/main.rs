@@ -1,6 +1,7 @@
 //! Kernel-neutral sandbox supervisor for the contract-3 runtime protocol.
 
 mod agent_attachment;
+mod agent_filesystem;
 mod agent_home;
 mod agent_skill_install;
 mod bridge;

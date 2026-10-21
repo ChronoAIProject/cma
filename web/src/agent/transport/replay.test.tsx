@@ -352,8 +352,24 @@ it('clears uncommitted fragments on a gap and suppresses text already covered by
   unmount();
 });
 
-it('keeps authorized partial history visible while holding every new action and tail', async () => {
+it('keeps the latest authorized transcript visible while incomplete rich history holds actions and tail', async () => {
   const h = harness();
+  vi.mocked(h.client.readAgentTranscript).mockResolvedValue({
+    agentId: 'agt_1',
+    throughSeq: 3,
+    turns: [
+      {
+        turnSequence: 1,
+        startedAt: at,
+        ownerMessage: '',
+        agentMessages: ['Known recorded work'],
+        messages: [
+          { sequence: 2, role: 'assistant', content: 'Known recorded work', appendedAt: at },
+        ],
+        outcome: { type: 'completed' },
+      },
+    ],
+  });
   h.snapshot
     .mockResolvedValueOnce(
       json(
@@ -387,7 +403,8 @@ it('keeps authorized partial history visible while holding every new action and 
   expect(result.current.state).toMatchObject({
     conversation: {
       messages: [expect.objectContaining({ content: 'Known recorded work' })],
-      agentCursor: cursor(2),
+      activeRunId: undefined,
+      cursor: 3,
     },
   });
   await act(async () => {

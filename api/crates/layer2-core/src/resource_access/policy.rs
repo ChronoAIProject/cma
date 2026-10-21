@@ -204,6 +204,53 @@ impl AccessDecision {
                 && share.revoked_at.is_none()
                 && share.selector.covers(scope)
         }) {
+            if let Some(link) = &share.link {
+                if !link.accepted_subjects.contains(&context.caller.subject) {
+                    continue;
+                }
+                let mut granted = Self::empty();
+                // Explicit Agent-link consent covers the shared home but never
+                // the parent Sandbox's lifecycle or the owner's credentials.
+                granted.grant_view(true);
+                if share.mode == ShareMode::ViewWrite {
+                    granted.grant_interaction();
+                }
+                if let Some(organization) = link.audience.organization() {
+                    let evidence = match membership(context, organization, purpose, now) {
+                        Ok(Some(evidence)) => evidence,
+                        Ok(None) => continue,
+                        Err(_) => {
+                            needs_revalidation = true;
+                            continue;
+                        }
+                    };
+                    result.observe_membership(evidence, granted, Some(share));
+                } else {
+                    result.capabilities.extend(&granted.capabilities);
+                    result.observe(
+                        now + std::time::Duration::from_secs(30),
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+                    );
+                    result
+                        .observations
+                        .push(super::ResourceAuthorityObservation {
+                            capabilities: granted.capabilities.iter().copied().collect(),
+                            basis: super::ResourceAuthorizationBasis::ShareRecipient {
+                                subject: context.caller.subject.clone(),
+                                share: super::ResourceGrantObservation {
+                                    id: share.id.clone(),
+                                    revision: share.revision,
+                                    mode: share.mode,
+                                    selector: share.selector.clone(),
+                                },
+                            },
+                        });
+                }
+                result
+                    .share_revisions
+                    .push((share.id.clone(), share.revision));
+                continue;
+            }
             let evidence = match membership(context, &share.target_org_id, purpose, now) {
                 Ok(Some(evidence)) => evidence,
                 Ok(None) => continue,

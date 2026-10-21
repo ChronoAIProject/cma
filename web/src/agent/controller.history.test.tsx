@@ -42,7 +42,7 @@ const transcript = {
   })),
 };
 
-it('publishes authorized transcript and partial activity while holding commands and replay until all pages hydrate', async () => {
+it('publishes the latest authorized transcript while hydrating rich activity silently', async () => {
   vi.useFakeTimers();
   const remaining = deferredPage();
   const readAgentEvents = vi
@@ -72,8 +72,9 @@ it('publishes authorized transcript and partial activity while holding commands 
           expect.objectContaining({ content: 'Inspect this repository.' }),
           expect.objectContaining({ content: 'The repository is ready.' }),
         ],
-        toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })],
-        approvals: [expect.objectContaining({ id: 'approval' })],
+        toolCalls: [],
+        approvals: [],
+        activeRunId: undefined,
       },
     });
     await act(async () => {
@@ -132,7 +133,7 @@ it('never uses the projected transcript cursor to skip remaining event pages', a
   expect(readAgentEvents.mock.calls.map((call) => call[1]?.cursor)).toEqual([
     0, 1, 2, 3, 4, 5, 6, 7,
   ]);
-  expect(progress).toHaveBeenCalledTimes(7);
+  expect(progress).toHaveBeenCalledOnce();
   expect(progress.mock.calls[0]?.[0].conversation.cursor).toBe(8);
   expect(ready.durableEvents).toEqual(events);
   expect(ready.conversation.messages).toHaveLength(2);
@@ -213,7 +214,7 @@ it('changes a transient later-page failure to the existing incomplete-history re
     status: 'ready',
     historyLoading: false,
     historyUnavailable: true,
-    conversation: { toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })] },
+    conversation: { toolCalls: [], activeRunId: undefined },
   });
   expect(client.replayAgent).not.toHaveBeenCalled();
 });

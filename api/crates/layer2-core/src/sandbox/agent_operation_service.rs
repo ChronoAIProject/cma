@@ -132,6 +132,7 @@ impl AgentOperationError {
 }
 
 pub struct AgentOperationService {
+    pub(super) settings_authority: Option<super::AgentSettingsAuthorization>,
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
     pub(super) execution_authority: Option<super::agent_io::CommandExecutionAuthorization>,
     pub(super) trigger_authority: Option<super::agent_io::TriggerExecutionAuthorization>,
@@ -147,6 +148,7 @@ impl AgentOperationService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            settings_authority: None,
             command_claim: None,
             execution_authority: None,
             trigger_authority: None,
@@ -161,6 +163,7 @@ impl AgentOperationService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),
             execution_authority: self.execution_authority.clone(),
             trigger_authority: self.trigger_authority.clone(),

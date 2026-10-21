@@ -220,6 +220,7 @@ async fn quiet_reattachment_durably_repairs_anchor_before_another_semantic_commi
     next.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
@@ -345,6 +346,7 @@ async fn lost_receipt_replay_after_publication_restores_prefix_without_duplicate
     next.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

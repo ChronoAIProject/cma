@@ -1,0 +1,139 @@
+//! Real public file routes composed with authorization and a deterministic runtime port.
+use super::{
+    super::{
+        resource_access_tests::context,
+        shared_agent_tests::{fixture, Reply},
+    },
+    Scenario,
+};
+use axum::Extension;
+use layer2_core::{
+    resource_access::*,
+    sandbox::{agent_filesystem::AgentFileService, store::SandboxStore},
+    AgentId,
+};
+use std::sync::Arc;
+
+#[path = "filesystem_runtime.rs"]
+mod runtime;
+
+pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    let kind = name.strip_prefix("filesystem_")?;
+    assert!([
+        "owner",
+        "viewer",
+        "writer",
+        "revoked",
+        "foreign",
+        "anonymous",
+        "not_ready",
+        "unsupported",
+        "runtime_unsupported",
+        "runtime_conflict",
+        "unavailable",
+        "too_large"
+    ]
+    .contains(&kind));
+    let (fixture, access, _, legacy) = fixture(Reply::Member).await;
+    // Isolate the typed link: no unrelated organization share may mask revocation.
+    access
+        .change_share(
+            &context("owner-a"),
+            Some("request-credential"),
+            ShareCommand {
+                selector: legacy.selector,
+                change: ShareChange::Revoke {
+                    share_id: legacy.id,
+                },
+                expected_share_revision: Some(legacy.revision),
+                idempotency_key: "remove-legacy-fixture-share".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let mut sandbox = fixture
+        .store
+        .get_sandbox(&layer2_core::SandboxId("sbx_route".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = sandbox.revision;
+    sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
+    if matches!(kind, "not_ready" | "unsupported") {
+        sandbox.runtime.as_mut().unwrap().boot_id = None;
+    }
+    if kind != "unsupported" {
+        sandbox.lifecycle.home = Some(Box::new(runtime::persistent_home()));
+    }
+    sandbox.revision += 1;
+    fixture.store.save_sandbox(revision, sandbox).await.unwrap();
+    let subject = if matches!(kind, "viewer" | "writer" | "revoked") {
+        "link-recipient"
+    } else if kind == "foreign" {
+        "foreign"
+    } else {
+        "owner-a"
+    };
+    if matches!(kind, "viewer" | "writer" | "revoked") {
+        let owner = context("owner-a");
+        let token = "c".repeat(64);
+        let link = access
+            .create_agent_share_link(
+                &owner,
+                Some("request-credential"),
+                CreateAgentShareLink {
+                    agent_id: AgentId("agt_shared_read".into()),
+                    audience: AgentShareAudience::Public,
+                    mode: if kind == "viewer" {
+                        ShareMode::View
+                    } else {
+                        ShareMode::ViewWrite
+                    },
+                    token: token.clone(),
+                    idempotency_key: "file-link".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let redeemed = access
+            .redeem_agent_share_link(
+                &context(subject),
+                Some("request-credential"),
+                &link.share.id,
+                &token,
+            )
+            .await
+            .unwrap();
+        if kind == "revoked" {
+            access
+                .change_share(
+                    &owner,
+                    Some("request-credential"),
+                    ShareCommand {
+                        selector: link.share.selector,
+                        change: ShareChange::Revoke {
+                            share_id: link.share.id,
+                        },
+                        expected_share_revision: Some(redeemed.revision),
+                        idempotency_key: "file-revoke".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    }
+    let caller = context(subject);
+    let service = AgentFileService::new(access, Arc::new(runtime::Files::new(kind)));
+    let mut router = super::super::agent_filesystem_router(service);
+    if kind != "anonymous" {
+        router = router.layer(Extension(caller.clone())).layer(Extension(
+            crate::DelegatedCredential::new("request-credential".into()),
+        ));
+    }
+    Some(Scenario {
+        router,
+        subject: (kind != "anonymous").then_some(subject),
+        authorization: caller.caller.authorization,
+        symbols: Default::default(),
+    })
+}
