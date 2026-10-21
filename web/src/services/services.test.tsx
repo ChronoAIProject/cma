@@ -4,7 +4,7 @@ import { App } from '../App';
 import { AuthContextProvider } from '../auth/context';
 import { createMockAuthProvider } from '../auth/mock';
 import { ServicePage } from './ServicePage';
-import { ServiceTabs } from './ServiceTabs';
+import { ServiceMenu } from './ServiceMenu';
 import { WriteForm } from './data';
 import { parseRoute, routePath } from '../routing/routes';
 afterEach(() => {
@@ -121,20 +121,35 @@ describe('independent CMA service navigation', () => {
       </AuthContextProvider>,
     );
     await screen.findByRole('button', { name: /account menu/i });
-    expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+    expect(screen.getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
     expect(screen.queryByText('Create an image')).not.toBeInTheDocument();
     expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('uses enabled service URLs, preserves modified clicks and exposes a disabled Image Manager', () => {
     const navigate = vi.fn();
-    render(<ServiceTabs route={{ kind: 'event_gateway' }} onNavigate={navigate} />);
-    expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
-      'aria-current',
-      'page',
+    render(<ServiceMenu route={{ kind: 'event_gateway' }} onNavigate={navigate} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Service: Event Gateway' }));
+    expect(screen.getByRole('menuitemradio', { name: 'Event Gateway' })).toHaveAttribute(
+      'aria-checked',
+      'true',
     );
-    expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
-    const agent = screen.getByRole('link', { name: 'Agent Manager' });
+    expect(screen.getByRole('menuitemradio', { name: 'Event Gateway' })).toHaveAttribute(
+      'href',
+      '/event-gateway',
+    );
+    const image = screen.getByRole('menuitemradio', { name: /^Image Manager/ });
+    expect(image).toHaveAttribute('aria-disabled', 'true');
+    expect(image).not.toHaveAttribute('href');
+    expect(image).toHaveTextContent('Coming soon. Image Manager is not available yet.');
+    fireEvent.click(image);
+    expect(navigate).not.toHaveBeenCalled();
+    const agent = screen.getByRole('menuitemradio', { name: 'Agent Manager' });
+    expect(agent).toHaveAttribute('href', '/agent-manager');
     fireEvent.click(agent, { ctrlKey: true });
     expect(navigate).not.toHaveBeenCalled();
     fireEvent.click(agent);
@@ -142,7 +157,11 @@ describe('independent CMA service navigation', () => {
     for (const kind of ['agent_manager', 'event_gateway'] as const)
       expect(parseRoute(routePath({ kind }))).toEqual({ kind });
     expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
-    expect(screen.queryByRole('link', { name: 'CMA home' })).not.toBeInTheDocument();
+  });
+
+  it('names a consumer route as Event Gateway in the service menu', () => {
+    render(<ServiceMenu route={{ kind: 'bots' }} onNavigate={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Service: Event Gateway' })).toBeInTheDocument();
   });
 
   it('a gateway authorization failure remains local to the gateway', async () => {

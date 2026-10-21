@@ -8,6 +8,7 @@ import { createMockAuthProvider } from '../auth/mock';
 import type { AppRoute } from '../routing/routes';
 import { agentClient } from '../test/agent';
 import { observeAnimations } from '../test/animations';
+import { chooseService } from '../test/services';
 
 let motion: ReturnType<typeof observeAnimations>;
 beforeEach(() => {
@@ -82,11 +83,16 @@ it('fades a retained Event Gateway on re-entry while preserving its form and avo
     fetcher.mock.calls.filter(([url]) => url.startsWith('/api/event-gateway/'));
   const reads = gatewayReads().length;
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(1);
-  fireEvent.click(screen.getByRole('link', { name: 'Agent Manager' }));
+  chooseService('Agent Manager');
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(field).not.toBeVisible();
-  expect(screen.getByRole('button', { name: 'Image Manager (coming soon)' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('link', { name: 'Event Gateway' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+  expect(screen.getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  chooseService('Event Gateway');
   expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(field);
   expect(field).toHaveValue(draft);
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(2);
