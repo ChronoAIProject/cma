@@ -2626,8 +2626,8 @@ sections. Account preferences no longer contain Consumers or Developer; Docs rem
 Existing hover/presence motion and reduced-motion behavior apply.
 
 Channels opens on a §12.6 table of every channel — Name, Provider (the mono slug),
-Level, Sources (a count) and Version — under the *Event Gateway / Channels* header,
-with New channel when the caller may create. Nothing is selected until somebody
+Level, Sources (a count) and Version — under the *Event Gateway / Channels* header;
+the sidebar's New channel stays the one create action. Nothing is selected until somebody
 chooses a channel, from the table or from the sidebar list, which keeps its rows and
 selection; the detail's *Channels* breadcrumb returns to the table. Empty says *No
 channels yet* and *Connect an event source to your agent.* In a channel each
