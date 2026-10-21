@@ -3,10 +3,20 @@ import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { AppRoute } from '../routing/routes';
 import { ResourceLink } from '../resources/ResourceLink';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Pill } from '../ui/Pill';
-import { stateLabels, type BotClient } from './model';
+import { Table, TableCell } from '../ui/Table';
+import { stateLabels, stateTones, type BotClient } from './model';
 import { useBotRead } from './useBotRead';
+
+const COLUMNS = [
+  { header: 'Name' },
+  { header: 'State' },
+  { header: 'Provider level' },
+  { header: 'Last test' },
+  { header: 'Updated' },
+];
 
 export function BotsList({
   client,
@@ -43,53 +53,61 @@ export function BotsList({
         />
       </div>
       <div className="bots__body">
-        {current.error === undefined ? null : <p role="alert">{current.error}</p>}
-        {page === undefined && current.error === undefined ? (
-          <p role="status">Loading consumers</p>
-        ) : null}
+        {current.error === undefined ? null : <Alert tone="error">{current.error}</Alert>}
+        <Table
+          label="Your consumers"
+          placement="bots__table"
+          columns={COLUMNS}
+          loading={page === undefined && current.error === undefined}
+          loadingLabel="Loading consumers"
+          empty={
+            page === undefined
+              ? undefined
+              : cursors.length === 1
+                ? 'No consumers yet'
+                : 'No consumers on this page.'
+          }
+        >
+          {page?.items.map((bot) => (
+            <tr key={bot.bot_id}>
+              <TableCell>
+                <ResourceLink route={{ kind: 'bot', botId: bot.bot_id }} onNavigate={onNavigate}>
+                  {bot.name}
+                </ResourceLink>
+              </TableCell>
+              <TableCell>
+                <Badge tone={stateTones[bot.state]}>{stateLabels[bot.state]}</Badge>
+              </TableCell>
+              <TableCell>{bot.channel?.level ?? 'Not reported'}</TableCell>
+              <TableCell>
+                {bot.last_test === null
+                  ? 'Not tested'
+                  : `Accepted after ${String(bot.last_test.accepted_after_ms)} ms`}
+              </TableCell>
+              <TableCell>
+                <time dateTime={bot.updated_at}>{new Date(bot.updated_at).toLocaleString()}</time>
+              </TableCell>
+            </tr>
+          ))}
+        </Table>
         {page === undefined ? null : (
-          <>
-            {page.items.length === 0 ? (
-              <p>No consumers on this page.</p>
-            ) : (
-              <ul className="bots__rows" aria-label="Your consumers">
-                {page.items.map((bot) => (
-                  <li key={bot.bot_id}>
-                    <ResourceLink
-                      route={{ kind: 'bot', botId: bot.bot_id }}
-                      onNavigate={onNavigate}
-                    >
-                      {bot.name}
-                    </ResourceLink>
-                    <Pill>{stateLabels[bot.state]}</Pill>
-                    <span>Provider level {bot.channel?.level ?? 'not reported'}</span>
-                    <span>
-                      {bot.last_test === null
-                        ? 'Not tested'
-                        : `Last test accepted after ${bot.last_test.accepted_after_ms} ms`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <nav className="bots__actions" aria-label="Consumer pages">
-              <Button
-                disabled={cursors.length === 1}
-                onClick={() => setCursors((values) => values.slice(0, -1))}
-              >
-                Previous page
-              </Button>
-              <span>Page {cursors.length}</span>
-              <Button
-                disabled={
-                  !current.fresh || page.next_after === null || cursors.includes(page.next_after)
-                }
-                onClick={() => setCursors((values) => [...values, page.next_after ?? undefined])}
-              >
-                Next page
-              </Button>
-            </nav>
-          </>
+          <nav className="bots__actions" aria-label="Consumer pages">
+            <Button
+              disabled={cursors.length === 1}
+              onClick={() => setCursors((values) => values.slice(0, -1))}
+            >
+              Previous page
+            </Button>
+            <span>Page {cursors.length}</span>
+            <Button
+              disabled={
+                !current.fresh || page.next_after === null || cursors.includes(page.next_after)
+              }
+              onClick={() => setCursors((values) => [...values, page.next_after ?? undefined])}
+            >
+              Next page
+            </Button>
+          </nav>
         )}
       </div>
     </section>
