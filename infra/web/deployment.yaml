@@ -47,6 +47,29 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: web-assets-release
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:68552554e4fb7fa7a4bcd920db62dd3194e7a908fd5d209f5bc3426b07adc834
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /compat/assets && cp -R /usr/share/nginx/html/assets/. /compat/assets/
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
         - name: web-assets-current
           image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:cb09a6a265dc8bfaa895c271e375ff341ed4878427c28c02a9015111f58e3ffc
           command: ["/bin/sh", "-c"]
