@@ -4,12 +4,12 @@ import { useOwnerViews } from './retainedOwnerViews';
 import type { ResourceViewsClient } from './client';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';
+import { StatusBadge } from '../ui/Badge';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { loadSandbox } from './loadHierarchy';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { WorkspaceBranch } from './WorkspaceContents';
 import { Button } from '../ui/Button';
-import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
 import { useSandboxControl } from './useSandboxControl';
 import { SandboxControls } from './SandboxControls';
@@ -118,7 +118,7 @@ export function SandboxAccessPage({
           { label: sandbox.name },
         ]}
         title={sandbox.name}
-        badge={<span>{statusLabel(sandbox.status)}</span>}
+        badge={<StatusBadge status={sandbox.status} />}
         description={
           <>
             <ResourceAccessDetails client={client} access={current.state.value.access} />

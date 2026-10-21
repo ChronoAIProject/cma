@@ -5,9 +5,10 @@ import {
   sandboxChildrenReadable,
   sandboxChildStatus,
   sandboxLifecycleLabel,
+  sandboxTone,
 } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
-import { StateDot } from '../ui/StateDot';
+import { toneDot } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import {
   IconAgentPresetOutline16,
@@ -240,12 +241,11 @@ export function Tree({
                             reviving={sandbox.status === 'reviving'}
                             meta={
                               <>
-                                <span className="tree-row__state">
-                                  {sandbox.status === 'active' &&
-                                  sandbox.lifecycle?.operation === undefined &&
-                                  refreshError === undefined ? (
-                                    <StateDot state="done" size={8} />
-                                  ) : null}
+                                <span className="tree-row__state" data-tone={sandboxTone(sandbox)}>
+                                  {/* A stale status draws no dot: it may no longer be true. */}
+                                  {refreshError === undefined
+                                    ? toneDot(sandboxTone(sandbox))
+                                    : null}
                                   {sandboxLifecycleLabel(sandbox)}
                                 </span>
                                 <TreeFactsSummary

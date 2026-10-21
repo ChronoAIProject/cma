@@ -21,7 +21,9 @@ import {
   sandboxLifecycleAction,
   sandboxLifecycleLabel,
   sandboxRefreshDelay,
+  sandboxTone,
 } from './lifecycle';
+import { Badge } from '../ui/Badge';
 import { SandboxOverview } from './SandboxOverview';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
 import { SandboxAdvanced } from './SandboxAdvanced';
@@ -241,7 +243,11 @@ export function SandboxPage({
         ]}
         title={sandbox.name}
         headingRef={heading}
-        badge={<span role="status">{sandboxLifecycleLabel(sandbox)}</span>}
+        badge={
+          <Badge tone={sandboxTone(sandbox)} live>
+            {sandboxLifecycleLabel(sandbox)}
+          </Badge>
+        }
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
