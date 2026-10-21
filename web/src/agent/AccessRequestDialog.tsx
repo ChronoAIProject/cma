@@ -4,7 +4,7 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
-import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
+import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 import { accessRequests, validAccessServices, type AgentAccessRequest } from './accessRequests';
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
 import type { SandboxStatus } from '../api/types';

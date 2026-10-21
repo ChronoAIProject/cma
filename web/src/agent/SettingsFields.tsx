@@ -2,7 +2,6 @@ import './Settings.css';
 import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Picker } from '../ui/Picker';
 
-export const REQUIRED_AGENT_SCOPES = ['chrono-llm-public', 'ornn-api'] as const;
 const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
 export function SettingsFields({
   value,
