@@ -2,7 +2,7 @@ import { Console } from './Console';
 import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
 import { SignInLanding } from './landing/SignInLanding';
-import { useAppRouter } from './routing/routes';
+import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
 import './styles/effects-typography.css';
@@ -103,11 +103,11 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
   if (state.status === 'checking') return <BrandLoading />;
   return (
     <SignInLanding
-      onSignIn={async () => {
-        if (state.status === 'authenticated') router.navigate({ kind: 'agent_manager' });
+      onSignIn={async (returnTo = '/agent-manager') => {
+        if (state.status === 'authenticated') router.navigate(parseRoute(returnTo));
         else {
           retainFatherDraftForSignIn();
-          await signIn('/agent-manager');
+          await signIn(returnTo);
         }
       }}
     />
@@ -180,10 +180,11 @@ function AgentApp({
         landing
       >
         <SignInLanding
-          onSignIn={async () => {
+          onSignIn={async (returnTo) => {
             retainFatherDraftForSignIn();
             await signIn(
-              router.route.kind === 'home' ? '/agent-manager' : window.location.pathname,
+              returnTo ??
+                (router.route.kind === 'home' ? '/agent-manager' : window.location.pathname),
             );
           }}
         />
