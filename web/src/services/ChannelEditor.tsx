@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { segment, ServiceError, serviceRequest } from './client';
+import { segment, ServiceError, serviceRequest, type Denied } from './client';
 export interface Channel {
   channel_id: string;
   record_id: string;
@@ -64,7 +64,7 @@ export function ChannelEditor({
 }: {
   readonly channel?: Channel;
   readonly onDone: (channel?: Channel) => void;
-  readonly denied: () => void;
+  readonly denied: Denied;
 }) {
   const [pending, setPending] = useState<{ key: string; body: string; record: string }>();
   const [error, setError] = useState<string>();
@@ -85,7 +85,7 @@ export function ChannelEditor({
       setPending(undefined);
       onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
-      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+      if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
       if (e instanceof ServiceError && e.status === 400) setPending(undefined);
       setError(
         e instanceof Error
@@ -194,7 +194,7 @@ export function ChannelEditor({
                   );
                 })
                 .catch((e: unknown) => {
-                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
                   setError(
                     e instanceof Error
                       ? e.message
@@ -218,7 +218,7 @@ export function DeleteChannel({
 }: {
   readonly channel: Channel;
   readonly onDone: () => void;
-  readonly denied: () => void;
+  readonly denied: Denied;
 }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -242,7 +242,7 @@ export function DeleteChannel({
               )
                 .then(onDone)
                 .catch((e: unknown) => {
-                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied();
+                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
                   setError(
                     e instanceof Error
                       ? e.message

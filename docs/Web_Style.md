@@ -848,6 +848,33 @@ The footer moves backward with a secondary **Back** key and forward with the ord
 A step that states a cost states the rate the service supplied and never projects a total. A projection
 assumes how long somebody will work and presents a number the service will never actually charge.
 
+### 12.6 Tables
+
+Records somebody compares across rows — channels, consumers, Operations records — are a real
+`table` with column headers, so a row reads the same to a screen reader as it does to the eye. A
+list of cards or bare rows makes every reader rediscover which line holds which fact. One shared
+table carries them all:
+
+- The table sits in one box with a 1px level-2 border at radius 12. A **40px header row** on the
+  layer-1 ground names every column in 12px medium secondary text.
+- **Body rows are 52px**, 14/20 primary text, 16px from the box edges, divided by a 1px level-2
+  hairline — no zebra stripes, and no hover fill, because a row is not itself a control. A slug,
+  identifier or image reference takes the code face; a count is tabular.
+- **Row actions** take the last column, right aligned, in compact §12 buttons. Its header is
+  visually hidden but still read (*Actions*), so the column is announced without printing a word
+  that adds nothing on screen.
+- A row that has to say something about itself — a failure, an unconfirmed outcome, a retained
+  draft — gets a **note row** directly beneath it, spanning every column with no divider between the
+  two, so the note reads as part of its row rather than as the next record.
+- **Loading** draws three skeleton rows in the table's own columns, with one polite status naming
+  what is loading. **Empty** keeps the headers and says so in one row spanning every column, with the
+  view's create action when the caller may create. A failed refresh keeps the last rows and reports
+  in an alert above the table.
+
+A table never widens the page. Its box scrolls horizontally inside itself; below 48rem the table
+keeps a 40rem minimum width so its columns do not crush into one-word lines, and the box is a
+named, keyboard-focusable region so that scrolling does not need a pointer.
+
 ---
 
 ## 13. The Agent conversation surface
@@ -1439,6 +1466,15 @@ your first message, and Ready. Each row has a fixed icon slot, visible state wor
 and safe detail. The state vocabulary is Waiting, In progress, Done, Needs you,
 Paused by CMA, and Didn't work. Colour is never the only account.
 
+The icon slot holds the §12.1 state dot the in-app setup rows use — done, the
+live ping while In progress, warning for Needs you, error for Didn't work, and a
+quiet dot while Waiting or Paused by CMA — not the 3D character, which stays on
+the landing and the brand. The word beside it takes the warning or error ink when
+the visitor must act or the step failed. The request's overall state under the
+heading is a §12.1 badge that announces politely. A failure, and updates that
+have stopped, are §12.1 alerts carrying their recovery actions. The words stay
+the visitor vocabulary below, never a wire value.
+
 Follow the owner-only Launch companion with bounded polling fallback. Retain the
 last acknowledged durable cursor; live transport failure does not erase progress.
 A ready result replaces the route with the Agent route and focuses its composer.
@@ -1957,21 +1993,38 @@ page. Do not retain the retired Chat hosts or Chat settings views.
 
 ### Record lists and details
 
-Use unframed compact record lists with hairline row separators, no zebra stripes,
-and no decorative section cards. A timestamp uses tabular numbers; the primary
-line uses `--text-body`, and metadata uses `--text-meta`. Identifiers use mono
+Sandboxes, Warm pools and Activity are §12.6 tables. A time column names its
+zone in its header — *Last activity (SGT)*, *Time (SGT)* — and draws an en-SG
+date and time in Asia/Singapore with tabular numbers. Identifiers use mono
 text that wraps without widening the viewport. People are identified by their
 retained public display names. Missing names say “Name unavailable”; subject IDs
 are never a fallback for a person's name. This applies to Sandbox and Profile
 owners, Activity actors, and Activity targets that are users. The ordinary Sandbox
 information page also shows its immutable creator under Owner.
 
-Sandboxes rows show owner, name, written status, runtime version, Agent count, and
-last activity. Owner, status, and version filters retain their values during reads.
-A named details command opens a drawer with Agents grouped beneath their named
-Workspaces, pinned Profile references, and
-the durable Sandbox event timeline. No row-wide destructive target exists.
-Unknown counts or unavailable runtime observations remain explicitly unknown.
+The Sandboxes table's columns are Sandbox (the name over its mono id), Owner,
+Status (a §12.1 badge in the shared Sandbox vocabulary), Runtime (or *not bound*),
+Agents, and Last activity (SGT), with Details and Retire as row actions. Owner,
+status, and version filters retain their values during reads. Details opens the
+existing dialog with Agents grouped beneath their named Workspaces, pinned Profile
+references, and the durable Sandbox event timeline. No row-wide destructive target
+exists. Unknown counts or unavailable runtime observations remain explicitly unknown.
+
+A capability the caller lacks is said once for the page, not on every row: without
+cross-owner control one information alert above the table reads *Cross-owner
+control is required.* and every Retire stays visible but disabled. A Deleting or
+Deleted status badge is the reason that row's Retire is unavailable.
+
+The Warm pools table's columns are Size (CPU and memory, with the Current default
+configuration tag and the Pool configuration disclosure), Status (Pending, Ready,
+Disabled or Unavailable as a §12.1 badge), Desired, Ready, Pending (Unknown until
+the controller has observed the pool), Target (the bounded input and Update
+target), and Disable pool as the row action. Waiting for the controller, a pool
+error, a failed or unconfirmed write, the retained-draft notice with Read current
+target, and Target saved are the pool's note row. The sentence on disabling spare
+capacity is said once above the table. Previous runtime pools use the same table
+inside their disclosure without the Target column, under one notice that only
+disabling is available and claimed Sandboxes keep running.
 
 Profiles rows show kind, visibility, owner, name, and update time. The three filters
 are native selectors or bounded inputs. A retired profile is not silently hidden
@@ -1984,7 +2037,10 @@ The confirmation names the target and the effect; it survives a failed request.
 Success rereads the record. Admin retirement has no invented idempotency-key
 contract. Never automatically repeat an ambiguous destructive request.
 
-Activity keeps the record-list treatment and public audit fields. It does not
+Activity is a table of Time (SGT), Actor (*Not signed in* or the actor's name),
+Action, Target (*User <name>* or the kind with its mono id), Outcome (Succeeded
+neutral, Refused warning, Failed error, as §12.1 badges) and Code. It keeps the
+public audit fields. It does not
 display credentials, profile contents, arbitrary runtime output, or internal
 checkpoint authority. All lists have loading, unavailable, empty, and pagination
 states. A failed refresh retains the last successful rows.
@@ -2037,8 +2093,10 @@ Public `/t/{publicId}` and `/t/{publicId}/{placementId}` visitor pages are separ
 
 The fixed header names CMA Trigger and carries a compact New Trigger command.
 Below it, one scrollport holds an unframed 240px rail, a 32px gap, and the editor
-on a maximum 1,100px axis. Rail rows show title, written state, and short public
-identifier. Selected rows use the existing navigation ground, a leading accent
+on a maximum 1,100px axis. Rail rows show title, the Trigger's status as a §12.1
+badge (Draft muted, Published neutral, Retired muted), and short public
+identifier; the open Trigger's header carries the same badge beside its
+title. Selected rows use the existing navigation ground, a leading accent
 rule, weight, and `aria-current`. Below 48rem the rail becomes a full-width
 40px native selector, the gap becomes 16px, and field rows become one column.
 No text or control may widen the viewport.
@@ -2713,6 +2771,27 @@ Channel editors and consumer forms retain their DOM and in-flight work when swit
 sections. Account preferences no longer contain Consumers or Developer; Docs remains.
 Existing hover/presence motion and reduced-motion behavior apply.
 
+Channels opens on a §12.6 table of every channel — Name, Provider (the mono slug),
+Level, Sources (a count) and Version — under the *Event Gateway / Channels* header;
+the sidebar's New channel stays the one create action. Nothing is selected until somebody
+chooses a channel, from the table or from the sidebar list, which keeps its rows and
+selection; the detail's *Channels* breadcrumb returns to the table. Empty says *No
+channels yet* and *Connect an event source to your agent.* In a channel each
+endpoint is a row: its name, a one-line purpose, the URL in the code face, and a
+compact **Copy** button that says *Copied* politely. When the clipboard refuses,
+the row says so and selects the URL so it can be copied by hand.
+
+Signed out and not permitted are different pages. A 401 keeps the *Sign in with
+NyxID* link; a 403 says *Your account doesn't have Event Gateway permissions.* with
+a Check again action and never offers sign-in, which would only return the same
+account to the same refusal.
+
+Consumers is a §12.6 table of Name, State, Provider level, Last test (*Not tested*
+or *Accepted after <n> ms*) and Updated. State is a §12.1 badge: Creating and
+Deleting active, Active neutral, Needs attention error, Disabled and Deleted muted.
+The consumer page carries the same badge beside its title, and its failures are
+§12.1 alerts.
+
 - 2026-10-16 — Group permission/status dropdowns on one row, place Consumers in
   Event Gateway navigation with retained section state, and remove Developer from
   the account menu.
@@ -2848,3 +2927,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Made the conversation say what the Agent is doing and what it needs. Consecutive tool calls form one group headed "<n> tool calls" with the latest call's summary, and every row carries a state dot with a plain word (In progress, Completed, Failed, Cancelled, or Outcome not reported) instead of the raw status; the "Duration not reported" filler is gone because no duration is reported. Groups with a failure open themselves. Plans reported through the public stream render as a per-turn Plan card with Done, In progress and Waiting badges. The approval card gained a one-line caption under Deny, Abort and Allow. The permission picker reads Guarded and Autonomous. |
 | 2026-10-21 | Made New agent one step that creates the Agent where the owner asked. A Workspace's New agent used to create another Workspace in its Sandbox, so a Workspace made with New workspace could never receive an Agent; it now opens the dialog on that Workspace and sends its `workspace_id`. §12.2 specifies the Where it works choice (New Sandbox, a Sandbox's new workspace, or a Workspace; unusable rows `aria-disabled` with their reasons), repository validation on blur and submit instead of on every keystroke, the read-only Agent settings summary and the access note. The preparation section replaces the percentage circle, which read 80% with every listed step Ready, with a four-step stepper (Sandbox, Workspace, Service access, Agent startup) that is also the setup band above the conversation. |
 | 2026-10-21 | Rebuilt the owner Sandbox page around one primary action and tabs. The header keeps New agent as primary and Pause or Resume as secondary, with its lifecycle reason line, and moves New workspace, Sharing, Technical details (formerly Advanced) and Delete Sandbox into More actions with their reasons. Every Sandbox message now sits in one toned alert stack. Overview, Workspaces, Access and Activity tabs keep their selection in the `tab` query and stay mounted while hidden. The Workspaces table's New agent here now starts an Agent in that Workspace instead of a new Workspace. The NyxID service scope editor moved from Agent Details to the Access tab, where the Sandbox-wide key belongs; Details keeps a read-only summary with Manage on Sandbox. Owners get a real Workspace page with Sandbox / Workspace breadcrumb, facts, an Agents and Worktrees table, New agent and Delete workspace; shared readers keep the shared projection. Supersedes the band layout, the closed Sandbox operation progress disclosure and the snapshot paragraph of §17. |
+| 2026-10-21 | Added one shared table (§12.6): a bordered box at radius 12 with a 40px header row, 52px rows on hairlines, a right-aligned actions column with a visually hidden header, note rows, skeleton loading and an empty row, scrolling inside its own box on narrow screens. Event Gateway channels and consumers and the Operations Sandboxes, Warm pools and Activity lists moved onto it, with status and outcome badges and SGT-labelled time columns; Operations says a missing cross-owner capability once for the page instead of on every row. Channels open on the table, endpoints gained Copy, and a 403 now says the account lacks Event Gateway permissions instead of offering sign-in again. Triggers carry their Draft, Published or Retired badge in the rail and header. Launch progress rows use state dots instead of the character, with the overall state as a badge and failures as alerts. |

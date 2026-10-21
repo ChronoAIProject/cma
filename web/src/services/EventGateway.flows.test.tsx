@@ -25,9 +25,10 @@ function channel(id: string, version = 1): Channel {
     },
   };
 }
+// Channels opens on the table; a channel's details appear once it is chosen.
 const select = async (name: string) =>
   userEvent.click(
-    within(screen.getByRole('region', { name: 'Channels' })).getByRole('button', {
+    await within(screen.getByRole('region', { name: 'Channels' })).findByRole('button', {
       name: new RegExp(name),
     }),
   );
@@ -51,6 +52,7 @@ it('retains an uncertain edit while switching channels and retries the original 
   });
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
+  await select('Alpha');
   await userEvent.click(await screen.findByRole('button', { name: 'Edit channel' }));
   fireEvent.change(
     within(screen.getByRole('region', { name: 'Alpha details' })).getByLabelText(
@@ -96,6 +98,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
   });
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
+  await select('Existing');
   await screen.findByRole('heading', { name: 'Existing' });
   await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
   const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
@@ -119,7 +122,10 @@ it('retains an uncertain create across navigation and removes a freshly created 
   await waitFor(() =>
     expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument(),
   );
-  expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
+  // The deleted channel was open, so the page returns to the table of what remains.
+  const table = screen.getByRole('table', { name: 'Your channels' });
+  expect(within(table).getByRole('button', { name: 'Existing' })).toBeVisible();
+  expect(within(table).queryByRole('button', { name: 'Created' })).not.toBeInTheDocument();
   expect(
     within(screen.getByRole('region', { name: 'Channels' })).queryByRole('button', {
       name: /Created/,
@@ -149,6 +155,7 @@ it('reopens a legacy record only with its original channel ID and rejects an unr
   });
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
+  await select('Legacy');
   const input = await screen.findByLabelText('Original channel ID');
   fireEvent.change(input, { target: { value: 'Wrong-channel' } });
   await userEvent.click(screen.getByRole('button', { name: 'Open existing channel' }));
@@ -184,6 +191,7 @@ it('recovers legacy endpoints automatically when the original creation record is
     );
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
+  await select('Recovered');
   expect(await screen.findByRole('button', { name: 'Edit channel' })).toBeEnabled();
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(2);

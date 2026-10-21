@@ -2,21 +2,26 @@ import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
+import { Alert } from '../ui/Alert';
+import { StatusBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { Table, TableActions, TableCell } from '../ui/Table';
 import { IconArchiveOutline20, IconInspectOutline12, IconSearchOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
-import {
-  FailureNotice,
-  RecordControls,
-  Records,
-  Timestamp,
-  stateWord,
-  useRecords,
-} from './records';
+import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { SandboxDetail } from './SandboxDetail';
+
+const COLUMNS = [
+  { header: 'Sandbox' },
+  { header: 'Owner' },
+  { header: 'Status' },
+  { header: 'Runtime' },
+  { header: 'Agents', align: 'end' },
+  { header: 'Last activity (SGT)' },
+] as const;
 
 const statuses: readonly SandboxStatus[] = [
   'provisioning',
@@ -46,6 +51,14 @@ export function Sandboxes({
   return (
     <section aria-label="Sandbox inventory">
       <h2>Sandboxes</h2>
+      {/* Said once for the page: every row would otherwise repeat the same sentence. */}
+      {canControl ? null : (
+        <div className="operator-notices">
+          <Alert tone="info" title="Cross-owner control is required.">
+            You can review these Sandboxes, but Retire stays unavailable.
+          </Alert>
+        </div>
+      )}
       <form
         className="operator-filters"
         onSubmit={(event) => {
@@ -160,54 +173,58 @@ function SandboxRecords({
     <>
       <RecordControls {...records} />
       <FailureNotice failure={records.error} />
-      <Records loading={records.loading} empty={records.page?.items.length === 0}>
+      <Table
+        label="Sandboxes"
+        placement="operator-table"
+        columns={COLUMNS}
+        actions="Actions"
+        loading={records.loading}
+        loadingLabel="Loading records"
+        empty={records.page === undefined ? undefined : 'No records match these filters.'}
+      >
         {records.page?.items.map((row) => (
-          <article className="operator-record" key={row.id}>
-            <Timestamp value={row.last_activity_at} />
-            <div>
-              <p>
-                {row.name} <span className="operator-state">{stateWord(row.status)}</span>
-              </p>
-              <p className="operator-meta">
-                <span>Owner {row.owner_name?.trim() || 'Name unavailable'}</span>
-                <span>{row.agent_count} Agents</span>
-                <span>Runtime {row.runtime_version ?? 'not bound'}</span>
-              </p>
-              <code>{row.id}</code>
-            </div>
-            <div>
-              <div className="operator-actions">
-                <Button
-                  size="sm"
-                  icon={<IconInspectOutline12 />}
-                  onClick={() => setDetail(row.id)}
-                  aria-label={`Details for ${row.name}`}
-                >
-                  Details
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  icon={<IconArchiveOutline20 />}
-                  disabled={!canControl || row.status === 'retired' || row.status === 'retiring'}
-                  onClick={() => {
-                    setFailure(undefined);
-                    setUncertain(false);
-                    setTarget(row);
-                  }}
-                >
-                  Retire
-                </Button>
-              </div>
-              {!canControl ? (
-                <p className="operator-notice">Cross-owner control is required.</p>
-              ) : row.status === 'retired' || row.status === 'retiring' ? (
-                <p className="operator-notice">Retirement already requested.</p>
-              ) : null}
-            </div>
-          </article>
+          <tr key={row.id}>
+            <TableCell>
+              <span className="operator-name">{row.name}</span>
+              <code className="operator-id">{row.id}</code>
+            </TableCell>
+            <TableCell>{row.owner_name?.trim() || 'Name unavailable'}</TableCell>
+            <TableCell>
+              <StatusBadge status={row.status} />
+            </TableCell>
+            <TableCell mono>{row.runtime_version ?? 'not bound'}</TableCell>
+            <TableCell align="end">{row.agent_count}</TableCell>
+            <TableCell>
+              <Timestamp value={row.last_activity_at} />
+            </TableCell>
+            <TableActions>
+              <Button
+                size="sm"
+                icon={<IconInspectOutline12 />}
+                onClick={() => setDetail(row.id)}
+                aria-label={`Details for ${row.name}`}
+              >
+                Details
+              </Button>
+              {/* Without the capability the page says so once; a Deleting or
+                  Deleted badge is this row's own reason. */}
+              <Button
+                size="sm"
+                variant="danger"
+                icon={<IconArchiveOutline20 />}
+                disabled={!canControl || row.status === 'retired' || row.status === 'retiring'}
+                onClick={() => {
+                  setFailure(undefined);
+                  setUncertain(false);
+                  setTarget(row);
+                }}
+              >
+                Retire
+              </Button>
+            </TableActions>
+          </tr>
         ))}
-      </Records>
+      </Table>
       {detail === undefined ? null : (
         <SandboxDetail client={client} id={detail} onClose={() => setDetail(undefined)} />
       )}
