@@ -119,7 +119,7 @@ it('keeps composer settings available while Details and tree navigation remain u
   const composer = within(screen.getByRole('form', { name: 'Message Agent' }));
   expect(await composer.findByLabelText('Model')).toHaveTextContent('gpt-6');
   expect(composer.getByLabelText('Reasoning effort')).toHaveTextContent('High');
-  expect(composer.getByLabelText('Permission mode')).toHaveTextContent('YOLO');
+  expect(composer.getByLabelText('Permission mode')).toHaveTextContent('Autonomous');
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
   expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
