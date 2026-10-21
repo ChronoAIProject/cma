@@ -57,11 +57,24 @@
   font-size: 12px;
   cursor: pointer;
 }
+/* A quiet label, not a control or a status: the pill reads as pressable here. */
+.warm-pool-tag {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+}
 /* The draft target and its command share one line inside the cell. */
 .warm-pool-target {
   display: flex;
   gap: 8px;
   align-items: center;
+  white-space: nowrap;
 }
 .warm-pool-target .input {
   width: 88px;
