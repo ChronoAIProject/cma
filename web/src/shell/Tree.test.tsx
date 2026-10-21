@@ -463,11 +463,36 @@ describe('Sandbox navigation tree', () => {
 
     await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
     await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
+    expect(actions.at(-1)).toEqual({ kind: 'new_agent', workspaceId: 'wsp_1' });
+
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
+    await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
     expect(actions.at(-1)).toEqual({ kind: 'new_agent', sandboxId: 'sbx_1' });
 
     await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
     await actor.click(screen.getByRole('menuitem', { name: 'Stop' }));
     expect(actions.at(-1)).toEqual({ kind: 'stop_agent', agentId: 'agt_1' });
+  });
+
+  it('keeps New agent on a Workspace that is not ready listed with its reason', async () => {
+    const actions: TreeAction[] = [];
+    const actor = userEvent.setup();
+    renderTree({
+      items: navigationFixture().map((item) => ({
+        ...item,
+        workspaces: item.workspaces.map((workspace) => ({
+          ...workspace,
+          status: 'preparing' as const,
+        })),
+      })),
+      onAction: (action) => actions.push(action),
+    });
+    await actor.click(screen.getByRole('button', { name: 'Options for /workspaces/chrono-bot' }));
+    const create = screen.getByRole('menuitem', { name: /^New agent/ });
+    expect(create).toHaveAttribute('aria-disabled', 'true');
+    expect(create).toHaveTextContent('The Workspace is not ready.');
+    await actor.click(create);
+    expect(actions).toEqual([]);
   });
 
   it('removes creation and control affordances from a visitor tree', () => {
