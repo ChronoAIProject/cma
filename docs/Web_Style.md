@@ -1996,8 +1996,9 @@ look, press-to-spin and visibility disposal return to the unframed Home and
 authentication surfaces. The stable square is bounded to the available width,
 220px minimum when space permits and 520px maximum; compact Home uses 280px.
 The signed-in wordmark is 48px, weight 700, with zero tracking. Only the signed-out
-landing names the product ChronoAI Managed Agent on one unbroken line, with
-responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking.
+landing names the product ChronoAI Managed Agent on one line where it fits, with
+responsive `clamp(18px, 4.8vw, 40px)` type, 1.2 leading and zero tracking; where the
+column is narrower it wraps with balanced lines and never overflows into the services.
 Its lockup is at most 760px wide, retaining 24px horizontal padding, and has no
 separate Sign in button. Its title and cloud invitation use self-hosted
 OFL Shrikhand with the interface stack as fallback; the regular face is deliberately
@@ -2587,3 +2588,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 
 | 2026-10-20 | Extend the full-width narrow composer through 320px conversation columns so 360px phones retain a readable draft; verify cold idle and active layouts at 320px, 360px and 390px viewport widths. |
 | 2026-10-21 | Moved both appearances onto a shadcn/ui-based neutral system: one `zinc` ramp for grounds, borders and labels, Chrono lime kept as the brand and accent (`lime 800` in light, where the bright step cannot carry text), a `zinc 900` light primary and lime dark primary, neutral low-alpha light shadows, inverted tooltips, and one interface/code pairing, Geist and Geist Mono, in both appearances. Kept every alias and specific name and the three-tier architecture so every surface re-inks without a migration vocabulary; the earlier ramps and faces stay declared only for remaining static and brand-asset consumers. Regenerated the §2 alias contract from the shipped sheet so the tables cannot drift from it. |
+| 2026-10-21 | Let the signed-out product name wrap with balanced lines when its column is narrower than the name. The unbroken line overflowed its 360px grid column between 761px and about 1040px, where the services cards covered it, and widened a phone's grid past the viewport. Restored the lockup's documented 144px top reservation so the cloud invitation no longer clips above the viewport. |
