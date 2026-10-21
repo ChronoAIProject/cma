@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 
 use crate::AuthenticatedCaller;
 
+use super::super::sandbox_runtime_update::SandboxRuntimeUpdateView;
 use super::{AdminState, CollectionProblem, ProtectedKind, ProtectedProblem};
 
 const DEFAULT_EVENT_LIMIT: u16 = 200;
@@ -137,6 +138,7 @@ impl From<AgentAdminSummary> for AgentSummaryView {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SandboxDetailView {
     owner_name: Option<String>,
+    runtime_update: Option<SandboxRuntimeUpdateView>,
     #[schema(value_type = Object)]
     sandbox: Sandbox,
     workspaces: Vec<WorkspaceSummaryView>,
@@ -147,6 +149,7 @@ impl From<SandboxAdminView> for SandboxDetailView {
     fn from(value: SandboxAdminView) -> Self {
         Self {
             owner_name: None,
+            runtime_update: None,
             sandbox: value.sandbox,
             workspaces: value.workspaces.into_iter().map(Into::into).collect(),
             agents: value.agents.into_iter().map(Into::into).collect(),
@@ -225,6 +228,10 @@ pub(crate) async fn read(
     )
     .await;
     let mut view = SandboxDetailView::from(value);
+    view.runtime_update = state
+        .runtime_updates
+        .as_ref()
+        .map(|service| SandboxRuntimeUpdateView::new(&view.sandbox, service));
     view.owner_name = names.get(&view.sandbox.owner.0).cloned();
     Ok(Json(view))
 }

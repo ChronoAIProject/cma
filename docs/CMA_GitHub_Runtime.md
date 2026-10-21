@@ -2,9 +2,10 @@
 
 The runtime image builds the genuine upstream GitHub CLI, version 2.100.0,
 from commit `45437bc7eeeb3359bbfddd1742f79de7652fd3e2`. The source archive and
-both architecture toolchain archives have pinned SHA-256 checksums. Go 1.26.9
-builds the unchanged CLI source with two indirect dependencies updated:
-`golang.org/x/mod` 0.40.0 fixes CVE-2026-56864 and CVE-2026-56865, and
+both architecture toolchain archives have pinned SHA-256 checksums. Go 1.26.10
+fixes CVE-2026-111943 in crypto/x509 and builds the unchanged CLI source with
+two indirect dependencies updated:
+`golang.org/x/mod` 0.41.0 fixes CVE-2026-56864 and CVE-2026-56865, and
 `golang.org/x/net` 0.60.0 fixes CVE-2026-78669, which remain in the upstream
 release binary. Go's checksum database and module verification remain enabled;
 the final build uses readonly module resolution. Image evidence records the

@@ -26,6 +26,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agents",
     "auth_api_bearers",
     "auth_actor_links",
+    super::auth::PROXY_GRANTS,
     "auth_browser_logins",
     "auth_login_attempts",
     "auth_subjects",
