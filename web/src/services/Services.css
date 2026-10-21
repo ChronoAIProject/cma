@@ -5,84 +5,80 @@
   min-width: 0;
 }
 /* The service switch is part of the shared sidebar, never a page header. */
-.service-tabs {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  flex: none;
-  isolation: isolate;
-  margin-block: 8px 12px;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2);
-}
-.service-tabs__indicator {
-  position: absolute;
-  z-index: -1;
-  inset: 3px auto 3px 3px;
-  width: calc((100% - 6px) / 3);
-  border-radius: 7px;
-  background: var(--dsw-specific-sidebar-nav-item-active);
-  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-.service-tabs[data-selected='gateway'] .service-tabs__indicator {
-  transform: translateX(100%);
-}
-.service-tabs a,
-.service-tabs button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
+/* The service switch — `docs/Web_Style.md` §10. */
+.service-menu {
+  flex: 1;
   min-width: 0;
-  min-height: 44px;
-  padding: 6px 2px;
+  display: flex;
+}
+.service-menu--collapsed {
+  flex: none;
+}
+.service-menu__trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 0.6875rem;
-  line-height: 1.25;
-  text-align: center;
-  text-decoration: none;
-  cursor: pointer;
-}
-.service-tabs a[aria-current='page'] {
   color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 0.875rem;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.service-tabs button:disabled {
-  color: var(--dsw-alias-label-tertiary);
-  cursor: not-allowed;
-}
-.service-tabs a:hover {
+.service-menu__trigger:hover,
+.service-menu__trigger[aria-expanded='true'] {
   background: var(--dsw-alias-interactive-bg-hover);
 }
-.service-tabs a:focus-visible,
+.service-menu__trigger:focus-visible,
 .service-link:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-.service-tabs[data-collapsed] {
-  grid-template-columns: 1fr;
-  margin-inline: -4px;
+.service-menu__icon {
+  display: none;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
 }
-.service-tabs[data-collapsed] a span,
-.service-tabs[data-collapsed] button span {
+.service-menu__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.service-menu__chevron {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+.service-menu--collapsed .service-menu__trigger {
+  flex: none;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+}
+.service-menu--collapsed .service-menu__name,
+.service-menu--collapsed .service-menu__chevron {
   display: none;
 }
-.service-tabs[data-collapsed] .service-tabs__indicator {
-  width: auto;
-  height: calc((100% - 6px) / 3);
-  inset-inline: 3px;
+/* Collapsed, the glyph is all that is left to say which service this is. */
+.service-menu--collapsed .service-menu__icon {
+  display: inline-flex;
 }
-.service-tabs[data-collapsed][data-selected='gateway'] .service-tabs__indicator {
-  transform: translateY(100%);
+@media (max-width: 30rem) {
+  .service-menu__trigger {
+    min-height: 44px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .service-tabs__indicator {
+  .service-menu__trigger {
     transition: none;
   }
 }

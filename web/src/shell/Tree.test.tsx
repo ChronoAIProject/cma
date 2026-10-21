@@ -125,13 +125,13 @@ describe('Sandbox navigation tree', () => {
         })),
       ],
     });
-    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
     expect(screen.getByRole('menuitem', { name: /Pause/ })).toHaveAttribute(
       'aria-disabled',
       'true',
     );
     await actor.keyboard('{Escape}');
-    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 2' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Other sandbox' }));
     for (const name of ['Pause', 'New agent', 'Delete'])
       expect(screen.getByRole('menuitem', { name })).toHaveAttribute('aria-disabled', 'false');
   });
@@ -161,14 +161,12 @@ describe('Sandbox navigation tree', () => {
       })),
     ];
     const view = renderTree({ items });
-    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
-      'Sandbox Machine - 1',
-    );
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
     expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).toHaveTextContent(
       'Sandbox Machine - paused',
     );
     await actor.click(screen.getByRole('button', { name: 'Collapse Live sandboxes' }));
-    expect(screen.queryByText('Sandbox Machine - 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
     expect(screen.getByText('Sandbox Machine - paused')).toBeInTheDocument();
     view.unmount();
     const restored = renderTree({ items });
@@ -179,7 +177,7 @@ describe('Sandbox navigation tree', () => {
     expect(screen.getByText('Sandbox Machine - paused')).toBeInTheDocument();
     restored.unmount();
     renderTree({ items, viewerId: 'another-owner' });
-    expect(screen.getByText('Sandbox Machine - 1')).toBeInTheDocument();
+    expect(screen.getByText('Atlas')).toBeInTheDocument();
   });
 
   it.each(['preparing', 'removing', 'failed'] as const)(
@@ -220,16 +218,10 @@ describe('Sandbox navigation tree', () => {
       },
     }));
     renderTree({ items });
-    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent(
-      'Sandbox Machine - 1',
-    );
-    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent(
-      'Sandbox Machine - 1',
-    );
-    expect(screen.getByRole('link', { name: /Sandbox Machine - 1/ })).toHaveTextContent('Resuming');
-    expect(
-      screen.getByRole('button', { name: 'Collapse Sandbox Machine - 1' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
+    expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent('Atlas');
+    expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Resuming');
+    expect(screen.getByRole('button', { name: 'Collapse Atlas' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Agent one/ })).toHaveTextContent('Resuming');
   });
 
@@ -250,8 +242,8 @@ describe('Sandbox navigation tree', () => {
         },
       }));
       renderTree({ items, onAction });
-      expect(screen.getByRole('link', { name: /Sandbox Machine - 1/ })).toHaveTextContent('Live');
-      await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+      expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Live');
+      await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
       const pause = screen.getByRole('menuitem', { name: /^Pause/ });
       expect(pause).toHaveAttribute('aria-disabled', 'true');
       expect(pause).toHaveTextContent('Progress is being saved.');
@@ -279,9 +271,7 @@ describe('Sandbox navigation tree', () => {
       });
       expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
       expect(screen.getByText('Agent one')).toBeInTheDocument();
-      await userEvent
-        .setup()
-        .click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
       expect(
         screen.getByRole('menuitem', { name: status === 'paused' ? /^Resume/ : /^Pause/ }),
       ).toHaveAttribute('aria-disabled', 'true');
@@ -291,14 +281,14 @@ describe('Sandbox navigation tree', () => {
   it('uses the reported Resume eligibility and blocks duplicate pending lifecycle actions', async () => {
     const actor = userEvent.setup();
     const view = renderTree({ paused: true });
-    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
     expect(screen.getByRole('menuitem', { name: 'Resume' })).toHaveAttribute(
       'aria-disabled',
       'false',
     );
     view.unmount();
     renderTree({ paused: true, lifecycleBusy: true });
-    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
     expect(screen.getByRole('menuitem', { name: /^Resume/ })).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -312,9 +302,7 @@ describe('Sandbox navigation tree', () => {
         sandbox: { ...item.sandbox, lifecycle: undefined },
       })),
     });
-    await userEvent
-      .setup()
-      .click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
     expect(screen.getByRole('menuitem', { name: /^Pause/ })).toHaveAttribute(
       'aria-disabled',
       'true',
@@ -324,7 +312,7 @@ describe('Sandbox navigation tree', () => {
 
   it('renders Sandbox, Workspace, and Agent rows without a Worktree navigation node', () => {
     renderTree();
-    expect(screen.getByText('Sandbox Machine - 1')).toBeInTheDocument();
+    expect(screen.getByText('Atlas')).toBeInTheDocument();
     expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
     const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
     expect(agent).not.toHaveAttribute('data-dimmed');
@@ -349,10 +337,10 @@ describe('Sandbox navigation tree', () => {
       expect(screen.queryByText('/workspaces/chrono-bot')).not.toBeInTheDocument();
       expect(
         screen.queryByRole('button', {
-          name: /Expand Sandbox Machine - 1|Collapse Sandbox Machine - 1/,
+          name: /Expand Atlas|Collapse Atlas/,
         }),
       ).not.toBeInTheDocument();
-      await userEvent.setup().click(screen.getByRole('link', { name: /Sandbox Machine - 1/ }));
+      await userEvent.setup().click(screen.getByRole('link', { name: /Atlas/ }));
       expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
     },
   );
@@ -429,7 +417,7 @@ describe('Sandbox navigation tree', () => {
 
   it('removes terminal Sandboxes, Workspaces and Agents from working navigation', () => {
     const retired = renderTree({ items: navigationFixture('retired') });
-    expect(screen.queryByText('Sandbox Machine - 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
     expect(screen.getByText('No Sandboxes')).toBeInTheDocument();
     retired.unmount();
     const removed = renderTree({
@@ -450,7 +438,7 @@ describe('Sandbox navigation tree', () => {
   it('persists collapsed groups independently for each viewer', async () => {
     const actor = userEvent.setup();
     const first = renderTree({ viewerId: 'viewer-one' });
-    await actor.click(screen.getByRole('button', { name: 'Collapse Sandbox Machine - 1' }));
+    await actor.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
     expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
     first.unmount();
 
@@ -467,7 +455,7 @@ describe('Sandbox navigation tree', () => {
     const actor = userEvent.setup();
     renderTree({ onAction: (action) => actions.push(action) });
 
-    await actor.click(screen.getByRole('button', { name: 'Options for Sandbox Machine - 1' }));
+    await actor.click(screen.getByRole('button', { name: 'Options for Atlas' }));
     expect(screen.getByRole('menuitem', { name: 'Pause' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
     await actor.click(screen.getByRole('menuitem', { name: 'New workspace' }));
