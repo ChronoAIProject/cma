@@ -99,3 +99,29 @@ it('keeps text preferences in sync between retained portal account menus', async
   );
   await actor.click(screen.getByRole('menuitemradio', { name: 'Medium' }));
 });
+
+it('copies the build revision from the account menu', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  // After setup, which installs its own clipboard on the navigator.
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Build dev' }));
+  expect(writeText).toHaveBeenCalledWith('dev');
+  expect(
+    await screen.findByRole('menuitem', { name: 'Build revision copied' }),
+  ).toBeInTheDocument();
+});
+
+it('keeps the build revision readable when the clipboard refuses it', async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+  // After setup, which installs its own clipboard on the navigator.
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Build dev' }));
+  expect(writeText).toHaveBeenCalledOnce();
+  expect(screen.getByRole('menuitem', { name: 'Build dev' })).toBeInTheDocument();
+});
