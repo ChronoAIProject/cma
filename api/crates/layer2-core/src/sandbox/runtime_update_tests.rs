@@ -201,3 +201,88 @@ async fn runtime_update_service_conceals_foreign_owner_and_rejects_stale_target(
     assert_eq!(saved.runtime, value.runtime);
     assert_eq!(saved.lifecycle.home, value.lifecycle.home);
 }
+
+#[tokio::test]
+async fn runtime_update_operator_queues_foreign_owner_without_changing_live_identity_or_work() {
+    use super::store::{InMemorySandboxStore, SandboxStore};
+    use crate::{Authorization, Caller, Capability, SubjectId};
+    use std::sync::Arc;
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut value = native();
+    value.revision = 1;
+    store.create_sandbox(value.clone()).await.unwrap();
+    let service = SandboxRuntimeUpdateService::new(store.clone(), "image-v2".into());
+    let caller = Caller {
+        subject: SubjectId::new("actual-operator"),
+        authorization: Authorization::new([Capability::UseOwnSandboxes]),
+    };
+    assert!(matches!(
+        service
+            .request_as_operator(&caller, &value.id, "image-v2")
+            .await,
+        Err(SandboxRuntimeUpdateError::Forbidden)
+    ));
+    let caller = Caller {
+        authorization: Authorization::new([
+            Capability::UseOwnSandboxes,
+            Capability::ControlAnySandbox,
+        ]),
+        ..caller
+    };
+    assert!(
+        matches!(
+            service.request(&caller, &value.id, "image-v2").await,
+            Err(SandboxRuntimeUpdateError::NotFound)
+        ),
+        "owner endpoint must still conceal foreign owners"
+    );
+    assert!(matches!(
+        service
+            .request_as_operator(&caller, &value.id, "image-v3")
+            .await,
+        Err(SandboxRuntimeUpdateError::TargetChanged)
+    ));
+    assert_eq!(
+        store.get_sandbox(&value.id).await.unwrap(),
+        Some(value.clone())
+    );
+    let queued = service
+        .request_as_operator(&caller, &value.id, "image-v2")
+        .await
+        .unwrap();
+    assert_eq!(queued.owner, value.owner);
+    assert_eq!(queued.runtime, value.runtime);
+    assert_eq!(queued.status, SandboxStatus::Active);
+    assert_eq!(queued.lifecycle.home, value.lifecycle.home);
+    assert_eq!(queued.lifecycle.operation, value.lifecycle.operation);
+    assert_eq!(queued.work, value.work);
+    let request = queued.runtime_update_request().unwrap();
+    assert_eq!(request.target_version, "image-v2");
+    assert!(request.started_at.is_none());
+    assert!(request.completed_at.is_none());
+    assert_eq!(
+        service
+            .request_as_operator(&caller, &value.id, "image-v2")
+            .await
+            .unwrap(),
+        queued
+    );
+    let service = SandboxRuntimeUpdateService::new(store, "image-v3".into());
+    assert_eq!(
+        service
+            .request_as_operator(&caller, &value.id, "image-v2")
+            .await
+            .unwrap(),
+        queued,
+        "already queued target remains retryable after a deployment"
+    );
+    assert!(
+        matches!(
+            service
+                .request_as_operator(&caller, &value.id, "image-v3")
+                .await,
+            Err(SandboxRuntimeUpdateError::NotAvailable)
+        ),
+        "pending update cannot be retargeted"
+    );
+}

@@ -23,7 +23,7 @@ use layer2_core::{
 
 use crate::{
     activity::ActivityRecorder,
-    auth::{AuthMode, AuthState, SignInRecords},
+    auth::{AuthMode, AuthState},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
@@ -112,24 +112,7 @@ impl ControlPlaneComposition {
         )
         .await?;
         let adapter = adapters.owned;
-        let auth = AuthState::with_store_and_nyxid_public_url(
-            config.auth_mode.clone(),
-            Some(SignInRecords {
-                users: Arc::clone(&users),
-                activity: Arc::clone(&activity),
-            }),
-            stores.auth.clone(),
-            config.nyxid_public_url.clone(),
-        )
-        .with_agent_key_service(config.nyxid_service_id.clone())
-        .with_resource_request_enabled(config.features.nyxid_resource_request)
-        .with_binding_store(stores.sandbox_model.clone())
-        .with_bot_father_username(
-            config
-                .bot_father
-                .as_ref()
-                .map(|father| father.username.clone()),
-        )?;
+        let auth = credentials::authentication(config, &stores, &users, &activity)?;
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config_with_callback(
                 &config.auth_mode,
@@ -220,6 +203,7 @@ impl ControlPlaneComposition {
             Arc::clone(&activity),
         )
         .with_user_directory(Arc::clone(&users))
+        .with_runtime_updates(runtime.updates.clone())
         .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
