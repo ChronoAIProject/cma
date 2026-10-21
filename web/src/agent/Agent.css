@@ -188,16 +188,6 @@
   line-height: 18px;
 }
 
-.approval__eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
-}
-
 .message p,
 .agent-event p {
   font-size: 16px;
@@ -328,40 +318,6 @@
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 19px;
-}
-
-.approval {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 16px 0;
-  padding: 14px;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-state-warn-secondary);
-  border-radius: 8px;
-}
-
-.approval h2 {
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.approval p {
-  margin-top: 3px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-}
-
-.approval__actions {
-  display: flex;
-  flex: none;
-  gap: 4px;
-}
-
-.approval__decision {
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: capitalize;
 }
 
 .message-stream__usage {
@@ -535,17 +491,6 @@
 
   .message {
     max-width: 96%;
-  }
-
-  .approval {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .approval__actions .button {
-    flex: 1;
-    min-height: 44px;
-    max-height: 44px;
   }
 
   .agent-composer {
