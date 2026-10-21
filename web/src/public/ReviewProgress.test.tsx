@@ -172,7 +172,7 @@ describe('minimal review', () => {
     await screen.findByRole('heading', { name: 'NyxID services' });
     const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
     expect(headings).toContain('Install software');
-    expect(headings).toContain('Codex provider');
+    expect(headings).toContain('Model subscription');
     expect(headings).toContain('Review before continuing');
     await actor.click(screen.getByRole('checkbox'));
     await actor.click(screen.getByRole('button', { name: 'Continue' }));

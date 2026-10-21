@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { ApiError, type Bot } from '@chronoai/cma-sdk';
-import type { AppRoute } from '../routing/routes';
+import { routePath, type AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { BotStatus, BotTestResult } from './BotStatus';
@@ -46,6 +48,7 @@ export function BotDetail({
         ? accepted
         : undefined
       : current.value;
+  useDocumentTitle(bot?.name ?? 'Consumer');
   const settled =
     bot != null && bot.operation === null && ['active', 'disabled', 'failed'].includes(bot.state);
   const confirmed =
@@ -93,11 +96,22 @@ export function BotDetail({
   };
   return (
     <section aria-labelledby="bot-detail-title">
-      <header className="bots__header">
-        <Button onClick={() => onNavigate({ kind: 'bots' })}>All consumers</Button>
-        <h1 id="bot-detail-title">{bot?.name ?? 'Bot'}</h1>
-        <Button onClick={current.reload}>Refresh status</Button>
-      </header>
+      <div className="bots__header">
+        <PageHeader
+          breadcrumb={[
+            { label: 'Event Gateway' },
+            {
+              label: 'Consumers',
+              href: routePath({ kind: 'bots' }),
+              onSelect: () => onNavigate({ kind: 'bots' }),
+            },
+            { label: bot?.name ?? 'Consumer' },
+          ]}
+          title={bot?.name ?? 'Consumer'}
+          headingId="bot-detail-title"
+          actions={<Button onClick={current.reload}>Refresh status</Button>}
+        />
+      </div>
       <div className="bots__body">
         {current.error === undefined ? null : <p role="alert">{current.error}</p>}
         {bot === undefined && current.error === undefined ? (

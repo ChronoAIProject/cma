@@ -49,7 +49,7 @@ export function commandRefusal(
   if (command === undefined || command.name.startsWith('$'))
     return commands === undefined
       ? 'This Agent has not reported its available commands yet. Keep this draft and try again when the session is ready.'
-      : 'This command is not available in this Codex session. Choose a listed command, or write a message without a leading slash.';
+      : 'This command is not available for this Agent. Choose a listed command, or write a message without a leading slash.';
   if (hasAttachments)
     return 'Send attachments with a message or skill invocation, separately from a session command.';
   return undefined;

@@ -138,7 +138,6 @@ export function RevisionContents({
       <Fact label="Size">
         {content.cpuMillis / 1000} cores · {content.memoryMib / 1024} GiB
       </Fact>
-      <Fact label="Agent provider">Codex</Fact>
       <Fact label="Model access">
         {content.modelAccess === 'chronoai_managed' ? 'ChronoAI managed' : 'Your own account'}
       </Fact>
