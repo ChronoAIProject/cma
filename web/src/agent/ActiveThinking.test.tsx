@@ -43,7 +43,7 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   const { rerender } = render(draw(state));
   const toggle = screen.getByRole('button', { name: /^Thinking/ });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(toggle.querySelector('.landing__character[data-state="running"]')).not.toBeNull();
+  expect(toggle.querySelector('.statedot[data-state="ongoing"]')).not.toBeNull();
   fireEvent.click(toggle);
   const dock = screen.getByRole('region', { name: 'What the agent is working through' });
   expect(within(dock).getByText('Inspecting dependencies')).toBeInTheDocument();
