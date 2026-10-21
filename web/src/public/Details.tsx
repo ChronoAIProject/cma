@@ -50,10 +50,6 @@ export function Details({
       <summary>{publicCopy.details}</summary>
       <dl>
         <div>
-          <dt>{publicCopy.provider}</dt>
-          <dd>{preview.technical.provider}</dd>
-        </div>
-        <div>
           <dt>{publicCopy.model}</dt>
           <dd>{preview.technical.model ?? publicCopy.defaults}</dd>
         </div>

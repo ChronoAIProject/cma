@@ -102,14 +102,14 @@ function SandboxEditor({
               />
             </section>
             <section className="profile-editor__band">
-              <h2>Codex provider</h2>
+              <h2>Model access</h2>
               <div className="profile-field">
                 <ChoiceGroup
-                  label="Codex provider"
+                  label="Model access"
                   value={value.modelAccess}
                   options={[
                     { value: 'chronoai_managed', label: 'Chrono LLM (public)' },
-                    { value: 'own_credentials', label: 'My Codex subscription' },
+                    { value: 'own_credentials', label: 'Your ChatGPT subscription' },
                   ]}
                   disabled={editor.locked}
                   describedBy="profile-model-access-help"
@@ -124,8 +124,8 @@ function SandboxEditor({
                 />
                 <p id="profile-model-access-help" className="profile-field__help">
                   {value.modelAccess === 'chronoai_managed'
-                    ? 'Codex uses Chrono LLM (public) through NyxID. No personal Codex subscription is needed.'
-                    : 'Each user signs in with their own Codex subscription through OpenAI before their sandbox opens.'}
+                    ? 'The Agent uses Chrono LLM (public) through NyxID. No personal subscription is needed.'
+                    : 'Each user signs in with their own ChatGPT subscription through OpenAI before their sandbox opens.'}
                 </p>
               </div>
             </section>
