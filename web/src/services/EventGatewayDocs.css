@@ -5,17 +5,13 @@
   margin: 0 auto;
   color: var(--dsw-alias-label-primary);
 }
-.gateway-docs h1,
-.gateway-docs-index h1 {
+/* The bundled documents' own headings; the page title is the header's. */
+.gateway-docs h1 {
   font-size: var(--text-page);
   line-height: 1.3;
 }
 .gateway-docs__header {
   margin-bottom: 32px;
-}
-.gateway-docs__header p,
-.gateway-docs-index > p {
-  color: var(--dsw-alias-label-secondary);
 }
 .gateway-docs__layout {
   display: grid;

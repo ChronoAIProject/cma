@@ -3,7 +3,9 @@ import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSu
 import { useMemo, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
-import type { AppRoute } from '../routing/routes';
+import { routePath, type AppRoute } from '../routing/routes';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { loadWorkspace } from './loadHierarchy';
 import { ResourceLink } from './ResourceLink';
@@ -108,6 +110,11 @@ export function WorkspaceContents({
       : [],
     current.state.status === 'ready',
   );
+  useDocumentTitle(
+    sandboxId === undefined && current.state.status === 'ready'
+      ? current.state.value.detail.name
+      : undefined,
+  );
   if (current.state.status === 'loading') return <p role="status">Loading authorized Workspace</p>;
   if (current.state.status === 'error')
     return (
@@ -161,16 +168,20 @@ export function WorkspaceContents({
     );
   return (
     <section className="sandbox-page">
-      <header className="sandbox-page__header">
-        <div>
-          <h1>{workspace.name}</h1>
-          <p role="status">{statusLabel(workspace.status)}</p>
-          <ResourceAccessDetails client={client} access={current.state.value.access} />
-        </div>
-        <div className="sandbox-page__actions">
-          <Button onClick={current.reload}>Refresh Workspace access</Button>
-        </div>
-      </header>
+      <PageHeader
+        breadcrumb={[
+          {
+            label: 'Agent Manager',
+            href: routePath({ kind: 'agent_manager' }),
+            onSelect: () => onNavigate({ kind: 'agent_manager' }),
+          },
+          { label: workspace.name },
+        ]}
+        title={workspace.name}
+        badge={<span role="status">{statusLabel(workspace.status)}</span>}
+        description={<ResourceAccessDetails client={client} access={current.state.value.access} />}
+        actions={<Button onClick={current.reload}>Refresh Workspace access</Button>}
+      />
       <section className="sandbox-page__band">
         <h2>Agents</h2>
         {agents}
