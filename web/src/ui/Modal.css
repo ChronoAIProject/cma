@@ -121,6 +121,7 @@
 
 .agent-files .modal__body {
   gap: 12px;
+  overflow: auto;
 }
 
 /* A short card must not spend its entire height on fixed header/footer chrome. */
