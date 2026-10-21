@@ -131,6 +131,10 @@ pub enum CredentialSource {
     Binding,
     /// Exact independently presented credential; cannot borrow sign-in custody.
     Independent { expires_at: Option<SystemTime> },
+    /// A request admitted by the configured identity proxy. Its immutable
+    /// permission ceiling and owner credential incarnation are retained by the
+    /// authentication adapter, independently of browser-session authority.
+    IdentityProxy { grant_digest: [u8; 32] },
     /// Authority for one exact read, with no renewable or durable credential custody.
     RequestBoundRead { expires_at: SystemTime },
 }

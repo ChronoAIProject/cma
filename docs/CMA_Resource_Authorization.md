@@ -15,9 +15,12 @@ service ID and the exact HTTP method, original encoded path/query, content type
 and body digest. Provider proof issuance follows normal proxy admission and
 checks live key, scope, connection, operation, approval and turn authority again
 at introspection. An ordinary identity token cannot substitute for this proof.
-The legacy `X-NyxID-Identity-Token` header does not activate this path or establish
-CMA identity. Existing requests carrying that header continue to use their
-independently verified bearer or browser credential.
+The separate `X-NyxID-Identity-Token` header does not activate this proof path.
+When `CHRONO_NYXID_PROXY_ENABLED` is enabled, it authenticates the normal CMA API
+using the existing signed service identity, as described in
+[CMA Operations](CMA_Operations.md#nyxid-proxy-access-to-the-cma-api). That path
+supports lifecycle and interaction writes with explicit proxy command custody.
+If both headers are present, the request-bound proof path retains precedence.
 
 The first version accepts only GET/HEAD with an empty body. Idempotency keys,
 method overrides, duplicate content headers and non-identity content encoding
@@ -47,8 +50,8 @@ The internal `RequestBoundRead` credential source expires with the proof and
 grants only resource detail/history reads. It cannot admit mutations, command
 custody or Bot authority even when the owner's RBAC includes write privileges.
 Neither the proof nor an ambient credential is attached as a delegated
-credential or persisted to the API-bearer store. Durable NyxBot actions require
-a separate future protocol and are not supported by this feature.
+credential or persisted to the API-bearer store. Durable NyxBot actions use the separate signed service identity integration;
+they are not supported by this read-only feature.
 
 Milestone 17 separates retained resource ownership from the principal executing
 an action. The implementation in `layer2-core::resource_access` defines the
