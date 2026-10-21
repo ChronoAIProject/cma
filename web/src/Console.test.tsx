@@ -79,7 +79,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
   expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
@@ -137,7 +137,7 @@ it('keeps composer settings available while Details and tree navigation remain u
   );
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
-  await actor.click(screen.getByRole('button', { name: 'Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
   const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
@@ -249,6 +249,7 @@ it('hides personal creation in organization scope without replacing the open con
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   await actor.type(composer, 'Retain my personal draft');
   expect(await screen.findByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: /^Filter/ }));
   await chooseOption(actor, 'Navigation scope', 'Research (Organization)');
   await waitFor(() =>
     expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument(),

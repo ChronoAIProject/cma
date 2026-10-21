@@ -137,13 +137,6 @@
   justify-content: center;
   padding-inline: 0;
 }
-@media (max-width: 30rem) {
-  .sidebar__new,
-  .sidebar__toggle,
-  .navigation-filters__picker > button {
-    min-height: 44px;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .sidebar__toggle,
   .sidebar__new {
@@ -157,13 +150,88 @@
   gap: 8px;
   margin-bottom: 12px;
 }
-.navigation-filters__pickers {
+.navigation-filters__bar {
   display: flex;
   gap: 8px;
+  align-items: center;
   min-width: 0;
 }
-.navigation-filters__picker {
+.navigation-filters__summary {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 2px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.navigation-filters__toggle,
+.navigation-filters__clear {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.navigation-filters__toggle:hover,
+.navigation-filters__toggle[aria-expanded='true'],
+.navigation-filters__clear:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.navigation-filters__toggle:focus-visible,
+.navigation-filters__clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.navigation-filters__count {
+  min-width: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  text-align: center;
+}
+.navigation-filters__panel {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.navigation-filters__panel[hidden] {
+  display: none;
+}
+.navigation-filters__field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.navigation-filters__label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+.navigation-filters__clear {
+  justify-self: start;
+}
+.navigation-filters__picker {
   min-width: 0;
 }
 .navigation-filters__picker > button {
@@ -213,5 +281,15 @@
 @media (prefers-reduced-motion: reduce) {
   .navigation-filters__indicator {
     transition: none;
+  }
+}
+/* Touch targets, after every rule they override. */
+@media (max-width: 30rem) {
+  .sidebar__new,
+  .sidebar__toggle,
+  .navigation-filters__toggle,
+  .navigation-filters__clear,
+  .navigation-filters__picker > button {
+    min-height: 44px;
   }
 }
