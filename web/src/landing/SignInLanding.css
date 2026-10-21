@@ -69,7 +69,7 @@
   pointer-events: none;
 }
 .sign-in-landing .sign-in-landing__brand {
-  width: min(100%, 560px);
+  width: min(100%, 760px);
   padding-top: 144px;
   align-items: flex-start;
 }
