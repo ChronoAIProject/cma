@@ -23,6 +23,7 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 pub(super) mod profiles;
+pub(super) mod runtime_update;
 pub(super) mod sandboxes;
 pub(super) mod settings;
 pub(super) mod triggers;
@@ -37,6 +38,7 @@ pub struct AdminState {
     pub(super) sandboxes: Arc<SandboxOperatorService>,
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
+    pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
 }
 
 impl AdminState {
@@ -52,6 +54,7 @@ impl AdminState {
             sandboxes,
             activity,
             runtime_inventory: None,
+            runtime_updates: None,
         }
     }
 
@@ -62,6 +65,14 @@ impl AdminState {
 
     pub fn with_warm_pools(mut self, service: Arc<dyn warm_pools::WarmPoolAdministration>) -> Self {
         self.warm_pools = Some(service);
+        self
+    }
+
+    pub fn with_runtime_updates(
+        mut self,
+        service: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
+    ) -> Self {
+        self.runtime_updates = Some(service);
         self
     }
 
@@ -77,6 +88,7 @@ pub fn router(state: AdminState) -> Router {
     Router::new()
         .merge(settings::routes())
         .merge(sandboxes::routes())
+        .merge(runtime_update::routes())
         .merge(profiles::routes())
         .merge(triggers::routes())
         .merge(warm_pools::routes())

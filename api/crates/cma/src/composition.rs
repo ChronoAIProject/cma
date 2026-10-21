@@ -203,6 +203,7 @@ impl ControlPlaneComposition {
             Arc::clone(&activity),
         )
         .with_user_directory(Arc::clone(&users))
+        .with_runtime_updates(runtime.updates.clone())
         .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
