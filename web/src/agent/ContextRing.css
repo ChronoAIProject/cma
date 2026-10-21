@@ -1,0 +1,105 @@
+/*
+ * The composer's context ring and its tooltip — `docs/Web_Style.md` §13.
+ */
+
+.context-ring {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.context-ring__button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: default;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.context-ring__button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.context-ring__button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.context-ring__track,
+.context-ring__arc {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.context-ring__track {
+  stroke: var(--dsw-alias-border-l2);
+}
+
+.context-ring__arc {
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-linecap: round;
+}
+
+.context-ring__tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 100;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--dsw-alias-tooltip-bg);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv2);
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  white-space: normal;
+}
+
+.context-ring__tooltip[hidden] {
+  display: none;
+}
+
+.context-ring__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.context-ring__term {
+  font-weight: 600;
+}
+
+.context-ring__value {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+
+.context-ring__detail {
+  opacity: 0.72;
+}
+
+@media (max-width: 30rem) {
+  .context-ring__button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-ring__button {
+    transition: none;
+  }
+}

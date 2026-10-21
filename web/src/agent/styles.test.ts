@@ -68,17 +68,25 @@ describe('conversation geometry with readable labels', () => {
     expect(narrow.getPropertyValue('justify-self')).toBe('center');
   });
 
-  it('retains the original 12px gaps in both metrics rows', () => {
+  it('retains the original 12px gap and track in the resource metrics row', () => {
     const rules = sheet('Resources.css');
-    const usage = declaration(rules, '.agent-instruments__usage');
     const resources = declaration(rules, '.resources');
-    expect(usage.getPropertyValue('grid-template-columns')).toBe('repeat(2, minmax(0, 1fr))');
     expect(resources.getPropertyValue('grid-template-columns')).toBe('repeat(3, minmax(0, 1fr))');
-    expect(usage.getPropertyValue('gap')).toBe('12px');
     expect(resources.getPropertyValue('gap')).toBe('12px');
     expect(declaration(rules, '.resources__track').getPropertyValue('height')).toBe('2px');
-    expect(declaration(rules, '.agent-instruments').getPropertyValue('color')).toBe(
-      'var(--dsw-alias-label-caption)',
+  });
+
+  it('draws the context ring with a neutral track, an accent arc and an inverted tooltip', () => {
+    const rules = sheet('ContextRing.css');
+    expect(declaration(rules, '.context-ring__track').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-border-l2)',
     );
+    expect(declaration(rules, '.context-ring__arc').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-state-business-primary)',
+    );
+    const tooltip = declaration(rules, '.context-ring__tooltip');
+    expect(tooltip.getPropertyValue('background')).toBe('var(--dsw-alias-tooltip-bg)');
+    expect(tooltip.getPropertyValue('color')).toBe('var(--dsw-alias-label-primary-inverted)');
+    expect(tooltip.getPropertyValue('font-variant-numeric')).toBe('tabular-nums');
   });
 });

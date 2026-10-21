@@ -547,7 +547,7 @@
 
 .agent-composer .agent-composer__form,
 .agent-composer .agent-composer__form--queue {
-  grid-template-columns: minmax(0, 1fr) 80px;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto [usage] auto;
   column-gap: 8px;
   row-gap: 8px;
@@ -609,7 +609,7 @@
 @media (max-width: 30rem) {
   .agent-composer .agent-composer__form,
   .agent-composer .agent-composer__form--queue {
-    grid-template-columns: minmax(0, 1fr) 96px;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .agent-composer__mode-button {
@@ -650,7 +650,7 @@
 /* Settings sit on their own row under the input at every width, so the draft
  * always keeps the full flexible column. */
 .agent-composer .agent-composer__form--settings {
-  grid-template-columns: minmax(0, 1fr) 80px;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto auto [usage] auto;
 }
 
@@ -667,7 +667,7 @@
 
 @container agent-conversation (max-width: 30rem) {
   .agent-composer .agent-composer__form--settings {
-    grid-template-columns: minmax(0, 1fr) 96px;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .agent-composer__settings {
     grid-column: 1 / -1;
