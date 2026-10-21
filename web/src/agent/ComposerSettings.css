@@ -1,0 +1,241 @@
+/*
+ * The Agent's settings inside the composer — `docs/Web_Style.md` §13.
+ *
+ * The settings render as loose pieces; each takes its own area in the
+ * composer's control grid, so the permission chip can sit on the left and the
+ * model chip on the right without one wrapper owning both.
+ */
+
+.agent-settings__permission {
+  grid-area: permission;
+}
+
+.agent-settings__model,
+.agent-settings__loading {
+  grid-area: model;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.agent-settings__loading {
+  margin: 0;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.model-effort__chip-effort {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.agent-settings__status {
+  grid-area: status;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  min-width: 0;
+  margin-top: 4px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.agent-settings__status:empty {
+  display: none;
+}
+
+.agent-settings__status > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-settings__apply {
+  margin-left: auto;
+}
+
+/* The card opened from the model chip. */
+.model-effort {
+  display: grid;
+  gap: 8px;
+  width: 256px;
+}
+
+.model-effort__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-effort__effort {
+  margin: 0;
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.model-effort__head [class~='button'] {
+  width: 24px;
+  height: 24px;
+}
+
+.model-effort__list {
+  display: flex;
+  min-width: 0;
+}
+
+.model-effort__model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  margin-left: -6px;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.model-effort__model:hover:not(:disabled),
+.model-effort__model[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.model-effort__model:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.model-effort__model:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.model-effort__model svg {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.model-effort__model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-effort__catalog {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.model-effort__catalog:empty {
+  display: none;
+}
+
+.model-effort__catalog p {
+  margin: 0;
+}
+
+.model-effort__catalog-error {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+/* The discrete effort slider. */
+.effort-slider {
+  position: relative;
+  padding: 10px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.effort-slider:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.effort-slider[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.effort-slider__rail {
+  position: relative;
+  display: block;
+  height: 4px;
+  background: var(--dsw-alias-bg-layer-3);
+  border-radius: 999px;
+}
+
+.effort-slider__fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: inherit;
+}
+
+.effort-slider__stop {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  background: var(--dsw-alias-label-dimmed);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.effort-slider__stop[data-reached] {
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.effort-slider__thumb {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  background: var(--dsw-specific-menu);
+  border: 2px solid var(--dsw-alias-state-business-primary);
+  border-radius: 50%;
+  box-shadow: var(--dsw-shadow-lv1);
+  transform: translate(-50%, -50%);
+  transition: left var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+/* Icons carry the permission chip on a narrow composer; its name stays its accessible name. */
+@container agent-conversation (max-width: 30rem) {
+  .agent-settings__permission .composer-chip__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .agent-settings__model {
+    max-width: 160px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .effort-slider__thumb {
+    transition: none;
+  }
+}
