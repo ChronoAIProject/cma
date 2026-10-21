@@ -183,6 +183,11 @@ pub(super) async fn ensure_indexes(
         ),
         (
             &store.resource_shares,
+            "resource_share_link_recipient",
+            mongodb::bson::doc! {"accepted_subjects":1,"revoked":1,"selector_kind":1,"selector_id":1},
+        ),
+        (
+            &store.resource_shares,
             "resource_share_recipient",
             mongodb::bson::doc! {"target_org_id":1,"revoked":1,"_id":1},
         ),

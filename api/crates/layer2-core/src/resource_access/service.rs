@@ -30,6 +30,7 @@ pub struct ResourceAccessService {
     pub(super) store: Arc<dyn ResourceShareStore>,
     pub(super) bindings: Option<Arc<crate::sandbox::binding::BindingAccessService>>,
     pub(super) organizations: Arc<dyn OrganizationAuthority>,
+    pub(super) directory: Option<Arc<crate::UserDirectory>>,
 }
 
 impl ResourceAccessService {
@@ -40,6 +41,7 @@ impl ResourceAccessService {
         Self {
             store,
             organizations,
+            directory: None,
             bindings: None,
         }
     }
@@ -83,8 +85,17 @@ impl ResourceAccessService {
         let organizations: BTreeSet<_> = snapshot
             .shares
             .iter()
-            .map(|share| share.target_org_id.as_str().to_owned())
-            .filter(|organization| !organization.starts_with("user:") && organization != "public")
+            .filter(|share| {
+                share
+                    .link
+                    .as_ref()
+                    .is_none_or(|link| link.accepted_subjects.contains(&context.caller.subject))
+            })
+            .filter_map(|share| {
+                share
+                    .organization_recipient()
+                    .map(|id| id.as_str().to_owned())
+            })
             .chain(match &scope.owner {
                 ResourceOwner::Organization { subject } => Some(subject.as_str().to_owned()),
                 ResourceOwner::Person { .. } => None,

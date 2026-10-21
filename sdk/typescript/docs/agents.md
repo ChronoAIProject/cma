@@ -486,3 +486,23 @@ transcript's durable message sequence. These idempotent metadata writes need no
 command key and never create turns. Serialize changes to one message and avoid
 replaying an old write after a newer choice. Current owner authority is required;
 shared readers cannot inspect or change these votes.
+
+### Agent session share links
+
+`client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
+creates an Agent-only share link. `mode` is `view` or `view_write`. `audience` is
+`{ kind: 'public' }`, `{ kind: 'organization', organization_id }`, or
+`{ kind: 'users', subjects }`. Resolve display names to canonical user subjects
+with `shareRecipients(agentId, search)` before creating a users link. The owner
+must select an existing CMA user; arbitrary usernames are not identity proofs.
+
+Generate `token` from 32 cryptographically random bytes encoded as 64 lowercase
+hex characters. Store the secret only in the share URL fragment, never a query
+parameter. Reuse the exact body and idempotency key on retry. The server retains
+only a digest and never returns the secret. `listAgentShareLinks` returns active
+link metadata. The signed-in recipient calls `redeemAgentShareLink(shareId,
+token)` once, then uses ordinary Agent APIs. `revokeAgentShareLink` takes the
+current revision and invalidates this link's recipients immediately; independent
+links remain valid. `effective(...).shared_by` provides the owner's public
+identity for a shared-session banner. No Agent link grants Sandbox lifecycle or
+sharing-management access.

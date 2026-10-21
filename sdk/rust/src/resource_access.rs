@@ -1,5 +1,5 @@
 //! Current policy inspection and owner share management.
-use crate::{Client, IdempotencyKey, Result, resources::positive};
+use crate::{resources::positive, Client, IdempotencyKey, Result};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ pub struct OrganizationChoices {
 }
 
 string_enum! { /// Organization share mode.
-    pub enum ShareMode { View => "view", OrgRoles => "org_roles" }
+    pub enum ShareMode { View => "view", ViewWrite => "view_write", OrgRoles => "org_roles" }
 }
 /// Retained resource owner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +171,8 @@ pub enum ResourceOwnership {
 /// Current policy only; every later operation checks its own authority and capabilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectiveAccess {
+    /// Owner attribution for a redeemed Agent-session link.
+    pub shared_by: Option<ShareIdentity>,
     /// Safe ownership summary; absent on older servers.
     pub owner: Option<ResourceOwnership>,
     /// The `capabilities` field.
@@ -273,5 +275,146 @@ impl ResourceAccess<'_> {
         )?;
         request.query = &query;
         self.client.request(request).await
+    }
+}
+
+/// Audience admitted by an Agent share link after proof of link possession.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentShareAudience {
+    /// Any authenticated user holding the link.
+    Public,
+    /// Only current members of this organization.
+    Organization {
+        /// Canonical organization identity.
+        organization_id: String,
+    },
+    /// Only these canonical directory identities.
+    Users {
+        /// Current CMA user subjects, resolved through recipient search.
+        subjects: Vec<String>,
+    },
+}
+/// Public identity used in sharing selectors and attribution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareIdentity {
+    /// Canonical user subject.
+    pub subject: String,
+    /// Current public display name.
+    pub display_name: Option<String>,
+    /// Current public avatar.
+    pub avatar_url: Option<String>,
+}
+/// Metadata for one revocable Agent-session link. Never contains its secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentShareLink {
+    /// Link identity.
+    pub id: String,
+    /// Shared Agent identity; this grants no parent Sandbox access.
+    pub agent_id: String,
+    /// Recipient constraint, revalidated on access.
+    pub audience: AgentShareAudience,
+    /// View or view-write.
+    pub mode: ShareMode,
+    /// Owner attribution.
+    pub shared_by: ShareIdentity,
+    /// Creation timestamp.
+    pub created_at: String,
+    /// Revocation timestamp, if revoked.
+    pub revoked_at: Option<String>,
+    /// Compare-and-swap revision for revocation.
+    pub revision: u64,
+    /// Number of users who redeemed this specific link.
+    pub accepted_count: u64,
+}
+/// New link input; reuse the exact request and idempotency key on uncertainty.
+#[derive(Clone, Serialize)]
+pub struct CreateAgentShareLinkRequest {
+    /// Public, organization, or canonical selected users.
+    pub audience: AgentShareAudience,
+    /// View or view-write (legacy org_roles is not valid for links).
+    pub mode: ShareMode,
+    /// 32 random bytes encoded as lowercase hex. Keep this in the URL fragment.
+    /// Only the SHA-256 digest is persisted by CMA.
+    pub token: String,
+}
+/// Active Agent-session sharing links.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentShareLinks {
+    /// Link metadata without secrets.
+    pub items: Vec<AgentShareLink>,
+}
+/// Bounded canonical users available to the owning Agent user.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ShareRecipients {
+    /// At most 20 matches.
+    pub items: Vec<ShareIdentity>,
+}
+impl ResourceAccess<'_> {
+    /// List active links belonging to one personally owned Agent.
+    pub async fn agent_share_links(&self, agent_id: &str) -> Result<AgentShareLinks> {
+        self.client
+            .get(&["agents", agent_id, "share-links"], &[])
+            .await
+    }
+    /// Create a link; the caller retains the secret, which CMA does not return.
+    pub async fn create_agent_share_link(
+        &self,
+        agent_id: &str,
+        body: &CreateAgentShareLinkRequest,
+        key: &IdempotencyKey,
+    ) -> Result<AgentShareLink> {
+        self.client
+            .command(
+                Method::POST,
+                &["agents", agent_id, "share-links"],
+                Some(body),
+                key,
+                StatusCode::OK,
+            )
+            .await
+    }
+    /// Revoke this link without changing any other grant to the same Agent.
+    pub async fn revoke_agent_share_link(
+        &self,
+        agent_id: &str,
+        share_id: &str,
+        expected_revision: u64,
+        key: &IdempotencyKey,
+    ) -> Result<AgentShareLink> {
+        positive(expected_revision)?;
+        let path = ["agents", agent_id, "share-links", share_id];
+        let query = [("expected_revision", expected_revision.to_string())];
+        let mut request =
+            crate::http::Request::command::<()>(Method::DELETE, &path, None, key, StatusCode::OK)?;
+        request.query = &query;
+        self.client.request(request).await
+    }
+    /// Exchange possession for access bound to the current authenticated user.
+    /// Repeated redemption is idempotent and does not duplicate recipients.
+    pub async fn redeem_agent_share_link(
+        &self,
+        share_id: &str,
+        token: &str,
+        key: &IdempotencyKey,
+    ) -> Result<AgentShareLink> {
+        self.client
+            .command(
+                Method::POST,
+                &["agent-share-links", share_id, "redeem"],
+                Some(&serde_json::json!({"token":token})),
+                key,
+                StatusCode::OK,
+            )
+            .await
+    }
+    /// Find canonical recipients by public display name or subject (minimum 2 characters).
+    pub async fn share_recipients(&self, agent_id: &str, search: &str) -> Result<ShareRecipients> {
+        self.client
+            .get(
+                &["agents", agent_id, "share-recipients"],
+                &[("q", search.to_owned())],
+            )
+            .await
     }
 }

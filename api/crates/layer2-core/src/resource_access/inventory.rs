@@ -27,7 +27,7 @@ impl ResourceAccessSnapshot {
         })?;
         if matches!(&scope.owner, ResourceOwner::Person { subject } if subject == recipient)
             || !self.shares.iter().any(|share| {
-                organizations.contains(&share.target_org_id)
+                share.incoming_for(recipient, organizations)
                     && share.revoked_at.is_none()
                     && share.selector.covers(&scope)
             })
@@ -54,7 +54,8 @@ impl ResourceAccessSnapshot {
         let owned = matches!(&scope.owner, ResourceOwner::Organization {subject} if subject == organization);
         if !owned
             && !self.shares.iter().any(|share| {
-                &share.target_org_id == organization
+                share.link.is_none()
+                    && &share.target_org_id == organization
                     && share.revoked_at.is_none()
                     && share.selector.covers(&scope)
             })

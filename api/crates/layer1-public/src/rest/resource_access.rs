@@ -25,6 +25,7 @@ use crate::AuthenticatedResourceCaller;
 pub fn resource_access_router(service: Arc<ResourceAccessService>) -> Router {
     Router::new()
         .merge(super::organizations::routes())
+        .merge(super::agent_share_links::routes())
         .route("/api/v1/resource-access/{kind}/{id}", get(effective))
         .route(
             "/api/v1/resource-shares/{kind}/{id}",
@@ -109,7 +110,25 @@ pub(crate) async fn effective(
             .to_owned()
         })
         .collect();
+    let shared_by = if !authorized
+        .decision
+        .allows(ResourceCapability::ManageSharing)
+    {
+        if let Some(share) = authorized.snapshot.shares.iter().find(|share| {
+            share.link.as_ref().is_some_and(|link| {
+                link.accepted_subjects
+                    .contains(&caller.context.caller.subject)
+            })
+        }) {
+            Some(service.share_owner_identity(share).await?.into())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     Ok(Json(EffectiveAccessView {
+        shared_by,
         owner: match authorized
             .snapshot
             .scope(&target)
@@ -195,24 +214,13 @@ pub(crate) async fn create(
         Ok(body) => body,
         Err(problem) => return problem.into_response(),
     };
-    let target_org_id = match body.audience {
-        Some(ShareAudienceView::Public) => SubjectId::new("public"),
-        Some(ShareAudienceView::Organization { organization_id }) => {
-            SubjectId::new(organization_id)
-        }
-        Some(ShareAudienceView::User { subject }) => SubjectId::new(format!("user:{subject}")),
-        None => match body.target_org_id {
-            Some(target) => SubjectId::new(target),
-            None => return invalid().into_response(),
-        },
-    };
     change(
         service,
         caller,
         (kind, id),
         key,
         ShareChange::Create {
-            target_org_id,
+            target_org_id: SubjectId::new(body.target_org_id),
             mode: body.mode.into(),
         },
         None,
