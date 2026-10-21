@@ -1,0 +1,135 @@
+/*
+ * Tool calls in the conversation timeline — `docs/Web_Style.md` §13.
+ *
+ * One bordered frame holds either a lone call or a group of consecutive calls,
+ * so a single row and a group read as the same kind of thing. Rows inside a
+ * group are separated by hairlines rather than nested frames, because a border
+ * inside a border only adds weight.
+ */
+
+.tool-calls {
+  width: 100%;
+  margin: 0 0 16px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.tool-calls__toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.tool-calls__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/*
+ * The frame does not clip, so the shared focus ring stays whole; the hover
+ * ground follows the frame's corners instead.
+ */
+.tool-calls__toggle[aria-expanded='true'] {
+  border-radius: 7px 7px 0 0;
+}
+
+.tool-calls__chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tool-calls__count {
+  flex: none;
+  font-weight: 500;
+}
+
+.tool-calls__latest {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tool-calls__rows {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.tool-calls__rows > .agent-event--tool + .agent-event--tool {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent-event--tool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.tool-call__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* Reserves the dot's column even when the state draws none, so titles align. */
+.tool-call__dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 20px;
+}
+
+.agent-event--tool strong {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.tool-call__kind {
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tool-call__word {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.agent-event--tool[data-outcome='failed'] .tool-call__word {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Details line up under the title, past the dot's column and its gap. */
+.agent-event--tool > details {
+  margin-left: 18px;
+}

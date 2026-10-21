@@ -1,0 +1,85 @@
+/*
+ * The approval card — `docs/Web_Style.md` §13.
+ *
+ * The request reads first and the answers sit below it, each over a caption
+ * naming its effect. The warning hairline is the card's only tone: it marks
+ * the one entry in the timeline that is waiting on a person.
+ */
+
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 8px;
+}
+
+.approval__request {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.approval__eyebrow {
+  color: var(--dsw-alias-state-warn-label);
+  font-family: var(--ds-font-family-code);
+  font-size: 10px;
+  line-height: 15px;
+  text-transform: uppercase;
+}
+
+.approval h2 {
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.approval__detail,
+.approval__waiting {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Three equal answers that fall into a column once their captions no longer fit side by side. */
+.approval__actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 12px;
+}
+
+.approval__choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.approval__effect {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.approval__decision {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+@media (max-width: 30rem) {
+  .approval__choice > .button {
+    align-self: stretch;
+    min-height: 44px;
+    max-height: 44px;
+  }
+}

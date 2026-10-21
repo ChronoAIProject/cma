@@ -164,6 +164,13 @@ describe('the dialog shell', () => {
     expect(css).not.toMatch(/\.modal--wide(?:st)?\s*\{/);
   });
 
+  it('gives a phone the full width less a 16px gutter', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
+    const phone = css.slice(css.indexOf('@media (max-width: 480px) {'));
+    expect(phone).toMatch(/\.modal\s*\{[^}]*padding-inline: 16px/);
+    expect(phone).toMatch(/\.modal__card\s*\{[^}]*width: 100%[^}]*max-width: 100%/);
+  });
+
   it.each([undefined, 'modal--wide', 'modal--widest'])(
     'uses the shared card and scrolling content for legacy placement %s',
     (placement) => {
