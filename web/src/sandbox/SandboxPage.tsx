@@ -362,6 +362,7 @@ export function SandboxPage({
         key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
         client={client}
         sandbox={sandbox}
+        owner={viewerId !== undefined && sandbox.owner === viewerId ? viewerId : undefined}
         observedAt={state.observedAt}
         permissions={permissions}
         busy={busy || stale}

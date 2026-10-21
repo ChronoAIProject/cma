@@ -367,13 +367,12 @@ function ConsoleContent({
         route.kind === 'agent' && personalAgentId !== undefined && !accessUncertain ? (
           <AgentDetails
             key={route.agentId}
-            owner={user.id}
             open={detailsOpen}
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}
             historyLoading={ready?.historyLoading}
             pending={agent.pending}
-            onSandboxProgress={
+            onOpenSandbox={
               ready === undefined
                 ? undefined
                 : () => onNavigate({ kind: 'sandbox', sandboxId: ready.detail.sandbox.id })
