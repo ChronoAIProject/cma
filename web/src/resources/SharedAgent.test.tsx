@@ -1,12 +1,15 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { Console } from '../Console';
 import { agentClient, AGENT_TRANSCRIPT } from '../test/agent';
-import { loadSharedAgent } from './loadSharedAgent';
+import { hydrateSharedAgent, loadSharedAgent } from './loadSharedAgent';
 import { WIRE_AGENT } from '../test/rest';
+import type { AgentEvent, AgentLiveEvent, ResourcePage } from '../api/types';
+
+afterEach(() => vi.useRealTimers());
 
 const detail = {
   access: 'shared',
@@ -209,6 +212,190 @@ it('discards history buffered across a policy change', async () => {
   ).rejects.toThrow('Agent access changed');
 });
 
+const sharedHistoryEvents: AgentEvent[] = [
+  { type: 'turn_started', turn_sequence: 1 },
+  { type: 'owner_message', content: 'Inspect this repository.' },
+  { type: 'tool_call_started', call_id: 'read', title: 'Read files' },
+  { type: 'approval_requested', approval_id: 'approval', action: 'Write files' },
+  { type: 'approval_resolved', approval_id: 'approval', decision: 'allow' },
+  { type: 'tool_call_updated', call_id: 'read', status: 'completed' },
+  { type: 'agent_message', content: 'The repository is ready.' },
+  { type: 'turn_completed', turn_sequence: 1 },
+].map((kind, index) => ({ seq: index + 1, appendedAt: detail.created_at, kind }));
+
+const sharedHistoryTranscript = {
+  ...AGENT_TRANSCRIPT,
+  throughSeq: 8,
+  turns: AGENT_TRANSCRIPT.turns.map((turn) => ({
+    ...turn,
+    messages: turn.messages.map((message) => ({
+      ...message,
+      sequence: message.role === 'assistant' ? 7 : 2,
+    })),
+  })),
+};
+
+it('shows the shared transcript tail while rich history rebuilds without historical Thinking or actions', async () => {
+  vi.useFakeTimers();
+  let finish!: (page: ResourcePage<AgentEvent, number>) => void;
+  const remaining = new Promise<ResourcePage<AgentEvent, number>>((resolve) => {
+    finish = resolve;
+  });
+  const readAgentEvents = vi
+    .fn()
+    .mockResolvedValueOnce({ items: sharedHistoryEvents.slice(0, 4), next: 4 })
+    .mockReturnValueOnce(remaining);
+  const replayAgent = vi.fn(() => new Promise<void>(() => {}));
+  const test = fixture(['view_details', 'view_history', 'interact', 'resolve_approval'], {
+    readAgentTranscript: async () => sharedHistoryTranscript,
+    readAgentEvents,
+    replayAgent,
+  });
+  const shown = test.show();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  expect(readAgentEvents).toHaveBeenCalledTimes(2);
+  expect(document.querySelector('.active-thinking')).not.toBeInTheDocument();
+  expect(screen.queryByText('Read files')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(replayAgent).not.toHaveBeenCalled();
+  expect(readAgentEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 4]);
+  // Rich history is independent of the bounded initial authorization read.
+  await act(() => vi.advanceTimersByTimeAsync(16_000));
+  expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  expect(
+    screen.queryByText(/Current resource access could not be checked/),
+  ).not.toBeInTheDocument();
+  await act(async () => finish({ items: sharedHistoryEvents.slice(4) }));
+  expect(replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 8 }));
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+  expect(document.querySelector('.active-thinking, .is-arriving')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
+  const composer = screen.getByRole('textbox', { name: 'Message' });
+  const refresh = vi
+    .spyOn(test.web, 'readAgentTranscript')
+    .mockImplementationOnce(() => new Promise(() => {}));
+  await act(() => vi.advanceTimersByTimeAsync(14_000));
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  shown.unmount();
+});
+
+it('preserves a new turn admitted after the transcript snapshot when selecting the replay cursor', async () => {
+  const test = fixture();
+  test.web.readAgentTranscript = async () => sharedHistoryTranscript;
+  const snapshot = await loadSharedAgent(test.web, test.sdk, 'agt_1', new AbortController().signal);
+  test.web.readAgentEvents = async () => ({
+    items: [
+      ...sharedHistoryEvents,
+      { seq: 9, appendedAt: detail.created_at, kind: { type: 'turn_started', turn_sequence: 9 } },
+      {
+        seq: 10,
+        appendedAt: detail.created_at,
+        kind: { type: 'owner_message', content: 'Continue.' },
+      },
+    ],
+  });
+  const conversation = await hydrateSharedAgent(
+    test.web,
+    test.sdk,
+    snapshot.value,
+    new AbortController().signal,
+  );
+  expect(conversation.cursor).toBe(10);
+  expect(conversation.activeRunId).toBe('9');
+  expect(conversation.messages.map((message) => message.content)).toEqual([
+    'Inspect this repository.',
+    'The repository is ready.',
+    'Continue.',
+  ]);
+});
+
+it('applies shared live events only for the current Agent after rich history is ready', async () => {
+  let onEvent: ((event: AgentLiveEvent) => void) | undefined;
+  const test = fixture(['view_details', 'view_history'], {
+    replayAgent: (_id, options) => {
+      onEvent = options.onEvent;
+      return new Promise(() => {});
+    },
+  });
+  test.show();
+  await waitFor(() => expect(onEvent).toBeDefined());
+  await act(async () => {
+    onEvent?.({ type: 'RUN_STARTED', runId: '5', threadId: 'agt_1', cursor: 5 });
+    onEvent?.({
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: '5',
+      threadId: 'agt_foreign',
+      messageId: 'foreign',
+      delta: 'A different Agent',
+      'cma:live': true,
+    });
+    onEvent?.({
+      type: 'TEXT_MESSAGE_CONTENT',
+      runId: '5',
+      threadId: 'agt_1',
+      messageId: 'shared-live',
+      delta: 'A live shared answer',
+      'cma:live': true,
+    });
+  });
+  expect(screen.getByText('A live shared answer')).toBeInTheDocument();
+  expect(screen.queryByText('A different Agent')).not.toBeInTheDocument();
+  expect(document.querySelector('.active-thinking')).toBeInTheDocument();
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+});
+
+it('discards rich history after policy change and rejects expired or aborted hydration', async () => {
+  const test = fixture();
+  const signal = new AbortController().signal;
+  const snapshot = await loadSharedAgent(test.web, test.sdk, 'agt_1', signal);
+  test.web.readAgentEvents = vi.fn(async () => {
+    test.state.policy += 1;
+    return { items: sharedHistoryEvents };
+  });
+  await expect(hydrateSharedAgent(test.web, test.sdk, snapshot.value, signal)).rejects.toThrow(
+    'Agent access changed',
+  );
+  const events = vi.spyOn(test.web, 'readAgentEvents');
+  events.mockClear();
+  await expect(
+    hydrateSharedAgent(test.web, test.sdk, { ...snapshot.value, deadline: Date.now() - 1 }, signal),
+  ).rejects.toThrow('Agent access changed');
+  const aborted = new AbortController();
+  aborted.abort();
+  await expect(
+    hydrateSharedAgent(test.web, test.sdk, snapshot.value, aborted.signal),
+  ).rejects.toThrow();
+  expect(events).not.toHaveBeenCalled();
+});
+
+it('clears the visible transcript when access is revoked during rich history hydration', async () => {
+  let finish!: (page: ResourcePage<AgentEvent, number>) => void;
+  let pending: AbortSignal | undefined;
+  const replayAgent = vi.fn(() => new Promise<void>(() => {}));
+  const test = fixture(['view_details', 'view_history'], {
+    readAgentEvents: (_id, options) => {
+      pending = options?.signal;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+    replayAgent,
+  });
+  test.show();
+  await screen.findByText('The repository is ready.');
+  await waitFor(() => expect(pending).toBeDefined());
+  test.state.revoked = true;
+  await act(async () => finish({ items: sharedHistoryEvents }));
+  await screen.findByRole('heading', { name: 'Agent unavailable' });
+  expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
+  expect(pending?.aborted).toBe(true);
+  expect(replayAgent).not.toHaveBeenCalled();
+});
+
 it('clears the shared header after an initial history refusal while rechecking access', async () => {
   const test = fixture();
   let refuse: ((error: Error) => void) | undefined;
@@ -242,8 +429,9 @@ it('clears the shared header after an initial history refusal while rechecking a
 it('rejects nonadvancing history and mismatched Agent identities', async () => {
   const test = fixture();
   test.web.readAgentEvents = async () => ({ items: [], next: 0 });
+  const snapshot = await loadSharedAgent(test.web, test.sdk, 'agt_1', new AbortController().signal);
   await expect(
-    loadSharedAgent(test.web, test.sdk, 'agt_1', new AbortController().signal),
+    hydrateSharedAgent(test.web, test.sdk, snapshot.value, new AbortController().signal),
   ).rejects.toThrow('pagination did not advance');
   test.web.readAgentTranscript = async () => ({ ...AGENT_TRANSCRIPT, agentId: 'agt_foreign' });
   await expect(
@@ -432,5 +620,7 @@ it.each([
   });
   test.show();
   await screen.findByText(/Your current access does not allow interaction/);
-  expect(document.querySelector('.agent-header .badge')).toHaveTextContent(label);
+  await waitFor(() =>
+    expect(document.querySelector('.agent-header .badge')).toHaveTextContent(label),
+  );
 });
