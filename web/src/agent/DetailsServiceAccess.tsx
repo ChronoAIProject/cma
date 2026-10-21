@@ -4,7 +4,7 @@ import { ReferenceLink } from '../profiles/ReferenceLink';
 import { isCodexConnection } from '../profiles/modelProvider';
 import { openSandboxTab, sandboxTabPath } from '../sandbox/sandboxTabRoute';
 import { Badge } from '../ui/Badge';
-import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
+import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 
 function plainClick(event: MouseEvent) {
   return !(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);

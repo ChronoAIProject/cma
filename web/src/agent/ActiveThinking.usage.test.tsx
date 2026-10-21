@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { V2AgentCursor, V2AgentEventKind } from '@chronoai/cma-sdk';
 import { MessageStream } from './MessageStream';
-import { UsageFooter } from './UsageFooter';
+import { ContextRing } from './ContextRing';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import { foldV2Item } from './transport/projection';
 import type { ConversationState } from './model';
@@ -28,7 +28,7 @@ const usage: V2AgentEventKind = {
 const draw = (conversation: ConversationState) => (
   <>
     <MessageStream conversation={conversation} onApproval={vi.fn()} />
-    <UsageFooter usage={conversation.usage} />
+    <ContextRing usage={conversation.usage} />
   </>
 );
 
@@ -84,7 +84,9 @@ it.each(['responses', 'agui'] as const)(
             'agent',
           );
     const view = render(draw(observed));
-    expect(screen.getByLabelText('Total input tokens: 27,801')).toHaveTextContent('27,801 input');
+    expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+      /27,801 input · 107 output/,
+    );
     const input = screen.getByLabelText('Turn input tokens: 13,963');
     await act(() => vi.advanceTimersByTimeAsync(200));
     const midway = Number(input.textContent?.replaceAll(',', '').split(' ')[0]);
@@ -98,11 +100,13 @@ it.each(['responses', 'agui'] as const)(
     expect(
       screen.getByRole('region', { name: 'What the agent is working through' }),
     ).toHaveTextContent('Turn input unavailable · output unavailable');
-    expect(screen.getByLabelText('Total output tokens: 107')).toHaveTextContent('107 output');
+    expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+      /27,801 input · 107 output/,
+    );
   },
 );
 
-it('keeps legacy context-only reports distinct from real token counts and animates actual totals', async () => {
+it('keeps legacy context-only reports distinct from real token counts and reports actual totals', async () => {
   vi.useFakeTimers();
   const started = start(empty(), 24);
   const legacy = foldAgentEvent(started, {
@@ -122,6 +126,7 @@ it('keeps legacy context-only reports distinct from real token counts and animat
   view.rerender(draw(observed));
   expect(screen.queryByLabelText('Turn input tokens: 81')).not.toBeInTheDocument();
   await act(() => vi.advanceTimersByTimeAsync(700));
-  expect(screen.getByLabelText('Total input tokens: 81')).toHaveTextContent('81 input');
-  expect(screen.getByLabelText('Total output tokens: 24')).toHaveTextContent('24 output');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /81 input · 24 output/,
+  );
 });

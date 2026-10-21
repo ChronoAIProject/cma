@@ -18,7 +18,8 @@ import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachm
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
-import { UsageFooter } from './UsageFooter';
+import { ContextRing } from './ContextRing';
+import './Composer.css';
 
 interface ComposerProps {
   readonly draft?: AgentDraft;
@@ -130,6 +131,9 @@ export function Composer({
           (item) => !handoff.attachments.some(({ key }) => key === item.key),
         );
   const messageContent = attachmentMessage(visibleContent, visibleAttachments);
+  // Outside a turn both steering modes send ordinary input, so the choice is
+  // only offered while there is a turn to queue behind or interrupt.
+  const steering = running && queueWhileRunning && onSteeringModeChange !== undefined;
   const commands = useComposerCommands(
     visibleContent,
     availableCommands,
@@ -306,7 +310,7 @@ export function Composer({
         )}
       </Presence>
       <form
-        className={`agent-composer__form${running && queueWhileRunning ? ' agent-composer__form--queue' : ''}${settings ? ' agent-composer__form--settings' : ''}`}
+        className="agent-composer__form"
         aria-label="Message Agent"
         onSubmit={(event) => {
           event.preventDefault();
@@ -316,127 +320,135 @@ export function Composer({
         <label className="sr-only" htmlFor="agent-message">
           Message
         </label>
-        <div className="agent-composer__capsule">
-          <div className="agent-composer__editor">
-            <ComposerAttachments
-              {...attachments}
-              items={visibleAttachments}
-              enabled={attachmentEnabled && uploadAttachment !== undefined}
-              locked={submitting || requestPending}
-            />
-            <div className="agent-composer__input-row">
-              <textarea
-                ref={inputRef}
-                id="agent-message"
-                rows={1}
-                value={visibleContent}
-                disabled={!usable}
-                aria-describedby={hasNotice ? noticeId : undefined}
-                aria-autocomplete="list"
-                aria-haspopup="listbox"
-                aria-expanded={commands.open}
-                aria-controls={commands.open ? commands.id : undefined}
-                aria-activedescendant={commands.activeId}
-                placeholder={preparing ? 'Message Agent' : placeholder(status)}
-                onChange={(event) => {
-                  editVersion.current += 1;
-                  setCommandError(undefined);
-                  if (handoff !== undefined) attachments.accept(handoff.attachments);
-                  setHandoff(undefined);
-                  setContent(event.target.value);
-                }}
-                onCompositionStart={() => {
-                  composing.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composing.current = false;
-                }}
-                onBlur={() => {
-                  composing.current = false;
-                  commands.onBlur();
-                }}
-                onFocus={commands.onFocus}
-                onKeyDown={(event) => {
-                  // Safari can end composition before the confirming Enter and reports keyCode 229.
-                  if (
-                    composing.current ||
-                    event.nativeEvent.isComposing ||
-                    event.nativeEvent.keyCode === 229
-                  )
-                    return;
-                  if (commands.onKeyDown(event)) return;
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    submit();
-                  }
-                }}
-              />
-              {uploadAttachment === undefined ? null : (
+        <div className="agent-composer__box">
+          <ComposerAttachments
+            {...attachments}
+            items={visibleAttachments}
+            enabled={attachmentEnabled && uploadAttachment !== undefined}
+            locked={submitting || requestPending}
+          />
+          <textarea
+            ref={inputRef}
+            id="agent-message"
+            rows={1}
+            value={visibleContent}
+            disabled={!usable}
+            aria-describedby={hasNotice ? noticeId : undefined}
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded={commands.open}
+            aria-controls={commands.open ? commands.id : undefined}
+            aria-activedescendant={commands.activeId}
+            placeholder={preparing ? 'Message Agent' : placeholder(status)}
+            onChange={(event) => {
+              editVersion.current += 1;
+              setCommandError(undefined);
+              if (handoff !== undefined) attachments.accept(handoff.attachments);
+              setHandoff(undefined);
+              setContent(event.target.value);
+            }}
+            onCompositionStart={() => {
+              composing.current = true;
+            }}
+            onCompositionEnd={() => {
+              composing.current = false;
+            }}
+            onBlur={() => {
+              composing.current = false;
+              commands.onBlur();
+            }}
+            onFocus={commands.onFocus}
+            onKeyDown={(event) => {
+              // Safari can end composition before the confirming Enter and reports keyCode 229.
+              if (
+                composing.current ||
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229
+              )
+                return;
+              if (commands.onKeyDown(event)) return;
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+          {/*
+            Every control lives in one row inside the box, placed by grid area
+            so a row that wraps on a narrow screen keeps Send at the far end.
+          */}
+          <div className="agent-composer__controls" data-steering={steering ? '' : undefined}>
+            {uploadAttachment === undefined ? null : (
+              <span className="agent-composer__attach">
                 <ComposerAttachmentPicker
                   add={attachments.add}
                   enabled={attachmentEnabled && uploadAttachment !== undefined}
                   locked={submitting || requestPending}
                 />
-              )}
+              </span>
+            )}
+            {settings ? <div className="agent-composer__settings">{settings}</div> : null}
+            {steering && onSteeringModeChange !== undefined ? (
+              <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
+            ) : null}
+            {showUsage ? (
+              <span className="agent-composer__ring">
+                <ContextRing usage={usage} />
+              </span>
+            ) : null}
+            <div className="agent-composer__actions">
+              {!running || queueWhileRunning ? (
+                <Button
+                  placement="agent-composer__submit"
+                  variant="primary"
+                  type="submit"
+                  icon={<IconSendOutline16 />}
+                  aria-label={
+                    running
+                      ? steeringMode === 'queue'
+                        ? 'Queue message'
+                        : 'Interrupt with message'
+                      : 'Send message'
+                  }
+                  title={
+                    running
+                      ? steeringMode === 'queue'
+                        ? 'Queue message'
+                        : 'Interrupt with message'
+                      : 'Send message'
+                  }
+                  disabled={
+                    !usable ||
+                    busy ||
+                    submitting ||
+                    starting ||
+                    inputBlocked ||
+                    requestPending ||
+                    messageContent === '' ||
+                    attachments.blocked ||
+                    (running && steeringMode === 'interrupt' && controlsUnavailable)
+                  }
+                  aria-describedby={hasNotice ? noticeId : undefined}
+                />
+              ) : null}
+              {running ? (
+                <Button
+                  placement="agent-composer__submit agent-composer__submit--stop"
+                  variant="primary"
+                  icon={<IconStopFill16 />}
+                  aria-label="Stop response"
+                  title={
+                    controlsUnavailable
+                      ? 'This turn does not support response controls.'
+                      : 'Stop response'
+                  }
+                  disabled={busy || controlsUnavailable}
+                  onClick={() => void onStop()}
+                />
+              ) : null}
             </div>
           </div>
         </div>
-        {settings ? <div className="agent-composer__settings">{settings}</div> : null}
-        <div className="agent-composer__actions">
-          {!running || queueWhileRunning ? (
-            <Button
-              placement="agent-composer__submit"
-              variant="primary"
-              type="submit"
-              icon={<IconSendOutline16 />}
-              aria-label={
-                running
-                  ? steeringMode === 'queue'
-                    ? 'Queue message'
-                    : 'Interrupt with message'
-                  : 'Send message'
-              }
-              title={
-                running
-                  ? steeringMode === 'queue'
-                    ? 'Queue message'
-                    : 'Interrupt with message'
-                  : 'Send message'
-              }
-              disabled={
-                !usable ||
-                busy ||
-                submitting ||
-                starting ||
-                inputBlocked ||
-                requestPending ||
-                messageContent === '' ||
-                attachments.blocked ||
-                (running && steeringMode === 'interrupt' && controlsUnavailable)
-              }
-              aria-describedby={hasNotice ? noticeId : undefined}
-            />
-          ) : null}
-          {running ? (
-            <Button
-              placement="agent-composer__submit agent-composer__submit--stop"
-              variant="primary"
-              icon={<IconStopFill16 />}
-              aria-label="Stop response"
-              title={
-                controlsUnavailable
-                  ? 'This turn does not support response controls.'
-                  : 'Stop response'
-              }
-              disabled={busy || controlsUnavailable}
-              onClick={() => void onStop()}
-            />
-          ) : null}
-        </div>
-        {showUsage ? <UsageFooter usage={usage} /> : null}
-        {onSteeringModeChange === undefined ? null : (
-          <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
-        )}
       </form>
     </div>
   );

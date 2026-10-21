@@ -106,7 +106,7 @@ for (const theme of ['light', 'dark']) {
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`LOCAL ${theme}: compact draft expands upward without moving its controls or history`, async ({
+  test(`LOCAL ${theme}: draft grows upward inside the box without moving its controls or covering history`, async ({
     page,
     baseURL,
   }, info) => {
@@ -138,9 +138,8 @@ for (const theme of ['light', 'dark']) {
         const initial = await field.boundingBox();
         const control = await send.boundingBox();
         const seat = await page.locator('.agent-composer__form').boundingBox();
-        const history = await page.locator('.message-stream').boundingBox();
-        expect(initial?.height).toBe(width > 480 ? 36 : 44);
-        expect(control?.height).toBe(width > 480 ? 32 : 44);
+        expect(initial?.height).toBe(40);
+        expect(control?.height).toBe(width > 480 ? 28 : 44);
         const padding = await field.evaluate((element) => {
           const style = getComputedStyle(element);
           return [style.paddingTop, style.paddingBottom];
@@ -157,16 +156,20 @@ for (const theme of ['light', 'dark']) {
         expect(expanded!.y).toBeLessThan(initial!.y);
         expect(expanded!.y + expanded!.height).toBe(initial!.y + initial!.height);
         expect(await send.boundingBox()).toEqual(control);
-        expect(await page.locator('.agent-composer__form').boundingBox()).toEqual(seat);
-        expect(await page.locator('.message-stream').boundingBox()).toEqual(history);
+        // The box grows upward from a stable bottom edge and pushes the
+        // conversation up rather than covering it.
+        const grown = await page.locator('.agent-composer__form').boundingBox();
+        expect(grown!.y + grown!.height).toBe(seat!.y + seat!.height);
+        expect(grown!.y).toBeLessThan(seat!.y);
+        const conversation = await page.locator('.agent-surface__conversation').boundingBox();
+        expect(conversation!.y + conversation!.height).toBeLessThanOrEqual(grown!.y);
         await field.evaluate((element: HTMLTextAreaElement) => {
           element.setSelectionRange(8, 12);
           element.blur();
         });
         await page.mouse.move(0, 0);
-        await expect.poll(async () => (await field.boundingBox())?.height).toBe(initial!.height);
-        await field.hover();
-        await expect.poll(async () => (await field.boundingBox())?.height).toBe(expanded!.height);
+        // A multi-line draft keeps its height when the box loses focus.
+        expect((await field.boundingBox())?.height).toBe(expanded!.height);
         expect(
           await field.evaluate((element: HTMLTextAreaElement) => [
             element.selectionStart,

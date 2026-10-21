@@ -9,9 +9,8 @@ import { conversationFromTranscript, type ConversationState } from './conversati
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
-import { chooseOptionValue } from '../test/select';
 
-it('places settings between composer input and actions and preserves draft and busy-turn apply rules', async () => {
+it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
   const defaults = {
     model: 'gpt-6',
     reasoning_effort: 'high',
@@ -40,29 +39,30 @@ it('places settings between composer input and actions and preserves draft and b
     </CmaClientProvider>
   );
   const view = render(draw(true));
-  const model = await screen.findByRole('button', { name: 'Model' });
-  expect(model).toHaveTextContent('GPT-6');
+  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  expect(chip).toHaveTextContent('GPT-6 High');
   const form = screen.getByRole('form', { name: 'Message Agent' });
-  expect(form.querySelector('.agent-composer__capsule')?.nextElementSibling).toBe(
-    form.querySelector('.agent-composer__settings'),
-  );
-  expect(form.querySelector('.agent-composer__settings')?.nextElementSibling).toBe(
-    form.querySelector('.agent-composer__actions'),
-  );
+  // Settings sit inside the composer box, in the row of controls under the draft.
+  const controls = form.querySelector('.agent-composer__box > .agent-composer__controls');
+  expect(controls).not.toBeNull();
+  expect(controls!.previousElementSibling).toBe(screen.getByRole('textbox', { name: 'Message' }));
+  expect(controls).toContainElement(chip);
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Permission mode' }));
   expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Retain this draft' },
   });
-  await chooseOptionValue(
-    userEvent.setup(),
-    screen.getByRole('button', { name: 'Reasoning effort' }),
-    'medium',
-  );
+  const actor = userEvent.setup();
+  await actor.click(chip);
+  const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+  await actor.keyboard('{ArrowLeft}');
+  expect(slider).toHaveAttribute('aria-valuetext', 'Medium');
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Apply settings' }));
   expect(update).not.toHaveBeenCalled();
   view.rerender(draw(false));
-  expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
-  await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(chip).toHaveTextContent('GPT-6 Medium');
+  await actor.click(screen.getByRole('button', { name: 'Apply settings' }));
   expect(update).toHaveBeenCalledWith(
     'agt_1',
     { ...defaults, reasoning_effort: 'medium' },
@@ -253,12 +253,14 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   ).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeInTheDocument();
   // Destructive last, after a separator.
+  // Details first, then the creation origin, then the actions with destructive last.
   expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
     'Stop agent',
     'Export history',
     'Delete agent Stop this Agent before deleting it and its Worktree.',
   ]);
-  expect(screen.getByRole('menu').querySelector('[role="separator"]')).not.toBeNull();
+  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(3);
   await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
   expect(onAgentAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
 });
@@ -295,7 +297,7 @@ it('holds every header action while another action is being confirmed', async ()
   expect(onAgentAction).not.toHaveBeenCalled();
 });
 
-it('offers no header actions to a reader without them', () => {
+it('offers only the Details toggle and creation origin to a reader without actions', async () => {
   render(
     <AgentSurface
       agentId="agt_1"
@@ -310,7 +312,11 @@ it('offers no header actions to a reader without them', () => {
       onNavigate={vi.fn()}
     />,
   );
-  expect(screen.queryByRole('button', { name: 'More Agent actions' })).toBeNull();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
+  ]);
+  expect(screen.getByRole('menu')).toHaveTextContent('Creation origin unavailable');
 });
 
 it('holds approval and Stop response controls during history hydration', async () => {
@@ -334,7 +340,7 @@ it('holds approval and Stop response controls during history hydration', async (
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
@@ -372,7 +378,7 @@ it('holds approvals while saving and distinguishes pending admission from an act
     savingStartedAt: '2026-09-08T00:00:00Z',
   };
   const { rerender } = render(draw({ inputAvailability }));
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Keep my draft' } });
@@ -421,7 +427,7 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
 });
 
@@ -474,10 +480,13 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(tool).not.toHaveTextContent(/duration/i);
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
-  expect(screen.getByLabelText('Agent usage')).toHaveTextContent('120 input');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /120 input/,
+  );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
   expect(approve).toHaveBeenCalledWith('approval_1', 'allow');
-  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   expect(onDetailsOpenChange).toHaveBeenCalledWith(true);
 });
 
@@ -499,7 +508,7 @@ it('removes completed preparation while preserving active and failed preparation
     />
   );
   const { rerender } = render(draw(AGENT_DETAIL));
-  expect(await screen.findByLabelText('Agent usage')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
   rerender(
