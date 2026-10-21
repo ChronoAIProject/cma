@@ -2,6 +2,44 @@
   display: grid;
   gap: 18px;
 }
+/*
+ * A summary, not a control: no hover, no chevron, nothing to press. The
+ * border only groups the defaults so they read as one fact about the Agent.
+ */
+.agent-lifecycle-settings {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+}
+.agent-lifecycle-settings__icon {
+  display: inline-flex;
+  color: var(--dsw-alias-label-secondary);
+}
+.agent-lifecycle-settings h3,
+.agent-lifecycle-settings p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.agent-lifecycle-settings h3 {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.agent-lifecycle-settings p,
+.agent-lifecycle-note {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+/* The note leads the footer so the actions keep their place at its end. */
+.agent-lifecycle-note {
+  flex: 1 1 220px;
+  margin: 0;
+}
 .agent-lifecycle-provisioning {
   display: grid;
   gap: 6px;
