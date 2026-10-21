@@ -512,7 +512,8 @@ that becomes a still glyph under reduced motion. Loading and failed child reads 
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
-Workspace New agent/Remove, Agent Stop/Delete. Destructive operations use §12.4.
+Workspace New agent/Remove, Agent Stop/Delete. A Workspace's New agent opens New
+agent in that Workspace rather than a new one. Destructive operations use §12.4.
 Visitors see their own hierarchy but no creation controls. Capabilities are read
 from the authenticated public snapshot, not inferred from a role label.
 
@@ -683,7 +684,40 @@ bounds and converts to wire units at the boundary. Creation may select the
 exact pinned deployment-default profile, never an unrecorded resource default.
 Paired fields stack below 30rem.
 
-New Agent creation names **Sandbox environment** and **Project workspace**, with
+**New agent** is one step in one dialog titled *New agent*. Its description names
+where the Agent will work: *Start an Agent in a new Sandbox with an empty
+workspace.*, *Start an Agent with a new workspace in this Sandbox.* or *Start an
+Agent in the selected workspace.* **Where it works** is a radio group of bordered
+choice rows at radius 10 with 12px padding, two columns from 30rem and one below:
+*New Sandbox* (second line *Latest CMA runtime image*), then *New workspace in
+<Sandbox>* for each of the owner's Sandboxes, then *<Sandbox> / <Workspace>* for
+each of their Workspaces. A Sandbox or Workspace row shows its status badge as its
+second line. The selected row takes the accent edge and the accent wash. A row
+that cannot be used now stays listed and `aria-disabled`, with its reason as its
+second line: *Available when the Sandbox is active.* for a Sandbox that is not
+Active with no pending operation, *The Workspace is not ready.* for a Workspace
+that is not Ready, and *You don’t have permission to create a Sandbox.* for New
+Sandbox without that capability. Arrow keys move between rows and select a usable
+one. The rows come from the same public Sandbox and Workspace reads as the
+sidebar; until they arrive the target the dialog was opened for is still
+selected. Opening New agent from a Sandbox selects its new-workspace row, and
+from a Workspace selects that Workspace, whose Agent is created there through the
+lifecycle request's `workspace_id`.
+
+**GitHub repository (optional)** keeps its strict HTTPS github.com rules. It is
+checked when the field loses focus and on Create agent, never while typing; the
+error *Enter an HTTPS GitHub repository URL.* is announced once when it appears
+and leaves as soon as the value is valid. A read-only **Agent settings** summary
+reads *gpt-6 · High · Autonomous*; there is no control to change it here. The
+footer starts with the note *Includes chrono-llm-public and ornn-api access.* and
+ends with Cancel and the primary Create agent, which reads *Starting
+provisioning…* while the request is pending and *Recover creation* while a
+retained request is unconfirmed. Each location keeps its own retained request,
+so choosing a location with an unconfirmed one shows its recovery. The choice is
+locked while a request is pending and once a receipt exists. Labels and help use
+the shared field label and hint voices.
+
+The profile-based compatibility creation names **Sandbox environment** and **Project workspace**, with
 short 13px secondary explanations of the environment and the project folder.
 The profile step explains model, skills and independence; optional title and
 first-message fields explain their effect. Deleted and deleting resources are
@@ -2178,13 +2212,20 @@ the consent gesture to a second click on the CMA landing page.
 
 ### Confirmed Agent creation and retained navigation
 
-New Agent preparation uses one 64px circle with a 3px stroke and a 1.2s linear
-rotation while pending. Reduced motion stops rotation. The percentage and
-current phase sit to its right with a 16px gap and 12px/18px detail copy.
-The four reported preparation stages contribute 20% each; 100% requires the
-successful operation plus its actual Agent identity. Elapsed time cannot raise
-the percentage. Full phase facts remain in an initially closed Setup details
-disclosure with 6px internal gaps.
+New Agent preparation replaces the dialog's form with a heading, one status
+line and a four-step stepper with no percentage: **Sandbox**, **Workspace**,
+**Service access** and **Agent startup**. Each step shows a state dot, its name
+and its state word: Waiting, Queued, In progress, Ready, Waiting for connection,
+Needs attention or Not reported. Ready takes the done dot, In progress the
+ongoing dot (whose ring stops under reduced motion), Waiting for connection the
+warning dot, Needs attention the error dot and the rest the neutral dot; the step
+in progress is the current step. Steps sit in four columns from 30rem and stack
+below. The heading reads *Preparing your Agent*, *Agent ready* or *Agent
+provisioning needs attention*; *Agent ready* requires the successful operation
+plus its actual Agent identity, even when all four steps are Ready. Provisioning
+and per-step elapsed times are information only and never advance a step. The
+same stepper is the one setup band above a starting Agent's conversation. This
+replaces the 64px percentage circle and its closed Setup details disclosure.
 
 Agent key scope rows are 64px high. Skill rows are 112px, with 18px / 18px / 40px
 internal tracks and 6px gaps. Text is single-line ellipsis with full hover text;
@@ -2695,3 +2736,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
 | 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
 | 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
+| 2026-10-21 | Made New agent one step that creates the Agent where the owner asked. A Workspace's New agent used to create another Workspace in its Sandbox, so a Workspace made with New workspace could never receive an Agent; it now opens the dialog on that Workspace and sends its `workspace_id`. §12.2 specifies the Where it works choice (New Sandbox, a Sandbox's new workspace, or a Workspace; unusable rows `aria-disabled` with their reasons), repository validation on blur and submit instead of on every keystroke, the read-only Agent settings summary and the access note. The preparation section replaces the percentage circle, which read 80% with every listed step Ready, with a four-step stepper (Sandbox, Workspace, Service access, Agent startup) that is also the setup band above the conversation. |
