@@ -1,4 +1,5 @@
 import { Presence } from '../ui/Presence';
+import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -193,6 +194,7 @@ export function SandboxPage({
         <h1 ref={heading} tabIndex={-1}>
           Sandbox
         </h1>
+        <SkeletonRows rows={4} label="Loading Sandbox" />
       </section>
     );
   if (state.status === 'error')

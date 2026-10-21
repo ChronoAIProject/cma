@@ -4,7 +4,7 @@ import { useCmaClient } from '../api/context';
 import { useAuth } from '../auth/context';
 import type { BotRoute } from '../bots/BotPage';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
-import { BrandLoading } from '../landing/LandingCharacter';
+import { ShellLoading } from '../ui/Skeleton';
 import { SignInLanding } from '../landing/SignInLanding';
 import { ReferenceProvider } from '../profiles/ReferenceLink';
 import { routePath, type AppRoute } from '../routing/routes';
@@ -138,7 +138,7 @@ function Consumers({
   readonly onNavigate: (route: AppRoute) => void;
 }) {
   const { state, signIn } = useAuth();
-  if (state.status === 'checking') return <BrandLoading label="Signing you in" />;
+  if (state.status === 'checking') return <ShellLoading label="Signing you in" />;
   if (state.status === 'error') return <p role="alert">{state.message}</p>;
   if (state.status === 'anonymous')
     return (
