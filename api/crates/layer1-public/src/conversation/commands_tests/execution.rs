@@ -49,6 +49,7 @@ pub(super) async fn commit(f: &Fixture, mut agent: Agent, logs: Vec<AgentLogKind
     agent.conversation.last_seq += logs.len() as u64;
     f.store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

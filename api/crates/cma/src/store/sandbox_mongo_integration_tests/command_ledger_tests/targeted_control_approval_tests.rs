@@ -69,6 +69,7 @@ async fn approval_uses_complete_pending_snapshot_and_replay_survives_resolution(
     resumed.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

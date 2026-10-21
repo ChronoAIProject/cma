@@ -71,6 +71,7 @@ impl AgentOperationService {
             return Err(AgentOperationError::Conflict);
         }
         let service = Self {
+            settings_authority: None,
             command_claim: Some(claim),
             execution_authority: None,
             trigger_authority: Some(authority),

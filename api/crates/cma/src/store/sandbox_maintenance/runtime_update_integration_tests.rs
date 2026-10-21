@@ -173,6 +173,7 @@ async fn runtime_update_mongo_fence_conflicts_with_a_turn_after_idle_snapshot() 
     working.conversation.last_seq = 3;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,

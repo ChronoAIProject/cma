@@ -8,6 +8,8 @@ use super::{SandboxMutationGuard, SandboxStoreError};
 /// One generation-fenced, all-or-nothing conversation mutation.
 #[derive(Debug, Clone)]
 pub struct AgentConversationMutation {
+    /// Fresh settings-specific policy proof, absent for outcome recording.
+    pub settings_fence: Option<std::sync::Arc<crate::sandbox::AgentSettingsFence>>,
     /// Ledger claim bound to the new runtime operation in this same transaction.
     pub command_claim: Option<crate::sandbox::agent_io::CommandClaim>,
     /// Opaque current resource permission; never attached to outcome evidence.
@@ -62,6 +64,7 @@ pub fn validate_agent_conversation_admission(
     }
     let admission = skill_admission || admits_input(current, mutation);
     if [
+        mutation.settings_fence.is_some(),
         mutation.execution_fence.is_some(),
         mutation.trigger_execution_fence.is_some(),
     ]
@@ -76,6 +79,12 @@ pub fn validate_agent_conversation_admission(
         && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
     {
         return Err(SandboxStoreError::Conflict);
+    }
+    if let Some(fence) = &mutation.settings_fence {
+        if mutation.command_claim.is_some() || mutation.admission_guard.is_none() || !admission {
+            return Err(SandboxStoreError::Conflict);
+        }
+        fence.validate_mutation(mutation)?;
     }
     let Some(guard) = mutation.admission_guard.as_ref() else {
         return if admission {
