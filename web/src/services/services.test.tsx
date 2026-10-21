@@ -97,7 +97,7 @@ describe('independent CMA service navigation', () => {
     vi.stubGlobal('fetch', fetcher);
     render(
       <ServicePage service="image-manager">
-        {(_, denied) => <button onClick={denied}>Simulate denied write</button>}
+        {(_, denied) => <button onClick={() => denied()}>Simulate denied write</button>}
       </ServicePage>,
     );
     await screen.findByRole('button', { name: 'Simulate denied write' });

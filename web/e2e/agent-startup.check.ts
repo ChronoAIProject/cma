@@ -136,11 +136,13 @@ for (const status of ['paused', 'reviving'] as const) {
       await page.goto('/sandboxes/sbx_route');
       const surface = page.locator('.sandbox-page');
       await expect(surface.getByRole('heading', { name: 'research', exact: true })).toBeVisible();
-      if (kind === 'workspace')
-        await expect(
-          surface.getByRole('button', { name: 'New workspace', exact: true }),
-        ).toBeDisabled();
-      else {
+      if (kind === 'workspace') {
+        await surface.getByRole('button', { name: 'More actions', exact: true }).click();
+        await expect(page.getByRole('menuitem', { name: /^New workspace/ })).toHaveAttribute(
+          'aria-disabled',
+          'true',
+        );
+      } else {
         await expect(surface.getByRole('button', { name: 'New agent', exact: true })).toHaveCount(
           0,
         );
@@ -166,8 +168,9 @@ for (const kind of ['workspace'] as const) {
     await page.goto('/sandboxes/sbx_route');
     await page
       .locator('.sandbox-page')
-      .getByRole('button', { name: `New ${kind}`, exact: true })
+      .getByRole('button', { name: 'More actions', exact: true })
       .click();
+    await page.getByRole('menuitem', { name: `New ${kind}`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: `New ${kind}`, exact: true });
     await dialog.getByRole('button', { name: `Create ${kind}`, exact: true }).click();
     await expect(dialog.getByRole('button', { name: 'Retry creation', exact: true })).toBeEnabled();

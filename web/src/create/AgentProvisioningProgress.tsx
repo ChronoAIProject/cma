@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react';
 import type { AgentLifecycleCreateReceipt, AgentLifecycleOperationView } from '../api/client';
+import { StateDot } from '../ui/StateDot';
 import {
   agentProvisioningSteps,
   orderedProvisioningEvents,
   provisioningDuration,
+  provisioningStepDot,
   provisioningStepDuration,
   provisioningStepState,
 } from './agentProvisioning';
 
+/**
+ * Agent setup as four reported milestones — `docs/Web_Style.md` §23, "Confirmed
+ * Agent creation".
+ *
+ * There is deliberately no percentage. A bar that counted the four steps plus
+ * success sat at 80% with every listed step Ready, which read as stalled; the
+ * stepper says which milestone the server has confirmed and nothing more.
+ */
 export function AgentProvisioningProgress({
   receipt,
   operation,
@@ -46,82 +56,47 @@ export function AgentProvisioningProgress({
     state: provisioningStepState(phase, events, operation),
     duration: provisioningStepDuration(phase, events, status, now),
   }));
+  // Four Ready steps are not success: only the operation's own success with
+  // the Agent it created may say the Agent is ready to open.
   const succeeded = status === 'succeeded' && operation?.agent_id !== undefined;
-  const confirmed = succeeded ? 5 : steps.filter((step) => step.state === 'Ready').length;
-  const percent = confirmed * 20;
   const current = steps.find((step) =>
     ['In progress', 'Waiting for connection', 'Needs attention'].includes(step.state),
   );
   return (
-    <section
-      className="agent-lifecycle-provisioning"
-      aria-label="Agent provisioning progress"
-      data-active={active ? '' : undefined}
-    >
-      <div
-        className="agent-lifecycle-provisioning__circle"
-        role="progressbar"
-        aria-label="Confirmed Agent setup milestones"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        aria-valuetext={`${confirmed} of 5 milestones confirmed`}
-      >
-        <svg viewBox="0 0 64 64" aria-hidden="true">
-          <circle className="agent-lifecycle-provisioning__track" cx="32" cy="32" r="28" />
-          <circle
-            className="agent-lifecycle-provisioning__arc"
-            cx="32"
-            cy="32"
-            r="28"
-            pathLength="100"
-            strokeDasharray={`${Math.max(percent, 8)} 100`}
-          />
-        </svg>
-      </div>
-      <div className="agent-lifecycle-provisioning__details">
-        <h3>
-          <strong>{percent}%</strong>
-          {' · '}
-          <span>
-            {status === 'failed'
-              ? 'Agent provisioning needs attention'
-              : succeeded
-                ? 'Agent ready'
-                : 'Preparing your Agent'}
-          </span>
-        </h3>
-        <p role="status">
-          {status === 'failed'
-            ? (operation?.error ?? 'Agent provisioning failed.')
-            : status === 'waiting_for_connection'
-              ? 'Connect the required services to continue setting up your Agent.'
-              : succeeded
-                ? 'Your Agent is ready to open.'
-                : current === undefined
-                  ? 'Waiting for the next confirmed stage.'
-                  : `${current.label} · ${current.state}`}
-        </p>
-        {elapsed === undefined ? null : (
-          <p className="agent-lifecycle-provisioning__elapsed">Provisioning elapsed: {elapsed}</p>
-        )}
-        <details>
-          <summary>Setup details</summary>
-          <ol>
-            {steps.map(({ phase, label, state, duration }) => (
-              <li
-                key={phase}
-                data-state={state}
-                aria-current={state === 'In progress' ? 'step' : undefined}
-              >
-                <strong>{label}</strong>
-                <span>{state}</span>
-                {duration === undefined ? null : <small>{duration} elapsed</small>}
-              </li>
-            ))}
-          </ol>
-        </details>
-      </div>
+    <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
+      <h3>
+        {status === 'failed'
+          ? 'Agent provisioning needs attention'
+          : succeeded
+            ? 'Agent ready'
+            : 'Preparing your Agent'}
+      </h3>
+      <p role="status">
+        {status === 'failed'
+          ? (operation?.error ?? 'Agent provisioning failed.')
+          : status === 'waiting_for_connection'
+            ? 'Connect the required services to continue setting up your Agent.'
+            : succeeded
+              ? 'Your Agent is ready to open.'
+              : current === undefined
+                ? 'Waiting for the next confirmed stage.'
+                : `${current.label} · ${current.state}`}
+      </p>
+      <ol className="agent-lifecycle-steps" aria-label="Agent setup steps">
+        {steps.map(({ phase, label, state, duration }) => (
+          <li
+            key={phase}
+            data-state={provisioningStepDot(state)}
+            aria-current={state === 'In progress' ? 'step' : undefined}
+          >
+            <StateDot state={provisioningStepDot(state)} placement="agent-lifecycle-steps__dot" />
+            <strong>{label}</strong>
+            <span className="agent-lifecycle-steps__state">{state}</span>
+            {duration === undefined ? null : <small>{duration} elapsed</small>}
+          </li>
+        ))}
+      </ol>
+      {elapsed === undefined ? null : <p>Provisioning elapsed: {elapsed}</p>}
     </section>
   );
 }

@@ -73,7 +73,8 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
       />
     </CmaClientProvider>,
   );
-  await actor.click(await screen.findByRole('button', { name: 'Delete' }));
+  await actor.click(await screen.findByRole('button', { name: 'More actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Delete Sandbox' }));
   await actor.click(
     await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
   );
@@ -127,7 +128,10 @@ it('keeps composer settings available while Details and tree navigation remain u
   expect(panel.queryByLabelText(/Model and reasoning effort/)).not.toBeInTheDocument();
   expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
   expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
-  expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
+  expect(panel.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_1?tab=access',
+  );
   expect(panel.getByRole('button', { name: 'Sandbox operation progress' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
   expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();

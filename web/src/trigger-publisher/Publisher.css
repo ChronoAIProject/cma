@@ -70,6 +70,13 @@
 .trigger-rail code {
   font-size: 12px;
 }
+.trigger-rail__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+}
 .trigger-rail__mobile {
   display: none;
 }
