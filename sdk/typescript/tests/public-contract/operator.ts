@@ -20,6 +20,8 @@ export const operatorDispatch: Record<string, Dispatch> = {
     client.admin.sandboxEvents(param('id'), options),
   'POST /api/v1/admin/sandboxes/{id}/retire': ({ client, param }) =>
     client.admin.retireSandbox(param('id')),
+  'POST /api/v1/admin/sandboxes/{id}/runtime-update': ({ client, param, body }) =>
+    client.admin.updateSandboxRuntime(param('id'), body),
   'GET /api/v1/admin/profiles': ({ client, options }) => client.admin.listProfiles(options),
   'POST /api/v1/admin/profiles/{kind}/{id}/retire': ({ client, param }) =>
     client.admin.retireProfile(param('kind') as ProfileKind, param('id')),
