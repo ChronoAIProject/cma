@@ -1,6 +1,6 @@
 import type { Launch, LaunchStep, LaunchStepStatus } from '@chronoai/cma-sdk';
-import { LandingCharacter } from '../landing/LandingCharacter';
 import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
+import { StateDot, type StateDotState } from '../ui/StateDot';
 import { blockedStates, stepStates } from '../vocabulary/states';
 import { progressDetail, provisioningNames, stepNames } from '../vocabulary/steps';
 
@@ -31,10 +31,41 @@ export function LaunchProgress({ record }: { readonly record: Launch }) {
     status === 'blocked' && record.blocked_reason?.type === 'sandbox_paused_reviving'
       ? 'running'
       : status;
+  const paused = (status: LaunchStepStatus) =>
+    status === 'blocked' && record.blocked_reason?.type === 'orchestration_paused';
   const labelFor = (status: LaunchStepStatus) =>
-    status === 'blocked' && record.blocked_reason?.type === 'orchestration_paused'
-      ? blockedStates.orchestration_paused
-      : stepStates[stateFor(status)];
+    paused(status) ? blockedStates.orchestration_paused : stepStates[stateFor(status)];
+  // The same dot the in-app setup rows draw; CMA's own pause asks nothing of
+  // the visitor, so it stays quiet rather than taking the Needs you warning.
+  const dotFor = (status: LaunchStepStatus): StateDotState => {
+    const state = stateFor(status);
+    return state === 'completed'
+      ? 'done'
+      : state === 'running'
+        ? 'ongoing'
+        : state === 'failed'
+          ? 'error'
+          : state === 'blocked' && !paused(status)
+            ? 'warning'
+            : 'neutral';
+  };
+  const line = (name: string, status: LaunchStepStatus) => {
+    const dot = dotFor(status);
+    return (
+      <div className="public-step__line">
+        <span className="public-step__icon" aria-hidden="true">
+          <StateDot state={dot} size={10} />
+        </span>
+        <h2>{name}</h2>
+        <span
+          className="public-step__state"
+          data-tone={dot === 'warning' || dot === 'error' ? dot : undefined}
+        >
+          {labelFor(status)}
+        </span>
+      </div>
+    );
+  };
   const notice = (key: 'signing_in' | 'checking_requirements' | 'first_message') => {
     const observation = step(key);
     if (
@@ -44,12 +75,9 @@ export function LaunchProgress({ record }: { readonly record: Launch }) {
       return null;
     const detail = progressDetail(observation.safe_detail);
     return (
-      <section className="public-notice" aria-label={stepNames[key]}>
-        <div className="public-step__line">
-          <h2>{stepNames[key]}</h2>
-          <span>{labelFor(observation.status)}</span>
-        </div>
-        {detail === undefined ? null : <p>{detail}</p>}
+      <section className="public-step" aria-label={stepNames[key]}>
+        {line(stepNames[key], observation.status)}
+        {detail === undefined ? null : <p className="public-step__detail">{detail}</p>}
       </section>
     );
   };
@@ -64,39 +92,26 @@ export function LaunchProgress({ record }: { readonly record: Launch }) {
       {requirementsNotice}
       <ol className="public-timeline" aria-label="Agent provisioning progress">
         {phases.map((phase) => {
-          const state = stateFor(phase.status);
           const details = [
             ...new Set(phase.steps.map((item) => progressDetail(item?.safe_detail))),
           ];
           return (
-            <li
-              key={phase.key}
-              className={`public-step${state === 'failed' ? ' public-step--failed' : ''}`}
-            >
-              <span className="public-step__icon" aria-hidden="true">
-                <LandingCharacter
-                  compact
-                  state={
-                    state === 'completed' || state === 'failed' || state === 'running'
-                      ? state
-                      : 'pending'
-                  }
-                />
-              </span>
-              <div>
-                <div className="public-step__line">
-                  <h2>{provisioningNames[phase.key]}</h2>
-                  <span>{labelFor(phase.status)}</span>
-                </div>
-                {details.map((detail) =>
-                  detail === undefined ? null : <p key={detail}>{detail}</p>,
-                )}
-                {phase.key === 'sandbox' &&
-                record.state === 'sandbox_pending' &&
-                sandboxId !== undefined ? (
+            <li key={phase.key} className="public-step">
+              {line(provisioningNames[phase.key], phase.status)}
+              {details.map((detail) =>
+                detail === undefined ? null : (
+                  <p key={detail} className="public-step__detail">
+                    {detail}
+                  </p>
+                ),
+              )}
+              {phase.key === 'sandbox' &&
+              record.state === 'sandbox_pending' &&
+              sandboxId !== undefined ? (
+                <div className="public-step__detail">
                   <LaunchSandboxProgress key={sandboxId} sandboxId={sandboxId} />
-                ) : null}
-              </div>
+                </div>
+              ) : null}
             </li>
           );
         })}
