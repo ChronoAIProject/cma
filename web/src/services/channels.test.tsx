@@ -31,7 +31,8 @@ describe('channel endpoints', () => {
     expect(rows[0]).toHaveTextContent('Post custom events from your source here.');
     expect(within(rows[1]!).getByText(endpoints.nyxid_callback_url).tagName).toBe('CODE');
     fireEvent.click(screen.getByRole('button', { name: 'Copy Callback endpoint' }));
-    expect(await within(rows[1]!).findByRole('status')).toHaveTextContent('Copied');
+    // The status region is always present; wait for the clipboard's answer in it.
+    expect(await within(rows[1]!).findByText('Copied')).toHaveAttribute('role', 'status');
     expect(write).toHaveBeenCalledWith(endpoints.nyxid_callback_url);
     expect(within(rows[0]!).getByRole('status')).toHaveTextContent('');
   });
