@@ -6,7 +6,7 @@
 use super::{Sandbox, SandboxStatus};
 use crate::resource_access::{
     AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
-    ResourceAccessService, ResourceActor, ResourceCapability, ResourceTarget,
+    ResourceAccessService, ResourceCapability, ResourceTarget,
 };
 use crate::AgentId;
 use layer3_adapter::{
@@ -23,6 +23,10 @@ pub enum AgentFileError {
     Access(#[from] ResourceAccessError),
     #[error("invalid file path or request")]
     Invalid,
+    #[error("file or directory does not exist")]
+    NotFound,
+    #[error("file exceeds the permitted size")]
+    TooLarge,
     #[error("the Agent runtime is not available")]
     NotReady,
     #[error("the current file changed; refresh before saving")]
@@ -37,6 +41,12 @@ impl From<AdapterError> for AgentFileError {
         match error {
             AdapterError::Unsupported(_) | AdapterError::RuntimeContractMismatch(_) => {
                 Self::Unsupported
+            }
+            AdapterError::Rejected(detail) if detail.starts_with("file_not_found:") => {
+                Self::NotFound
+            }
+            AdapterError::Rejected(detail) if detail.starts_with("file_too_large:") => {
+                Self::TooLarge
             }
             AdapterError::Rejected(detail) if detail.contains("not ready") => Self::NotReady,
             AdapterError::Rejected(detail)
@@ -55,6 +65,13 @@ pub struct AgentFileService {
     adapter: Arc<dyn SandboxAdapter>,
 }
 impl AgentFileService {
+    /// Build actual route authorization with an isolated, non-network runtime.
+    #[cfg(feature = "test-support")]
+    pub fn for_route_tests(access: Arc<ResourceAccessService>) -> Arc<Self> {
+        let (adapter, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
+        Self::new(access, Arc::new(adapter))
+    }
+
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
         Arc::new(Self { access, adapter })
     }
@@ -82,6 +99,10 @@ impl AgentFileService {
             path,
             |sandbox, boot_id| {
                 Ok(AgentFileListRequest {
+                    owner_access: authorized
+                        .decision
+                        .allows(ResourceCapability::ManageSharing),
+                    protected_paths: Vec::new(),
                     sandbox_id: sandbox.id.to_string(),
                     runtime_generation: generation(sandbox)?,
                     boot_id,
@@ -125,6 +146,10 @@ impl AgentFileService {
             path,
             |sandbox, boot_id| {
                 Ok(AgentFileReadRequest {
+                    owner_access: authorized
+                        .decision
+                        .allows(ResourceCapability::ManageSharing),
+                    protected_paths: Vec::new(),
                     sandbox_id: sandbox.id.to_string(),
                     runtime_generation: generation(sandbox)?,
                     boot_id,
@@ -145,6 +170,7 @@ impl AgentFileService {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn write(
         &self,
         caller: &crate::Caller,
@@ -154,6 +180,7 @@ impl AgentFileService {
         path: &str,
         expected_sha256: Option<String>,
         content_base64: String,
+        directory: bool,
     ) -> Result<AgentFileWriteReceipt, AgentFileError> {
         let authorized = self
             .authorize(
@@ -161,7 +188,7 @@ impl AgentFileService {
                 context,
                 credential,
                 agent_id,
-                ResourceCapability::ManageSharing,
+                ResourceCapability::OperateAgent,
                 AccessPurpose::Mutation {
                     started_at: SystemTime::now(),
                 },
@@ -172,15 +199,22 @@ impl AgentFileService {
             path,
             |sandbox, boot_id| {
                 Ok(AgentFileWriteRequest {
+                    owner_access: authorized
+                        .decision
+                        .allows(ResourceCapability::ManageSharing),
+                    protected_paths: Vec::new(),
                     sandbox_id: sandbox.id.to_string(),
                     runtime_generation: generation(sandbox)?,
                     boot_id,
                     path: path.into(),
                     expected_sha256,
                     content_base64,
+                    directory,
                 })
             },
         )?;
+        self.finish(&authorized, agent_id, ResourceCapability::OperateAgent)
+            .await?;
         let response = self
             .adapter
             .write_agent_file(
@@ -188,7 +222,7 @@ impl AgentFileService {
                 &request,
             )
             .await?;
-        self.finish(&authorized, agent_id, ResourceCapability::ManageSharing)
+        self.finish(&authorized, agent_id, ResourceCapability::OperateAgent)
             .await?;
         Ok(response)
     }
@@ -208,7 +242,7 @@ impl AgentFileService {
                 context,
                 credential,
                 agent_id,
-                ResourceCapability::ManageSharing,
+                ResourceCapability::OperateAgent,
                 AccessPurpose::Mutation {
                     started_at: SystemTime::now(),
                 },
@@ -219,6 +253,10 @@ impl AgentFileService {
             path,
             |sandbox, boot_id| {
                 Ok(AgentFileDeleteRequest {
+                    owner_access: authorized
+                        .decision
+                        .allows(ResourceCapability::ManageSharing),
+                    protected_paths: Vec::new(),
                     sandbox_id: sandbox.id.to_string(),
                     runtime_generation: generation(sandbox)?,
                     boot_id,
@@ -227,6 +265,8 @@ impl AgentFileService {
                 })
             },
         )?;
+        self.finish(&authorized, agent_id, ResourceCapability::OperateAgent)
+            .await?;
         let response = self
             .adapter
             .delete_agent_file(
@@ -234,7 +274,7 @@ impl AgentFileService {
                 &request,
             )
             .await?;
-        self.finish(&authorized, agent_id, ResourceCapability::ManageSharing)
+        self.finish(&authorized, agent_id, ResourceCapability::OperateAgent)
             .await?;
         Ok(response)
     }
@@ -251,23 +291,25 @@ impl AgentFileService {
         let target = ResourceTarget::Agent {
             agent_id: id.clone(),
         };
-        if let Some(context) = context {
-            if caller != &context.caller
-                || !context.validate_principal()
-                || !matches!(&context.actor, ResourceActor::Human { subject } | ResourceActor::Api { subject, delegation_id: None } if subject == &caller.subject)
-            {
+        let authorized = if let Some(context) = context {
+            if caller != &context.caller || !context.validate_principal() {
                 return Err(ResourceAccessError::Access(AccessError::NotFound).into());
             }
-            Ok(self
-                .access
+            self.access
                 .authorize(context, credential, &target, capability, purpose)
-                .await?)
+                .await?
         } else {
-            Ok(self
-                .access
+            self.access
                 .authorize_personal(caller, &target, capability)
-                .await?)
+                .await?
+        };
+        if matches!(purpose, AccessPurpose::Mutation { .. }) {
+            // Legacy Agent operation rights never imply consent to modify the
+            // complete mounted home. Only an owner or an explicitly accepted
+            // view/write link grants that wider filesystem authority.
+            require_home_mutation(&authorized, &caller.subject)?;
         }
+        Ok(authorized)
     }
     async fn finish(
         &self,
@@ -275,7 +317,8 @@ impl AgentFileService {
         id: &AgentId,
         capability: ResourceCapability,
     ) -> Result<(), AgentFileError> {
-        self.access
+        let current = self
+            .access
             .current_read_snapshot(
                 authorized,
                 &ResourceTarget::Agent {
@@ -284,7 +327,43 @@ impl AgentFileService {
                 capability,
             )
             .await?;
+        // current_read_snapshot preserves the original policy fence, including
+        // the exact typed link. A surviving legacy OperateAgent grant cannot
+        // make an in-flight request adopt authority after that link is revoked.
+        if current.lineage.sandbox.runtime != authorized.snapshot.lineage.sandbox.runtime
+            || current.lineage.sandbox.lifecycle.home
+                != authorized.snapshot.lineage.sandbox.lifecycle.home
+            || current.lineage.sandbox.status != SandboxStatus::Active
+        {
+            return Err(AgentFileError::Conflict);
+        }
         Ok(())
+    }
+}
+
+fn require_home_mutation(
+    authorized: &AuthorizedResource,
+    subject: &crate::SubjectId,
+) -> Result<(), AgentFileError> {
+    let owner = authorized
+        .decision
+        .allows(ResourceCapability::ManageSharing);
+    let linked_write = authorized.snapshot.shares.iter().any(|share| {
+        share.mode == crate::resource_access::ShareMode::ViewWrite
+            && share.revoked_at.is_none()
+            && authorized
+                .decision
+                .share_revisions
+                .contains(&(share.id.clone(), share.revision))
+            && share
+                .link
+                .as_ref()
+                .is_some_and(|link| link.accepted_subjects.contains(subject))
+    });
+    if owner || linked_write {
+        Ok(())
+    } else {
+        Err(ResourceAccessError::Access(AccessError::Forbidden).into())
     }
 }
 
@@ -307,8 +386,19 @@ fn runtime_request<T>(
     path: &str,
     build: impl FnOnce(&Sandbox, String) -> Result<T, AgentFileError>,
 ) -> Result<T, AgentFileError> {
-    if sandbox.status != SandboxStatus::Active || !layer3_adapter::valid_agent_file_path(path) {
+    if !layer3_adapter::valid_agent_file_path(path) {
+        return Err(AgentFileError::Invalid);
+    }
+    if sandbox.status != SandboxStatus::Active || sandbox.lifecycle.operation.is_some() {
         return Err(AgentFileError::NotReady);
+    }
+    let home = sandbox
+        .lifecycle
+        .home
+        .as_ref()
+        .ok_or(AgentFileError::Unsupported)?;
+    if home.released || home.receipt.is_none() || !home.request.policy.mounts_full_home() {
+        return Err(AgentFileError::Unsupported);
     }
     let boot_id = sandbox
         .runtime
