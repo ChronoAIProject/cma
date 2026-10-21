@@ -2,20 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
-import { SettingsFields } from './SettingsFields';
 import { AgentSettingsError } from '../api/rest/agentSettings';
 import { Presence } from '../ui/Presence';
+import { ModelEffortPicker } from './ModelEffortPicker';
+import { PermissionChip } from './PermissionChip';
+import './ComposerSettings.css';
 
+/**
+ * The Agent's model, reasoning effort and permission mode, in the composer's
+ * control row — `docs/Web_Style.md` §13.
+ *
+ * It renders loose pieces rather than one box: the permission chip, the model
+ * and effort chip and a status line each take their own place in the
+ * composer's grid. Choosing changes a draft only; nothing reaches the Agent
+ * until Apply, and an uncertain update is retried with its original key.
+ */
 export function SessionSettings({
   agentId,
   active,
   busy,
-  compact = false,
 }: {
   readonly agentId: string;
   readonly active: boolean;
   readonly busy: boolean;
-  readonly compact?: boolean;
 }) {
   const client = useCmaClient();
   const [value, setValue] = useState<AgentSettingsView>();
@@ -66,10 +75,10 @@ export function SessionSettings({
     unavailableModelChange && !intent && value && saved ? { ...value, model: saved.model } : value;
   const changed = Boolean(draft && JSON.stringify(draft) !== JSON.stringify(saved));
   useEffect(() => {
-    if (!confirmed || !compact) return;
+    if (!confirmed) return;
     const timer = setTimeout(() => setConfirmed(false), 3000);
     return () => clearTimeout(timer);
-  }, [confirmed, compact]);
+  }, [confirmed]);
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
     if (!active || !client.readAgentSettings) return;
@@ -147,61 +156,72 @@ export function SessionSettings({
     }
   };
   if (!client.readAgentSettings || !client.updateAgentSettings)
-    return <p>Agent settings are unavailable from this connection.</p>;
+    return (
+      <div className="agent-settings__status">
+        <p>Agent settings are unavailable from this connection.</p>
+      </div>
+    );
+  const locked = pending || intent !== undefined || draft?.pending === true;
+  const change = (next: AgentSettingsView) => {
+    setValue(next);
+    setConfirmed(false);
+  };
   return (
-    <div
-      className={`agent-settings${compact ? ' agent-settings--compact' : ''}`}
-      aria-label="Agent settings"
-    >
+    <>
       {draft ? (
-        <SettingsFields
-          value={draft}
-          models={models}
-          modelsLoading={modelsLoading}
-          compact={compact}
-          disabled={pending || intent !== undefined || draft.pending === true}
-          onChange={(next) => {
-            setValue(next);
-            setConfirmed(false);
-          }}
-        />
-      ) : (
-        <p role="status">Loading Agent settings…</p>
-      )}
-      {modelsLoading ? (
-        <p role="status">Loading available models…</p>
-      ) : modelsError ? (
-        <div role="alert">
-          <p>{modelsError}</p>
-          <Button onClick={() => setModelsReload((count) => count + 1)}>Retry models</Button>
-        </div>
-      ) : models.length === 0 ? (
-        <p role="status">No models are available for this Agent.</p>
-      ) : models.every((model) => !model.available) ? (
-        <p role="status">
-          Model changes are unavailable for this Agent. You can still change reasoning effort and
-          permissions.
+        <>
+          <PermissionChip
+            value={draft.permission_mode}
+            disabled={locked}
+            onChange={(permission_mode) => change({ ...draft, permission_mode })}
+          />
+          <ModelEffortPicker
+            value={draft}
+            saved={saved}
+            models={models}
+            modelsLoading={modelsLoading}
+            modelsError={modelsError}
+            onRetryModels={() => setModelsReload((count) => count + 1)}
+            disabled={locked}
+            onChange={change}
+          />
+        </>
+      ) : error ? null : (
+        <p className="agent-settings__loading" role="status">
+          Loading Agent settings…
         </p>
-      ) : null}
-      {value?.pending ? (
-        <p role="status">Waiting for the runtime to confirm these settings.</p>
-      ) : null}
-      {busy && (!compact || changed) ? (
-        <p role="status">Settings can be changed after the current turn finishes.</p>
-      ) : null}
-      {error ? <p role="alert">{error}</p> : null}
-      <Presence>{confirmed ? <p role="status">Settings applied to this Agent.</p> : null}</Presence>
-      {draft && (!compact || changed || intent !== undefined || pending) ? (
-        <Button
-          size={compact ? 'sm' : undefined}
-          disabled={pending || busy || !draft.model.trim() || (!intent && !changed)}
-          onClick={() => void update()}
-        >
-          {pending ? 'Applying settings…' : intent ? 'Retry settings update' : 'Apply settings'}
-        </Button>
-      ) : !draft && error ? (
-        <Button onClick={() => setReload((count) => count + 1)}>Retry settings</Button>
-      ) : null}
-    </div>
+      )}
+      {/* Present only when there is something to say; an empty line takes no room. */}
+      <div className="agent-settings__status">
+        {value?.pending ? (
+          <p role="status">Waiting for the runtime to confirm these settings.</p>
+        ) : null}
+        {busy && changed ? (
+          <p role="status">Settings can be changed after the current turn finishes.</p>
+        ) : null}
+        {error ? <p role="alert">{error}</p> : null}
+        <Presence>
+          {confirmed ? <p role="status">Settings applied to this Agent.</p> : null}
+        </Presence>
+        {draft && (changed || intent !== undefined || pending) ? (
+          <Button
+            size="sm"
+            placement="agent-settings__apply"
+            disabled={pending || busy || !draft.model.trim() || (!intent && !changed)}
+            onClick={() => void update()}
+          >
+            {pending ? 'Applying settings…' : intent ? 'Retry settings update' : 'Apply settings'}
+          </Button>
+        ) : !draft && error ? (
+          <Button
+            size="sm"
+            placement="agent-settings__apply"
+            onClick={() => setReload((count) => count + 1)}
+          >
+            Retry settings
+          </Button>
+        ) : null}
+      </div>
+    </>
   );
 }

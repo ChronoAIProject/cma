@@ -364,7 +364,6 @@ export function AgentSurface({
                 agentId={agentId}
                 active={!accessUncertain}
                 busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}
-                compact
               />
             )
           }
