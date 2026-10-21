@@ -88,4 +88,26 @@ describe('the retained application shell', () => {
       within(services).getByRole('button', { name: 'Image Manager (coming soon)' }),
     ).toBeDisabled();
   });
+
+  it('explains an unreachable service in plain words and offers Reload', async () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload, pathname: '/agent-manager' });
+    render(
+      <AuthContextProvider
+        provider={createMockAuthProvider({ failCurrent: 'identity check failed with 503' })}
+      >
+        <App />
+      </AuthContextProvider>,
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'CMA could not reach its service' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('It may be starting up. Reload to try again.')).toBeInTheDocument();
+    // The control plane's own sentence stays as the detail for a report.
+    expect(screen.getByText('identity check failed with 503')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
 });
