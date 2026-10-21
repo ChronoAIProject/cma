@@ -2,7 +2,7 @@ import './Settings.css';
 import { useMemo } from 'react';
 import { useProfileViewsClient } from '../api/context';
 import { ServicePicker } from '../profiles/pickers/ServicePicker';
-import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
+import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 
 export function ScopePicker({
   value,

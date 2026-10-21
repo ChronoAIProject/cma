@@ -4,7 +4,7 @@ import type { AgentDetail } from '../api/types';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { ScopePicker } from './ScopePicker';
-import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
+import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 import { accessRequests, AgentAccessError, type AgentAccessRequest } from './accessRequests';
 import { useScopeConnections } from './scopeConnections';
 import { loadScopeUpdate, saveScopeUpdate, type ScopeUpdateIntent } from './scopeUpdateStorage';
