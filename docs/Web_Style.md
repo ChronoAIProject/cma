@@ -633,6 +633,39 @@ A state that has ended draws **no dot at all**. Every state the dot has asserts 
 needing you, running, failed — and a finished Agent asserts none of them; painting it green because
 green was the nearest colour would claim it finished well, which is a different fact.
 
+**One tone per status word, everywhere.** Every resource status maps to one tone in
+`vocabulary/status.ts`, and the sidebar, page headers, tables and the command menu all draw it the
+same way:
+
+| Tone | Words | Dot |
+|---|---|---|
+| active | Starting, Working, Pausing, Resuming, Updating runtime, Updating access, Deleting | accent core with the ping |
+| neutral | Live, Ready | a quiet static dot in the tertiary ink, no halo |
+| warning | Needs approval | warning dot; the word takes the warning ink |
+| error | Needs attention | error dot; the word takes the error ink |
+| muted | Paused, Stopped, Deleted | no dot; the word in the secondary ink |
+
+Live and Ready are not the success colour: in dark that is the same lime as the accent, so a settled
+Sandbox read exactly like one that was working. A Sandbox with a lifecycle operation in flight takes
+the active tone of the operation's word. A sidebar status that may be stale draws no dot.
+
+A **badge** carries a status beside a title or in a table cell: 22px high at radius 6, a hairline
+border, the dot and the word in 12px medium, and no fill — a filled status beside a filled primary
+button reads as a second button. A badge whose status changes while somebody reads it announces
+politely.
+
+An **alert** is the one way a view says something about its resource: radius 12, one hairline, a
+glyph, the words and any actions on one row that wraps. Information (neutral ground and edge) and
+success (success glyph) are polite status updates; a warning (warning ground and edge) or an error
+(danger wash and edge) interrupts. Only the edge, ground and glyph take the tone; the words stay in
+the primary ink. A view stacks its alerts in one place under its header, 8px apart — on the Agent
+surface that is one grid row, so a second message can never be placed below the composer.
+
+**Loading reserves geometry.** A view that is loading draws a skeleton in the shape of what will
+arrive — rows for a list, the page outline while identity is checked — with one polite status
+naming what is loading. The shared `.skeleton` shimmer stops under reduced motion. Bare "Loading…"
+sentences and full-screen characters are not loading states.
+
 ### 12.2 Fields
 
 A 44px field at radius 10, with its border on the **wrapper** rather than on the input. That is what
@@ -2079,6 +2112,10 @@ prompt static when revealed and skips bump, turn and fade; unavailable WebGL ret
 labelled, clickable static fallback. Failed sign-in restores an explicit retry.
 This activation behavior never applies to signed-in Home or step characters.
 
+> Superseded by §12.1 (2026-10-21): in-app steps, connection rows, recovery and runtime notices and
+> the Thinking disclosure use a status dot, and loading surfaces use skeletons. The paragraph below
+> records the earlier behaviour.
+
 Every provisioning step uses that same character in a fixed 44px square.
 Completed steps are green and make one small jump every two seconds: a 0.6-second
 sine arc with 0.08 scene-unit lift followed by rest. Running steps stay blue and
@@ -2657,3 +2694,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Moved the composer settings into their own row under the input at every width. Beside the input, an `auto` grid track grew to the longest settings explanation and squeezed a 1440px desktop draft to about 120px; below the input the draft keeps the full flexible column, as narrow layouts already did. |
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
 | 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
+| 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
