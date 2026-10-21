@@ -1,4 +1,5 @@
 import { ResourceAccessDetails } from './ResourceAccessSummary';
+import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useOwnerViews } from './retainedOwnerViews';
 import type { ResourceViewsClient } from './client';
@@ -93,8 +94,9 @@ export function SandboxAccessPage({
       : personal;
   if (current.state.status === 'loading')
     return (
-      <section className="console__empty" role="status">
+      <section className="console__empty">
         <h1>Opening Sandbox</h1>
+        <SkeletonRows rows={3} label="Opening Sandbox" />
       </section>
     );
   if (current.state.status === 'error')

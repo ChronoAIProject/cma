@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import type { ResourceViewsClient } from '../resources/client';
@@ -111,9 +112,7 @@ export function ManagerNavigation({
               onAction={onAction}
             />
           ) : navigation.status === 'loading' ? (
-            <p className="console__navigation-status" role="status">
-              Loading Agents
-            </p>
+            <SkeletonRows rows={4} label="Loading Agents" />
           ) : (
             <div className="console__navigation-status" role="alert">
               <p>{navigation.message}</p>

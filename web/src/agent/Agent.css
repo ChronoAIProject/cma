@@ -522,11 +522,6 @@
   margin: 64px auto;
 }
 
-.agent-loading__row {
-  height: 70px;
-  border-radius: 7px;
-}
-
 .agent-surface--error {
   place-items: center;
 }

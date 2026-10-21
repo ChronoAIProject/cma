@@ -1,4 +1,5 @@
 import { Presence } from './ui/Presence';
+import { SkeletonRows } from './ui/Skeleton';
 import { Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
@@ -246,7 +247,7 @@ function ConsoleContent({
       personalAgentId === undefined ? (
       <section
         className="console__empty"
-        role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
+        role={agentAccess.state.status === 'error' ? 'alert' : undefined}
       >
         <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
         {agentAccess.state.status === 'error' ? (
@@ -254,7 +255,9 @@ function ConsoleContent({
             <p>{agentAccess.state.message}</p>
             <Button onClick={agentAccess.reload}>Check access again</Button>
           </>
-        ) : null}
+        ) : (
+          <SkeletonRows rows={3} label="Opening Agent" />
+        )}
       </section>
     ) : route.kind === 'agent' ? (
       <AgentSurface
