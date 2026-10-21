@@ -89,3 +89,47 @@ it('replaces owned content on an account change and removes it when the common s
   await screen.findByRole('link', { name: 'Sign in with NyxID' });
   expect(screen.queryByText('new-owner channels')).not.toBeInTheDocument();
 });
+it('tells a signed-in account without permissions so instead of offering sign-in again', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('{}', { status: 403 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(session())))
+    .mockResolvedValueOnce(new Response(JSON.stringify(session())));
+  vi.stubGlobal('fetch', fetcher);
+  render(<ServicePage service="event-gateway">{() => <p>private channels</p>}</ServicePage>);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    "Your account doesn't have Event Gateway permissions.",
+  );
+  expect(screen.queryByRole('link', { name: 'Sign in with NyxID' })).not.toBeInTheDocument();
+  expect(screen.queryByText('private channels')).not.toBeInTheDocument();
+  // A later focus check must not quietly restore the refused view.
+  await act(async () => {
+    fireEvent.focus(window);
+  });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('private channels')).not.toBeInTheDocument();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  });
+  expect(await screen.findByText('private channels')).toBeInTheDocument();
+});
+it.each([
+  [403, "Your account doesn't have Event Gateway permissions.", false],
+  [401, 'Sign in with NyxID to open Event Gateway.', true],
+  [undefined, 'Sign in with NyxID to open Event Gateway.', true],
+] as const)('routes a refusal reported with %s to its own page', async (status, text, signIn) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(session()))));
+  render(
+    <ServicePage service="event-gateway">
+      {(_value, denied) => (
+        <button type="button" onClick={() => denied(status)}>
+          Refused read
+        </button>
+      )}
+    </ServicePage>,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Refused read' }));
+  expect(screen.getByText(text)).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Sign in with NyxID' }) !== null).toBe(signIn);
+  expect(screen.queryByRole('button', { name: 'Refused read' })).not.toBeInTheDocument();
+});
