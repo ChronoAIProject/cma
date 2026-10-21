@@ -1,0 +1,93 @@
+/*
+ * The shared table — `docs/Web_Style.md` §12.6.
+ *
+ * The bordered box, not the page, scrolls sideways: a table wider than a
+ * phone would otherwise widen the whole view and take every other row of the
+ * page off screen with it.
+ */
+
+.table {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+}
+
+.table:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.table__grid {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--dsw-alias-label-primary);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.table__grid th {
+  height: 40px;
+  padding: 0 16px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  text-align: start;
+  white-space: nowrap;
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.table__grid td {
+  height: 52px;
+  padding: 8px 16px;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+/* The divider sits above each record, so a note row joins the row it follows. */
+.table__grid tbody tr + tr > td {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.table__grid tbody tr.table__note > td {
+  height: auto;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.table__grid [data-align='end'] {
+  text-align: end;
+}
+
+.table__grid td[data-align='end'] {
+  font-variant-numeric: tabular-nums;
+}
+
+.table__grid td[data-mono] {
+  font-family: var(--ds-font-family-code);
+  font-size: 0.8125rem;
+}
+
+.table__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.table__empty > td {
+  padding: 24px 16px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: center;
+}
+
+/* Phones keep readable columns and scroll the box instead of crushing them. */
+@media (max-width: 48rem) {
+  .table__grid {
+    min-width: 40rem;
+  }
+}
