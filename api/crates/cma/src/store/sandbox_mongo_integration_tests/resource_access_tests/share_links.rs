@@ -240,7 +240,7 @@ async fn typed_links_persist_redeem_and_revoke_without_migrating_legacy_shares()
         assert_eq!(accepted.revision, 2);
         assert_eq!(
             accepted.link.as_ref().unwrap().accepted_subjects,
-            [recipient.caller.subject.clone()]
+            std::slice::from_ref(&recipient.caller.subject)
         );
         assert_eq!(
             two.resource_share(&accepted.id).await.unwrap(),
@@ -268,7 +268,7 @@ async fn typed_links_persist_redeem_and_revoke_without_migrating_legacy_shares()
         };
         assert_eq!(
             inventory(&two, &recipient.caller.subject, &organizations).await,
-            [id.clone()]
+            std::slice::from_ref(&id)
         );
         assert!(inventory(&two, &owner.caller.subject, &organizations)
             .await
