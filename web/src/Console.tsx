@@ -2,7 +2,7 @@ import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
 import { Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
@@ -31,7 +31,7 @@ import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
-import { AgentShareAccept } from './resources/AgentShareAccept';
+import { AgentSharePage } from './resources/AgentSharePage';
 import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
@@ -41,13 +41,7 @@ import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
-
-const EventGatewayDocs = lazy(() =>
-  import('./services/EventGatewayDocs').then((module) => ({ default: module.EventGatewayDocs })),
-);
-const DocsIndex = lazy(() =>
-  import('./services/EventGatewayDocs').then((module) => ({ default: module.DocsIndex })),
-);
+import { DocsPage } from './services/DocsPage';
 
 interface ConsoleProps {
   readonly user: User;
@@ -189,36 +183,19 @@ function ConsoleContent({
     deleteSandbox: !accessUncertain && user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
-  const shareAccepted = useCallback(
-    (agentId: string) => {
-      setNavigationScope('shared');
-      refreshNavigation();
-      onNavigate({ kind: 'agent', agentId });
-    },
-    [setNavigationScope, refreshNavigation, onNavigate],
-  );
   const content =
     route.kind === 'docs' ? (
-      <Suspense fallback={<p role="status">Loading documentation</p>}>
-        {route.view === 'event_gateway_protocol' ? (
-          <EventGatewayDocs onNavigate={onNavigate} />
-        ) : (
-          <DocsIndex onNavigate={onNavigate} />
-        )}
-      </Suspense>
+      <DocsPage view={route.view} onNavigate={onNavigate} />
     ) : isBotRoute(route) ? (
       <BotManagement user={user} route={route} onNavigate={onNavigate} />
     ) : route.kind === 'agent_share' ? (
-      client.resourceViews === undefined ? (
-        <UnavailableView title="Agent sharing unavailable" />
-      ) : (
-        <AgentShareAccept
-          key={route.shareId}
-          client={client.resourceViews}
-          shareId={route.shareId}
-          onAccepted={shareAccepted}
-        />
-      )
+      <AgentSharePage
+        key={route.shareId}
+        shareId={route.shareId}
+        onScope={setNavigationScope}
+        onRefresh={refreshNavigation}
+        onNavigate={onNavigate}
+      />
     ) : route.kind === 'inventory' ? (
       client.resourceViews === undefined ? (
         <UnavailableView title="Agent inventory unavailable" />
