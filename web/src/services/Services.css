@@ -132,6 +132,9 @@
   background: var(--dsw-alias-bg-layer-1);
   overflow-wrap: anywhere;
 }
+.service-forbidden {
+  margin-block: 16px;
+}
 .service-form {
   display: grid;
   gap: 16px;
