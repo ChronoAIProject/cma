@@ -888,16 +888,52 @@ turn token reporting retain their existing sources and do not reset on relocatio
 On narrow screens the token line wraps within the message content width so actual
 counts and explicitly labelled estimates remain readable.
 
-Each settled tool call has its own neutral, 8px-radius bordered container in the
-message timeline, inserted at its completion position and retained on reload.
-Use 12px padding and the existing 16px entry rhythm. Show the recorded title,
-kind, written status and reported duration with wrapping text; failed and stopped
-calls remain individually inspectable. A call left pending by an ended turn
-states that its outcome was not reported, without inventing success or failure.
-Tool activity never invents missing arguments or results. Tool bodies are absent
-unless the public contract supplies them, use bounded disclosure when present,
-and unknown duration is not zero. Live and replayed activity reconcile by call
-identity without duplicate cards or regression to pending after completion.
+Each settled tool call is a neutral, 8px-radius bordered row in the message
+timeline, inserted at its completion position and retained on reload, named
+**Tool call: <title>**. Use 12px padding and the existing 16px entry rhythm. The
+row leads with a state dot and pairs it with a plain word: **In progress** (the
+pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
+(error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
+or stopped, and **Outcome not reported (last status: <status>)** (neutral dot)
+for a call left pending by an ended turn, without inventing success or failure.
+The recorded title and kind wrap beside the word. A duration appears only when
+the public contract reports one; it reports none today, so no row carries a
+duration or a "not reported" filler, and unknown duration is never zero. Tool
+activity never invents missing arguments or results: the recorded detail sits
+behind a bounded **Details** disclosure only when the contract supplies it.
+
+Two or more consecutive tool calls, with no message, approval, plan or notice
+between them, form one group in the same bordered container. Its header is a
+real button with `aria-expanded`, reading **<n> tool calls** and a one-line
+summary of the latest call (its title and word). A collapsed group hides its rows;
+an expanded one lists every row with the same dot, word and disclosure. A group
+containing a failure starts expanded, and stays so until the reader collapses it;
+otherwise it starts collapsed. A single call stays a single row. Live and
+replayed activity reconcile by call identity without duplicate rows or
+regression to pending after completion.
+
+A plan the Agent reports through the public stream (`plan_set` in the durable
+history and Responses v2, the `/plan` state on AG-UI) renders as a **Plan** card
+in the timeline: an eyebrow "Plan" and one row per entry, its title wrapping
+beside a status badge. The badge reads **Done** (neutral), **In progress**
+(active) or **Waiting** (muted); an unfamiliar status is shown verbatim, muted,
+rather than mapped to a guess. Each turn has at most one card, placed where that
+turn first reported a plan and replaced in place by the turn's latest report,
+because a provider restates the whole plan on every change. Plans render when
+the public stream carries them; history read from the transcript alone has no
+plan, and no card is invented for it.
+
+An approval is a card in the timeline at the point of interruption, on the
+layer-1 ground with a warning-toned hairline and radius 8. An eyebrow reads
+**Approval**; the request's action reason is the heading and its detail the
+body. Below them sit **Deny**, **Abort** and the primary **Allow**, each over a
+one-line caption that states its effect: Deny refuses this request and lets the
+Agent continue another way; Abort cancels the request without an answer; Allow
+lets the Agent go ahead. The captions describe the buttons, they do not rename
+them. The buttons hold while an approval command is pending or input is not
+allowed. A viewer without authority reads **Waiting for an authorized
+participant to answer this approval.** in place of the buttons. A resolved
+approval shows its recorded decision instead.
 
 AG-UI identifies the thread by Agent id and the run by durable turn sequence.
 Live content can arrive without a preceding START frame. It must be visible
@@ -2658,6 +2694,9 @@ The row sits before usage, leaving Send/Stop and steering aligned in their actio
 column, so the draft always keeps the full flexible column. At 30rem or less, retain 44px touch targets and let the
 three controls share the full input row. Preserve typed drafts, attachments,
 queue/interrupt behavior, and input-aligned Context/Total tokens.
+The permission picker reads **Guarded** and **Autonomous**, in the compact
+composer and the full settings alike; the wire values `guarded` and `autonomous`
+are unchanged. No other name for the unrestricted mode appears in the UI.
 
 Each normal message always shows its recorded timestamp as a semantic time in
 Asia/Singapore, with an explicit SGT suffix, using existing 12/18 caption text
@@ -2695,3 +2734,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
 | 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
 | 2026-10-21 | Gave every status word one tone everywhere (active, neutral, warning, error, muted) with a neutral dot for Live and Ready instead of the success colour, which in dark matched the accent. Added the status badge, a severity-toned alert that replaces the danger-tinted notice and stacks in one place per view (on the Agent surface in one grid row, so no message can fall below the composer), and skeleton loading for navigation, the Agent, Sandbox, Workspace and inventory, and the console outline while identity is checked. Retired the 3D character from in-app rows: Thinking, connection rows, setup steps, recovery and runtime notices use a status dot; the character remains on the signed-out home and the brand. Supersedes the step-character and loading-character paragraphs of §23. |
+| 2026-10-21 | Made the conversation say what the Agent is doing and what it needs. Consecutive tool calls form one group headed "<n> tool calls" with the latest call's summary, and every row carries a state dot with a plain word (In progress, Completed, Failed, Cancelled, or Outcome not reported) instead of the raw status; the "Duration not reported" filler is gone because no duration is reported. Groups with a failure open themselves. Plans reported through the public stream render as a per-turn Plan card with Done, In progress and Waiting badges. The approval card gained a one-line caption under Deny, Abort and Allow. The permission picker reads Guarded and Autonomous. |
