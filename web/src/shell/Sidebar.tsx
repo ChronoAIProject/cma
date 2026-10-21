@@ -1,11 +1,14 @@
 import { IconNewChatOutline16, IconPanelLeftOutline16, IconGoalOutline16 } from '../ui/icons';
 import type { ReactNode } from 'react';
 import type { AppRoute } from '../routing/routes';
-import { ServiceTabs } from '../services/ServiceTabs';
+import { ServiceMenu } from '../services/ServiceMenu';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
-import { BUILD } from './build';
 import './Sidebar.css';
 const markHtml = { __html: markMarkup };
+
+function plainClick(event: React.MouseEvent) {
+  return !(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
+}
 
 interface SidebarProps {
   readonly collapsed: boolean;
@@ -44,15 +47,9 @@ export function Sidebar({
           className="sidebar__brand"
           href="/"
           aria-label="CMA home"
+          title="ChronoAI Managed Agent"
           onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
+            if (!plainClick(event)) return;
             if (!onHome && !onNavigate) return;
             event.preventDefault();
             if (onHome) onHome();
@@ -60,17 +57,8 @@ export function Sidebar({
           }}
         >
           <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-          <span className="sidebar__name" title="ChronoAI Managed Agent">
-            ChronoAI Managed Agent
-          </span>
         </a>
-        <span
-          className="sidebar__build"
-          aria-label={`Build ${BUILD}`}
-          title={`Build revision: ${BUILD}`}
-        >
-          {BUILD.replace(/^trureturing-/, '')}
-        </span>
+        <ServiceMenu route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
         <button
           type="button"
           className="sidebar__toggle"
@@ -81,7 +69,6 @@ export function Sidebar({
           <IconPanelLeftOutline16 />
         </button>
       </div>
-      <ServiceTabs route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
       <div className="sidebar__actions">
         {canCreateAgent ? (
           <button

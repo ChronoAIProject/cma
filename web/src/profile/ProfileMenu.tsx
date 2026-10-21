@@ -8,6 +8,7 @@ import {
   IconBrowseOutline16,
   IconFollowsystemOutline16,
   IconLightOutline16,
+  IconCopyOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
 } from '../ui/icons';
@@ -18,6 +19,7 @@ import {
   storedAppearance,
   type Appearance,
 } from '../theme/appearance';
+import { BUILD } from '../shell/build';
 import './ProfileMenu.css';
 import {
   SYSTEM_TEXT_SIZES,
@@ -58,6 +60,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const [copied, setCopied] = useState(false);
   const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
@@ -82,6 +85,11 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       })),
     },
     { type: 'separator', id: 'before-sign-out' },
+    {
+      id: 'build',
+      icon: <IconCopyOutline16 />,
+      label: copied ? 'Build revision copied' : `Build ${BUILD}`,
+    },
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
 
@@ -104,6 +112,15 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       setAppearance(next);
       return;
     }
+    if (id === 'build') {
+      // The revision is what a bug report needs, so it copies in one step.
+      // A refused clipboard leaves the visible text, which can be read out.
+      void navigator.clipboard?.writeText(BUILD).then(
+        () => setCopied(true),
+        () => setCopied(false),
+      );
+      return;
+    }
     if (id === 'sign-out') {
       setOpen(false);
       onSignOut();
@@ -122,6 +139,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       onSelect={choose}
       onClose={() => {
         setOpen(false);
+        setCopied(false);
       }}
       anchor={
         <button

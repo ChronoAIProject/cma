@@ -30,7 +30,6 @@ import type { AppRouter, AppRoute } from './routing/routes';
 import { EventGatewayPortal } from './services/EventGatewayPortal';
 import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
-import { ServiceSwitchMotion } from './services/ServiceSwitchMotion';
 import { PortalFrame } from './shell/PortalFrame';
 
 export function App() {
@@ -68,35 +67,33 @@ export function App() {
   const navigateService = (next: AppRoute) =>
     router.navigate(next.kind === 'agent_manager' ? lastAgentRoute : next);
   return (
-    <ServiceSwitchMotion current={service ? 'gateway' : 'agent'}>
-      <div className="service-shell">
-        {home ? (
-          <ServiceBody>
-            <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
-              <HomeLanding router={router} />
-            </PortalFrame>
-          </ServiceBody>
-        ) : null}
-        {agentVisible || visitedAgent ? (
-          <ServiceBody visible={agentVisible}>
-            <AgentApp
-              router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
-              onServiceNavigate={navigateService}
-              {...sidebar}
-            />
-          </ServiceBody>
-        ) : null}
-        {visitedGateway ? (
-          <EventGatewayPortal
-            key={`event-gateway:${identityKey}`}
-            visible={service === 'event-gateway'}
-            route={service ? router.route : lastGatewayRoute}
-            onNavigate={navigateService}
+    <div className="service-shell">
+      {home ? (
+        <ServiceBody>
+          <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
+            <HomeLanding router={router} />
+          </PortalFrame>
+        </ServiceBody>
+      ) : null}
+      {agentVisible || visitedAgent ? (
+        <ServiceBody visible={agentVisible}>
+          <AgentApp
+            router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
+            onServiceNavigate={navigateService}
             {...sidebar}
           />
-        ) : null}
-      </div>
-    </ServiceSwitchMotion>
+        </ServiceBody>
+      ) : null}
+      {visitedGateway ? (
+        <EventGatewayPortal
+          key={`event-gateway:${identityKey}`}
+          visible={service === 'event-gateway'}
+          route={service ? router.route : lastGatewayRoute}
+          onNavigate={navigateService}
+          {...sidebar}
+        />
+      ) : null}
+    </div>
   );
 }
 function HomeLanding({ router }: { readonly router: AppRouter }) {
