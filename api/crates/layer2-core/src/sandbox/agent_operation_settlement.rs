@@ -39,6 +39,7 @@ impl AgentOperationService {
                                 prepared.input.clone(),
                                 std::sync::Arc::new(
                                     super::agent_settings_validation::SettingsInputGuard {
+                                        authority: self.settings_authority.clone(),
                                         store: self.store.clone(),
                                         target: prepared.target.clone(),
                                         sequence: prepared.operation_sequence,
@@ -287,6 +288,10 @@ impl AgentOperationService {
         next.validate_conversation()
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
         let mutation = AgentConversationMutation {
+            settings_fence: admission_guard
+                .as_ref()
+                .and(self.settings_authority.as_ref())
+                .map(|authority| authority.fence()),
             command_claim: admission_guard.as_ref().and(self.command_claim.clone()),
             execution_fence: admission_guard
                 .as_ref()

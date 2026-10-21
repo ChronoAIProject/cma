@@ -3,6 +3,7 @@
 mod config;
 mod connections;
 mod construction;
+mod filesystem;
 mod home;
 mod hosted_runtime;
 use hosted_runtime::CodexRuntime;
@@ -49,6 +50,55 @@ pub struct CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    async fn list_agent_files(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileListRequest,
+    ) -> crate::Result<crate::AgentFileListReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.list_agent_files(handle, &request).await
+    }
+    async fn read_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileReadRequest,
+    ) -> crate::Result<crate::AgentFileReadReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.read_agent_file(handle, &request).await
+    }
+    async fn write_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileWriteRequest,
+    ) -> crate::Result<crate::AgentFileWriteReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.write_agent_file(handle, &request).await
+    }
+    async fn delete_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileDeleteRequest,
+    ) -> crate::Result<crate::AgentFileDeleteReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.delete_agent_file(handle, &request).await
+    }
+
     async fn upload_agent_attachment(
         &self,
         handle: &RuntimeHandle,

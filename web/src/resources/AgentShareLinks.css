@@ -1,0 +1,100 @@
+.agent-share {
+  display: grid;
+  gap: 20px;
+}
+.agent-share__form {
+  display: grid;
+  gap: 12px;
+}
+.agent-share__form label,
+.agent-share__people {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-share__description {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+.agent-share__links {
+  display: grid;
+  gap: 12px;
+}
+.agent-share__links h3 {
+  margin: 0;
+}
+.agent-share__link {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.agent-share__link-summary {
+  display: grid;
+  gap: 4px;
+}
+.agent-share__link-summary small {
+  color: var(--dsw-alias-label-secondary);
+}
+.agent-share__copy {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.agent-share__copy input {
+  min-width: 0;
+  flex: 1;
+}
+.agent-share__copy > button {
+  flex: none;
+  white-space: nowrap;
+}
+.agent-share__revoke {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.agent-share__revoke p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.agent-share__selection {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+}
+.agent-share__selection li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.agent-share__selection li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shared-agent__attribution {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.shared-agent__attribution img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}

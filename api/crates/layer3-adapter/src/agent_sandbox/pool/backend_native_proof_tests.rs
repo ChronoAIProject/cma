@@ -40,6 +40,7 @@ impl HostedControlTransport for StatusTransport {
                 json!("replaced-after-status");
         }
         Ok(ResponseFrame::RuntimeStatus(RuntimeStatus {
+            agent_filesystem: false,
             agent_attachment_upload: false,
             agent_skill_install: true,
             agent_model_catalog: true,

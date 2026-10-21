@@ -106,7 +106,8 @@ impl AgentAttachmentService {
     ) -> Arc<Self> {
         Arc::new(Self { access, writer })
     }
-    /// Authorize before reading bytes. Sharing or delegated conversation rights do not permit writes.
+    /// Authorize before reading bytes. Only the owner or an explicitly accepted
+    /// Agent view/write link may write the shared home; legacy narrow grants do not.
     pub async fn admit(
         &self,
         caller: &Caller,
@@ -143,7 +144,7 @@ impl AgentAttachmentService {
                     context,
                     credential,
                     &target,
-                    ResourceCapability::ManageSharing,
+                    ResourceCapability::OperateAgent,
                     AccessPurpose::Mutation {
                         started_at: SystemTime::now(),
                     },
@@ -151,9 +152,26 @@ impl AgentAttachmentService {
                 .await?
         } else {
             self.access
-                .authorize_personal(caller, &target, ResourceCapability::ManageSharing)
+                .authorize_personal(caller, &target, ResourceCapability::OperateAgent)
                 .await?
         };
+        let owns_home = authorized
+            .decision
+            .allows(ResourceCapability::ManageSharing);
+        let linked_write = authorized.snapshot.shares.iter().any(|share| {
+            share.mode == crate::resource_access::ShareMode::ViewWrite
+                && authorized
+                    .decision
+                    .share_revisions
+                    .contains(&(share.id.clone(), share.revision))
+                && share
+                    .link
+                    .as_ref()
+                    .is_some_and(|link| link.accepted_subjects.contains(&caller.subject))
+        });
+        if !owns_home && !linked_write {
+            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+        }
         available(&authorized.snapshot)?;
         let identity = identity(&authorized.snapshot)?;
         let id = format!(
@@ -194,7 +212,7 @@ impl AgentAttachmentService {
             .current_read_snapshot(
                 &admission.authorized,
                 &admission.target,
-                ResourceCapability::ManageSharing,
+                ResourceCapability::OperateAgent,
             )
             .await?;
         available(&current)?;

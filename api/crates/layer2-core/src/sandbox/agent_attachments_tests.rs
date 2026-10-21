@@ -3,7 +3,7 @@ use crate::sandbox::agent_attachments::*;
 use crate::{resource_access::*, Authorization, Caller, Capability};
 use layer3_adapter::*;
 #[path = "agent_attachments_test_runtime.rs"]
-mod runtime;
+pub(super) mod runtime;
 use runtime::UnusedRuntime;
 struct NoOrganizations;
 #[async_trait::async_trait]
@@ -284,7 +284,7 @@ impl ResourceShareStore for ChangingStore {
     }
 }
 
-fn persistent_home() -> SandboxHome {
+pub(super) fn persistent_home() -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {
         mode: HomeVolumeMode::NativeVctFullHomeV2,
@@ -365,6 +365,7 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
         let store = Arc::new(store::InMemorySandboxStore::default());
         let home = persistent_home();
         let status = RuntimeStatus {
+            agent_filesystem: false,
             agent_attachment_upload: mode != 1,
             agent_skill_install: false,
             agent_model_catalog: false,

@@ -1,10 +1,55 @@
 use super::*;
 use tokio::sync::mpsc;
-pub(super) struct UnusedRuntime {
-    pub(super) status: Option<RuntimeStatus>,
+pub(crate) struct UnusedRuntime {
+    pub(crate) status: Option<RuntimeStatus>,
 }
 #[async_trait::async_trait]
 impl SandboxAdapter for UnusedRuntime {
+    async fn list_agent_files(
+        &self,
+        _: &RuntimeHandle,
+        request: &AgentFileListRequest,
+    ) -> Result<AgentFileListReceipt> {
+        Ok(AgentFileListReceipt {
+            path: request.path.clone(),
+            entries: vec![],
+        })
+    }
+    async fn read_agent_file(
+        &self,
+        _: &RuntimeHandle,
+        request: &AgentFileReadRequest,
+    ) -> Result<AgentFileReadReceipt> {
+        Ok(AgentFileReadReceipt {
+            path: request.path.clone(),
+            size_bytes: 4,
+            sha256: "3b9c358f36f0a31b6ad3e14f309c7cf198ac9246e8316f9ce543d5b19ac02b80".into(),
+            content_base64: "ZmlsZQ==".into(),
+        })
+    }
+    async fn write_agent_file(
+        &self,
+        _: &RuntimeHandle,
+        request: &AgentFileWriteRequest,
+    ) -> Result<AgentFileWriteReceipt> {
+        use sha2::{Digest as _, Sha256};
+        let bytes = request.content()?;
+        Ok(AgentFileWriteReceipt {
+            path: request.path.clone(),
+            size_bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        })
+    }
+    async fn delete_agent_file(
+        &self,
+        _: &RuntimeHandle,
+        request: &AgentFileDeleteRequest,
+    ) -> Result<AgentFileDeleteReceipt> {
+        Ok(AgentFileDeleteReceipt {
+            path: request.path.clone(),
+            deleted: true,
+        })
+    }
     async fn runtime_status(&self, handle: &RuntimeHandle) -> Result<RuntimeStatus> {
         assert_eq!(handle.as_str(), "runtime-test");
         Ok(self.status.clone().expect("unexpected runtime status"))

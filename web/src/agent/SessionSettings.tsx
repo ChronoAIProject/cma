@@ -21,10 +21,12 @@ export function SessionSettings({
   agentId,
   active,
   busy,
+  authorizeUpdate,
 }: {
   readonly agentId: string;
   readonly active: boolean;
   readonly busy: boolean;
+  readonly authorizeUpdate?: (signal: AbortSignal) => Promise<void>;
 }) {
   const client = useCmaClient();
   const [value, setValue] = useState<AgentSettingsView>();
@@ -131,6 +133,8 @@ export function SessionSettings({
     setError(undefined);
     setConfirmed(false);
     try {
+      await authorizeUpdate?.(request.signal);
+      request.signal.throwIfAborted();
       const result = await client.updateAgentSettings(agentId, retained.body, {
         idempotencyKey: retained.key,
         signal: request.signal,

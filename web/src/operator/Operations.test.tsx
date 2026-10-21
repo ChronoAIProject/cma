@@ -233,12 +233,14 @@ describe('operator capabilities and record views', () => {
         expect.objectContaining({ cursor: undefined }),
       ),
     );
-    await user.type(screen.getByLabelText('Activity actor'), 'operator-2');
+    // Actor is a selector populated from the canonical actor names returned by
+    // the activity endpoint; operators no longer need to type a subject id.
+    await chooseOptionValue(user, screen.getByLabelText('Activity actor'), 'operator-1');
     await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() =>
       expect(client.admin.listActivity).toHaveBeenLastCalledWith(
-        expect.objectContaining({ actor: 'operator-2', action: 'delete' }),
+        expect.objectContaining({ actor: 'operator-1', action: 'delete' }),
       ),
     );
   });

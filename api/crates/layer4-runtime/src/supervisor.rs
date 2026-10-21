@@ -13,7 +13,7 @@ use crate::checkpoint::CheckpointStore;
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::install_state::RecoveryState;
-use crate::paths::{path_is_directory, safe_component};
+use crate::paths::path_is_directory;
 use crate::upstream::{CredentialHolder, PreparedProxies};
 use crate::writer_fence::{SupervisorBoundary, WriterFence};
 
@@ -29,6 +29,8 @@ mod agent_validation;
 mod attachment;
 #[path = "supervisor_checkpoint.rs"]
 mod checkpoint_lifecycle;
+#[path = "supervisor_execute.rs"]
+mod execute;
 #[path = "supervisor_guards.rs"]
 mod guards;
 #[path = "supervisor_mutations.rs"]
@@ -253,96 +255,6 @@ impl Supervisor {
         match self.execute(request).await {
             Ok(response) => response,
             Err(error) => error.response(operation),
-        }
-    }
-
-    async fn execute(&self, request: RequestFrame) -> Result<ResponseFrame> {
-        if !matches!(
-            request,
-            RequestFrame::Install(_)
-                | RequestFrame::BootstrapRestore(_)
-                | RequestFrame::Credential(_)
-                | RequestFrame::Restore(_)
-                | RequestFrame::ResumeCheckpointWriters(_)
-                | RequestFrame::Resources
-        ) {
-            self.authorize_preparation(&request).await?;
-        }
-        match request {
-            RequestFrame::UploadAgentAttachment(upload) => self
-                .upload_attachment(upload)
-                .await
-                .map(ResponseFrame::UploadAgentAttachment),
-            RequestFrame::CacheSkillArchive(archive) => {
-                crate::skills::cache_archive(&self.config, &archive)?;
-                Ok(ResponseFrame::CacheSkillArchive {
-                    sha256: archive.sha256,
-                })
-            }
-            RequestFrame::Install(request) => self.install(request).await,
-            RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
-            RequestFrame::Credential(frame) => self.credential(frame).await,
-            RequestFrame::PrepareWorkspace(_)
-            | RequestFrame::WorkspaceSetup(_)
-            | RequestFrame::RemoveWorkspace(_) => unreachable!("workspace requests detach first"),
-            RequestFrame::AddWorktree(request) => {
-                self.add_worktree(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::RemoveWorktree(request) => {
-                self.remove_worktree(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::InstallAgentSkill(request) => {
-                self.install_agent_skill(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::MaterializeAgentHome(request) => {
-                self.materialize_agent_home(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::RemoveAgentHome(request) => {
-                self.remove_agent_home(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::OpenAgent(request) => {
-                self.open_agent(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::CloseAgent(request) => {
-                self.close_agent(request.authority_fence, request.request)
-                    .await
-            }
-            RequestFrame::CaptureAgent(reference) => {
-                safe_component(reference.agent_id.as_str(), "agent id")?;
-                let home = self.config.agent_home(reference.agent_id.as_str());
-                if !path_is_directory(&home) {
-                    return Err(RuntimeError::rejected(
-                        "agent_home_not_found",
-                        "agent home was not found",
-                    ));
-                }
-                Ok(ResponseFrame::CaptureAgent(crate::conversation::capture(
-                    &home,
-                )?))
-            }
-            RequestFrame::Checkpoint(request) => self.checkpoint(&request).await,
-            RequestFrame::CheckpointForTeardown(request) => {
-                self.checkpoint_for_teardown(request).await
-            }
-            RequestFrame::ResumeCheckpointWriters(request) => {
-                self.resume_checkpoint_writers(request).await
-            }
-            RequestFrame::Restore(request) => self.restore(&request).await,
-            RequestFrame::Resources => Ok(ResponseFrame::Resources(
-                self.resources.sample(std::time::Instant::now()).into(),
-            )),
-            RequestFrame::WorkspaceRemovalSupport(_)
-            | RequestFrame::ReconcileWorkspaceRemoval(_)
-            | RequestFrame::RuntimeStatus(_)
-            | RequestFrame::ToolProxyStatus(_) => {
-                unreachable!("status requests observe without mutation")
-            }
         }
     }
 
