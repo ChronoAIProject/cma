@@ -445,8 +445,13 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
   await expect(chip).toHaveText('Fast model High');
   await page.keyboard.press('Escape');
   await expect(card).toHaveCount(0);
+  // Service access is read-only in Details; the Sandbox's Access tab edits it.
   await expect(details.getByRole('list', { name: 'Services' }).getByRole('listitem')).toHaveCount(
-    108,
+    3,
+  );
+  await expect(details.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_route?tab=access',
   );
   await expect(
     details.getByRole('list', { name: 'Available Ornn skills' }).getByRole('listitem'),
@@ -455,7 +460,7 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
     await page.setViewportSize({ width, height: 1000 });
     await expect(details).toBeVisible();
     await details.getByRole('heading', { name: 'Details', exact: true }).scrollIntoViewIfNeeded();
-    for (const name of ['Services', 'Available Ornn skills']) {
+    for (const name of ['Available Ornn skills']) {
       const list = details.getByRole('list', { name, exact: true });
       expect(
         await list.evaluate(
