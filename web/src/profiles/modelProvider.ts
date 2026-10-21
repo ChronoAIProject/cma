@@ -3,5 +3,5 @@ export function isCodexConnection(service: string): boolean {
 }
 
 export function codexProviderName(access: 'chronoai_managed' | 'own_credentials'): string {
-  return access === 'own_credentials' ? 'My Codex subscription' : 'Chrono LLM (public)';
+  return access === 'own_credentials' ? 'Your ChatGPT subscription' : 'Chrono LLM (public)';
 }

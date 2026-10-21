@@ -202,13 +202,7 @@ export function SandboxOverview({
         <h2>Agent access</h2>
         <dl>
           <div>
-            <dt>Agent provider</dt>
-            <dd>
-              {settings === undefined ? (settingsLoaded ? 'Unavailable' : 'Loading') : 'Codex'}
-            </dd>
-          </div>
-          <div>
-            <dt>Codex provider</dt>
+            <dt>Model access</dt>
             <dd>
               {settings === undefined
                 ? settingsLoaded
