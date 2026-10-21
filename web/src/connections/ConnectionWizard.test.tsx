@@ -295,7 +295,9 @@ it('does not mistake an older usable subscription for completed forced re-login'
   render(<ConnectionWizard target={target} client={client} forceSubscription onReady={ready} />);
   await flush();
   expect(ready).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Re-login with Codex subscription' }));
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Sign in to your ChatGPT subscription again' }),
+  );
   await flush();
   await poll();
   expect(client.start).toHaveBeenCalledWith(
@@ -340,4 +342,15 @@ it('fences pending starts when the selected sandbox changes', async () => {
   expect(client.cancel).toHaveBeenCalledWith(target, started);
   expect(ready).not.toHaveBeenCalled();
   expect(screen.queryByText(/Waiting for sign-in/)).not.toBeInTheDocument();
+});
+
+it('names the subscription row and group without the agent provider', async () => {
+  const { client } = fixture();
+  render(<ConnectionWizard target={target} client={client} onReady={vi.fn()} />);
+  await flush();
+  expect(screen.getByRole('heading', { name: 'Model subscription' })).toBeInTheDocument();
+  expect(screen.getByText('Your ChatGPT subscription')).toBeInTheDocument();
+  // Other services keep the name their record gives them.
+  expect(screen.getByText('GitHub')).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/codex/i);
 });

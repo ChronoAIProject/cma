@@ -26,6 +26,7 @@ import { Button } from './ui/Button';
 import { IconGoalOutline16 } from './ui/icons';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
+import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
@@ -166,6 +167,13 @@ function ConsoleContent({
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
+  useDocumentTitle(
+    route.kind === 'home' || route.kind === 'agent_manager'
+      ? 'Agent Manager'
+      : route.kind === 'not_found'
+        ? 'Page not found'
+        : undefined,
+  );
   const permissions: TreePermissions = {
     createAgent: canCreate,
     // Workspace creation is an inline Agent Manager operation. The legacy
@@ -183,7 +191,7 @@ function ConsoleContent({
     route.kind === 'docs' ? (
       <Suspense fallback={<p role="status">Loading documentation</p>}>
         {route.view === 'event_gateway_protocol' ? (
-          <EventGatewayDocs />
+          <EventGatewayDocs onNavigate={onNavigate} />
         ) : (
           <DocsIndex onNavigate={onNavigate} />
         )}
@@ -214,6 +222,7 @@ function ConsoleContent({
         onAccessChanged={agentAccess.reload}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
+        onNavigate={onNavigate}
       />
     ) : route.kind === 'agent' &&
       client.resourceViews !== undefined &&
@@ -245,6 +254,9 @@ function ConsoleContent({
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
+        permissions={permissions}
+        actionsBusy={actions.pending}
+        onAgentAction={actions.select}
       />
     ) : route.kind === 'sandbox' ? (
       <SandboxAccessPage

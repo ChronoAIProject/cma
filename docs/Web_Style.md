@@ -545,9 +545,39 @@ reduced motion or when hidden. Its geometry remains reserved while Three.js load
 
 ## 11. The centre column
 
-The header belongs to its surface: a Sandbox -> Workspace -> Agent breadcrumb,
-the Agent title and status, and compact Details and Interrupt controls. Other
-working views use the same restrained heading scale, not an oversized hero.
+**Every centre view starts with one page header**, so the same three questions — where am I, what
+state is this in, what can I do — are answered in the same place on every page. Top to bottom:
+
+- A **breadcrumb**, a `nav` named *Breadcrumb* holding an ordered list in 13/18 secondary text with
+  drawn `/` separators. Every step but the last is a real link (a modified click opens a new tab);
+  the last is the current page, `aria-current="page"`. Long steps truncate with their full text on
+  hover.
+- The **title** as the view's only `h1`, 20/28 semibold, truncating on one line, focusable
+  (`tabindex="-1"`) so a view can move focus to it. Beside it, the resource's **status** and short
+  facts in the code face as 22px chips, such as a Worktree branch or a Sandbox id.
+- An optional **description** line in 14/20 secondary text.
+- The **actions** on the right: at most one primary, one secondary, and a *More actions* menu
+  (§12.3) for everything else, destructive actions included, each unavailable row keeping its
+  reason. Below 48rem the actions take their own full-width row.
+
+The header has no padding or border of its own; each view places it in its own gutter. Breadcrumbs
+by view: Agent — `<Sandbox> / <Workspace> / <Agent title>` with the Worktree branch as a chip (a
+shared reader, authorized for the Agent but not its parents, sees `Agent Manager / <Agent title>`);
+Sandbox — `Agent Manager / <Sandbox>` with its id as a chip; Workspace — `Agent Manager /
+<Workspace>`; Agents — `Agent Manager / Agents`; Operations — `Operations / <tab>`; Triggers —
+`Triggers / <Trigger title>`; Event Gateway — `Event Gateway / Channels / <channel>` and `Event
+Gateway / Consumers / <consumer>`; Docs — `Docs / <document>`.
+
+The Agent header's actions are the Details toggle and *More Agent actions*: **Stop agent**,
+**Export history** and **Delete agent**, with Delete unavailable until the Agent is stopped
+(*Stop this Agent before deleting it and its Worktree.*), every row unavailable while the Sandbox is
+not active, and every row held while another action is still being confirmed. These are the same
+public operations as the sidebar row menu, with the same confirmations.
+
+**The browser tab is named after the view**: `<view or resource> · CMA`. Services stay mounted
+while hidden, so each view registers its name rather than writing it: the most recently registered
+view that is on screen names the tab, and leaving or hiding a view hands the name back to the one
+behind it. A view whose name is not known yet registers nothing.
 
 There is no plane strip or terminal transition. Worktrees are Agent facts rather
 than another navigation band. The composer and history own the remaining height.
@@ -2626,3 +2656,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Rebuilt the signed-out home around one visible primary action. The character had been the only way in, its Get Started name never appeared on screen and its invitation waited five seconds, so §20 now specifies a hero with the product name as `h1`, a one-sentence value line, Get Started, a NyxID caption that announces progress, three How it works steps and service cards that return to their service after sign-in. Image Manager is marked Coming soon until its route exists. The character stays as a companion without the cloud. Copy never names the agent provider. |
 | 2026-10-21 | Moved the composer settings into their own row under the input at every width. Beside the input, an `auto` grid track grew to the longest settings explanation and squeezed a 1440px desktop draft to about 120px; below the input the draft keeps the full flexible column, as narrow layouts already did. |
 | 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
+| 2026-10-21 | Gave every centre view one page header: a breadcrumb of real links ending at the current page, the title as the only `h1` with its status and short code-face facts, an optional description, and at most one primary, one secondary and a More actions menu. The Agent breadcrumb now names its Sandbox and Workspace as links instead of a path and the literal word "Agent", shows the Worktree branch, and moves Stop, Export history and Delete into the header with their reasons. Browser tabs are named after the view on every route, and a hidden service no longer leaves its name on the tab. Removed the agent provider's name from the remaining UI copy (subscription sign-in, model access, composer commands and the public Trigger details). |
