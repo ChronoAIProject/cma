@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
@@ -309,6 +309,11 @@ it('uses server defaults without image, workspace or profile selectors and allow
   ])
     expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   expect(screen.queryByText('Detailed settings')).not.toBeInTheDocument();
+  const settings = screen.getByRole('region', { name: 'Agent settings' });
+  expect(settings).toHaveTextContent('gpt-6 · High · Autonomous');
+  expect(within(settings).queryByRole('button')).not.toBeInTheDocument();
+  expect(screen.getByText('Includes chrono-llm-public and ornn-api access.')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'New agent' })).not.toHaveTextContent(/YOLO|Codex/);
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   await waitFor(() => expect(create).toHaveBeenCalledOnce());
   expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent' });
