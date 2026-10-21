@@ -1,10 +1,10 @@
 import type { ApprovalDecision } from './controller';
-import { Button } from '../ui/Button';
 import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
 import { ToolCallRow } from './ToolCallRows';
 import { PlanCard } from './PlanCard';
+import { ApprovalCard } from './ApprovalCard';
 import { UserMessage } from './UserMessage';
 import { TurnUsage } from './TurnUsage';
 import type { AgentUsage } from '../api/types';
@@ -117,40 +117,12 @@ export function StreamEntry({
       </div>
     );
   }
-  const approval = entry.item;
   return (
-    <section className="approval" aria-labelledby={`approval-${approval.id}`}>
-      <div>
-        <span className="approval__eyebrow">Approval</span>
-        <h2 id={`approval-${approval.id}`}>{approval.reason}</h2>
-        {approval.message === undefined ? null : <p>{approval.message}</p>}
-      </div>
-      {approval.decision === undefined && approvalReadOnly ? (
-        <p>Waiting for an authorized participant to answer this approval.</p>
-      ) : approval.decision === undefined ? (
-        <div className="approval__actions">
-          <Button size="sm" disabled={approvalBusy} onClick={() => onApproval(approval.id, 'deny')}>
-            Deny
-          </Button>
-          <Button
-            size="sm"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'abort')}
-          >
-            Abort
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'allow')}
-          >
-            Allow
-          </Button>
-        </div>
-      ) : (
-        <span className="approval__decision">{approval.decision}</span>
-      )}
-    </section>
+    <ApprovalCard
+      approval={entry.item}
+      busy={approvalBusy}
+      readOnly={approvalReadOnly}
+      onApproval={onApproval}
+    />
   );
 }
