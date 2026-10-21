@@ -147,7 +147,7 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   const channelDraft = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
   fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
   fireEvent.click(screen.getByRole('link', { name: 'Consumers' }));
-  await screen.findByRole('heading', { name: 'Event Gateway consumers' });
+  await screen.findByRole('heading', { name: 'Consumers' });
   expect(window.location.pathname).toBe('/bots');
   expect(currentService()).toBe('Service: Event Gateway');
   expect(screen.getByRole('link', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');

@@ -2,7 +2,9 @@ import { ResourceAccessDetails } from './ResourceAccessSummary';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useOwnerViews } from './retainedOwnerViews';
 import type { ResourceViewsClient } from './client';
-import type { AppRoute } from '../routing/routes';
+import { routePath, type AppRoute } from '../routing/routes';
+import { PageHeader } from '../ui/PageHeader';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { loadSandbox } from './loadHierarchy';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { WorkspaceBranch } from './WorkspaceContents';
@@ -75,6 +77,8 @@ export function SandboxAccessPage({
     current.reload,
     commandScope ?? localCommandScope,
   );
+  // The personal page names its own tab; only a shared reader's is named here.
+  useDocumentTitle(shared?.detail.name);
   if (knownPersonal !== undefined && current.state.status === 'error') setKnownPersonal(undefined);
   if (
     client === undefined ||
@@ -104,19 +108,28 @@ export function SandboxAccessPage({
   const sandbox = current.state.value.detail;
   return (
     <section className="sandbox-page">
-      <header className="sandbox-page__header">
-        <div>
-          <h1>{sandbox.name}</h1>
-          <ResourceAccessDetails client={client} access={current.state.value.access} />
-          <p>
-            {statusLabel(sandbox.status)} · {resourceCount(sandbox.workspace_count, 'Workspace')} ·{' '}
-            {resourceCount(sandbox.agent_count, 'Agent')}
-          </p>
-        </div>
-        <div className="sandbox-page__actions">
-          <Button onClick={current.reload}>Refresh Sandbox access</Button>
-        </div>
-      </header>
+      <PageHeader
+        breadcrumb={[
+          {
+            label: 'Agent Manager',
+            href: routePath({ kind: 'agent_manager' }),
+            onSelect: () => onNavigate({ kind: 'agent_manager' }),
+          },
+          { label: sandbox.name },
+        ]}
+        title={sandbox.name}
+        badge={<span>{statusLabel(sandbox.status)}</span>}
+        description={
+          <>
+            <ResourceAccessDetails client={client} access={current.state.value.access} />
+            <p>
+              {resourceCount(sandbox.workspace_count, 'Workspace')} ·{' '}
+              {resourceCount(sandbox.agent_count, 'Agent')}
+            </p>
+          </>
+        }
+        actions={<Button onClick={current.reload}>Refresh Sandbox access</Button>}
+      />
       <SandboxControls
         control={control}
         access={current.state.value.access}
