@@ -158,7 +158,13 @@ pub(crate) fn fixture_with_pools(
     ));
     let names = crate::rest::public_names::tests::Names::seeded();
     let mut state = AdminState::new(settings, operators, activity_service)
-        .with_user_directory(layer2_core::UserDirectory::new(names.clone()));
+        .with_user_directory(layer2_core::UserDirectory::new(names.clone()))
+        .with_runtime_updates(Arc::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                sandboxes.clone(),
+                "runtime-v2".into(),
+            ),
+        ));
     if inventory {
         state = state.with_runtime_inventory(Arc::new(FixedInventory));
     }
@@ -919,3 +925,6 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
 
 #[path = "admin/warm_pools_tests.rs"]
 mod warm_pool_tests;
+
+#[path = "admin/runtime_update_tests.rs"]
+mod runtime_update_tests;

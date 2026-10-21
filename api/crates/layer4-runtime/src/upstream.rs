@@ -112,6 +112,7 @@ struct ProxyState {
     credential: CredentialHolder,
     client: reqwest::Client,
     allowed_host: Option<&'static str>,
+    model_proxy: bool,
 }
 
 struct PreparedProxy {
@@ -186,7 +187,7 @@ async fn bind_proxy(config: &ProxyConfig) -> Result<PreparedProxy> {
 }
 
 fn spawn_proxy(proxy: PreparedProxy, credential: CredentialHolder) {
-    let app = router(proxy.target, credential, None);
+    let app = proxy_router(proxy.target, credential, None, proxy.role == "model");
     tokio::spawn(async move {
         tracing::info!(proxy = proxy.role, bind = %proxy.bind, "credential proxy listening");
         if let Err(error) = axum::serve(proxy.listener, app).await {
@@ -200,6 +201,15 @@ pub(crate) fn router(
     credential: CredentialHolder,
     allowed_host: Option<&'static str>,
 ) -> Router {
+    proxy_router(target, credential, allowed_host, false)
+}
+
+fn proxy_router(
+    target: TargetBase,
+    credential: CredentialHolder,
+    allowed_host: Option<&'static str>,
+    model_proxy: bool,
+) -> Router {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(600))
@@ -210,6 +220,7 @@ pub(crate) fn router(
         credential,
         client,
         allowed_host,
+        model_proxy,
     };
     Router::new().fallback(any(forward)).with_state(state)
 }
@@ -243,6 +254,20 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
                 .into_response()
         }
     };
+    let normalized = state
+        .model_proxy
+        .then(|| {
+            crate::upstream_compaction::normalize(&parts.method, &parts.uri, &parts.headers, &body)
+        })
+        .flatten();
+    let body = normalized.as_deref().unwrap_or(&body);
+    if body.len() > MAX_REQUEST_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "proxy request body is too large",
+        )
+            .into_response();
+    }
     let mut outbound = reqwest::Request::new(parts.method, target);
     copy_request_headers(&parts.headers, outbound.headers_mut());
     let bearer = match HeaderValue::from_str(&format!("Bearer {}", credential.value)) {
