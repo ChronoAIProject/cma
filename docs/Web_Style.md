@@ -23,7 +23,6 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
-| Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
 | Bots | Owner Bot configuration and lifecycle through CMAEG, opened from Consumers in Event Gateway navigation. |
 
 Each view has a canonical route. Refresh and browser history restore it without
@@ -420,6 +419,13 @@ leftover width.
 Below 1024px the sidebar auto-collapses, with an explicit override so somebody who opens it on a
 narrow screen keeps it open.
 
+**Phones have no rail.** Below the centre's 640px floor a permanent 56px rail would take a seventh
+of a 375px screen, so a collapsed sidebar takes no width and leaves the tab order. The centre gains
+the frame's only bar: 48px high, with a 44px **Show navigation** key and the current service name.
+The sidebar then opens as a sheet over the page, at most the viewport less 48px wide, behind the
+`bg-mask-1` scrim. The page behind is inert while the sheet is open. Escape, the scrim, or choosing
+a destination closes it. Between 640px and 1023px the rail and the automatic collapse remain.
+
 Column widths are **transient preferences**, not persisted state. Drag handles are 8px strips with
 pointer capture; the details edge shows a small pill on column hover, and the collapsed rail shows
 none — there is nothing to drag when the width is fixed.
@@ -430,34 +436,65 @@ The grid transitions its tracks, except while dragging, where the transition wou
 
 ## 10. The sidebar
 
-The global service bar owns the sole CMA logo and home link. Clicking it opens
-`/`, the same landing screen before and after sign-in; its signed-in Get Started
-control enters `/agent-manager`. The Agent Manager tab uses that path while
-existing Agent, Workspace and Sandbox links retain their canonical paths.
-The home landing starts with the sidebar collapsed on every visit. Entering an
-app or service from home expands it; direct service links also start expanded.
-Manual toggles remain available everywhere. Within and between services, the
-manual choice persists until the next visit home. Browser history follows the
-same defaults. Below 1024px the existing automatic collapse still applies.
-The build/version appears immediately to the right of CMA as an 11px code
-subscript, 18px line height, capped to 11ch with its full identity on hover.
-The sidebar header contains only the scope Picker, New agent and collapse
-controls. Its browser region scrolls and fills the remaining height.
+The sidebar is how somebody gets to a conversation, so it spends its height on the list of Agents
+rather than on chrome.
 
-The tree is Sandbox -> Workspace -> Agent. Sandbox labels use
-`Sandbox Machine - <UUID>`; Workspace labels use the selected Agent's confirmed
-runtime working directory, with the recorded workspace path as fallback. Agent
-labels share one selector with the Agent header and browser document title.
-An explicit native provider title takes priority, even when it equals the
-automatic setup message. A prompt preview confirmed by public provenance to
-come from automatic setup is omitted; the configured Agent name is the
-fallback. Preserve descriptions whose legacy provenance is unknown. Do not
-guess setup from wording or choose a task by its position among user messages:
-service-access callbacks can also use that role. Display selection leaves the
-raw runtime description and conversation history intact.
-Runtime metadata arrives through the public event stream, never a directory
-poll. Long labels truncate with ellipsis and expose full text on hover. Rows
-retain stable status/icon slots, and expansion belongs to the signed-in viewer.
+**Header.** One row: the CMA mark as the **CMA home** link (a 32px target), the **service menu**, and
+the 32px collapse key (**Hide navigation** / **Show navigation**). Clicking home opens `/`, the
+same landing before and after sign-in. The home landing starts with the sidebar collapsed on every
+visit; entering an app or service from home expands it, and direct service links start expanded.
+Within and between services the manual choice persists until the next visit home, browser history
+follows the same defaults, and below 1024px the automatic collapse still applies.
+
+**Service menu.** A button showing the current service's glyph and name, **Agent Manager** or
+**Event Gateway**, with a trailing chevron; its accessible name is `Service: <name>`. It opens the
+shared §12.3 menu titled **CMA services**. Agent Manager and Event Gateway are real links, so a
+modified or middle click opens a new tab, with the current one checked. **Image Manager** stays
+listed, `aria-disabled`, with the reason *Coming soon. Image Manager is not available yet.* under
+its label, and never routes. Consumer routes belong to Event Gateway. Collapsed, the button keeps
+only its glyph. The build revision is no longer in the header; it is the copyable **Build `<rev>`**
+row of the account menu.
+
+**Action row.** Directly under the header, in this order:
+
+- **New agent**, the sidebar's one primary button, 36px, drawn as the shared primary. It is shown
+  whenever the caller holds `use_own_sandboxes` and is not a visitor. When it cannot be used right
+  now it stays in place, `aria-disabled`, with its reason in 12px secondary text beneath it and as
+  its accessible description: *Switch to Personal to create an Agent.* in Shared or Organization
+  scope, *Checking your access.* while the scope is still being confirmed.
+- **Search**, a 36px field-like button with a `⌘K` (Ctrl K elsewhere) key hint, which opens the
+  command menu below. Visitors do not get it.
+- **Triggers**, a navigation row to `/triggers/manage` for callers who may publish Triggers and are
+  not visitors, current on every Trigger route. It replaces the old *New agent trigger* row.
+
+Collapsed, each keeps only its glyph and a hover title. Below 30rem every row is 44px.
+
+**Filters.** The Agents | Sandboxes switch stays visible because it changes what the list is.
+Scope and status only narrow it, so they sit behind one **Filter** button beside a one-line
+summary such as *Personal · All statuses*. The button names how many filters are applied (*Filter,
+1 applied*) and shows the count; it discloses a bordered panel with labelled **Scope** (Personal,
+Shared, `<Org> (Organization)`) and **Status** pickers and, once anything is applied, **Clear
+filters**, which returns both to their defaults. Each view keeps its own status choice.
+
+**Agents view.** Agents are grouped by Workspace, each group headed by the Workspace's source glyph,
+its name and its Sandbox name, and announced as a group named `<workspace> · <sandbox>`. Within a
+group Agents are ordered by most recent activity; groups are ordered by their most recent Agent.
+Each row shows the Agent title, its status word with any dot (§12.1), and relative time. Deleted
+Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still open
+their conversation.
+
+**Sandboxes view.** The tree is Sandbox -> Workspace -> Agent, grouped Live and Paused. Sandbox rows
+use the Sandbox's own name — the same selector the Sandbox page uses — never a generated
+`Sandbox Machine - <id>` label. Workspace labels use the selected Agent's confirmed runtime working
+directory, with the recorded workspace path as fallback. Agent labels share one selector with the
+Agent header and browser document title. An explicit native provider title takes priority, even
+when it equals the automatic setup message. A prompt preview confirmed by public provenance to come
+from automatic setup is omitted; the configured Agent name is the fallback. Preserve descriptions
+whose legacy provenance is unknown. Do not guess setup from wording or choose a task by its position
+among user messages: service-access callbacks can also use that role. Display selection leaves the
+raw runtime description and conversation history intact. Runtime metadata arrives through the
+public event stream, never a directory poll. Long labels truncate with ellipsis and expose full text
+on hover. Rows retain stable status/icon slots, and expansion belongs to the signed-in viewer.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
@@ -479,12 +516,22 @@ Workspace New agent/Remove, Agent Stop/Delete. Destructive operations use §12.4
 Visitors see their own hierarchy but no creation controls. Capabilities are read
 from the authenticated public snapshot, not inferred from a role label.
 
-The account row is the only foot content: avatar, name, and email. Long identity
-lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-capability-gated Bot settings, CMA Trigger, Developer, capability-gated Operations, appearance,
-and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
-their canonical routes and work with refresh and browser history. Bot settings
-opens `/bots` from this menu; it is not a separate sidebar navigation row.
+**Command menu.** ⌘K on Apple keyboards and Ctrl+K elsewhere toggle it from anywhere, except while
+an input method is composing; the Search button opens it too. It is the shared §12.4 dialog, named
+**Command menu**, holding a 48px search field over a result list. The field is a combobox: focus
+stays in it while the arrow keys, Home and End move the active option, which wraps; Enter runs it
+and closes the menu, and Escape closes it. Results are grouped **Agents** (title, `<workspace> ·
+<sandbox>`, status word; most recent first), **Sandboxes**, **Workspaces**, **Actions** (New agent
+when it can be used now, Appearance: System / Light / Dark) and **Go to** (Agent Manager, Event
+Gateway, Triggers and Operations when permitted, Docs). Every word typed must match the label, its
+second line, its status or its group. At most 60 results are listed; an empty match says *No
+results.* The menu shows only what the shell has already read: opening it sends no request and
+starts no work. Visitors do not get it.
+
+The account row is the only foot content: avatar, name, and email. Long identity lines truncate
+within the fixed seat. Its upward-opening menu contains Docs, capability-gated Operations,
+Appearance, System text size, the copyable **Build `<rev>`** row (*Build revision copied* once
+copied; a refused clipboard leaves the revision readable) and Sign out.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -510,6 +557,12 @@ loaded history and the draft visible. A read error must not replace successful
 content or report an empty list. Errors and pending commands remain scoped to
 their resource. Boot reserves geometry and never disables sign-in while a
 decorative asset loads.
+
+When the service cannot be reached while checking identity, the page says so in words a person can
+act on: a 20px heading *CMA could not reach its service*, the line *It may be starting up. Reload
+to try again.*, a primary **Reload**, and the service's own sentence beneath as a 12px mono detail
+for whoever reads a report. Unreachable is never shown as signed out, and nothing on the page is
+coloured as an alarm.
 
 ---
 
@@ -1392,6 +1445,8 @@ carries a `reduce` block.
   carry the only account of state.
 - Focus enters the primary task; entering a ready Agent focuses its composer.
 - Minimum target 32px, 44px below 30rem.
+- ⌘K (Ctrl+K) opens the command menu from anywhere and is ignored while an input method composes.
+  It never takes the composer's `/` or Enter.
 
 ---
 
@@ -1762,55 +1817,11 @@ No new palette, type scale, radius, or spacing token is introduced here.
 
 ---
 
-## 19a. Developer
+## 19a. Developer (retired)
 
-**A reading surface at `/developer`, not a settings dialog.** Every signed-in
-user may open it from the account menu. Refresh and browser history restore the
-route; selecting an Agent opens its conversation. The surface adds no API
-request: its content is the TypeScript and Rust markdown bundled from
-`sdk/*/docs/` with the frontend build.
-
-The first band has the Agent header's fixed proportions and names **Developer**. Beneath it, one
-scrollport owns the page. Its contents use `--page-gutter` and centre a two-column document layout:
-a fixed 200px document rail, a 32px gap, and the existing 748px reading axis. The article is unframed;
-the navigation and prose never sit together inside a card. At widths below 48rem the rail becomes a
-full-width, 40px document selector above the article, the gap becomes 16px, and no label or control is
-allowed to widen the viewport.
-
-The SDK choice precedes the document choice. It is a two-part segmented control labelled **SDK**, with
-TypeScript and Rust as genuine buttons, a fixed 40px height, 8px outer radius and the shared focus
-ring. The active part uses the existing selected-navigation ground, primary ink, weight and
-`aria-pressed`; colour is not its only account. The document rail is an unframed list of 40px buttons
-at 8px radius. Its active row uses the same selected ground, a 2px leading accent rule, weight and
-`aria-current="page"`. Changing SDK keeps the same document when both sets contain it and otherwise
-opens that SDK's first document. The narrow selector exposes the same ordered labels and current
-value with a native `select` rather than a horizontally scrolling row of pills.
-
-One small deployment preface sits above the repository-authored article. It uses the layer-2 ground,
-a level-1 hairline, 8px radius and 16px padding; it is not a card containing the article. It names the
-current same-origin API base URL in inline-code treatment and says where a bearer credential comes
-from. Until issuance is self-service, the exact guidance is to ask the deployment operator or identity
-administrator. It never displays, accepts, stores or fetches a credential.
-
-The article uses §4's long-form ramp on the 748px reading axis: body at 16/28, H1 at 32px, H2 at 22px,
-and lower headings at 16px or 15px with weight and spacing carrying their rank. Letter spacing is zero.
-GFM tables scroll inside their own 8px frame rather than widening the axis. Fenced and inline code use
-§7's existing code-block and code-segment grounds, mono face and copy control. Heading identifiers are
-stable, lower-case slugs with duplicate headings suffixed in document order; every heading exposes its
-anchor without adding a second visible label.
-
-There is one markdown pipeline in the frontend. Developer documents use the conversation parser and
-block model, with a document rendering policy rather than a second parser: the H1 keeps its true rank,
-same-document fragments target heading anchors, and links to another bundled document switch the
-current document without a route. Safe HTTP(S) links open externally with opener and referrer access
-denied. Other relative links remain readable text because this build bundles no target for them.
-Images and raw HTML are not rendered on this surface. The `<!-- nav: order label -->` comment is build
-metadata, not article content.
-
-The build validates both SDK sets before the surface can ship: each has all nine named guides, each
-guide has exactly one leading H1 and one well-formed nav comment, orders and labels are unique, and the
-two sets carry the same filenames. Missing, extra or malformed input fails the build; there is no
-runtime empty state for a bundle CI was required to reject.
+The Developer reading surface is retired; nothing renders it. `/developer` still parses so old links
+keep working, but it opens Docs and the address bar is rewritten to `/docs` without adding a
+history entry. Nothing links to it.
 
 ---
 
@@ -2384,6 +2395,11 @@ draft. Summary readers never receive the management history control.
 
 ## 25. Unified service navigation and system text (2026-10-16)
 
+> Superseded in part by §10 (2026-10-21): the three service segments, the brand title and build
+> badge in the first row, and the labelled New agent trigger row are replaced by the service menu,
+> the action row and the Triggers navigation row. System text and the composer command drop-up
+> below are unchanged.
+
 The sidebar owns the single home brand link and build badge. Its first row holds a 20px mark,
 ChronoAI Managed Agent title, compact revision badge, and collapse control. The following row
 has three equal segments in this order: Agent Manager, Event Gateway, Image Manager. The active
@@ -2468,6 +2484,9 @@ groups remain whole rather than wrapping digit by digit. The action column reser
 
 
 ## 27. Grouped filters and Gateway consumers (2026-10-16)
+
+> Superseded in part by §10 (2026-10-21): the scope and status pickers now sit behind one Filter
+> button with a summary line. The Event Gateway navigation below is unchanged.
 
 Agent Manager places the permission-scope and status dropdowns in one horizontal
 filter group below the Agent/Sandbox switch. Both controls share equal space,
@@ -2606,3 +2625,4 @@ input-aligned usage, allowing all three controls their full touch targets.
 | 2026-10-21 | Let the signed-out product name wrap with balanced lines when its column is narrower than the name. The unbroken line overflowed its 360px grid column between 761px and about 1040px, where the services cards covered it, and widened a phone's grid past the viewport. Restored the lockup's documented 144px top reservation so the cloud invitation no longer clips above the viewport. |
 | 2026-10-21 | Rebuilt the signed-out home around one visible primary action. The character had been the only way in, its Get Started name never appeared on screen and its invitation waited five seconds, so §20 now specifies a hero with the product name as `h1`, a one-sentence value line, Get Started, a NyxID caption that announces progress, three How it works steps and service cards that return to their service after sign-in. Image Manager is marked Coming soon until its route exists. The character stays as a companion without the cloud. Copy never names the agent provider. |
 | 2026-10-21 | Moved the composer settings into their own row under the input at every width. Beside the input, an `auto` grid track grew to the longest settings explanation and squeezed a 1440px desktop draft to about 120px; below the input the draft keeps the full flexible column, as narrow layouts already did. |
+| 2026-10-21 | Rebuilt the sidebar around getting into a conversation. The three service segments became one service menu (Image Manager listed, disabled with its reason); the build revision moved into the account menu as a copyable row; New agent became the sidebar's primary button and is disabled with a reason instead of disappearing in Shared or Organization scope; Search and a ⌘K command menu over the already-loaded hierarchy were added; Triggers became a navigation row instead of a creation row; scope and status moved behind one Filter button with a summary line; the Agents view groups Agents by Workspace and Sandbox in order of recent activity; Sandbox rows use the Sandbox's own name. Phones lost the permanent rail: a 48px top bar opens the sidebar as a sheet over a scrim. `/developer` now opens Docs, and the unreachable-service page explains itself and offers Reload. Supersedes the matching parts of §25 and §27 and retires §19a. |
