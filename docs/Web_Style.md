@@ -3302,3 +3302,50 @@ The title menu also exposes owner-only Rename Agent and Update system prompt whe
 
 
 | 2026-10-22 | Preserve the live composer through revision-safe Agent rename and owner system-prompt dialogs, retaining uncertain edits for exact retry and explaining unavailable native capabilities. |
+
+
+### Quiet document workspace (2026-10-23)
+
+Artifacts uses an editorial 1184px maximum gallery, 48px/32px page insets,
+32px/40px weight-500 title with -0.03em tracking and a 14px secondary introduction.
+The New document action is the single primary. A compact 280px creation tile
+uses a 40px icon seat, 16px padding, 12px radius and neutral hover; it does not
+pretend to preview source. Registry cards use 16px gaps, 240px minimum columns,
+12px radii, a quiet layer-2 preview, 20px/28px title and 16px metadata insets.
+Hover changes border and ground only, never position. Empty results and loading
+keep the same content geometry, with the shared skeleton for loading.
+
+The document header uses 56px minimum height, 12px/20px insets, a 14px medium
+title and a compact readable save status. Edit and Preview are named pressed
+buttons in one neutral 8px-radius group; preview changes only presentation and
+keeps the same editor, undo history, draft and explicit Save. Shared readers
+remain read-only. The 48px formatting row groups paragraph/font, emphasis,
+insert and history controls with quiet vertical separators. The document lives
+on a layer-1 sheet on a layer-2 canvas: 864px maximum width, 24px margin, 48px
+insets, radius 12 and a border-l1 edge. Body is 16px/28px; headings use 32/40,
+24/32 and 20/28 with weights 600, 600 and 500. Comments are a 300px layer-1
+column with plain 13px/20px text, 16px insets and 12px-radius comment surfaces.
+Sharing retains the shared centered Modal and all existing consent controls.
+
+On this page opens a quiet 180px outline beside the paper on wide documents,
+with 12px/18px rows and 12px nested heading indentation. On narrow surfaces it
+stacks above the document. It derives up to 64 actual headings from editor
+transactions, without polling or extra API calls; selecting one scrolls to that
+heading without changing the document or editor selection. Empty outlines say
+that headings will appear there. Preview, outline and comment changes retain
+the editor DOM. Shared 200ms opacity/grid transitions and reduced-motion rules
+apply; content text and hover positions never animate. Below 640px, document
+insets reduce to 20px/16px, controls wrap within the viewport, and phone targets
+retain the shared 44px minimum.
+
+| 2026-10-23 | Refine Artifacts into a calm document workspace with an editorial gallery, grouped formatting toolbar, readable paper surface, draft-preserving Preview, event-driven heading outline, quieter comments and shared light/dark motion. |
+
+### Legible browser favicon (2026-10-23)
+
+Keep the exact conversation-avatar geometry, lime #C3FD43 mark, #18181B
+circular tile and #27272A outline. The mark viewport is `12 7.25 76 76`, filling
+the 32px canvas with an approximately 30px visible glyph; this supersedes the
+20px inner-square treatment. The 16, 32, 48, 64, 180 and 512px raster fallbacks
+derive from that SVG, and content-hashed URLs refresh retained browser icons.
+
+| 2026-10-23 | Enlarge the existing favicon glyph within its circular tile for legibility in browser tabs while preserving its geometry and fixed CMA palette. |

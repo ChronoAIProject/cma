@@ -50,6 +50,23 @@ beforeEach(() => {
   retainDocumentDraft('owner', id);
   window.history.replaceState({}, '', '/');
 });
+it('preserves the same unsaved editor and source baseline through preview without a write or reload', async () => {
+  const update = vi.fn();
+  const api = client({ update });
+  page(api);
+  const content = await screen.findByRole('textbox', { name: 'Document content' });
+  fireEvent.change(content, { target: { value: '# Unfinished draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Preview', exact: true }));
+  expect(screen.getByRole('textbox', { name: 'Document content' })).toBe(content);
+  expect(content).toBeDisabled();
+  expect(content).toHaveValue('# Unfinished draft');
+  expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+  fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+  expect(content).toBeEnabled();
+  expect(documentDraft('owner', id)?.sourceRevision).toBe(1);
+  expect(api.source).toHaveBeenCalledTimes(1);
+  expect(update).not.toHaveBeenCalled();
+});
 it('pins source reads to the source revision, and retains the exact save key across an uncertain retry', async () => {
   const update = vi
     .fn()

@@ -8,6 +8,7 @@ for (const width of [1600, 390]) {
     }, info) => {
       const fixture = new LocalDocuments();
       await page.setViewportSize({ width, height: 1000 });
+      await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
       await fixture.route(page, baseURL!);
       await page.goto('/artifacts');
       await page.evaluate(
@@ -34,9 +35,29 @@ for (const width of [1600, 390]) {
       await expect(page.locator('[data-type=detailsContent]')).toContainText(
         'Useful hidden context.',
       );
+      await page.screenshot({ path: info.outputPath(`document-${width}-${theme}.png`) });
+      const originalEditor = await content.elementHandle();
+      await content.click();
       await content.press('ControlOrMeta+End');
       await content.press('Enter');
-      await content.pressSequentially('A locally verified rich edit.');
+      await page.keyboard.type('A locally verified rich edit.');
+      await page.getByRole('button', { name: 'Preview', exact: true }).click();
+      await expect(content).toHaveAttribute('contenteditable', 'false');
+      await expect(page.getByRole('toolbar', { name: 'Document formatting' })).toHaveCount(0);
+      await page.getByRole('button', { name: 'On this page', exact: true }).click();
+      const outline = page.getByRole('navigation', { name: 'On this page' });
+      await outline.getByRole('button', { name: /Product brief$/ }).click();
+      await expect(content.getByRole('heading', { name: /Product brief$/ })).toBeInViewport();
+      await expect(page.locator('.document-workspace__save-status')).toHaveText('Unsaved changes');
+      expect(fixture.writes).toHaveLength(0);
+      await page.screenshot({ path: info.outputPath(`preview-${width}-${theme}.png`) });
+      await page.getByRole('button', { name: 'Edit', exact: true }).click();
+      expect(await content.evaluate((node, original) => node === original, originalEditor)).toBe(
+        true,
+      );
+      await expect(content).toHaveAttribute('contenteditable', 'true');
+      await expect(content).toContainText('A locally verified rich edit.');
+      await page.getByRole('button', { name: 'On this page', exact: true }).click();
       await page.getByRole('button', { name: 'Save', exact: true }).click();
       await expect(page.locator('.document-workspace__save-status')).toHaveText('Saved');
       expect(fixture.markdown).toContain('A locally verified rich edit.');
@@ -55,6 +76,7 @@ for (const width of [1600, 390]) {
       await expect(page.getByRole('list', { name: 'People with access' })).toContainText(
         'reviewer',
       );
+      await page.screenshot({ path: info.outputPath(`sharing-${width}-${theme}.png`) });
       await page.getByRole('button', { name: 'Create view link' }).click();
       const link = await page.getByRole('textbox', { name: 'Document share link' }).inputValue();
       expect(link).toMatch(/#token=[a-f0-9]{64}$/);
