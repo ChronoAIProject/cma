@@ -961,6 +961,8 @@ it.each([
   test.show();
   await screen.findByText(/Your current access does not allow interaction/);
   await waitFor(() =>
-    expect(document.querySelector('.agent-header .badge')).toHaveTextContent(label),
+    expect(
+      screen.getByRole('button', { name: 'More Agent actions' }).getAttribute('title'),
+    ).toContain(label),
   );
 });

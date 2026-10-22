@@ -13,7 +13,7 @@ import { useMessageFeedback } from './useMessageFeedback';
 import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import './Agent.css';
-import { AgentHeader } from './AgentHeader';
+import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
@@ -52,6 +52,8 @@ interface AgentSurfaceProps {
   readonly agentId: string;
   readonly controller: AgentController;
   readonly viewPosition?: AgentViewPosition;
+  readonly filesOpen?: boolean;
+  readonly onFilesOpenChange?: (open: boolean) => void;
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
@@ -69,6 +71,8 @@ export function AgentSurface({
   controller,
   viewPosition,
   detailsOpen,
+  filesOpen,
+  onFilesOpenChange,
   onDetailsOpenChange,
   onNavigate,
   viewerId,
@@ -195,7 +199,15 @@ export function AgentSurface({
   return (
     <section className="agent-surface">
       {connections.dialog}
-      <AgentHeader
+      <OwnerAgentHeader
+        detail={detail}
+        availability={controller.resourceAvailability}
+        readOnly={readOnly}
+        busy={
+          status !== 'ready' || controller.pending !== undefined || state.historyLoading === true
+        }
+        filesOpen={filesOpen}
+        onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
         title={title}
         status={status}
         headingRef={headingRef}

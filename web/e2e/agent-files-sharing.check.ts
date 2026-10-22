@@ -77,7 +77,6 @@ async function files(page: Page, writable = true) {
 }
 
 async function details(page: Page) {
-  await page.locator('.agent-header__strip').hover();
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
 }

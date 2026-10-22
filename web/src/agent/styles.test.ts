@@ -98,21 +98,12 @@ describe('conversation geometry with readable labels', () => {
     expect(tooltip.getPropertyValue('font-variant-numeric')).toBe('tabular-nums');
   });
 
-  it('keeps a 28px seat for the collapsed header and draws the revealed one over the conversation', () => {
+  it('keeps the compact toolbar in flow without a hidden hover banner', () => {
     const rules = sheet('AgentHeader.css');
-    expect(declaration(rules, '.agent-header-seat').getPropertyValue('height')).toBe('28px');
-    expect(declaration(rules, '.agent-header-seat[data-pinned]').getPropertyValue('height')).toBe(
-      'auto',
-    );
-    const collapsed = declaration(rules, '.agent-header-seat:not([data-pinned]) > .agent-header');
-    expect(collapsed.getPropertyValue('position')).toBe('absolute');
-    expect(collapsed.getPropertyValue('opacity')).toBe('0');
-    expect(collapsed.getPropertyValue('pointer-events')).toBe('none');
-    const revealed = declaration(
-      rules,
-      '.agent-header-seat[data-revealed]:not([data-pinned]) > .agent-header',
-    );
-    expect(revealed.getPropertyValue('opacity')).toBe('1');
-    expect(revealed.getPropertyValue('pointer-events')).toBe('auto');
+    const toolbar = declaration(rules, '.agent-toolbar');
+    expect(toolbar.getPropertyValue('display')).toBe('flex');
+    expect(toolbar.getPropertyValue('min-height')).toBe('48px');
+    expect(toolbar.getPropertyValue('position')).toBe('');
+    expect(toolbar.getPropertyValue('opacity')).toBe('');
   });
 });

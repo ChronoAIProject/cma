@@ -67,7 +67,6 @@ test('LOCAL approved artifacts preserve personal work, publish once and revoke c
   const composer = page.getByRole('textbox', { name: 'Message' });
   await composer.fill('Keep this draft while reviewing files');
   const node = await composer.elementHandle();
-  await page.locator('.agent-header__strip').hover();
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   await page.getByRole('button', { name: 'Artifacts', exact: true }).click();
@@ -93,7 +92,6 @@ test('LOCAL approved artifacts preserve personal work, publish once and revoke c
   await expect(modal.getByRole('button', { name: 'Retry artifact publication' })).toBeEnabled();
   await modal.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
-  await page.locator('.agent-header__strip').hover();
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   await page.getByRole('button', { name: 'Artifacts', exact: true }).click();

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppFrame } from './AppFrame';
@@ -383,6 +383,30 @@ describe('the page frame', () => {
     const details = screen.getByRole('separator', { name: 'Resize the details column' });
     dragAcrossFrames(details, [1300, 1280, 1260, 1240]);
     expect(tracks().endsWith(' 360px')).toBe(true);
+  });
+
+  it('resizes Files by keyboard with an announced bounded width and preserves the center node', () => {
+    const view = renderFrame();
+    measure(1600);
+    const center = screen.getByText('surface');
+    const handle = screen.getByRole('separator', { name: 'Resize the details column' });
+    expect(handle).toHaveAttribute('tabindex', '0');
+    expect(handle).toHaveAttribute('aria-valuenow', '300');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(handle).toHaveAttribute('aria-valuenow', '316');
+    fireEvent.keyDown(handle, { key: 'End' });
+    expect(handle).toHaveAttribute('aria-valuenow', '520');
+    fireEvent.keyDown(handle, { key: 'Home' });
+    expect(handle).toHaveAttribute('aria-valuenow', '300');
+    view.rerender(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={<p>navigation</p>}
+        center={<p>surface</p>}
+        details={<p>details</p>}
+      />,
+    );
+    expect(screen.getByText('surface')).toBe(center);
   });
 
   it('offers no details handle when there is no details column', () => {
