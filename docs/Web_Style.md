@@ -3100,3 +3100,15 @@ and stream without rereading the transcript; actual stream disconnection repairs
 the durable view before reconnecting.
 
 | 2026-10-22 | Flatten Agents navigation, fix global New agent to a new Sandbox, select Operations owners by name, lock the landing sidebar, apply text preferences to conversations, limit voting to Agent replies, center the green favicon, and decouple input/latest-message display from historical activity loading. |
+
+### Live replies during conversation loading (2026-10-22)
+
+An authorized live Agent head starts real-time observation independently of
+transcript, rich event history and usage loading. A new message shows its usual
+Thinking, streaming reply and message arrival motion while older history loads.
+Historical rows remain static. Late history enriches the conversation without
+clearing new text, restoring a completed turn, duplicating messages or restarting
+a healthy live connection. An account, access or conversation identity change
+still cancels observation and prevents stale output from entering another view.
+
+| 2026-10-22 | Start live Agent replies independently of conversation history loading and preserve current Thinking, replies and arrival motion when historical records finish loading. |

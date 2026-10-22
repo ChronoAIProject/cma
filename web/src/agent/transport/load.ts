@@ -6,6 +6,7 @@ import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '..
 import type { ConversationState } from '../model';
 import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
+import { conversationFromHead } from './liveHead';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -100,10 +101,25 @@ export async function loadV2Agent(
       return { ...metadata, preview };
     },
   );
-  const [{ detail, workspace, preview: latest }, usage, firstPage] = await Promise.all([
+  const liveHead = (async () => {
+    if (onInputReady === undefined) return undefined;
+    try {
+      const head = await v2.events.head(agentId, { signal });
+      const metadata = await hierarchy;
+      await v2.authorize(signal);
+      const conversation = conversationFromHead(head);
+      onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+      return conversation;
+    } catch (error) {
+      if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
+      return undefined;
+    }
+  })();
+  const [{ detail, workspace, preview: latest }, usage, firstPage, head] = await Promise.all([
     projections,
     readUsage(),
     readPage(),
+    liveHead,
   ]);
   await v2.authorize(signal);
   const preview = latest === undefined ? undefined : { ...latest, usage };
@@ -120,12 +136,16 @@ export async function loadV2Agent(
   // cursor's format and sequence; it remains opaque to the request machinery.
   if (
     page !== undefined &&
-    preview !== undefined &&
-    preview.cursor > Number(page.through_cursor.split('.').at(-1))
+    Math.max(preview?.cursor ?? 0, head?.cursor ?? 0) >
+      Number(page.through_cursor.split('.').at(-1))
   ) {
     page = await readPage();
     await v2.authorize(signal);
-    if (page !== undefined && preview.cursor > Number(page.through_cursor.split('.').at(-1))) {
+    if (
+      page !== undefined &&
+      Math.max(preview?.cursor ?? 0, head?.cursor ?? 0) >
+        Number(page.through_cursor.split('.').at(-1))
+    ) {
       if (!allowIncomplete)
         throw new TransportError('Agent transcript is ahead of its available event history.');
       page = undefined;
@@ -136,6 +156,8 @@ export async function loadV2Agent(
     if (incarnation !== undefined && incarnation !== page.incarnation)
       throw new Error('Agent snapshot changed conversation identity.');
     incarnation = page.incarnation;
+    if (head !== undefined && incarnation !== head.agentIncarnation)
+      throw new Error('Agent snapshot changed conversation identity.');
     conversation = { ...conversation, agentIncarnation: incarnation };
     for (const item of page.items) conversation = foldV2Item(conversation, item);
     items.push(...page.items);

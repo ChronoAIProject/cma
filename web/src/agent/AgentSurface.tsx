@@ -327,7 +327,7 @@ export function AgentSurface({
           viewPosition={viewPosition}
           conversation={conversation}
           optimisticMessages={messageQueue.messages}
-          arrivalsEnabled={!historyIncomplete && !accessUncertain}
+          arrivalsEnabled={!accessUncertain}
           approvalBusy={approvalBusy}
           approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
