@@ -19,6 +19,10 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
             Ok(value) => value,
             Err(_) => return rpc_error(id, -32602, "Invalid tool arguments"),
         };
+        if matches!(call.name.as_str(), "publish_document" | "update_document") {
+            return super::documents::invoke(state, capability, id, &call.name, call.arguments)
+                .await;
+        }
         if call.name != TOOL {
             return rpc_error(id, -32602, "Unknown tool");
         }
@@ -94,7 +98,7 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
                     "protocolVersion":VERSION,
                     "serverInfo":{"name":"cma-agent-access","version":"1"},
                     "capabilities":{"tools":{"listChanged":false}},
-                    "instructions":"Use agent_key_scope_revision when a required NyxID service lacks permission. Reuse request_key only to recover or observe the same attempt. When status is failed and the owner asks to retry, submit the returned next_request as a new attempt; keep that new key on transport retries. Failed attempts retain their history and do not grant consent to a new attempt. Wait for owner approval and CMA confirmation before retrying the service.",
+                    "instructions":format!("Use agent_key_scope_revision when a required NyxID service lacks permission. Reuse request_key only to recover or observe the same attempt. When status is failed and the owner asks to retry, submit the returned next_request as a new attempt; keep that new key on transport retries. Failed attempts retain their history and do not grant consent to a new attempt. Wait for owner approval and CMA confirmation before retrying the service. {}", if state.documents.is_some() { super::documents::INSTRUCTIONS } else { "" }),
                 }),
             )
         }
@@ -103,7 +107,14 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
             if rpc.params.get("cursor").is_some() {
                 return rpc_error(id, -32602, "This tool list has no continuation cursor");
             }
-            result(id, list())
+            let mut tools = list();
+            if state.documents.is_some() {
+                tools["tools"]
+                    .as_array_mut()
+                    .expect("static tool list")
+                    .extend(super::documents::list());
+            }
+            result(id, tools)
         }
         _ => rpc_error(id, -32601, "Method not found"),
     }

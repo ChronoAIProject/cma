@@ -1644,6 +1644,43 @@ The exact successful deletion command remains replayable with its original key.
 | `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
 | `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
+
+
+### Personal document Artifacts
+
+Persistent documents are independent of their originating Agent, Workspace and Sandbox. `/api/v1/documents` is an authenticated per-user registry backed by majority-durable Mongo metadata in `cma_document_artifacts`; immutable Markdown sources live in the configured S3-backed object service. Agent/Sandbox deletion does not delete documents. List/search reads bounded metadata projections and never reads source objects or history/receipt payloads.
+
+All writes require `Idempotency-Key`. Every metadata change increments `revision`; only title/source edits advance `source_revision` and add an immutable source revision. Owner title/source edits, grant/link changes and comment removal carry `expected_revision`. Stale revisions return 409; retries with the original key replay without repeating effects; different bodies under the same key return 409. Create replay returns current document metadata. Comments use a policy-fenced CAS with bounded retry and may anchor a specific source revision. Owner can remove any comment; a currently authorized commenter can remove their own.
+
+Owner may grant `read` or `comment` to explicit authenticated subjects, or create authenticated token links. The browser generates a CSPRNG 256-bit token (64 lowercase hex), retains it only in the URL fragment and submits it as `X-CMA-Document-Share-Token`; the backend retains only SHA-256. Authentication is required in addition to the token. Links do not make documents searchable. Revocation is checked again after bounded source download, before bytes are returned. Document responses use private,no-store; nosniff; no-referrer. Ordinary `origin_agent_id` is an informational label and grants no runtime publishing authority.
+
+Runtime MCP `publish_document` and `update_document` derive owner/Agent from confirmed runtime capability; no arbitrary owner field is accepted. Runtime update can change only verified runtime-authored documents for the current Agent/owner. The private runtime author field is separate from caller-supplied origin labels. Full runtime/conversation identity is checked again immediately before metadata commit after object upload, and replay requires current capability. Documents remain owner-accessible even if the originating runtime is removed.
+
+Limits: UTF8 Markdown 1 MiB, title 240 bytes, search 160 bytes, comments 8 KiB; page 1–50 (default 25); source revisions 256; direct grants 128; links 32; comments 256; retained receipts 1024; serialized metadata 12 MiB. Sources are content-addressed by server-derived owner/document/digest keys; callers never select storage locations. A failed metadata CAS may leave an unreachable immutable source object; no document metadata or source is lost. There is no document deletion endpoint in this increment.
+
+Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity;503 document_unavailable.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/documents` | List/search owned and explicitly shared documents. |
+| `POST /api/v1/documents` | Create owned Markdown document. |
+| `GET /api/v1/documents/{id}` | Read effective document metadata. |
+| `PATCH /api/v1/documents/{id}` | Owner source/title compare-and-swap. |
+| `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
+| `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
+| `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
+| `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
+| `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |
+| `POST /api/v1/documents/{id}/share-links` | Register authenticated token link. |
+| `DELETE /api/v1/documents/{id}/share-links/{link_id}` | Revoke authenticated token link. |
+| `GET /api/v1/documents/{id}/comments` | Page document comments. |
+| `POST /api/v1/documents/{id}/comments` | Add comment under current grant. |
+| `DELETE /api/v1/documents/{id}/comments/{comment_id}` | Owner or author comment removal. |
+
+SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. Full and focused AgentManager OpenAPI documents include all 15 operations.
+
+
 <!-- openapi-operations:end -->
 
 ## Contract Verification
