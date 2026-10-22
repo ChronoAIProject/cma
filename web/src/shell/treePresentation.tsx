@@ -16,6 +16,38 @@ export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: Rea
   );
 }
 
+/**
+ * The one-line Agent row's leading slot (§10): a dot only for a state that
+ * shows work or asks for a person. Ready and held states stay blank, so the
+ * dots that remain are worth looking at.
+ */
+export function attentionSignal(status: Parameters<typeof statusLabel>[0]) {
+  const tone = statusTone(status);
+  const drawn = tone === 'active' || tone === 'warning' || tone === 'error';
+  return (
+    <span className="tree-row__signal" title={drawn ? statusLabel(status) : undefined}>
+      {drawn ? toneDot(tone) : null}
+    </span>
+  );
+}
+
+/**
+ * The one-line row's facts. The word is never drawn but stays in the row's
+ * accessible name, so a screen reader hears every state the list used to show.
+ * Its own separator keeps it from running into the title wherever layout does
+ * not already separate the two.
+ */
+export function lineMeta(status: Parameters<typeof statusLabel>[0], updatedAt: string) {
+  return (
+    <>
+      <span className="sr-only">{`, ${statusLabel(status)}`}</span>
+      <time className="tree-row__age" dateTime={updatedAt}>
+        {activityLabel(updatedAt)}
+      </time>
+    </>
+  );
+}
+
 function visibleRows(tree: HTMLElement): HTMLElement[] {
   return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')];
 }

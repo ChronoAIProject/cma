@@ -148,3 +148,35 @@ it('keeps navigation mounted across collapse', async () => {
   expect(screen.getByRole('textbox', { name: 'Navigation draft' })).toBe(draft);
   expect(draft).toHaveValue('retained state');
 });
+
+it('keeps the plain action rows in the tab order and operable from the keyboard', async () => {
+  const onCreate = vi.fn();
+  const onSearch = vi.fn();
+  const actor = userEvent.setup();
+  const draw = (unavailableReason?: string) => (
+    <Sidebar
+      collapsed={false}
+      onToggleCollapsed={vi.fn()}
+      account={<span>Account</span>}
+      newAgent={{ onCreate, unavailableReason }}
+      onSearch={onSearch}
+    />
+  );
+  const { rerender } = render(draw());
+  const create = screen.getByRole('button', { name: 'New agent' });
+  const search = screen.getByRole('button', { name: 'Search' });
+  create.focus();
+  await actor.keyboard('{Enter}');
+  expect(onCreate).toHaveBeenCalledOnce();
+  await actor.tab();
+  expect(search).toHaveFocus();
+  await actor.keyboard(' ');
+  expect(onSearch).toHaveBeenCalledOnce();
+  // Unavailable stays focusable so its reason is heard, but never creates.
+  rerender(draw('Checking your access.'));
+  await actor.tab({ shift: true });
+  expect(create).toHaveFocus();
+  expect(create).toHaveAccessibleDescription('Checking your access.');
+  await actor.keyboard('{Enter}');
+  expect(onCreate).toHaveBeenCalledOnce();
+});
