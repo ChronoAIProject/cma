@@ -69,7 +69,7 @@ it('keeps each completed turn count under its final reply through a full history
   verify();
 });
 
-it('does not attribute earlier usage to a new reply or display unknown usage as zero', () => {
+it('does not attribute earlier usage to a new reply and draws no line for unknown usage', () => {
   const started = events.slice(0, -1).reduce(foldAgentEvent, empty());
   const view = render(<MessageStream conversation={started} onApproval={vi.fn()} />);
   expect(screen.getAllByLabelText('Turn token usage')).toHaveLength(1);
@@ -80,6 +80,8 @@ it('does not attribute earlier usage to a new reply or display unknown usage as 
     event(31, { type: 'turn_completed', turn_sequence: 25 }),
   ].reduce(foldAgentEvent, empty());
   view.rerender(<MessageStream conversation={noReport} onApproval={vi.fn()} />);
-  expect(screen.getByText('Turn input unavailable · output unavailable')).toBeInTheDocument();
+  const unreported = screen.getByText('No usage report for this turn.').closest('article')!;
+  expect(within(unreported).queryByLabelText('Turn token usage')).not.toBeInTheDocument();
+  expect(unreported).not.toHaveTextContent(/\b0 (input|output)/);
   expect(screen.getAllByLabelText('Turn input tokens: 13,831')).toHaveLength(1);
 });
