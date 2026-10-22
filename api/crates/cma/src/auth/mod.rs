@@ -277,13 +277,12 @@ impl AuthState {
                             ));
                         }
                         refresh::refresh_if_needed(self, &mut state).await?;
-                        return cookie_authorization::request_for_cookie(
+                        return cookie_authorization::request_for_browser_cookie(
                             self,
                             &login.subject,
                             state,
                         )
-                        .await
-                        .map(Some);
+                        .await;
                     }
                 }
                 let Some(token) = bearer::bearer_token(headers) else {
