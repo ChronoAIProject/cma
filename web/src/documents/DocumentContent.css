@@ -195,3 +195,9 @@
 .document-editor[data-reading] .document-code-block:has(.document-diagram) pre {
   display: none;
 }
+
+@container (max-width: 760px) {
+  .document-rich-text :is(h1, h2, h3) {
+    scroll-margin-top: 128px;
+  }
+}

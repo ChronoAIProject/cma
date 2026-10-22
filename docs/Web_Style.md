@@ -3349,3 +3349,6 @@ the 32px canvas with an approximately 30px visible glyph; this supersedes the
 derive from that SVG, and content-hashed URLs refresh retained browser icons.
 
 | 2026-10-23 | Enlarge the existing favicon glyph within its circular tile for legibility in browser tabs while preserving its geometry and fixed CMA palette. |
+
+
+| 2026-10-23 | Render Mermaid diagrams with the current CMA alias palette, including connector and edge-label contrast, and re-render on appearance changes without changing source. Keep narrow-canvas outline destinations below wrapped formatting controls with a 128px scroll margin. |
