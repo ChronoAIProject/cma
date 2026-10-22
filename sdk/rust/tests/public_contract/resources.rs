@@ -1,12 +1,12 @@
-use super::context::{invalid, Context};
+use super::context::{Context, invalid};
 use cma_sdk::{
+    Result,
     agents::{AccessibleAgentListOptions, AgentListOptions, AgentProvenanceInventoryOptions},
     instances::{AccessibleSandboxListOptions, SandboxListOptions},
     profiles::{
         AgentProfileContent, MarketplaceListOptions, ProfileContent, Profiles,
         SandboxProfileContent, WorkspaceProfileContent,
     },
-    Result,
 };
 use std::fmt::Debug;
 

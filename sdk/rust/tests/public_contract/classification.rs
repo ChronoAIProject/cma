@@ -143,7 +143,34 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         Classification::MediaType,
     ),
     ("settings-state-agent-invalid-input", Classification::Local),
-    ("preferences-state-agent-invalid-input", Classification::Local),
+    (
+        "preferences-state-agent-invalid-input",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body-reused-key",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "preferences-malformed-post-api-v1-agents-id-input",
+        Classification::RawJson,
+    ),
     (
         "settings-agent-input-unavailable-invalid-key",
         Classification::Local,
