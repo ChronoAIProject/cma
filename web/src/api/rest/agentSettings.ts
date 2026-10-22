@@ -1,3 +1,4 @@
+import { agentPreferencesClient } from './agentPreferences';
 import { ProtocolError } from '@chronoai/cma-sdk';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
@@ -42,9 +43,14 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
 
 export function agentSettingsClient(): Pick<
   CmaWebClient,
-  'readAgentSettings' | 'updateAgentSettings' | 'readAgentModels'
+  | 'readAgentSettings'
+  | 'updateAgentSettings'
+  | 'readAgentModels'
+  | 'readAgentPreferences'
+  | 'updateAgentPreferences'
 > {
   return {
+    ...agentPreferencesClient(),
     readAgentModels: async (id, options) => {
       const response = await fetch(`/api/v1/agents/${encodeURIComponent(id)}/models`, {
         credentials: 'same-origin',
