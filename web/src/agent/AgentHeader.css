@@ -1,153 +1,123 @@
-/*
- * The Agent header — `docs/Web_Style.md` §13.
- *
- * The shared page header's parts are restyled here through attribute
- * selectors, so this sheet never declares a class PageHeader.css owns.
- */
-
-/* The loading and error states reuse the bare header in the same row. */
+/* Compact conversation toolbar — docs/Web_Style.md §13. */
 .agent-header {
   grid-row: 1;
   padding: 16px 20px 14px;
   background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
-
-/*
- * The seat keeps a 28px strip in the layout whatever the header shows, so
- * revealing the full line never moves the conversation.
- */
-.agent-header-seat {
-  position: relative;
-  z-index: 20;
+.agent-toolbar {
   grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
-  height: 28px;
-}
-
-.agent-header-seat[data-pinned] {
-  height: auto;
-}
-
-.agent-header__strip {
-  box-sizing: border-box;
-  height: 28px;
-  margin: 0;
-  padding: 5px 20px;
-  overflow: hidden;
-  color: var(--dsw-alias-label-caption);
+  min-height: 48px;
+  padding: 8px 20px;
   background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  font-size: 12px;
+}
+.agent-toolbar__identity,
+.agent-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.agent-toolbar__identity {
+  flex: 1;
+}
+.agent-toolbar__actions {
+  flex: none;
+}
+.agent-toolbar__heading {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.agent-toolbar__heading > span {
+  max-width: 100%;
+}
+.agent-toolbar__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
   font-weight: 600;
-  line-height: 18px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.agent-toolbar__title span {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* One line: breadcrumb, title, status and branch, then the actions. */
-.agent-header-seat > .agent-header {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: center;
-  padding: 8px 20px;
-}
-
-/* Collapsed: drawn over the conversation, hidden until revealed, still focusable. */
-.agent-header-seat:not([data-pinned]) > .agent-header {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  opacity: 0;
-  pointer-events: none;
-  box-shadow: var(--dsw-shadow-lv1);
-  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.agent-header-seat[data-revealed]:not([data-pinned]) > .agent-header {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.agent-header-seat > .agent-header > [class~='page-header__crumbs'] {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-/* The title follows in the same line, so the crumb that repeats it is not drawn. */
-.agent-header-seat [class~='page-header__crumbs'] li:last-child {
-  display: none;
-}
-
-.agent-header-seat [class~='page-header__crumbs'] ol::after {
+.agent-toolbar__title svg {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  content: '/';
 }
-
-.agent-header-seat > .agent-header > [class~='page-header__row'] {
-  flex: 1 1 240px;
-  flex-wrap: nowrap;
-  align-items: center;
+.agent-toolbar__title:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.agent-toolbar__title:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-toolbar__machine {
+  flex: none;
+  display: inline-flex;
+}
+.agent-toolbar__machine-card {
+  width: min(360px, calc(100vw - 24px));
+}
+.agent-toolbar__machine-content {
+  display: grid;
+  gap: 16px;
   min-width: 0;
 }
-
-.agent-header-seat [class~='page-header__heading'] {
-  flex: 1 1 auto;
-}
-
-.agent-header-seat [class~='page-header__titleline'] {
-  flex-wrap: nowrap;
-  gap: 8px;
-}
-
-.agent-header-seat .agent-header h1[class~='page-header__title'] {
+.agent-toolbar__machine-content h2 {
+  margin: 0;
   font-size: 14px;
   line-height: 20px;
-  letter-spacing: 0;
 }
-
-/* The status keeps its word; the title and then the branch give way first. */
-.agent-header-seat [class~='page-header__badge'] {
-  flex: none;
+.agent-toolbar__machine-content code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
 }
-
-.agent-header-seat [class~='page-header__meta'] {
-  flex-wrap: nowrap;
-  min-width: 0;
+.agent-toolbar__scope {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 20px;
 }
-
-.agent-header-seat [class~='page-header__actions'] {
-  flex: none;
-  flex-wrap: nowrap;
-  gap: 4px;
+.agent-toolbar__scope li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.agent-header-seat [aria-pressed='true'] {
-  color: var(--dsw-alias-state-business-primary);
+.agent-toolbar__prompt {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
 }
-
-/* Narrow: the breadcrumb takes its own line above the title and actions. */
 @container agent-conversation (max-width: 30rem) {
-  .agent-header-seat > .agent-header > [class~='page-header__crumbs'] {
-    flex-basis: 100%;
+  .agent-toolbar {
+    padding-inline: 8px;
+    gap: 4px;
   }
-
-  .agent-header__strip,
-  .agent-header-seat > .agent-header {
-    padding-inline: 14px;
-  }
-
-  .agent-header {
-    padding-inline: 14px;
+  .agent-toolbar__title {
+    min-height: 44px;
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .agent-header-seat:not([data-pinned]) > .agent-header {
+  .agent-toolbar__title {
     transition: none;
   }
 }
