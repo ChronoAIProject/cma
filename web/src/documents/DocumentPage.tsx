@@ -5,6 +5,7 @@ import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { Modal } from '../ui/Modal';
+import { SkeletonRows } from '../ui/Skeleton';
 import { usePresence } from '../ui/Presence';
 import { IconChevronLeftOutline14, IconShareOutline16, IconDownloadOutline16 } from '../ui/icons';
 import { DocumentComments } from './DocumentComments';
@@ -36,6 +37,7 @@ export function DocumentPage({
   const [title, setTitle] = useState('');
   const [markdown, setMarkdown] = useState('');
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [preview, setPreview] = useState(false);
   const commentsPresence = usePresence(commentsOpen);
   const [shareOpen, setShareOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -204,7 +206,11 @@ export function DocumentPage({
         ) : (
           <h1>Opening document</h1>
         )}
-        <span className="document-workspace__save-status" role="status">
+        <span
+          className="document-workspace__save-status"
+          role="status"
+          data-dirty={dirty || undefined}
+        >
           {busy
             ? 'Saving…'
             : conflict
@@ -215,6 +221,16 @@ export function DocumentPage({
                   ? 'Saved'
                   : ''}
         </span>
+        {owner ? (
+          <div className="document-workspace__mode" role="group" aria-label="Document mode">
+            <Button size="sm" aria-pressed={!preview} onClick={() => setPreview(false)}>
+              Edit
+            </Button>
+            <Button size="sm" aria-pressed={preview} onClick={() => setPreview(true)}>
+              Preview
+            </Button>
+          </div>
+        ) : null}
         <Button
           size="sm"
           variant="ghost"
@@ -293,17 +309,25 @@ export function DocumentPage({
       <div className="document-workspace__body" data-comments={commentsOpen || undefined}>
         <div className="document-workspace__canvas">
           {loaded ? (
-            <Suspense fallback={<p role="status">Opening editor…</p>}>
+            <Suspense
+              fallback={
+                <div className="document-editor__paper">
+                  <SkeletonRows rows={6} label="Opening editor" />
+                </div>
+              }
+            >
               <RichDocumentEditor
                 key={`${id}:${revision}`}
                 source={markdown}
-                editable={owner && !busy && intent === undefined && !conflict}
+                editable={owner && !preview && !busy && intent === undefined && !conflict}
                 onChange={setMarkdown}
                 onSave={() => void save()}
               />
             </Suspense>
           ) : !error ? (
-            <p role="status">Loading document…</p>
+            <div className="document-editor__paper">
+              <SkeletonRows rows={6} label="Loading document" />
+            </div>
           ) : null}
         </div>
         {loaded && commentsPresence.present ? (
