@@ -74,7 +74,8 @@ describe('the CMA mark', () => {
       icon?.getAttribute('y'),
       icon?.getAttribute('width'),
       icon?.getAttribute('height'),
-    ]).toEqual(['6', '6', '20', '20']);
+    ]).toEqual(['0', '0', '32', '32']);
+    expect(icon?.getAttribute('viewBox')).toBe('12 7.25 76 76');
     expect(favicon.querySelector('circle')?.getAttribute('fill')).toBe('#18181b');
     expect(favicon.documentElement.getAttribute('viewBox')).toBe('0 0 32 32');
     expect(parts.map((part) => part.outerHTML)).toEqual(
@@ -173,8 +174,10 @@ describe('browser chrome metadata', () => {
       link.getAttribute('href'),
     );
     expect(icons).toEqual([
-      './src/assets/brand/png/favicon-32.png',
-      './src/assets/brand/cma-favicon.svg',
+      './src/assets/brand/png/favicon-16.png?no-inline',
+      './src/assets/brand/png/favicon-32.png?no-inline',
+      './src/assets/brand/png/favicon-48.png?no-inline',
+      './src/assets/brand/cma-favicon.svg?no-inline',
     ]);
   });
 });

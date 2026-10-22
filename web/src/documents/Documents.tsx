@@ -4,6 +4,8 @@ import type { User } from '../auth/types';
 import { DocumentRegistry } from './DocumentRegistry';
 import { DocumentPage } from './DocumentPage';
 import './Documents.css';
+import './DocumentRegistry.css';
+import './DocumentContent.css';
 export default function Documents({
   route,
   user,
