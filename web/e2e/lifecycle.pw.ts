@@ -142,7 +142,6 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
     }
   }
   await page.goto(`${h.config.baseURL}/agents/${agentIds[0]}`);
-  await page.locator('.agent-header__strip').hover();
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();

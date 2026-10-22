@@ -110,6 +110,10 @@ data:
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  # Durable personal documents use the existing S3-backed storage service.
+  # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
+  CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm-public"
   CHRONO_UPSTREAM_WIRE_API: "responses"

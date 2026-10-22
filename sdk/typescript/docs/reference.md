@@ -545,3 +545,21 @@ These methods require the configured Bot Father binding credential; they do not
 accept a user token or claimed grant ID. The operation result is `{ status, body }`;
 inspect the inner status before treating a mutation as successful. A CMA callback
 continuation is accepted only by CMA APIs, never gateway reply tools.
+
+## Persistent documents
+
+`client.documents` exposes `list`, `create`, `read`, `update`, `source`,
+`revisions`, `shares`, `grant`, `revoke`, `links`, `createLink`, `revokeLink`,
+`comments`, `comment`, and `removeComment`. Documents remain available after
+an originating Agent or Sandbox is removed. Listing supports `q`, `scope`
+(`owned`, `shared`, `all`), `cursor`, and `limit` (1–50).
+
+Every mutation requires `idempotencyKey`; retain it when retrying an uncertain
+result. Owner edits and grant changes carry `expected_revision`. Source reads
+accept an optional immutable source revision. Authorized recipients can read,
+or comment when their permission is `comment`. Optional `shareToken` is sent
+only in `X-CMA-Document-Share-Token`, alongside the user's authentication; it is
+never appended to a URL. The caller generates a random 256-bit token for
+`createLink` and keeps it in the application URL fragment. CMA returns link
+metadata without the token. Revocation is effective on subsequent source reads,
+including downloads that were in progress when authority was revoked.

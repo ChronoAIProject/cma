@@ -17,7 +17,8 @@ pub(super) fn observe_operation(
     };
     let evidence_matches = match &record.intent {
         AgentOperationIntent::Interrupt => interruption_evidence,
-        AgentOperationIntent::UpdateSettings { .. } => false,
+        AgentOperationIntent::UpdateSettings { .. }
+        | AgentOperationIntent::RefreshContext { .. } => false,
         _ => prompt_evidence,
     };
     if !evidence_matches

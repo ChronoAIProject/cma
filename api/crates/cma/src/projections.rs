@@ -112,7 +112,9 @@ impl AgentProjectionServices {
             runtime_capabilities,
         );
         let reads = AgentReadService::new(store.clone(), resources);
-        let operations = AgentOperationService::new(store, runtimes);
+        let operations = AgentOperationService::new(store, runtimes).with_instruction_policy(
+            Arc::new(crate::agent_lifecycle::guidance::ManagedInstructionPolicy),
+        );
         Self {
             message_feedback: None,
             skill_support: None,

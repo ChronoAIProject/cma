@@ -38,3 +38,21 @@ it.each([
   });
   await expect(test.client.agents.events(agent.id)).rejects.toBeInstanceOf(ProtocolError);
 });
+
+it('reads acknowledged managed context maintenance without losing subsequent events', async () => {
+  const test = transport();
+  const items = [
+    {
+      seq: 26,
+      appended_at: now,
+      kind: {
+        type: 'operation_delivery_changed',
+        operation_sequence: 26,
+        operation: 'refresh_context',
+        state: 'execution_observed',
+      },
+    },
+  ];
+  test.answer({ items, next: 26 });
+  expect(await test.client.agents.events(agent.id, { after: 25 })).toEqual({ items, next: 26 });
+});

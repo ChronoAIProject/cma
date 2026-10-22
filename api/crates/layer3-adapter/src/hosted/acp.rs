@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
-use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -45,6 +44,10 @@ impl<T> ConversationSocket for T where
 pub(super) type Socket = Box<dyn ConversationSocket>;
 type Sink = SplitSink<Socket, Message>;
 type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
+
+#[path = "acp_declaration.rs"]
+mod declaration;
+use declaration::validate_ready;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
@@ -87,6 +90,9 @@ pub(super) struct Bridge {
     pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
     pub(super) orphaned_prompt_response: AtomicBool,
     retired: AtomicBool,
+    pub(super) instructions_support: AtomicU8,
+    pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
+    pub(super) context_goal: Mutex<Option<(String, bool)>>,
 }
 
 pub(super) struct OpenedBridge {
@@ -94,18 +100,6 @@ pub(super) struct OpenedBridge {
     pub(super) bridge: Arc<Bridge>,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,
-}
-
-#[derive(Deserialize)]
-struct Ready {
-    t: String,
-    #[serde(rename = "wireVersion")]
-    wire_version: u32,
-    lanes: Vec<String>,
-    #[serde(rename = "agentId")]
-    agent_id: String,
-    #[serde(default, rename = "outputAcknowledgement")]
-    output_acknowledgement: Option<output::OutputCapability>,
 }
 
 impl Bridge {
@@ -195,6 +189,9 @@ impl Bridge {
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
             orphaned_prompt_response: AtomicBool::new(false),
             retired: AtomicBool::new(false),
+            instructions_support: AtomicU8::new(0),
+            context_refresh: settings.context_refresh.clone(),
+            context_goal: Mutex::new(None),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
         let writer = Arc::clone(&bridge);
@@ -203,7 +200,8 @@ impl Bridge {
             let writer = Arc::clone(&writer);
             let updates = writer_updates.clone();
             async move { writer.drive(input, &updates).await }
-        });
+        })
+        .with_settings_support(bridge.clone());
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
 
@@ -448,30 +446,6 @@ impl Bridge {
         self.pending.lock().await.clear();
         self.blocked.lock().await.clear();
     }
-}
-
-fn validate_ready(message: Message, expected_agent: &str) -> crate::Result<Option<uuid::Uuid>> {
-    let Message::Text(text) = message else {
-        return Err(AdapterError::Rejected(
-            "runtime sent a non-text Ready declaration".into(),
-        ));
-    };
-    let ready: Ready = serde_json::from_str(&text)
-        .map_err(|_| AdapterError::Rejected("runtime Ready declaration is malformed".into()))?;
-    if ready.t != "ready"
-        || ready.wire_version != 1
-        || ready.agent_id != expected_agent
-        || !ready.lanes.iter().any(|lane| lane == "ctl")
-        || !ready.lanes.iter().any(|lane| lane == "conv")
-    {
-        return Err(AdapterError::Rejected(
-            "runtime Ready declaration does not match the requested agent".into(),
-        ));
-    }
-    ready
-        .output_acknowledgement
-        .map(|capability| capability.validate())
-        .transpose()
 }
 
 fn unframe(bytes: &[u8]) -> Option<(u8, &[u8])> {

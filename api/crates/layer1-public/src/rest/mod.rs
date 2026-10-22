@@ -33,6 +33,7 @@ mod agent_channel_usage;
 mod agent_command_admission;
 mod agent_models;
 mod agent_operate;
+mod agent_preferences;
 mod agent_settings;
 mod agent_skills;
 mod message_feedback;
@@ -62,6 +63,8 @@ mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 mod defaults;
+mod documents;
+pub use documents::documents_router;
 mod embed;
 #[cfg(test)]
 mod embed_tests;

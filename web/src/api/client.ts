@@ -30,6 +30,7 @@ import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 import type { AgentFilesClient } from './agentFiles';
+import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -83,6 +84,19 @@ export interface AgentModelOption {
   readonly id: string;
   readonly label: string;
   readonly available: boolean;
+}
+
+export interface AgentPreferencesView {
+  readonly title?: string;
+  readonly system_prompt: string;
+  readonly prompt_pending: boolean;
+  readonly prompt_supported: boolean;
+  readonly revision: number;
+}
+export interface UpdateAgentPreferences {
+  readonly expected_revision: number;
+  readonly title?: string;
+  readonly system_prompt?: string;
 }
 
 export interface AgentSettingsView {
@@ -148,6 +162,7 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (
     agentId: string,
@@ -190,6 +205,15 @@ export interface CmaWebClient {
     id: string,
     options?: ReadOptions,
   ) => Promise<readonly AgentModelOption[]>;
+  readonly readAgentPreferences?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly updateAgentPreferences?: (
+    id: string,
+    preferences: UpdateAgentPreferences,
+    options: CommandOptions,
+  ) => Promise<AgentPreferencesView>;
   readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
   readonly updateAgentSettings?: (
     id: string,

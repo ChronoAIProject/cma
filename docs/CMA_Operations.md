@@ -890,6 +890,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_BASE_URL` | Required canonical HTTPS model API base without trailing slash |
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
+| `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
+| `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |

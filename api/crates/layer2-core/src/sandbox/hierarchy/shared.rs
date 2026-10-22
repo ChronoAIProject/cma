@@ -157,7 +157,7 @@ impl From<WorkspaceHierarchyView> for SharedWorkspaceHierarchy {
                     workspace_id: agent.workspace_id,
                     sandbox_id: agent.sandbox_id,
                     status: agent.status,
-                    title: agent.title,
+                    title: agent.owner_title.or(agent.title),
                     updated_at: agent.updated_at,
                 })
                 .collect(),

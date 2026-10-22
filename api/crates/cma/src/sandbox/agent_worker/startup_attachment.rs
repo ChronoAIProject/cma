@@ -35,7 +35,47 @@ impl AgentWorker {
                 (&target.conversation_id, recovered_prompt),
             )
             .await?;
-        if let Some(settings) = &agent.conversation.settings {
+        let mut context_replayed = false;
+        if let Some((sequence, input)) = agent.pending_managed_context() {
+            let result = channel.input.send(input).await;
+            let refresh_target = layer2_core::sandbox::AgentRuntimeTarget {
+                agent_id: agent.id.clone(),
+                conversation_id: target.conversation_id.clone(),
+                runtime_generation: target.runtime_generation,
+            };
+            let authority = layer2_core::sandbox::AgentWorkAuthority {
+                holder: self.config.holder.clone(),
+                fence: connection_fence,
+            };
+            let confirmation = match result {
+                Ok(()) => {
+                    context_replayed = true;
+                    self.dependencies
+                        .operations
+                        .confirm_managed_context_replayed(&refresh_target, &authority, sequence)
+                        .await
+                }
+                Err(layer3_adapter::AdapterError::OperationIdentityConflict(_)) => {
+                    self.dependencies
+                        .operations
+                        .retire_managed_context_replayed(&refresh_target, &authority, sequence)
+                        .await
+                }
+                Err(error) => return Err(adapter_failure(error)),
+            };
+            confirmation.map_err(|error| {
+                WorkerFailure::retryable(
+                    "managed_context_confirmation_unavailable",
+                    error.to_string(),
+                )
+            })?;
+        }
+        if let Some(settings) = agent
+            .conversation
+            .settings
+            .as_ref()
+            .filter(|_| !context_replayed)
+        {
             channel
                 .input
                 .send(settings.runtime_input())

@@ -12,6 +12,9 @@ use std::sync::{
 };
 use tower::ServiceExt;
 
+#[path = "document_tests.rs"]
+mod document_tests;
+
 struct Stub {
     bearer: String,
     confirmed: AtomicBool,
