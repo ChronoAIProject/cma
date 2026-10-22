@@ -5,6 +5,7 @@ import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import { SkeletonRows } from '../ui/Skeleton';
 import { IconPlusOutline16, IconListPenOutline16 } from '../ui/icons';
 
 export function DocumentRegistry({
@@ -109,9 +110,12 @@ export function DocumentRegistry({
   return (
     <section className="documents-page" aria-label="Artifacts">
       <header className="documents-page__header">
-        <h1>Artifacts</h1>
+        <div>
+          <h1>Artifacts</h1>
+          <p>Your ideas, brought together.</p>
+        </div>
         {canCreate ? (
-          <Button icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>
+          <Button variant="primary" icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>
             New document
           </Button>
         ) : null}
@@ -152,11 +156,16 @@ export function DocumentRegistry({
             <span>
               <IconListPenOutline16 size={32} />
             </span>
-            <strong>Docs</strong>
-            <small>Write, share and collaborate</small>
+            <span className="document-template__label">
+              <strong>Blank document</strong>
+              <small>A fresh space for your ideas</small>
+            </span>
           </button>
         </section>
       ) : null}
+      <h2 className="documents-page__section-title">
+        {query ? 'Search results' : scope === 'shared' ? 'Shared documents' : 'Your library'}
+      </h2>
       {error ? (
         <Alert
           tone="error"
@@ -197,9 +206,17 @@ export function DocumentRegistry({
         ))}
       </div>
       {loading ? (
-        <p role="status">Loading artifacts…</p>
+        <SkeletonRows label="Loading artifacts" />
       ) : items.length === 0 && !error ? (
-        <p>No documents yet{query ? ' match your search' : ''}.</p>
+        <div className="documents-page__empty">
+          <IconListPenOutline16 size={24} />
+          <strong>{query ? 'No matching documents' : 'A place for your next idea'}</strong>
+          <p>
+            {query
+              ? 'Try a different title or search term.'
+              : 'Create a document, or save something your Agent makes.'}
+          </p>
+        </div>
       ) : null}
       {next ? (
         <Button disabled={loading} onClick={() => setCursor(next)}>
