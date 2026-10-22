@@ -119,6 +119,15 @@ export function MessageStream({
       !entry.item.liveOnly
     )
       finalReply.set(entry.item.runId, entry.item.id);
+  // Work between two replies (tools, plans, notices) is the same author at work, so
+  // only the previous message's role decides whether a message repeats its identity.
+  const continued = new Set<string>();
+  let previousRole: 'user' | 'assistant' | undefined;
+  for (const entry of entries) {
+    if (entry.kind !== 'message') continue;
+    if (entry.item.role === previousRole) continued.add(entry.item.id);
+    previousRole = entry.item.role;
+  }
 
   return (
     <div className="message-stream" aria-live="polite" ref={streamRef}>
@@ -141,6 +150,7 @@ export function MessageStream({
             user={user}
             unknownUserName={unknownUserName}
             feedback={feedback}
+            continued={entry.kind === 'message' && continued.has(entry.item.id)}
             showUsage={
               entry.kind === 'message' &&
               entry.item.runId !== undefined &&
@@ -159,16 +169,18 @@ export function MessageStream({
         ),
       )}
       <ActiveThinking conversation={conversation} />
-      {optimisticMessages?.map((message) => (
+      {optimisticMessages?.map((message, index) => (
         <article
           className={`message message--user${message.queued ? ' message--queued' : ''}`}
           aria-label={identity.name}
           key={`local:${message.id}`}
           data-message-key={`local:${message.id}`}
         >
-          <MessageAvatar identity={identity} />
+          <MessageAvatar identity={identity} continued={index > 0 || previousRole === 'user'} />
           <div className="message__body">
-            <span className="message__role">{identity.name}</span>
+            {index > 0 || previousRole === 'user' ? null : (
+              <span className="message__role">{identity.name}</span>
+            )}
             <UserMessage content={message.content} />
             <span className="message__delivery" role="status">
               {message.state === 'sending'
