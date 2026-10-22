@@ -61,6 +61,7 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v2/responses/{response_id}/events", &["get"]),
     ("/api/v2/conversations/{conversation_id}", &["get"]),
     ("/api/v2/conversations/{conversation_id}/items", &["get"]),
+    ("/api/v2/agents/{agent_id}/events/head", &["get"]),
     ("/api/v2/agents/{agent_id}/events/snapshot", &["get"]),
     ("/api/v2/agents/{agent_id}/events", &["get"]),
     (
