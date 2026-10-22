@@ -165,6 +165,7 @@ pub struct AgentSummary {
     /// Canonical runtime observations, absent on retained older runtimes.
     pub runtime_metadata: Option<AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit owner rename, which takes precedence over a provider-generated title.
     pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
@@ -203,6 +204,7 @@ pub struct Agent {
     /// Canonical runtime observations, absent on retained older runtimes.
     pub runtime_metadata: Option<AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit owner rename, which takes precedence over a provider-generated title.
     pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
