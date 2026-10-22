@@ -6,11 +6,11 @@ macro_rules! request_parts {
     ($key:ident, $body:ident) => {
         let $key = match required_key($key) {
             Ok(v) => v,
-            Err(e) => return e,
+            Err(e) => return e.into_response(),
         };
         let $body = match json_body($body) {
             Ok(v) => v,
-            Err(e) => return e,
+            Err(e) => return e.into_response(),
         };
     };
 }

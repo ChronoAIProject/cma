@@ -22,8 +22,8 @@ pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod documents;
-pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use bot_father::BotFatherConfig;
+pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 
