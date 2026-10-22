@@ -1412,6 +1412,7 @@ See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
 | `GET /api/v2/ui/transport` | - | - | 200 UiTransportView |
+| `GET /api/v2/agents/{agent_id}/events/head` | - | - | 200 EventHead |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` | - | limit, page_cursor | 200 EventPage |
 | `GET /api/v2/agents/{agent_id}/events` | - | after_cursor, follow / Last-Event-ID | 200 Agent event SSE |
 | `GET /api/v2` | - | - | 200 JSON capabilities |

@@ -75,6 +75,40 @@ that creation intent only on confirmed success. If a worker retry requires a new
 connection check, **Continue Agent setup** verifies the operation's connection
 target and resumes the same creation body/key; reload alone never resumes it.
 
+## Current live baseline
+
+`GET /api/v2/agents/{agent_id}/events/head` reads the current durable head and
+its active turn without loading the historical log. It requires the same
+`ViewHistory` authority as snapshots and tails, revalidates held authorization
+immediately before publication, and returns `Cache-Control: private, no-store`.
+It accepts no query parameters.
+
+```json
+{
+  "object": "cma.agent.event_head",
+  "schema_version": 1,
+  "agent_id": "agt_example",
+  "incarnation": "opaque_incarnation_digest",
+  "through_cursor": "opaque_agent_cursor",
+  "active_turn": null
+}
+```
+
+For an active turn, `active_turn` is its exact durable `turn_started` snapshot
+item, including `cursor`, `sequence`, `appended_at`, safe `kind` and verified
+`response_binding`. Legacy turns retain a null binding. The endpoint reads at
+most that one historical row and never returns private source metadata. An
+invalid active-turn pointer or unverifiable common-command binding fails closed.
+
+Clients can establish a live tail after this `through_cursor` while independently
+loading transcript and snapshot history. This baseline does not acknowledge
+historical rows. Keep tail events ordered and reconcile them by durable sequence
+when history is applied. The returned head and active-turn identity both belong
+to the captured aggregate: completion or new work racing the read is delivered
+by the tail, even if it commits before the head response is published. The
+baseline carries no control authority; observe response controls before a new
+control intent.
+
 ## Snapshot bootstrap
 
 `GET /api/v2/agents/{agent_id}/events/snapshot` captures a durable high-water
@@ -108,9 +142,10 @@ requested number of rows. A row that does not fit is deferred intact.
 }
 ```
 
-Apply every page successfully before acknowledging `through_cursor` and
-starting the tail. It is an event watermark, not an aggregate revision. Observe
-the current Agent revision through the response-controls API when preparing a
+When bootstrapping sequentially from the snapshot, apply every page successfully
+before acknowledging `through_cursor` and starting the tail. The independent
+head baseline above permits live observation during this history load. The cursor
+is an event watermark, not an aggregate revision. Observe the current Agent revision through the response-controls API when preparing a
 new control intent.
 
 `kind` uses the safe core `AgentEventKind` vocabulary. Messages retain their

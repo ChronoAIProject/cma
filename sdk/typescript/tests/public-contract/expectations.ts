@@ -107,6 +107,7 @@ const protectedQueries = new Map([
   ['queued-cancellation-v2-query-submit', ['unexpected']],
   ['queued-input-v2-query-list', ['unexpected']],
   ['queued-input-v2-query-submit', ['unexpected']],
+  ['agent-events-v2-head-query', ['unknown']],
   ['agent-events-v2-snapshot-query', ['unknown']],
   ['agent-events-v2-events-query', ['unknown']],
   ['agent-events-v2-snapshot-duplicate', ['page_cursor']],
