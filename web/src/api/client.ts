@@ -30,6 +30,7 @@ import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 import type { AgentFilesClient } from './agentFiles';
+import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -148,6 +149,7 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly documents?: DocumentsClient;
   readonly files?: AgentFilesClient;
   readonly readMessageFeedback?: (
     agentId: string,
