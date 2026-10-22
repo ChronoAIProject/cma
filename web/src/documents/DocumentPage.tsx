@@ -133,7 +133,8 @@ export function DocumentPage({
         baseSourceRevision: document.source_revision,
       });
       setTitle(document.title);
-      setMarkdown(retained.body.markdown);
+      // FileReader may have inserted an image while this snapshot was saving.
+      // Keep that newer local source; the acknowledged snapshot is the new baseline.
       setIntent(undefined);
       retainDocumentDraft(viewer, id);
     } catch (cause) {
