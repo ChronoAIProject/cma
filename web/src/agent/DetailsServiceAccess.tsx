@@ -3,7 +3,6 @@ import type { AgentDetail } from '../api/types';
 import { ReferenceLink } from '../profiles/ReferenceLink';
 import { isCodexConnection } from '../profiles/modelProvider';
 import { openSandboxTab, sandboxTabPath } from '../sandbox/sandboxTabRoute';
-import { Badge } from '../ui/Badge';
 import { REQUIRED_AGENT_SCOPES } from './requiredScopes';
 
 function plainClick(event: MouseEvent) {
@@ -38,8 +37,8 @@ export function DetailsServiceAccess({
       <ul aria-label="Services this Agent can use">
         {REQUIRED_AGENT_SCOPES.map((id) => (
           <li key={id}>
-            <code>{id}</code>
-            <Badge tone="muted">Required</Badge>
+            <span>{id}</span>
+            <span className="agent-details__required">Required</span>
           </li>
         ))}
         {optional.map((id) => (

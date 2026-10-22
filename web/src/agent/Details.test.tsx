@@ -32,6 +32,10 @@ it('summarises service access read-only beside skills without duplicating compos
     'ornn-apiRequired',
     'GitHub',
   ]);
+  for (const required of services.getAllByText('Required')) {
+    expect(required).toHaveClass('agent-details__required');
+    expect(required.closest('.badge')).toBeNull();
+  }
   expect(panel.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
     'href',
     '/sandboxes/sbx_1?tab=access',
