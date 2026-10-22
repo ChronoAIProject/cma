@@ -96,7 +96,6 @@ test('LOCAL channel history retains manual origin and drafts while current autho
   await expect(tree.getByText('Channel linked', { exact: true })).toBeVisible();
   await tree.getByLabel('Agent channel activity', { exact: true }).selectOption('active');
   await expect(tree.locator('a[href="/agents/agt_contract"]')).toBeVisible();
-  await page.locator('.agent-header__strip').hover();
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   await expect(page.getByText('Linked to a channel', { exact: true })).toBeVisible();

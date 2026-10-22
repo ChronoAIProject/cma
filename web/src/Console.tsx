@@ -8,7 +8,7 @@ import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
 import { useAgentDraft } from './agent/draft';
-import { AgentDetails } from './agent/Details';
+import { AgentSidePanel, type AgentPanel } from './agent/AgentSidePanel';
 import { useAgentController } from './agent/controller';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -32,7 +32,6 @@ import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentSharePage } from './resources/AgentSharePage';
-import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
@@ -76,7 +75,9 @@ function ConsoleContent({
 }: ConsoleProps) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [panel, setPanel] = useState<AgentPanel>();
+  const detailsOpen = panel === 'details';
+  const setDetailsOpen = (open: boolean) => setPanel(open ? 'details' : undefined);
   const [positions] = useState(() => new AgentViewPositions());
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
@@ -218,6 +219,8 @@ function ConsoleContent({
         web={client}
         detail={shared}
         onAccessChanged={agentAccess.reload}
+        filesOpen={panel === 'files'}
+        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
@@ -251,6 +254,8 @@ function ConsoleContent({
         viewPosition={viewPosition}
         accessUncertain={accessUncertain}
         accessAuthorized={agentAccess.personalReady && !accessUncertain}
+        filesOpen={panel === 'files'}
+        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
@@ -357,16 +362,22 @@ function ConsoleContent({
     <AppFrame
       phoneTitle="Agent Manager"
       detailsOpen={
-        !accessUncertain && (personalAgentId !== undefined || shared !== undefined) && detailsOpen
+        !accessUncertain &&
+        (personalAgentId !== undefined || shared !== undefined) &&
+        panel !== undefined
       }
       compactDetailsOverlay
       details={
-        route.kind === 'agent' && personalAgentId !== undefined && !accessUncertain ? (
-          <AgentDetails
+        route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
+          <AgentSidePanel
             key={route.agentId}
-            open={detailsOpen}
-            onClose={() => setDetailsOpen(false)}
+            agentId={route.agentId}
+            shared={shared !== undefined}
             detail={ready?.detail}
+            panel={panel}
+            onClose={() => setPanel(undefined)}
+            onAccessChanged={agentAccess.reload}
+            publicationScope={artifactPublicationScope}
             historyLoading={ready?.historyLoading}
             pending={agent.pending}
             onOpenSandbox={
@@ -374,15 +385,6 @@ function ConsoleContent({
                 ? undefined
                 : () => onNavigate({ kind: 'sandbox', sandboxId: ready.detail.sandbox.id })
             }
-          />
-        ) : shared !== undefined ? (
-          <SharedAgentDetails
-            key={shared.id}
-            agent={shared.id}
-            open={detailsOpen}
-            onClose={() => setDetailsOpen(false)}
-            onAccessChanged={agentAccess.reload}
-            publicationScope={artifactPublicationScope}
           />
         ) : undefined
       }
