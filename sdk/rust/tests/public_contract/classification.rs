@@ -143,6 +143,7 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         Classification::MediaType,
     ),
     ("settings-state-agent-invalid-input", Classification::Local),
+    ("preferences-state-agent-invalid-input", Classification::Local),
     (
         "settings-agent-input-unavailable-invalid-key",
         Classification::Local,

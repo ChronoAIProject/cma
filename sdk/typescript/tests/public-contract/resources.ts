@@ -89,6 +89,10 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('message_id'),
       (body as { vote: 'up' | 'down' | null }).vote,
     ),
+  'GET /api/v1/agents/{id}/preferences': ({ client, param }) =>
+    client.agents.preferences(param('id')),
+  'PATCH /api/v1/agents/{id}/preferences': ({ client, param, body, command }) =>
+    client.agents.updatePreferences(param('id'), body, command),
   'GET /api/v1/agents/{id}/settings': ({ client, param }) => client.agents.settings(param('id')),
   'PATCH /api/v1/agents/{id}/settings': ({ client, param, body, command }) =>
     client.agents.updateSettings(param('id'), body, command),

@@ -1681,6 +1681,10 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. Full and focused AgentManager OpenAPI documents include all 15 operations.
 
 
+
+| `GET /api/v1/agents/{id}/preferences` | - | - | 200 AgentPreferencesView |
+| `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
+
 <!-- openapi-operations:end -->
 
 ## Contract Verification

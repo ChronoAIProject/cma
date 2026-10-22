@@ -17,6 +17,7 @@ export const localCodes = new Map([
   ['agent-skills-install-invalid-version', 'invalid_agent_request'],
   ['agent-skills-install-unknown-field', 'invalid_json'],
   ['settings-state-agent-invalid-input', 'invalid_agent_request'],
+  ['preferences-state-agent-invalid-input', 'invalid_agent_request'],
   ['gateway-connection-list-invalid-query', 'invalid_query'],
   ['gateway-connection-delete-invalid-query', 'invalid_query'],
   ['queued-cancellation-v2-invalid-revision', 'invalid_queued_cancellation_request'],

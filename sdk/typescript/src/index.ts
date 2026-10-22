@@ -117,3 +117,5 @@ export type {
 } from './agents/message-feedback.js';
 
 export * from './documents.js';
+
+export type { AgentPreferences, UpdateAgentPreferencesRequest } from './agents/preferences.js';
