@@ -60,20 +60,22 @@ export function AgentDetails({
       <div className="agent-details__scroll">
         <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />
         <AgentShareLinks key={`sharing:${detail.id}`} agentId={detail.id} active={open} />
-        <div className="agent-details__band">
-          <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
-          <SkillsSettings
-            key={`skills:${detail.id}`}
-            agentId={detail.id}
-            active={open}
-            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
-          />
-          {onOpenSandbox === undefined ? null : (
-            <Button onClick={() => openSandboxTab(onOpenSandbox, detail.sandbox.id, 'activity')}>
-              Sandbox operation progress
-            </Button>
-          )}
-        </div>
+        <DetailsServiceAccess detail={detail} onOpenSandbox={onOpenSandbox} />
+        <SkillsSettings
+          key={`skills:${detail.id}`}
+          agentId={detail.id}
+          active={open}
+          busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
+        />
+        {onOpenSandbox === undefined ? null : (
+          <button
+            type="button"
+            className="agent-details__link"
+            onClick={() => openSandboxTab(onOpenSandbox, detail.sandbox.id, 'activity')}
+          >
+            Sandbox operation progress
+          </button>
+        )}
       </div>
     </aside>
   );
