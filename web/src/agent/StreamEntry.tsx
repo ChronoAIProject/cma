@@ -58,7 +58,8 @@ export function StreamEntry({
           ) : (
             <MessageContent content={message.content} streaming={message.status === 'streaming'} />
           )}
-          {showUsage ? (
+          {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
+          {showUsage && usage !== undefined ? (
             <div className="message__usage" aria-label="Turn token usage">
               <TurnUsage usage={usage} animateInitial={false} />
             </div>
