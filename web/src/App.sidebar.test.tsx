@@ -40,27 +40,26 @@ afterEach(() => {
 it.each([
   ['Agent Manager', '/agent-manager', 'Welcome to CMA'],
   ['Event Gateway', '/event-gateway', 'Event Gateway'],
-])('expands %s from home and on direct entry', async (service, path, heading) => {
-  const home = show();
-  await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
-  expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
-  chooseService(service as 'Agent Manager' | 'Event Gateway');
-  await screen.findByRole('heading', { name: heading });
-  expect(window.location.pathname).toBe(path);
-  expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
+])(
+  'enters %s with expanded navigation after home redirect and on direct entry',
+  async (service, path, heading) => {
+    const home = show();
+    await screen.findByRole('heading', { name: 'Welcome to CMA' });
+    expect(window.location.pathname).toBe('/agent-manager');
+    chooseService(service as 'Agent Manager' | 'Event Gateway');
+    await screen.findByRole('heading', { name: heading });
+    expect(window.location.pathname).toBe(path);
+    expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
 
-  home.unmount();
-  show(path);
-  await screen.findByRole('heading', { name: heading });
-  expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
-});
+    home.unmount();
+    show(path);
+    await screen.findByRole('heading', { name: heading });
+    expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
+  },
+);
 
-it('retains manual toggles across service navigation and resets on home visits and history', async () => {
+it('retains manual toggles across service navigation and avoids a home history loop', async () => {
   show();
-  await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
-  chooseService('Agent Manager');
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   fireEvent.click(screen.getByRole('button', { name: 'Hide navigation' }));
   chooseService('Event Gateway');
@@ -71,16 +70,15 @@ it('retains manual toggles across service navigation and resets on home visits a
   chooseService('Agent Manager');
   expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
   fireEvent.click(screen.getByRole('link', { name: 'CMA home' }));
-  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
-  expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
+  await waitFor(() => expect(window.location.pathname).toBe('/agent-manager'));
+  expect(screen.queryByRole('button', { name: 'Get Started' })).toBeNull();
 
   window.history.back();
   await waitFor(() => expect(window.location.pathname).toBe('/agent-manager'));
   expect(await screen.findByRole('button', { name: 'Hide navigation' })).toBeVisible();
   window.history.forward();
-  await waitFor(() => expect(window.location.pathname).toBe('/'));
-  await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
+  await waitFor(() => expect(window.location.pathname).toBe('/agent-manager'));
+  expect(screen.queryByRole('button', { name: 'Get Started' })).toBeNull();
 });
 
 it('keeps narrow-screen automatic collapse when entering a service from home', async () => {
@@ -89,8 +87,6 @@ it('keeps narrow-screen automatic collapse when entering a service from home', a
     height: 844,
   } as DOMRect);
   show();
-  await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(await screen.findByRole('button', { name: 'Show navigation' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Show navigation' }));
