@@ -29,7 +29,7 @@ function response(body: unknown, status = 200) {
   return fetcher;
 }
 describe('Personal documents public transport', () => {
-  it('carries share authority only in its dedicated header with no referrer or cache', async () => {
+  it('keeps share authority in its header and refuses redirect forwarding', async () => {
     const fetcher = response({ ...view, access: 'read' });
     const token = newDocumentShareToken();
     expect(token).toMatch(/^[a-f0-9]{64}$/);
@@ -40,6 +40,7 @@ describe('Personal documents public transport', () => {
     expect(options).toMatchObject({
       cache: 'no-store',
       credentials: 'same-origin',
+      redirect: 'error',
       referrerPolicy: 'no-referrer',
       headers: { 'X-CMA-Document-Share-Token': token },
     });
@@ -107,6 +108,8 @@ describe('Personal documents public transport', () => {
       `/api/v1/documents/${id}/comments`,
       expect.objectContaining({
         method: 'POST',
+        redirect: 'error',
+        headers: expect.objectContaining({ 'X-CMA-Document-Share-Token': 'd'.repeat(64) }),
         body: JSON.stringify({ body: 'Review', document_revision: 2 }),
       }),
     );
