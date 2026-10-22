@@ -90,13 +90,11 @@ fn share_token(headers: &HeaderMap) -> Result<Option<&str>, DocumentProblem> {
     }
     Ok(value)
 }
-fn json_body<T>(body: Result<RequestBody<T>, super::BodyProblem>) -> Result<T, Response> {
+fn json_body<T>(body: Result<RequestBody<T>, super::BodyProblem>) -> Result<T, super::BodyProblem> {
     body.and_then(|b| b.into_parts().0)
-        .map_err(IntoResponse::into_response)
 }
-fn required_key(key: IdempotencyKey) -> Result<String, Response> {
+fn required_key(key: IdempotencyKey) -> Result<String, super::idempotency::IdempotencyProblem> {
     key.into_required_value()
-        .map_err(IntoResponse::into_response)
 }
 fn result<T: serde::Serialize>(value: Result<T, DocumentError>, status: StatusCode) -> Response {
     match value {
