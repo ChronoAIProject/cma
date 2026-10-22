@@ -918,10 +918,19 @@ The owner's message is right-aligned on the existing accent wash, capped at the
 smaller of 525px and its available message column. The Agent message is unboxed at 16/28.
 Use the existing markdown parser and theme tokens. Tables and code scroll within
 their own bounds; long words and links cannot widen the reading axis.
+Inline code is quiet, because replies name many identifiers: the code font at
+0.875em, 1px × 4px padding, radius 4 on the `markdown-inline-code` ground, with no
+border. Code blocks keep their framed ground.
 
-Every user or Agent message has a 32px circular avatar beside its reading column,
+A run of consecutive messages from one author shows its identity once. The first
+message of a run has a 32px circular avatar beside its reading column,
 separated by 12px, with a 1px border-l2 edge. User avatars sit at the right; Agent avatars at the left. The
-name uses caption ink at 12/18, weight 600, with 4px before the content. The Agent
+name uses caption ink at 12/18, weight 600, with 4px before the content. A message
+whose previous message has the same role continues the run: it keeps the empty
+32px avatar column, so its text stays aligned, and draws neither avatar nor name.
+Tool calls, plans, reasoning, approvals and notices between them do not break a
+run, because they are the same author at work. The message keeps its accessible
+name either way. The Agent
 name is always **Chrono Agent**, and its avatar is the CMA mark (§21) drawn inline as SVG in
 `brand-primary` ink on a `bg-layer-2` circle, so it follows the appearance with no raster ground
 of its own; message rows do not start WebGL scenes. Personal user
@@ -978,9 +987,11 @@ turn token reporting retain their existing sources and do not reset on relocatio
 On narrow screens the token line wraps within the message content width so actual
 counts and explicitly labelled estimates remain readable.
 
-Each settled tool call is a neutral, 8px-radius bordered row in the message
-timeline, inserted at its completion position and retained on reload, named
-**Tool call: <title>**. Use 12px padding and the existing 16px entry rhythm. The
+Tool activity is one quiet line in the timeline, not a box: no border, ground
+or radius. It reads in 13/20 secondary ink, so the replies around it lead.
+Each settled tool call is a row inserted at its completion position and retained
+on reload, named **Tool call: <title>**. Rows use 8px vertical padding; a tool
+line is 28px tall with 12px after it, and a message leaves 8px below its footer. The
 row leads with a state dot and pairs it with a plain word: **In progress** (the
 pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
 (error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
@@ -993,10 +1004,13 @@ activity never invents missing arguments or results: the recorded detail sits
 behind a bounded **Details** disclosure only when the contract supplies it.
 
 Two or more consecutive tool calls, with no message, approval, plan or notice
-between them, form one group in the same bordered container. Its header is a
-real button with `aria-expanded`, reading **<n> tool calls** and a one-line
-summary of the latest call (its title and word). A collapsed group hides its rows;
-an expanded one lists every row with the same dot, word and disclosure. A group
+between them, form one group. Its header is a text button with `aria-expanded`:
+a chevron and **<n> tool calls**. While a call in the group runs, the header adds
+**· Running <title>**, truncated with an ellipsis; when calls failed it adds
+**· <n> failed** in error ink. A settled group repeats no command line. The
+header has the hover ground only on hover. A collapsed group hides its rows; an
+expanded one lists every row with the same dot, word and disclosure, indented
+past the chevron against a 1px border-l1 rule on its left. A group
 containing a failure starts expanded, and stays so until the reader collapses it;
 otherwise it starts collapsed. A single call stays a single row. Live and
 replayed activity reconcile by call identity without duplicate rows or
@@ -1351,10 +1365,12 @@ runtime authority, or internal checkpoint writer identifier is displayed.
 
 **Service access** in the drawer is read-only. The NyxID key belongs to the
 Sandbox, not to one Agent, so it is edited in one place, the Sandbox page's
-Access tab (§17). The drawer lists the effective services as catalog-name links,
-with chrono-llm-public and ornn-api marked Required, and ends with **Manage on
-Sandbox**, a real link to `/sandboxes/<id>?tab=access`. **Sandbox operation
-progress** opens the same page's Activity tab.
+Access tab (§17). The drawer lists the effective services as plain rows of
+catalog names, with chrono-llm-public and ornn-api followed by the word Required
+in the tertiary label colour, and ends with **Manage on Sandbox**, a real link to
+`/sandboxes/<id>?tab=access`. **Sandbox operation progress** opens the same
+page's Activity tab. How the panel is laid out is specified under Agent details
+panel below.
 
 Usage and context are read from the composer's context ring and its tooltip, with
 tabular figures. Missing usage is not zero. Without a reported ceiling, the tooltip
@@ -1479,9 +1495,11 @@ frame. The cumulative footer uses the same observed-count animation. A new turn
 resets only its own counters.
 
 Each completed turn keeps its reported input/output counts below its final Agent
-reply, in the existing 12/18 caption style. Earlier intermediate replies do not
+reply, in the existing 12/18 caption style, revealed with the message footer
+(hover, keyboard focus, or always on touch devices). Earlier intermediate replies do not
 repeat the same turn total. Full durable replay restores every available turn's
-counts; a turn without a report explicitly says input/output unavailable.
+counts. A completed turn without a report draws no line at all: absence is still
+never shown as zero, and the composer's context ring holds the totals.
 
 Routine stream reconnection is quiet for 2.5 seconds; a continuing failure then
 shows the existing connection status. If live fragments need refreshing, show
@@ -2999,7 +3017,7 @@ The permission picker reads **Guarded** and **Autonomous**, in the compact
 composer and the full settings alike; the wire values `guarded` and `autonomous`
 are unchanged. No other name for the unrestricted mode appears in the UI.
 
-Each normal message always shows its recorded timestamp as a semantic time in
+Each normal message carries its recorded timestamp as a semantic time in
 Asia/Singapore, with an explicit SGT suffix, using existing 12/18 caption text
 and tabular numerals. Never substitute render time for a missing historical
 timestamp: state that its time is unavailable until an authoritative timestamp
@@ -3007,10 +3025,13 @@ arrives. An outgoing local message uses its actual local submission time; live
 messages use the source event timestamp. The durable message timestamp replaces
 that provisional observation when the recorded message arrives.
 
-Reserve a compact footer for Copy content, Upvote and Downvote using the existing
-copy/like/dislike glyphs and shared 32px Buttons. Fade these controls in on message
+Reserve a compact footer for the timestamp and Copy content, Upvote and Downvote, using the existing
+copy/like/dislike glyphs on 28px keys (44px on a coarse pointer), because the footer
+is reserved under every message and its height sets the conversation's rhythm. At rest a message shows only its
+content. Fade the timestamp and these controls in on message
 hover or keyboard focus over the shared fast duration, with no movement or layout
-shift; keep them visible on touch devices. A selected vote stays visible and uses
+shift; keep them visible on touch devices. A copy, vote or feedback status stays
+visible while it is shown. A selected vote stays visible and uses
 the existing business-primary ink and a filled glyph. Copy reports a brief local
 confirmation and failures remain actionable. Votes toggle off or switch sides,
 persist for the authenticated owner and exact recorded message, and never create
@@ -3124,4 +3145,46 @@ and stream without rereading the transcript; actual stream disconnection repairs
 the durable view before reconnecting.
 
 | 2026-10-22 | Flatten Agents navigation, fix global New agent to a new Sandbox, select Operations owners by name, lock the landing sidebar, apply text preferences to conversations, limit voting to Agent replies, center the green favicon, and decouple input/latest-message display from historical activity loading. |
+
+
+### Agent details panel (2026-10-22)
+
+The Agent details panel is a calm side panel, not a settings form. Below its
+header it scrolls as one region with a 16px inset; no list, catalogue or section
+inside it has a scroll area of its own. Sections are separated by 24px of space,
+never by hairlines, and appear in the order Files, Sharing, Service access and
+Skills, followed by the Sandbox operation progress action.
+
+Section headings are sentence case at 13px, weight 500, in
+`--dsw-alias-label-primary`, without uppercase or the code face. A section's
+explanatory sentence is 13px in `--dsw-alias-label-secondary`; code-face values
+such as `/home/` stay code. Every text action in the panel (Browse files, Manage
+share links, Manage on Sandbox, Sandbox operation progress, Refresh skill status,
+Retry installation, Retry Ornn catalog and More Ornn skills) uses one quiet-link
+style: 13px text in `--dsw-alias-label-secondary` with no fill, border, icon or
+indent, starting flush with the text above it, underlined on hover, with the
+shared `--focus-ring` on keyboard focus and the existing disabled treatment. Each
+keeps its accessible name and role: navigation stays a link, commands stay
+buttons.
+
+Service access lists each effective service as a plain row: its catalog name in
+the primary label colour, underlined on hover where it links, and, for
+chrono-llm-public and ornn-api, the word Required after it in
+`--dsw-alias-label-tertiary` rather than a bordered badge. Manage on Sandbox
+remains the single action.
+
+Skills lists the Agent's installed skills as plain rows: the name in the primary
+label colour, then its version and installation state (Installed, Installing…
+or Installation failed) in the tertiary colour, with an installation error on its
+own line beneath. Pending, unavailable and busy explanations and the install
+error with Refresh skill status remain directly under the list. The available
+Ornn catalogue sits behind a native **Add skills** disclosure, collapsed by
+default. Opening it reveals the search field, the catalogue rows with their
+version picker and Install button, the catalogue loading, empty and error
+states, Retry Ornn catalog and More Ornn skills. Catalogue rows grow with the
+panel and are separated by 12px of space, without a bordered box. Installing,
+version choice, same-key retry and lifecycle gating are unchanged.
+
+| 2026-10-22 | Calmed the Agent details panel. Section headings became sentence case at 13px weight 500 in the primary label colour (Files, Sharing, Service access, Skills; "Session sharing" became Sharing), sections are separated by 24px of space instead of hairlines, and every text action shares one quiet-link style flush with the text above it. Required services read as tertiary text instead of bordered badges. Installed skills are plain name and version rows, and the Ornn catalogue moved behind a collapsed Add skills disclosure that holds its error and retry states, so the panel scrolls as one region without nested scroll areas. |
+| 2026-10-22 | Quiet the Agent conversation so reply text leads: identity once per run of one author's messages, the timestamp revealed with the message actions on hover or focus (always on touch), no usage line for a turn without a report, lighter inline code, and tool calls as frameless lines whose group header reads "<n> tool calls" plus only the running call or failure count. |
 | 2026-10-22 | Quiet the Agent Manager sidebar: New agent, Search and Triggers become plain 32px rows with no fill or border at rest; Agents \| Sandboxes becomes text tabs sharing one row with an icon-only Filter key that carries an accent dot, and a summary line naming only non-default filters appears only when one is applied; personal Agent rows become one 32px line with a state dot only for Starting, Working, Needs approval and Needs attention, the status word kept in the accessible name, and age and ⋯ shown only on hover, focus or the current row. |

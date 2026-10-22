@@ -77,9 +77,17 @@ function AgentMark() {
   );
 }
 
-export function MessageAvatar({ identity }: { readonly identity: Identity }) {
+export function MessageAvatar({
+  identity,
+  continued = false,
+}: {
+  readonly identity: Identity;
+  /** Keeps the avatar column so a continuation's text aligns with the run's first message. */
+  readonly continued?: boolean;
+}) {
   const [failed, setFailed] = useState<string>();
   const source = identity.avatarUrl;
+  if (continued) return <span className="message__avatar" data-continued="" aria-hidden="true" />;
   if (identity.agent === true)
     return (
       <span className="message__avatar" data-agent="" aria-hidden="true">
