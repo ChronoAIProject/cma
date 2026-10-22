@@ -226,10 +226,7 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
       />,
     );
   const first = draw();
-  expect(await screen.findByRole('radio', { name: 'Atlas / chrono-bot' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
   expect(screen.getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
   expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
   const user = await review();
@@ -287,10 +284,7 @@ it('isolates a global creation from contextual creation and rejects a mismatched
   expect(screen.getByRole('alert')).toHaveTextContent('saved Agent request could not be read');
   expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();
-  expect(await screen.findByRole('radio', { name: 'Atlas / chrono-bot' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
 });
 
 it('uses server defaults without image or profile selectors and allows an empty repository', async () => {
@@ -303,10 +297,10 @@ it('uses server defaults without image or profile selectors and allows an empty 
       readAgentLifecycle: async () => running,
     }),
   );
-  expect(screen.getByRole('radio', { name: 'New Sandbox' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(
+    screen.getByText('Start an Agent in a new Sandbox with an empty workspace.'),
+  ).toBeInTheDocument();
   expect(screen.getAllByRole('textbox')).toHaveLength(1);
   expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   for (const label of [
@@ -326,8 +320,7 @@ it('uses server defaults without image or profile selectors and allows an empty 
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   await waitFor(() => expect(create).toHaveBeenCalledOnce());
   expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent' });
-  // The location choice reads the owner's Sandboxes; creation itself sends none.
-  expect(listSandboxes).toHaveBeenCalled();
+  expect(listSandboxes).not.toHaveBeenCalled();
 });
 
 it('retains the contextual Sandbox and keeps its recovery separate from global creation', async () => {
@@ -380,20 +373,11 @@ it('keeps global new-Sandbox creation unavailable without its capability', async
     />,
   );
   expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
-  const sandbox = screen.getByRole('radio', { name: 'New Sandbox' });
-  expect(sandbox).toHaveAttribute('aria-disabled', 'true');
-  expect(sandbox).toHaveAttribute('aria-checked', 'false');
-  expect(sandbox).toHaveAccessibleDescription('You don’t have permission to create a Sandbox.');
+  expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  expect(screen.getByText('You don’t have permission to create a Sandbox.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
-  const user = userEvent.setup();
-  await user.click(sandbox);
-  expect(sandbox).toHaveAttribute('aria-checked', 'false');
-  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   expect(create).not.toHaveBeenCalled();
-  await user.click(await screen.findByRole('radio', { name: 'New workspace in Atlas' }));
-  await user.click(screen.getByRole('button', { name: 'Create agent' }));
-  await waitFor(() => expect(create).toHaveBeenCalledOnce());
-  expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent', sandbox_id: 'sbx_1' });
 });
 
 it('validates the repository when the field is left, never while typing', async () => {

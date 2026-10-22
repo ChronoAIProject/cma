@@ -184,32 +184,15 @@
   }
 }
 
-/* Agents view: one group per Sandbox. Workspace rows belong in Sandboxes. */
-.agent-group + .agent-group {
-  margin-top: 8px;
+/* Agent cards do not reserve hierarchy indentation or disclosure space. */
+.agent-navigation .tree-row {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
-.agent-group__heading {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 0.75rem;
-  line-height: 1rem;
+
+.agent-navigation .tree-row__disclosure {
+  display: none;
 }
-.agent-group__heading svg {
-  flex: none;
-}
-.agent-group__name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
 .resource-tree__empty {
   padding: 16px 8px;
   color: var(--dsw-alias-label-tertiary);
