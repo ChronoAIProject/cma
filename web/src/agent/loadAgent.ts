@@ -22,6 +22,8 @@ export interface ReadyAgent {
   readonly sandboxEvents?: readonly SandboxEvent[];
   readonly historyLoading?: boolean;
   readonly historyUnavailable?: boolean;
+  /** A complete transcript provides the durable baseline for background live replay. */
+  readonly replayReady?: boolean;
 }
 
 /** IDs from the current exact personal access read; projections are still read afresh. */
@@ -95,6 +97,7 @@ export async function loadAgent(
       conversation: conversationFromTranscript(transcript),
       historyLoading: true,
       historyUnavailable: false,
+      replayReady: true,
     });
     return { ...metadata, transcript };
   });
@@ -158,5 +161,6 @@ export async function loadAgent(
     durableEvents,
     historyLoading: false,
     historyUnavailable,
+    replayReady: true,
   };
 }
