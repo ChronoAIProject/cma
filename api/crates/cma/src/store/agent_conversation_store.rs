@@ -144,6 +144,13 @@ async fn apply_mutation(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    // Command reservation also writes this Agent, so this transaction cannot
+    // miss a concurrently admitted message and then take its idle boundary.
+    if mutation.is_managed_context_admission() && store.agent_commands.find_one(doc! {
+        "agent_id": mutation.agent.id.as_str(), "status": {"$nin": ["completed", "failed", "cancelled"]}
+    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some() {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     super::trigger_first_messages::require_mutation(store, &current, mutation, session)
         .await
         .map_err(ApplyError::Domain)?;

@@ -1,9 +1,11 @@
 use layer3_adapter::ConversationSendOutcome;
+use std::sync::Arc;
 
 use crate::now_rfc3339;
 
 use super::agent_operation_dispatch::{operation_log, PreWriteRollback, PreparedAgentOperation};
 use super::agent_operation_service::{operation_store_error, MAX_OPERATION_COMMIT_RETRIES};
+use super::agent_settings_validation::SettingsInputGuard;
 use super::store::{AgentConversationMutation, AgentStore, SandboxMutationGuard};
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationError,
@@ -31,20 +33,29 @@ impl AgentOperationService {
                 Ok(()) => {
                     let outcome = if matches!(
                         prepared.input,
+                        layer3_adapter::ConversationInput::RefreshContext { .. }
+                    ) {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                self.managed_context_input_guard(&prepared),
+                            )
+                            .await
+                    } else if matches!(
+                        prepared.input,
                         layer3_adapter::ConversationInput::Configure { .. }
                     ) {
                         connection
                             .input
                             .send_guarded(
                                 prepared.input.clone(),
-                                std::sync::Arc::new(
-                                    super::agent_settings_validation::SettingsInputGuard {
-                                        authority: self.settings_authority.clone(),
-                                        store: self.store.clone(),
-                                        target: prepared.target.clone(),
-                                        sequence: prepared.operation_sequence,
-                                    },
-                                ),
+                                Arc::new(SettingsInputGuard {
+                                    authority: self.settings_authority.clone(),
+                                    store: self.store.clone(),
+                                    target: prepared.target.clone(),
+                                    sequence: prepared.operation_sequence,
+                                }),
                             )
                             .await
                     } else if let Some(authority) = &self.execution_authority {
@@ -89,6 +100,7 @@ impl AgentOperationService {
                         ) if matches!(
                             prepared.input,
                             layer3_adapter::ConversationInput::Configure { .. }
+                                | layer3_adapter::ConversationInput::RefreshContext { .. }
                         ) =>
                         {
                             SendClassification::Rejected(detail)
@@ -177,12 +189,24 @@ impl AgentOperationService {
                     let result = if matches!(
                         next_record.intent,
                         super::AgentOperationIntent::UpdateSettings { .. }
+                            | super::AgentOperationIntent::RefreshContext { .. }
                     ) {
                         next_record.mark_execution_observed(at.clone())
                     } else {
                         next_record.mark_write_confirmed(at.clone())
                     };
                     result.map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+                    if let super::AgentOperationIntent::RefreshContext { revision, .. } =
+                        &next_record.intent
+                    {
+                        next.conversation.managed_guidance_revision = *revision;
+                        next.conversation.settings =
+                            super::agent_managed_context::confirmed_settings(
+                                &current,
+                                &next_record.intent,
+                            )
+                            .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+                    }
                 }
                 SendClassification::Rejected(detail) | SendClassification::PreWrite(detail) => {
                     next_record

@@ -41,6 +41,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub managed_documents_enabled: bool,
     pub holder: String,
     pub deployment_id: String,
     pub lease_duration: Duration,
@@ -53,6 +54,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            managed_documents_enabled: false,
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             lease_duration: DEFAULT_LEASE,
@@ -61,6 +63,11 @@ impl AgentWorkerConfig {
             sign_in_timeout: DEFAULT_SIGN_IN_TIMEOUT,
             parent_readiness: None,
         }
+    }
+
+    pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {
+        self.managed_documents_enabled = enabled;
+        self
     }
 
     pub(crate) fn with_parent_readiness(mut self, readiness: Arc<tokio::sync::Notify>) -> Self {
