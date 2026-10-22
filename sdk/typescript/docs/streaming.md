@@ -394,6 +394,19 @@ Typed `ApiError` codes include `invalid_agent_cursor`, `agent_cursor_beyond_head
 rejects observation without acknowledging a cursor. Changed incarnation requires
 rebuilding normalized history for the new resource.
 
+### Current Agent event head
+
+`agentEventsV2.head(agentId, { signal })` reads a constant-size, authorized live
+baseline independently of historical snapshot pagination. It returns
+`through_cursor`, `incarnation` and `active_turn`: either `null` or the exact
+durable `turn_started` item, including any verified `response_binding`. Start a
+separate live tail after this cursor while historical pages load; buffer and
+reconcile later events by durable sequence when merging history. The head is not
+an acknowledgement that earlier history has been applied. A turn may finish or
+a new turn may start after capture; those events arrive on the tail normally.
+The SDK validates Agent identity, incarnation, cursor bounds and the active
+turn's exact sequence and response binding before returning the baseline.
+
 ### Edit pending input in place
 
 The public queue lists every editable human/API message in its original admission
