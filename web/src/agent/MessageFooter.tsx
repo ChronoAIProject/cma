@@ -35,12 +35,14 @@ export function MessageFooter({
   at,
   content,
   committed,
+  canVote,
   feedback,
 }: {
   readonly id: string;
   readonly at?: string;
   readonly content: string;
   readonly committed: boolean;
+  readonly canVote: boolean;
   readonly feedback?: MessageFeedbackControls;
 }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
@@ -49,7 +51,7 @@ export function MessageFooter({
     const timer = setTimeout(() => setCopy(undefined), 2500);
     return () => clearTimeout(timer);
   }, [copy]);
-  const row = feedback?.rows[id];
+  const row = canVote ? feedback?.rows[id] : undefined;
   const vote = row?.vote ?? null;
   const unavailable = !committed
     ? 'Available when this message is recorded.'
@@ -85,24 +87,28 @@ export function MessageFooter({
               })();
             }}
           />
-          <Button
-            size="sm"
-            icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
-            aria-label="Upvote message"
-            aria-pressed={vote === 'up'}
-            disabled={unavailable !== undefined}
-            title={unavailable ?? (vote === 'up' ? 'Remove upvote' : 'Upvote message')}
-            onClick={() => feedback?.setVote(id, vote === 'up' ? null : 'up')}
-          />
-          <Button
-            size="sm"
-            icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
-            aria-label="Downvote message"
-            aria-pressed={vote === 'down'}
-            disabled={unavailable !== undefined}
-            title={unavailable ?? (vote === 'down' ? 'Remove downvote' : 'Downvote message')}
-            onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
-          />
+          {canVote ? (
+            <>
+              <Button
+                size="sm"
+                icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
+                aria-label="Upvote message"
+                aria-pressed={vote === 'up'}
+                disabled={unavailable !== undefined}
+                title={unavailable ?? (vote === 'up' ? 'Remove upvote' : 'Upvote message')}
+                onClick={() => feedback?.setVote(id, vote === 'up' ? null : 'up')}
+              />
+              <Button
+                size="sm"
+                icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
+                aria-label="Downvote message"
+                aria-pressed={vote === 'down'}
+                disabled={unavailable !== undefined}
+                title={unavailable ?? (vote === 'down' ? 'Remove downvote' : 'Downvote message')}
+                onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
+              />
+            </>
+          ) : null}
         </div>
         {copy === 'copied' ? (
           <span className="message-footer__status" role="status">

@@ -30,7 +30,7 @@ export interface SidebarNewAgent {
 
 interface SidebarProps {
   readonly collapsed: boolean;
-  readonly onToggleCollapsed: () => void;
+  readonly onToggleCollapsed?: () => void;
   readonly account: ReactNode;
   readonly navigation?: ReactNode;
   readonly newAgent?: SidebarNewAgent;
@@ -84,15 +84,17 @@ export function Sidebar({
           <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
         </a>
         <ServiceMenu route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
-        <button
-          type="button"
-          className="sidebar__toggle"
-          aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
-          aria-expanded={!collapsed}
-          onClick={onToggleCollapsed}
-        >
-          <IconPanelLeftOutline16 />
-        </button>
+        {onToggleCollapsed === undefined ? null : (
+          <button
+            type="button"
+            className="sidebar__toggle"
+            aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+            aria-expanded={!collapsed}
+            onClick={onToggleCollapsed}
+          >
+            <IconPanelLeftOutline16 />
+          </button>
+        )}
       </div>
       {newAgent === undefined && onSearch === undefined && links.length === 0 ? null : (
         <div className="sidebar__actions">
