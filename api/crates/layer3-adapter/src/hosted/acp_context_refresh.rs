@@ -25,7 +25,7 @@ impl Bridge {
             .ok()
     }
 
-    async fn context_busy(&self) -> bool {
+    pub(super) async fn context_busy(&self) -> bool {
         self.owned_prompt_waiters.load(Ordering::SeqCst) != 0
             || self.orphaned_prompt_response.load(Ordering::SeqCst)
             || !self.blocked.lock().await.is_empty()

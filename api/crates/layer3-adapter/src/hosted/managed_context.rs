@@ -100,6 +100,32 @@ impl HostedContextRefresh {
         let status = self.status().await?;
         Ok(self.receipt(&status, session, sequence))
     }
+
+    /// Confirm the failed instruction operation persisted exactly its desired
+    /// bytes in this runtime generation before reloading the retained thread.
+    pub(super) async fn confirm_instructions(&self, expected: &str) -> crate::Result<()> {
+        let status = self.status().await?;
+        let ResponseFrame::ReadAgentFile(file) = self
+            .exchange(RequestFrame::ReadAgentFile(crate::AgentFileReadRequest {
+                owner_access: true,
+                protected_paths: Vec::new(),
+                sandbox_id: status.sandbox_id,
+                runtime_generation: status.generation,
+                boot_id: status.boot_id,
+                path: self.0.path.clone(),
+                max_bytes: 32 * 1024,
+            }))
+            .await?
+        else {
+            return Err(AdapterError::unexpected_reply("retained instructions read"));
+        };
+        if file.path != self.0.path || file.content()? != expected.as_bytes() {
+            return Err(AdapterError::OperationIdentityConflict(
+                "retained instructions do not match the pending settings operation".into(),
+            ));
+        }
+        Ok(())
+    }
     fn receipt(&self, status: &RuntimeStatus, session: &str, sequence: u64) -> String {
         let exact = serde_json::json!([
             "managed-context-v1",

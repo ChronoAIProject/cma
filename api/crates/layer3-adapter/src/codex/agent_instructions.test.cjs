@@ -1,12 +1,13 @@
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { mkdtempSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
-const { agentInstructions } = require("./agent_instructions.cjs");
+const { agentInstructions, method, recording } = require("./agent_instructions.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
 async function modelFixture() {
   const calls = [];
@@ -82,7 +83,10 @@ function config(directory, provider, origin) {
 
 test("instruction patch refuses unreviewed source", () => { assert.throws(() => agentInstructions("unknown"), /Unexpected ACP source/); });
 
-test("pinned native instructions change at idle without replacing the thread, process, files or history", { timeout: 120000 }, async () => {
+for (const legacy of [false, true]) test(
+  legacy ? "legacy instruction failure recovers through exact session load without close or new conversation"
+    : "pinned native instructions change at idle without replacing the thread, process, files or history",
+  { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
   assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
   const directory = mkdtempSync(join(tmpdir(), "cma-agent-instructions-test-"));
@@ -91,7 +95,25 @@ test("pinned native instructions change at idle without replacing the thread, pr
   config(home, "cma_test", fixture.origin);
   writeFileSync(join(directory, "dirty-work.txt"), "preserved user work");
   writeFileSync(join(home,"AGENTS.md"), "OLD_OWNER_INSTRUCTION_MARKER: be precise.");
-  const bridge = processRpc(process.execPath, [process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath], {
+  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
+  if (legacy) {
+    const installed = readFileSync(program, "utf8");
+    const oldMethod = method.replace(`    const mcpServers = session.cmaInstructionMcpServers;
+    if (!Array.isArray(mcpServers))
+      throw RequestError.invalidRequest("Reload the Agent session before updating instructions");
+`, "").replace("additionalDirectories: session.additionalDirectories, mcpServers\n",
+      "additionalDirectories: session.additionalDirectories, mcpServers: session.sessionMcpServers\n");
+    const oldRecording = recording.replace(`    // ACP's sessionMcpServers contains names for display, not resume definitions.
+    sessionState.cmaInstructionMcpServers = structuredClone(requestedMcpServers);
+`, "");
+    const source = installed.replace(method, oldMethod).replaceAll(recording, oldRecording);
+    assert.equal(createHash("sha256").update(source).digest("hex"),
+      "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
+      "Recovery regression must use the exact previously deployed bridge bytes");
+    program = join(directory, "legacy-bridge.mjs");
+    writeFileSync(program, source);
+  }
+  const bridge = processRpc(process.execPath, [program], {
     cwd: directory, env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: binary },
   });
   const mcpServers = [{ type: "http", name: "cma_access", url: fixture.origin + "/mcp",
@@ -109,7 +131,26 @@ test("pinned native instructions change at idle without replacing the thread, pr
     assert(before.includes("OLD_OWNER_INSTRUCTION_MARKER"));
     assert(before.includes("instructions_probe"), "initial MCP definition is usable");
     assert.deepEqual(await bridge.call("cma/agent-instructions",{action:"support"}), {supported:true,version:1});
-    const apply = systemPrompt => bridge.call("cma/agent-instructions", { action:"apply", sessionId:session.sessionId, systemPrompt });
+    const apply = async systemPrompt => {
+      const request = { action:"apply", sessionId:session.sessionId, systemPrompt };
+      try { return await bridge.call("cma/agent-instructions", request); }
+      catch (error) {
+        if (!legacy || error.actual?.code !== -32603 ||
+            error.actual?.data?.details !== "Cannot read properties of undefined (reading 'replace')") throw error;
+        assert.equal(readFileSync(join(home,"AGENTS.md"), "utf8"), systemPrompt);
+        // Existing pending operations reconnect to an already-failed bridge.
+        // A repeated original apply must still reach the same narrow recovery.
+        await assert.rejects(bridge.call("cma/agent-instructions", request), retry =>
+          retry.actual?.code === -32603 &&
+          retry.actual?.data?.details === "Cannot read properties of undefined (reading 'replace')");
+        const inventory = await bridge.call("session/list", {});
+        const native = inventory.sessions.find(value => value.sessionId === session.sessionId);
+        assert(native);
+        await bridge.call("session/load", {sessionId:session.sessionId,cwd:native.cwd,
+          ...(native.additionalDirectories ? {additionalDirectories:native.additionalDirectories} : {}), mcpServers});
+        return await bridge.call("cma/agent-instructions", request);
+      }
+    };
     const updated = "NEW_OWNER_INSTRUCTION_MARKER: be concise.";
     assert.equal((await apply(updated)).sessionId, session.sessionId);
     const after = await prompt();
