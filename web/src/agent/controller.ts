@@ -8,10 +8,9 @@ import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
 import { currentAgentStatus } from './status';
 import { useSandboxInput } from './sandboxInput';
-import { HydrationEvents } from './mergeHydration';
+import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
 import { reopenAgent, refreshConversation } from './reopenAgent';
-import { foldV2Frame } from './transport/projection';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
@@ -89,7 +88,7 @@ export function useAgentController(
   const actionKindRef = useRef<AgentCommand | undefined>(undefined);
   const replayAbortRef = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
-  const hydration = useRef(new HydrationEvents());
+  const hydration = useRef(new ConversationHydration());
   const onIdentityChange = useCallback(
     (error: unknown) => {
       if (!isIdentityChanged(error)) return false;
@@ -137,6 +136,7 @@ export function useAgentController(
         const conversation =
           preserveEmpty &&
           current.status === 'ready' &&
+          ready.conversation.agentCursor === undefined &&
           ready.conversation.cursor === 0 &&
           ready.conversation.messages.length === 0
             ? current.conversation
@@ -270,7 +270,9 @@ export function useAgentController(
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
-    !historyIncomplete &&
+    (v2 === undefined
+      ? state.replayReady === true || !historyIncomplete
+      : state.conversation.agentCursor !== undefined) &&
     (v2 !== undefined || (pending !== 'send' && pending !== 'approval'));
 
   const provisioning =
@@ -350,7 +352,12 @@ export function useAgentController(
               const current = stateRef.current;
               if (current.status !== 'ready' || current.detail.id !== agentId)
                 throw new Error('The Agent view no longer accepts live updates.');
-              const conversation = foldV2Frame(current.conversation, frame, agentId);
+              const conversation = hydration.current.applyV2(
+                current.conversation,
+                frame,
+                agentId,
+                current.historyLoading === true || current.historyUnavailable === true,
+              );
               liveCursor.current = conversation.cursor;
               setState({ ...current, conversation });
             },

@@ -90,9 +90,9 @@ it('publishes the latest authorized transcript while hydrating rich activity sil
       client.interruptAgent,
       client.stopAgent,
       client.deleteAgent,
-      client.replayAgent,
     ])
       expect(command).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 8 }));
     expect(client.readAgent).toHaveBeenCalledTimes(1);
     expect(readAgentEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 4]);
     await act(async () => remaining.resolve({ items: events.slice(4) }));
@@ -151,7 +151,7 @@ it.each([401, 403])(
         .fn()
         .mockResolvedValueOnce({ items: events.slice(0, 3), next: 3 })
         .mockReturnValueOnce(remaining.promise),
-      replayAgent: vi.fn(),
+      replayAgent: vi.fn(() => new Promise<void>(() => undefined)),
     });
     const { result } = renderHook(() => useAgentController(client, 'agt_1'));
     await waitFor(() =>
@@ -159,7 +159,8 @@ it.each([401, 403])(
     );
     await act(async () => remaining.reject(new ApiError(status, 'Denied')));
     expect(result.current.state).toEqual({ status: 'error', message: 'Denied' });
-    expect(client.replayAgent).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledOnce();
+    expect(vi.mocked(client.replayAgent).mock.calls[0]![1].signal?.aborted).toBe(true);
   },
 );
 
@@ -203,7 +204,7 @@ it('changes a transient later-page failure to the existing incomplete-history re
       .fn()
       .mockResolvedValueOnce({ items: events.slice(0, 3), next: 3 })
       .mockReturnValueOnce(remaining.promise),
-    replayAgent: vi.fn(),
+    replayAgent: vi.fn(() => new Promise<void>(() => undefined)),
   });
   const { result } = renderHook(() => useAgentController(client, 'agt_1'));
   await waitFor(() =>
@@ -216,7 +217,8 @@ it('changes a transient later-page failure to the existing incomplete-history re
     historyUnavailable: true,
     conversation: { toolCalls: [], activeRunId: undefined },
   });
-  expect(client.replayAgent).not.toHaveBeenCalled();
+  expect(client.replayAgent).toHaveBeenCalledOnce();
+  expect(vi.mocked(client.replayAgent).mock.calls[0]![1].signal?.aborted).toBe(false);
 });
 
 it('does not publish progress for a malformed first page', async () => {
