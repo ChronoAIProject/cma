@@ -189,6 +189,8 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         ]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
             observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),

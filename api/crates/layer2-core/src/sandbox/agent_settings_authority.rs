@@ -21,9 +21,10 @@ pub struct AgentSettingsAuthorization {
 /// Consumed by the conversation store in the same transaction as the settings
 /// intent. A retained HTTP response or old share never creates this proof.
 pub struct AgentSettingsFence {
-    authorized: AuthorizedResource,
+    authorized: Arc<AuthorizedResource>,
     target: ResourceTarget,
     settings: AgentSettings,
+    preferences: Option<super::AgentPreferencesUpdate>,
     deadline: tokio::time::Instant,
 }
 
@@ -43,12 +44,36 @@ impl ResourceAccessService {
         id: &AgentId,
         settings: &AgentSettings,
     ) -> Result<AgentSettingsAuthorization, ResourceAccessError> {
+        self.authorize_agent_configuration(context, credential, id, Some(settings), None)
+            .await
+    }
+
+    pub async fn authorize_agent_preferences(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentId,
+        preferences: &super::AgentPreferencesUpdate,
+    ) -> Result<AgentSettingsAuthorization, ResourceAccessError> {
+        self.authorize_agent_configuration(context, credential, id, None, Some(preferences))
+            .await
+    }
+
+    async fn authorize_agent_configuration(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentId,
+        settings: Option<&AgentSettings>,
+        preferences: Option<&super::AgentPreferencesUpdate>,
+    ) -> Result<AgentSettingsAuthorization, ResourceAccessError> {
         if !context.validate_principal()
             || !context
                 .caller
                 .authorization
                 .allows(Capability::UseOwnSandboxes)
-            || settings.validate().is_err()
+            || settings.is_some_and(|value| value.validate().is_err())
+            || preferences.is_some_and(|value| value.validate().is_err())
         {
             return Err(AccessError::Forbidden.into());
         }
@@ -73,10 +98,25 @@ impl ResourceAccessService {
             .decision
             .revalidation_deadline(ResourceCapability::OperateAgent)
             .map_or(deadline, |expiry| deadline.min(expiry));
+        let agent = authorized
+            .snapshot
+            .lineage
+            .agent
+            .as_ref()
+            .ok_or(ResourceAccessStoreError::Corrupt)?;
+        let mut settings = settings.cloned().unwrap_or_else(|| agent.settings());
+        if settings.system_prompt.is_none() {
+            settings.system_prompt = agent.settings().system_prompt;
+        }
+        if let Some(super::AgentPreferencesUpdate::SystemPrompt { system_prompt, .. }) = preferences
+        {
+            settings.system_prompt = Some(system_prompt.clone());
+        }
         let fence = Arc::new(AgentSettingsFence {
-            authorized,
+            authorized: Arc::new(authorized),
             target,
-            settings: settings.clone(),
+            settings,
+            preferences: preferences.cloned(),
             deadline,
         });
         fence.require_current()?;
@@ -89,6 +129,10 @@ impl ResourceAccessService {
 }
 
 impl AgentSettingsAuthorization {
+    pub(super) fn preferences(&self) -> Option<&super::AgentPreferencesUpdate> {
+        self.fence.preferences.as_ref()
+    }
+
     pub(super) fn caller(&self) -> &Caller {
         &self.caller
     }
@@ -152,11 +196,25 @@ impl AgentSettingsFence {
         &self,
         mutation: &super::store::AgentConversationMutation,
     ) -> Result<(), super::store::SandboxStoreError> {
-        let valid = self.target == (ResourceTarget::Agent { agent_id: mutation.agent.id.clone() })
-            && mutation.agent.conversation.operation.as_ref().is_some_and(|operation| {
+        let preference_revision = self.preferences.as_ref().is_none_or(|update| {
+            update.expected_revision().checked_add(1)
+                == Some(mutation.agent.conversation.preferences.revision)
+        });
+        let operation_matches = match &self.preferences {
+            Some(super::AgentPreferencesUpdate::Title {title,..}) =>
+                mutation.agent.conversation.preferences.title.as_ref() == Some(title)
+                && mutation.agent_logs == vec![super::AgentLogKind::TitleSet {title:title.clone(), source:"owner_override".into()}],
+            _ => mutation.agent.conversation.operation.as_ref().is_some_and(|operation| {
                 operation.state == super::AgentOperationDelivery::DispatchFenced
                     && matches!(&operation.intent, super::AgentOperationIntent::UpdateSettings { settings, .. } if settings == &self.settings)
-            });
+            }),
+        };
+        let valid = self.target
+            == (ResourceTarget::Agent {
+                agent_id: mutation.agent.id.clone(),
+            })
+            && preference_revision
+            && operation_matches;
         if self.require_current().is_err() || !valid {
             return Err(super::store::SandboxStoreError::Conflict);
         }
@@ -180,6 +238,7 @@ impl AgentOperationService {
             command_claim: None,
             execution_authority: None,
             trigger_authority: None,
+            instruction_policy: self.instruction_policy.clone(),
             connections: self.connections.clone(),
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -190,6 +249,58 @@ impl AgentOperationService {
                 agent_id,
                 authority.fence.settings.clone(),
             )
+            .await
+    }
+}
+
+impl AgentOperationService {
+    pub async fn update_preferences_authorized(
+        &self,
+        authority: &AgentSettingsAuthorization,
+    ) -> Result<super::Agent, AgentOperationError> {
+        authority.fence.require_current().map_err(operation_error)?;
+        let crate::resource_access::ResourceTarget::Agent { agent_id } = &authority.fence.target
+        else {
+            return Err(AgentOperationError::Forbidden);
+        };
+        let update = authority
+            .fence
+            .preferences
+            .clone()
+            .ok_or(AgentOperationError::Forbidden)?;
+        let mut authority = authority.clone();
+        if let super::AgentPreferencesUpdate::SystemPrompt { system_prompt, .. } = &update {
+            let agent = authority
+                .fence
+                .authorized
+                .snapshot
+                .lineage
+                .agent
+                .as_ref()
+                .ok_or(AgentOperationError::NotFound)?;
+            let mut fence = AgentSettingsFence {
+                authorized: authority.fence.authorized.clone(),
+                target: authority.fence.target.clone(),
+                settings: authority.fence.settings.clone(),
+                preferences: authority.fence.preferences.clone(),
+                deadline: authority.fence.deadline,
+            };
+            fence.settings.system_prompt =
+                Some(self.instruction_policy.compose(agent, system_prompt));
+            authority.fence = Arc::new(fence);
+        }
+        let service = Self {
+            settings_authority: Some(authority.clone()),
+            command_claim: None,
+            execution_authority: None,
+            trigger_authority: None,
+            instruction_policy: self.instruction_policy.clone(),
+            connections: self.connections.clone(),
+            store: self.store.clone(),
+            runtimes: self.runtimes.clone(),
+        };
+        service
+            .update_preferences(&authority.caller, agent_id, update)
             .await
     }
 }

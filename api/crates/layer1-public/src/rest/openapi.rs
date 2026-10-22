@@ -155,6 +155,8 @@ use super::trigger_openapi_shapes::*;
         super::agent_skills::install,
         super::message_feedback::list,
         super::message_feedback::set,
+        super::agent_preferences::read,
+        super::agent_preferences::update,
         super::agent_settings::read,
         super::agent_settings::update,
         super::agent_source::read,
@@ -493,7 +495,6 @@ pub fn document() -> utoipa::openapi::OpenApi {
     identity::secure_operations(&mut document);
     document
 }
-/// Focused lifecycle and Responses v2 contract, derived from the full public API.
 pub use agent_manager::document as agent_manager_document;
 #[cfg(test)]
 mod tests;
