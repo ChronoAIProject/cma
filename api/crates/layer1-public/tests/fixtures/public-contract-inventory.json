@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 225,
+  "openapi_operations": 227,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3198,6 +3198,36 @@
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "store_failed"
       ]
     }
   }
