@@ -47,7 +47,8 @@
 .sidebar__toggle,
 .sidebar__new,
 .sidebar__search,
-.sidebar__link {
+.sidebar__link,
+.sidebar__sign-in {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -67,27 +68,27 @@
   border-radius: 8px;
   color: var(--dsw-alias-label-secondary);
 }
+/*
+ * Plain rows, never filled at rest: the list of Agents below is what the
+ * sidebar is for, so the actions above it must not out-shout it (§10).
+ */
 .sidebar__new,
 .sidebar__search,
 .sidebar__link {
   box-sizing: border-box;
-  min-height: 36px;
+  min-height: 32px;
   width: 100%;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
   text-align: left;
   font-size: 0.875rem;
   line-height: 1.25rem;
 }
-/* The view's one primary action, drawn as the shared primary button is. */
-.sidebar__new {
-  justify-content: center;
-  color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-button-primary-fill);
-  font-weight: 500;
-}
-.sidebar__new:hover:not([aria-disabled='true']) {
-  background: var(--dsw-alias-button-primary-hover);
+.sidebar__new span,
+.sidebar__search span {
+  flex: 1;
+  min-width: 0;
 }
 .sidebar__new[aria-disabled='true'] {
   opacity: 0.4;
@@ -103,28 +104,35 @@
 .sidebar__reason[hidden] {
   display: none;
 }
-/* Reads as a field, because pressing it is how searching starts. */
-.sidebar__search {
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-}
-.sidebar__search span {
-  flex: 1;
-  min-width: 0;
-}
 .sidebar__kbd {
   flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 4px;
+  color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code);
   font-size: 0.6875rem;
   line-height: 1.125rem;
 }
 .sidebar__link {
-  color: var(--dsw-alias-label-secondary);
   text-decoration: none;
+}
+/*
+ * Signing in is the only thing a signed-out sidebar offers, so unlike the
+ * signed-in action rows it keeps the shared primary fill.
+ */
+.sidebar__sign-in {
+  box-sizing: border-box;
+  justify-content: center;
+  min-height: 36px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+.sidebar__sign-in:hover {
+  background: var(--dsw-alias-button-primary-hover);
 }
 .sidebar__link[aria-current='page'] {
   color: var(--dsw-alias-label-primary);
@@ -138,11 +146,12 @@
 }
 .sidebar__actions {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   flex: none;
   margin-bottom: 12px;
 }
 .sidebar__toggle:hover,
+.sidebar__new:hover:not([aria-disabled='true']),
 .sidebar__search:hover,
 .sidebar__link:hover {
   background: var(--dsw-alias-interactive-bg-hover);
@@ -151,6 +160,7 @@
 .sidebar__new:focus-visible,
 .sidebar__search:focus-visible,
 .sidebar__link:focus-visible,
+.sidebar__sign-in:focus-visible,
 .sidebar__brand:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -183,7 +193,8 @@
 }
 .sidebar--collapsed .sidebar__new,
 .sidebar--collapsed .sidebar__search,
-.sidebar--collapsed .sidebar__link {
+.sidebar--collapsed .sidebar__link,
+.sidebar--collapsed .sidebar__sign-in {
   justify-content: center;
   padding-inline: 0;
 }
@@ -191,7 +202,8 @@
   .sidebar__toggle,
   .sidebar__new,
   .sidebar__search,
-  .sidebar__link {
+  .sidebar__link,
+  .sidebar__sign-in {
     transition: none;
   }
 }
@@ -340,6 +352,7 @@
   .sidebar__new,
   .sidebar__search,
   .sidebar__link,
+  .sidebar__sign-in,
   .sidebar__toggle,
   .navigation-filters__toggle,
   .navigation-filters__clear,
