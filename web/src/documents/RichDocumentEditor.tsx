@@ -101,7 +101,7 @@ export default function RichDocumentEditor({
     };
   }, [editor]);
   useEffect(() => {
-    editor?.setEditable(editable);
+    editor?.setEditable(editable, false);
   }, [editor, editable]);
   const selected = useEditorState({
     editor,
