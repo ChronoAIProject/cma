@@ -16,11 +16,15 @@ function sources() {
   const installed = readFileSync(process.env.CMA_ACP_ACCESS_BASE_SOURCE ?? bridgePath, "utf8");
   const base = installed.includes(after) ? installed.replace(after, before) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
-  if (digest(installed) === "b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9") {
+  const compositions = {
+    b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9: "87d08828c723db16ada3e7cd56a075373d7d01837af389bd5906c1ff7c3187c8",
+    "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4": "f2dc53b3c73f3844cb596ac5e7ee42e4057f49b06c82449ef43f3713a9b57bb5",
+  };
+  if (Object.hasOwn(compositions, digest(installed))) {
     // Exercise the final image composition while removing only this patch for
     // the native before/after comparison. The session command patch is retained.
     assert.equal(installed.split(after).length, 2);
-    assert.equal(digest(base), "87d08828c723db16ada3e7cd56a075373d7d01837af389bd5906c1ff7c3187c8");
+    assert.equal(digest(base), compositions[digest(installed)]);
     assert.equal(base.replace(before, after), installed);
     return { base, patched: installed };
   }
