@@ -56,7 +56,7 @@ function deleteReason(sandbox: SandboxSummary, context: SandboxActionContext) {
 }
 
 export type SandboxMenuAction =
-  'new_workspace' | 'sharing' | 'technical_details' | 'delete_sandbox';
+  'new_agent' | 'new_workspace' | 'sharing' | 'technical_details' | 'delete_sandbox';
 
 /**
  * The Sandbox header's More actions — `docs/Web_Style.md` §17.
@@ -73,6 +73,16 @@ export function sandboxHeaderMenu(
   sharingAllowed: boolean,
 ): MenuEntry[] {
   const entries: MenuEntry[] = [];
+  if (permissions.createAgent) {
+    const reason = sandboxCreateReason(sandbox, context);
+    entries.push({
+      id: 'new_agent',
+      label: 'New agent',
+      icon: <IconPlusOutline16 />,
+      disabled: reason !== undefined,
+      reason,
+    });
+  }
   if (permissions.createWorkspace) {
     const reason = sandboxCreateReason(sandbox, context);
     entries.push({

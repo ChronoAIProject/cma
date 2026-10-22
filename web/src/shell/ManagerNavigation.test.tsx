@@ -124,7 +124,7 @@ it('uses effective parent lifecycle status and the shared status tones for dots'
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
 });
 
-it('groups Agents by Sandbox without Workspace rows, most recently active first', () => {
+it('lists Agents without Sandbox or Workspace groups, most recently active first', () => {
   const [item] = navigationFixture();
   if (item === undefined) throw new Error('fixture');
   const [workspace] = item.workspaces;
@@ -165,13 +165,12 @@ it('groups Agents by Sandbox without Workspace rows, most recently active first'
       }}
     />,
   );
-  const groups = screen.getAllByRole('group', { name: 'Atlas' });
-  expect(groups).toHaveLength(1);
+  const agents = screen.getByRole('tree', { name: 'Personal Agents' });
+  expect(screen.queryByRole('group', { name: 'Atlas' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
   expect(screen.queryByText('chrono-bot')).not.toBeInTheDocument();
   expect(screen.queryByText('quiet-workspace')).not.toBeInTheDocument();
-  expect(
-    [...(groups[0]?.querySelectorAll('[role="treeitem"]') ?? [])].map((row) => row.textContent),
-  ).toEqual([
+  expect([...agents.querySelectorAll('[role="treeitem"]')].map((row) => row.textContent)).toEqual([
     expect.stringContaining('Newer'),
     expect.stringContaining('Older'),
     expect.stringContaining('Quiet'),

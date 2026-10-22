@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import type { User } from './auth/types';
@@ -99,3 +99,40 @@ it('shows Triggers in navigation only to publishers', async () => {
   expect(screen.queryByRole('link', { name: 'Triggers' })).toBeNull();
 });
 import './test/connectedAccounts';
+
+it('keeps global New agent unscoped and existing-Sandbox creation in its row menu', async () => {
+  const onCreate = vi.fn();
+  const actor = userEvent.setup();
+  render(
+    <CmaClientProvider client={agentClient()}>
+      <Console
+        user={OWNER}
+        route={{ kind: 'agent_manager' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+        onCreate={onCreate}
+      />
+    </CmaClientProvider>,
+  );
+  const agents = await screen.findByRole('tree', { name: 'Personal Agents' });
+  expect(agents).not.toHaveTextContent('Atlas');
+  expect(agents).not.toHaveTextContent('/workspaces/chrono-bot');
+  await actor.click(
+    within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+      'button',
+      { name: 'New agent' },
+    ),
+  );
+  expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent' });
+  await actor.click(screen.getByRole('button', { name: 'Sandboxes' }));
+  await actor.click(await screen.findByRole('button', { name: 'Options for Atlas' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
+  expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent', sandboxId: 'sbx_1' });
+  await actor.click(
+    within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+      'button',
+      { name: 'New agent' },
+    ),
+  );
+  expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent' });
+});
