@@ -1010,15 +1010,17 @@ history without losing an unsubmitted draft or replaying already committed text.
 If the authorized Agent, transcript, usage and Workspace reads succeed but an
 event-history page is temporarily unavailable, keep the known conversation
 visible. The existing status band names incomplete activity and automatic retry;
-it is not complete-history acceptance. Keep the draft editable, but hold Send,
-approval actions and live replay until a complete history read succeeds. Retry
+it is not complete-history acceptance. Keep ordinary message input available once
+current access, identity, connections and Sandbox eligibility are verified. Hold
+approval actions and history-dependent turn controls until their recorded targets
+are available. Retry
 from the start so missing tool and approval pages are not skipped. Authentication
 or permission denials and malformed identities remain explicit failures.
 
-After the first authorized event-history page, show the known transcript while
-remaining activity pages load. Use the same status band to name loading, retain
-the editable draft, and hold Send, approvals, lifecycle controls and live replay
-until history is complete. The snapshot's sequence does not skip activity pages.
+Show the current authorized transcript as soon as it arrives, independently of
+usage and rich event pages. Rebuild older activity offscreen; keep newer live
+messages and the draft when hydration completes. History-dependent controls
+remain held. The snapshot's sequence does not skip activity pages.
 
 For new Agent tabs, the authenticated transport eligibility selects Responses v2
 input with independent rich Agent snapshot/tail observation. Retain the tab's
@@ -1031,10 +1033,11 @@ snapshot until matching acceptance and restores untouched input on uncertainty.
 A refused intent may be corrected after an authoritative admission refusal.
 
 Responses v2 may load Agent/Workspace details, usage and the first activity page
-concurrently. Expose their combined result only after all required projections
-agree and a fresh account check succeeds after the last read. Continue to hold
-Send until complete history, current Sandbox state and required connections are
-verified; an early activity page alone does not authorize interaction.
+concurrently. Publish identity-checked Agent/Workspace metadata after a fresh
+account check to enable ordinary input, then the latest transcript as soon as it
+arrives. Send still requires current Sandbox state and required connections; an
+early activity page alone does not authorize interaction. Rich history completes
+independently with its own fresh authorization check.
 
 Once a retained creation operation names its actual Agent, its modal may prepare
 that exact Agent's transport and owner-authorized connection check while lineage
@@ -1048,8 +1051,8 @@ reload uses the normal freshly authorized opening path.
 After current personal access is verified for an exact Agent, check required
 connections while its conversation loads. Keep the result bound to that Agent,
 viewer, client and uninterrupted authorization generation. Refused or uncertain
-access discards the result and cancels pending checks. Send still waits for full
-history and current Sandbox eligibility. A v2 send may consume the creation's
+access discards the result and cancels pending checks. Send still waits for
+current Sandbox eligibility. A v2 send may consume the creation's
 transferred ready connection report once, within one second of receiving it on a
 monotonic clock. Opening settings, a known grant/profile change, loss of focus or
 visibility, or a changed authorization scope discards this handoff. Ordinary,
@@ -1063,8 +1066,8 @@ The same current personal access read may supply immutable Agent, Workspace and
 Sandbox IDs to overlap fresh reads. Load the Workspace beside the Agent after
 the normal v2 entry identity check, then verify both fresh projections against
 those IDs before the final account check and any publication. Observe the parent
-Sandbox while history loads; that observation never admits input before the
-complete authorized conversation is ready. Owner/client/access changes,
+Sandbox while history loads; that observation admits input only with current
+identity-checked Agent metadata and required connections. Owner/client/access changes,
 visibility loss, observation expiry and newly discovered bootstrap authority
 retain their existing invalidation and recheck behavior. A changed lineage
 requires a new load and cannot reuse the previously loaded view.
@@ -3054,3 +3057,46 @@ Workspace rows; Sandbox navigation retains them. Operations Actor is a named
 selector instead of a free-text identity field.
 
 | 2026-10-22 | Add lazy mounted-home Files browsing/editing and scoped Agent share links using existing Modal, controls, tokens and transitions; show latest conversation on return, simplify Agents navigation and select named Operations actors. |
+
+
+### Agent navigation, loading, and text preferences (2026-10-22)
+
+Agents view is a flat list of individual Agent cards, ordered by recent activity,
+without Sandbox or Workspace group headings. Sandbox view retains its hierarchy
+and contextual three-dot actions. The global New agent action always starts a
+new Sandbox and offers no destination chooser. Creating an Agent in an existing
+Sandbox uses that Sandbox's three-dot action; an explicit scoped action shows
+its fixed destination as a description. Sandbox Details keeps Pause/Resume in
+the header and places New agent in More actions, rather than a second primary
+creation button.
+
+Operations Sandbox Owner is a named dropdown with All owners. Choices use the
+canonical display names from the complete authorized, unfiltered Sandbox
+inventory and remain available across table filtering and pagination. Load once
+per mounted client, with bounded pagination, cancellation, loading and explicit
+retry on failure; do not poll. Existing explicit filter application is retained.
+
+The landing route keeps the sidebar collapsed and has no expand, drawer, drag,
+or keyboard expansion affordance. Service routes retain normal sidebar controls.
+The system text-size preference applies equally to conversation body, Markdown,
+code, and tool content; it changes typography without scaling control geometry.
+Only Chrono Agent replies have upvote/downvote controls. User messages retain
+copy and timestamp controls. The browser favicon uses the current lime
+`#C3FD43` mark in both OS appearances, with the visible glyph centered in its
+square viewport; PNG fallbacks use the same mark.
+
+Loading conversation history does not block sending a new message once the
+current identity, Agent access, and Sandbox input availability are verified.
+History-dependent approvals and turn controls still require their exact recorded
+targets. The latest transcript is displayed without waiting for older rich event
+pages, which hydrate offscreen without replaying historical Thinking. Returning
+to an authorized cached Agent preserves its latest visible conversation while
+metadata refreshes. Account/access changes clear or suspend the relevant state.
+History completion must preserve input receipts, newer messages and active live
+updates; it must never clear the user's next draft or submit a duplicate message.
+Shared Agent access enables interaction independently of transcript and rich
+history loading. Unchanged periodic access verification preserves the composer
+and stream without rereading the transcript; actual stream disconnection repairs
+the durable view before reconnecting.
+
+| 2026-10-22 | Flatten Agents navigation, fix global New agent to a new Sandbox, select Operations owners by name, lock the landing sidebar, apply text preferences to conversations, limit voting to Agent replies, center the green favicon, and decouple input/latest-message display from historical activity loading. |
