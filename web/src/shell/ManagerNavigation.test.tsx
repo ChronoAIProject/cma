@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ManagerNavigation } from './ManagerNavigation';
 import type { TreePermissions } from './Tree';
+import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
 import { chooseOption } from '../test/select';
 
@@ -72,48 +73,42 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('uses effective parent lifecycle status and the shared status tones for dots', async () => {
+it('uses effective parent lifecycle status and draws a dot only for attention states', async () => {
   const refresh = vi.fn();
   const dot = () =>
     screen.getByRole('tree', { name: 'Personal Agents' }).querySelector('.statedot');
-  const view = render(
+  const draw = (sandbox: 'active' | 'paused', agent: AgentStatus) => (
     <ManagerNavigation
       {...props}
-      navigation={{ status: 'ready', items: navigationFixture('active', 'ready'), refresh }}
-    />,
+      navigation={{ status: 'ready', items: navigationFixture(sandbox, agent), refresh }}
+    />
   );
-  // Ready is settled and usable: a quiet dot, never the success colour.
-  expect(dot()).toHaveAttribute('data-state', 'neutral');
-  view.rerender(
-    <ManagerNavigation
-      {...props}
-      navigation={{ status: 'ready', items: navigationFixture('active', 'working'), refresh }}
-    />,
-  );
-  expect(dot()).toHaveAttribute('data-state', 'ongoing');
-  view.rerender(
-    <ManagerNavigation
-      {...props}
-      navigation={{
-        status: 'ready',
-        items: navigationFixture('active', 'waiting_approval'),
-        refresh,
-      }}
-    />,
-  );
-  expect(dot()).toHaveAttribute('data-state', 'warning');
-  expect(screen.getByText('Needs approval').closest('.tree-row__state')).toHaveAttribute(
-    'data-tone',
-    'warning',
-  );
-  view.rerender(
-    <ManagerNavigation
-      {...props}
-      navigation={{ status: 'ready', items: navigationFixture('paused', 'working'), refresh }}
-    />,
-  );
-  // A held state draws no dot at all.
-  expect(dot()).toBeNull();
+  const view = render(draw('active', 'ready'));
+  const cases = [
+    // Ready is settled and usable: the slot stays blank, the word is still heard.
+    ['active', 'ready', undefined, 'Ready'],
+    ['active', 'starting', 'ongoing', 'Starting'],
+    ['active', 'working', 'ongoing', 'Working'],
+    ['active', 'waiting_approval', 'warning', 'Needs approval'],
+    ['active', 'failed', 'error', 'Needs attention'],
+    ['active', 'stopped', undefined, 'Stopped'],
+    // A held parent holds its Agents too, and a held state draws no dot.
+    ['paused', 'working', undefined, 'Paused'],
+  ] as const;
+  for (const [sandbox, agent, state, word] of cases) {
+    view.rerender(draw(sandbox, agent));
+    const name = new RegExp(`^Agent one, ${word}`);
+    const row = screen.getByRole('treeitem', { name });
+    expect(row).toHaveAttribute('data-layout', 'line');
+    expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
+    if (state === undefined) {
+      expect(dot()).toBeNull();
+      expect(row.querySelector('.tree-row__signal')).not.toHaveAttribute('title');
+    } else {
+      expect(dot()).toHaveAttribute('data-state', state);
+      expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
+    }
+  }
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Filter' }));
   await chooseOption(user, 'Agent status filter', 'Paused');
@@ -218,4 +213,41 @@ it('clears status and scope together and names the scope in the summary', async 
   await user.click(screen.getByRole('button', { name: 'Clear filters' }));
   expect(onScope).toHaveBeenCalledWith('');
   expect(summary()).toHaveTextContent(/^Shared$/);
+});
+
+it('keeps one-line Agent rows operable by keyboard, with their age and menu key in place', async () => {
+  const onAction = vi.fn();
+  const onNavigate = vi.fn();
+  render(
+    <ManagerNavigation
+      {...props}
+      route={{ kind: 'agent', agentId: 'agt_1' }}
+      permissions={{ ...permissions, stopAgent: true }}
+      onAction={onAction}
+      onNavigate={onNavigate}
+      navigation={{
+        status: 'ready',
+        items: navigationFixture('active', 'working'),
+        refresh: vi.fn(),
+      }}
+    />,
+  );
+  const user = userEvent.setup();
+  const row = screen.getByRole('treeitem', { name: /^Agent one, Working/ });
+  // The current row: its age and menu key are drawn rather than left to hover.
+  expect(row).toHaveAttribute('aria-selected', 'true');
+  expect(row.querySelector('time.tree-row__age')).toHaveAttribute(
+    'dateTime',
+    '2026-09-06T00:05:00Z',
+  );
+  row.focus();
+  await user.keyboard('{Enter}');
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_1' });
+  // The hidden-at-rest menu key is still the next Tab stop after its row.
+  await user.tab();
+  const options = screen.getByRole('button', { name: 'Options for Agent one' });
+  expect(options).toHaveFocus();
+  await user.keyboard('{Enter}');
+  await user.click(await screen.findByRole('menuitem', { name: 'Stop' }));
+  expect(onAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
 });

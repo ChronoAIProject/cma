@@ -1,11 +1,10 @@
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
-import { activityLabel, keyboardNavigation, stateMeta } from './treePresentation';
+import { attentionSignal, keyboardNavigation, lineMeta } from './treePresentation';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { agentDisplayTitle } from '../agent/presentation';
 import type { AgentSummary, SandboxDetail } from '../api/types';
-import { IconAgentPresetOutline16 } from '../ui/icons';
 
 interface AgentCard {
   readonly sandbox: SandboxDetail;
@@ -65,37 +64,38 @@ export function PersonalAgentTree({
       aria-label="Personal Agents"
       onKeyDown={keyboardNavigation}
     >
-      {cards.map(({ sandbox, agent }) => (
-        <TreeRow
-          key={agent.id}
-          nodeId={`agent:${agent.id}`}
-          level={1}
-          label={agentDisplayTitle(agent)}
-          icon={<IconAgentPresetOutline16 />}
-          route={{ kind: 'agent', agentId: agent.id }}
-          selected={route.kind === 'agent' && route.agentId === agent.id}
-          dimmed={sandbox.status === 'paused'}
-          meta={stateMeta(
-            sandboxChildStatus(sandbox, agent.status),
-            <time dateTime={agent.updatedAt}>{activityLabel(agent.updatedAt)}</time>,
-          )}
-          actions={agentActions(
-            agent.status,
-            permissions,
-            !lifecycleBusy &&
-              !busySandboxIds?.has(sandbox.id) &&
-              !refreshError &&
-              sandboxChildrenAvailable(sandbox),
-          )}
-          onNavigate={onNavigate}
-          onAction={(kind) =>
-            onAction({
-              kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
-              agentId: agent.id,
-            })
-          }
-        />
-      ))}
+      {cards.map(({ sandbox, agent }) => {
+        const status = sandboxChildStatus(sandbox, agent.status);
+        return (
+          <TreeRow
+            key={agent.id}
+            nodeId={`agent:${agent.id}`}
+            level={1}
+            layout="line"
+            label={agentDisplayTitle(agent)}
+            icon={attentionSignal(status)}
+            route={{ kind: 'agent', agentId: agent.id }}
+            selected={route.kind === 'agent' && route.agentId === agent.id}
+            dimmed={sandbox.status === 'paused'}
+            meta={lineMeta(status, agent.updatedAt)}
+            actions={agentActions(
+              agent.status,
+              permissions,
+              !lifecycleBusy &&
+                !busySandboxIds?.has(sandbox.id) &&
+                !refreshError &&
+                sandboxChildrenAvailable(sandbox),
+            )}
+            onNavigate={onNavigate}
+            onAction={(kind) =>
+              onAction({
+                kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
+                agentId: agent.id,
+              })
+            }
+          />
+        );
+      })}
       {cards.length === 0 ? (
         <p className="resource-tree__empty">No Agents match this scope and status.</p>
       ) : null}
