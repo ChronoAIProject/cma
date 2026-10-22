@@ -34,6 +34,7 @@ async function request(
     body: input === undefined ? undefined : JSON.stringify(input),
     signal: options?.signal,
     credentials: 'same-origin',
+    redirect: 'error',
     cache: 'no-store',
     referrerPolicy: 'no-referrer',
   });
