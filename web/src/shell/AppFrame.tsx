@@ -54,6 +54,8 @@ interface AppFrameProps {
    * inside a track that was still 280px wide, and the control read as broken.
    */
   readonly sidebarCollapsed?: boolean;
+  /** Landing pages retain a collapsed rail without any expansion interaction. */
+  readonly sidebarLocked?: boolean;
   /** Records an explicit collapse or expansion; automatic collapse stays derived. */
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   /** Things that float over every column — a banner, a dialog's own layer. */
@@ -70,6 +72,7 @@ export function AppFrame({
   compactDetailsOverlay = false,
   overlay,
   sidebarCollapsed = false,
+  sidebarLocked = false,
   onSidebarCollapsedChange,
   phoneTitle = 'CMA',
 }: AppFrameProps) {
@@ -157,7 +160,8 @@ export function AppFrame({
    * a hand-opened sidebar open against the automatic rule, not against its
    * owner asking a second time for it to close.
    */
-  const effectiveSidebarCollapsed = sidebarCollapsed || (narrow && !expandedAnyway);
+  const effectiveSidebarCollapsed =
+    sidebarLocked || sidebarCollapsed || (narrow && !expandedAnyway);
   const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
   /*
    * A phone has no room for a permanent rail: 56px is a seventh of a 375px
@@ -172,6 +176,7 @@ export function AppFrame({
   const sidebarOverlay = phone && !effectiveSidebarCollapsed;
 
   const toggleSidebar = useCallback(() => {
+    if (sidebarLocked) return;
     if (effectiveSidebarCollapsed) {
       onSidebarCollapsedChange?.(false);
       if (narrow) {
@@ -182,7 +187,7 @@ export function AppFrame({
 
     onSidebarCollapsedChange?.(true);
     setExpandedAnyway(false);
-  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange]);
+  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange, sidebarLocked]);
 
   const sidebarOwnsToggle = typeof sidebar === 'function';
   const renderedSidebar = sidebarOwnsToggle
@@ -243,15 +248,17 @@ export function AppFrame({
       <div className="frame__center" inert={sidebarOverlay || undefined}>
         {phone && sidebarOwnsToggle ? (
           <div className="frame__topbar">
-            <button
-              type="button"
-              className="frame__menu"
-              aria-label="Show navigation"
-              aria-expanded={!effectiveSidebarCollapsed}
-              onClick={toggleSidebar}
-            >
-              <IconPanelLeftOutline16 />
-            </button>
+            {sidebarLocked ? null : (
+              <button
+                type="button"
+                className="frame__menu"
+                aria-label="Show navigation"
+                aria-expanded={!effectiveSidebarCollapsed}
+                onClick={toggleSidebar}
+              >
+                <IconPanelLeftOutline16 />
+              </button>
+            )}
             <span className="frame__title">{phoneTitle}</span>
           </div>
         ) : null}
@@ -267,20 +274,22 @@ export function AppFrame({
         move: a column clips its own overflow, so a strip straddling its border
         would be cut in half by the thing it is there to resize.
       */}
-      <DragHandle
-        side="sidebar"
-        at={columns.sidebar}
-        label="Resize navigation"
-        onDrag={(dx) => {
-          onSidebarDrag(sidebarDragStart.current + dx);
-        }}
-        onDraggingChange={(active) => {
-          if (active) {
-            sidebarDragStart.current = columns.sidebar;
-          }
-          setDragging(active);
-        }}
-      />
+      {sidebarLocked ? null : (
+        <DragHandle
+          side="sidebar"
+          at={columns.sidebar}
+          label="Resize navigation"
+          onDrag={(dx) => {
+            onSidebarDrag(sidebarDragStart.current + dx);
+          }}
+          onDraggingChange={(active) => {
+            if (active) {
+              sidebarDragStart.current = columns.sidebar;
+            }
+            setDragging(active);
+          }}
+        />
+      )}
       {columns.details === 0 ? null : (
         <DragHandle
           side="details"
@@ -300,7 +309,7 @@ export function AppFrame({
       )}
 
       <div className="frame__overlay">{overlay}</div>
-      {narrow && !sidebarOwnsToggle ? (
+      {narrow && !sidebarOwnsToggle && !sidebarLocked ? (
         <button
           type="button"
           className="frame__narrowtoggle"

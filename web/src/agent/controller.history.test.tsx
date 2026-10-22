@@ -258,3 +258,109 @@ it('holds interruption of a known active turn while its event history is still l
   await act(() => result.current.interrupt());
   expect(interruptAgent).not.toHaveBeenCalled();
 });
+
+it('sends while legacy history hydrates and retains new live output after the older snapshot arrives', async () => {
+  const remaining = deferredPage();
+  const runAgent = vi.fn(async (_input, options) => {
+    options.onEvent({ type: 'RUN_STARTED', threadId: 'agt_1', runId: 'new-turn', cursor: 9 });
+    options.onEvent({
+      type: 'TEXT_MESSAGE_START',
+      threadId: 'agt_1',
+      runId: 'new-turn',
+      messageId: 'new-reply',
+      role: 'assistant',
+    });
+    options.onEvent({
+      type: 'TEXT_MESSAGE_CONTENT',
+      threadId: 'agt_1',
+      runId: 'new-turn',
+      messageId: 'new-reply',
+      delta: 'New response while loading',
+    });
+  });
+  const client = agentClient({
+    readAgentTranscript: async () => transcript,
+    readAgentEvents: vi.fn().mockReturnValueOnce(remaining.promise),
+    runAgent,
+    replayAgent: vi.fn(() => new Promise<void>(() => {})),
+  });
+  const view = renderHook(() => useAgentController(client, 'agt_1'));
+  await waitFor(() => expect(view.result.current.inputAvailability.allowed).toBe(true));
+  const accepted = vi.fn();
+  await act(() => view.result.current.send('New question', accepted));
+  expect(runAgent).toHaveBeenCalledOnce();
+  expect(accepted).toHaveBeenCalledOnce();
+  expect(view.result.current.state).toMatchObject({
+    historyLoading: true,
+    conversation: {
+      messages: expect.arrayContaining([
+        expect.objectContaining({ content: 'New response while loading' }),
+      ]),
+    },
+  });
+  await act(async () => remaining.resolve({ items: events }));
+  expect(view.result.current.state).toMatchObject({
+    historyLoading: false,
+    conversation: {
+      activeRunId: 'new-turn',
+      messages: expect.arrayContaining([
+        expect.objectContaining({ content: 'The repository is ready.' }),
+        expect.objectContaining({ content: 'New response while loading' }),
+      ]),
+    },
+  });
+  expect(runAgent).toHaveBeenCalledOnce();
+  view.unmount();
+});
+
+it('keeps an admitted send alive when usage hydration fails transiently, then retries history', async () => {
+  vi.useFakeTimers();
+  let rejectUsage!: (error: unknown) => void;
+  const usage = new Promise<never>((_resolve, reject) => {
+    rejectUsage = reject;
+  });
+  let finishRun!: () => void;
+  let runSignal: AbortSignal | undefined;
+  const runAgent = vi.fn(async (_input, options) => {
+    runSignal = options.signal;
+    await new Promise<void>((resolve) => {
+      finishRun = resolve;
+    });
+    options.onEvent({ type: 'RUN_STARTED', threadId: 'agt_1', runId: '5', cursor: 5 });
+  });
+  const client = agentClient({
+    readAgentUsage: vi.fn().mockReturnValueOnce(usage).mockResolvedValue(AGENT_USAGE),
+    runAgent,
+  });
+  const { result, unmount } = renderHook(() => useAgentController(client, 'agt_1'));
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const accepted = vi.fn();
+    let sending!: Promise<void>;
+    act(() => {
+      sending = result.current.send('Continue', accepted);
+    });
+    expect(runAgent).toHaveBeenCalledOnce();
+    await act(async () => rejectUsage(new ApiError(503, 'Usage unavailable')));
+    expect(result.current.state).toMatchObject({
+      status: 'ready',
+      historyLoading: false,
+      historyUnavailable: true,
+    });
+    expect(runSignal?.aborted).toBe(false);
+    await act(async () => {
+      finishRun();
+      await sending;
+    });
+    expect(accepted).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(client.readAgentUsage).toHaveBeenCalledTimes(2);
+    expect(result.current.state).toMatchObject({
+      status: 'ready',
+      historyUnavailable: false,
+      conversation: { activeRunId: '5' },
+    });
+  } finally {
+    unmount();
+  }
+});

@@ -14,14 +14,6 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { agentNameFor, validRepository } from './repository';
-import {
-  agentLocationOptions,
-  locationId,
-  locationScope,
-  useAgentLocations,
-  type AgentLocation,
-} from './agentLocations';
-import { AgentLocationChoice } from './AgentLocationChoice';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -51,23 +43,14 @@ export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
 function AgentLifecycleForm({
   client,
   viewerId,
-  workspaceId: openedWorkspaceId,
-  sandboxId: openedSandboxId,
+  workspaceId,
+  sandboxId,
   canCreateSandbox = true,
   onClose,
   onCreated,
 }: AgentLifecycleCardProps) {
-  const opened: AgentLocation | undefined =
-    openedWorkspaceId !== undefined
-      ? { kind: 'workspace', workspaceId: openedWorkspaceId, sandboxId: openedSandboxId }
-      : openedSandboxId !== undefined
-        ? { kind: 'sandbox', sandboxId: openedSandboxId }
-        : undefined;
-  const [location, setLocation] = useState<AgentLocation | undefined>(
-    opened ?? (canCreateSandbox ? { kind: 'new_sandbox' } : undefined),
-  );
-  // Each location keeps its own retained request; the hooks below follow it.
-  const { workspaceId, sandboxId } = locationScope(location);
+  // The action that opened this dialog fixes its destination. The global action
+  // always provisions a new Sandbox; contextual actions keep their exact parent.
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
@@ -94,8 +77,6 @@ function AgentLifecycleForm({
   // Shown only after the field is left or Create agent is pressed, never while
   // somebody is still typing the URL, so the alert is announced once.
   const [repositoryError, setRepositoryError] = useState(false);
-  const [openedName, setOpenedName] = useState<string>();
-  const locations = useAgentLocations(client, createdReceipt === undefined);
   const openedOperation = useRef<string | undefined>(undefined);
   const clearIntent = lifecycle.clear;
   const bindAgent = lifecycle.bindAgent;
@@ -112,33 +93,9 @@ function AgentLifecycleForm({
       onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
     }
   }, [bindAgent, clearIntent, createdReceipt, handoffTransport, onCreated, operation, openTarget]);
-  useEffect(() => {
-    // Names the Workspace the dialog was opened for until the hierarchy lists it.
-    if (openedWorkspaceId === undefined) return;
-    const request = new AbortController();
-    void client
-      .readWorkspace(openedWorkspaceId, { signal: request.signal })
-      .then((workspace) => {
-        if (!request.signal.aborted && workspace.id === openedWorkspaceId)
-          setOpenedName(workspace.name);
-      })
-      .catch(() => undefined);
-    return () => request.abort();
-  }, [client, openedWorkspaceId]);
-  const options = agentLocationOptions(
-    locations.state.status === 'ready' ? locations.state.items : [],
-    viewerId,
-    canCreateSandbox,
-    opened,
-    openedName,
-  );
-  const selected =
-    location === undefined
-      ? undefined
-      : options.find((option) => option.id === locationId(location));
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
-  const canCreate = selected !== undefined && selected.reason === undefined;
+  const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
@@ -210,9 +167,9 @@ function AgentLifecycleForm({
         open={connectionRequest === undefined}
         title="New agent"
         description={
-          location?.kind === 'workspace'
+          workspaceId !== undefined
             ? 'Start an Agent in the selected workspace.'
-            : location?.kind === 'sandbox'
+            : sandboxId !== undefined
               ? 'Start an Agent with a new workspace in this Sandbox.'
               : 'Start an Agent in a new Sandbox with an empty workspace.'
         }
@@ -283,15 +240,9 @@ function AgentLifecycleForm({
         ) : null}
         {createdReceipt === undefined ? (
           <div className="agent-lifecycle-step">
-            <AgentLocationChoice
-              options={options}
-              value={selected?.id}
-              onChange={setLocation}
-              locked={pending}
-              loading={locations.state.status === 'loading'}
-              failed={locations.state.status === 'error'}
-              onRetry={locations.retry}
-            />
+            {!canCreate ? (
+              <p className="field__hint">You don’t have permission to create a Sandbox.</p>
+            ) : null}
             {lifecycle.intent === undefined ? form : null}
           </div>
         ) : null}
