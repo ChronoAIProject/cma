@@ -130,3 +130,78 @@ for (const width of [1600, 390]) {
     });
   }
 }
+
+test('LOCAL Agent rename and system prompt updates keep the conversation mounted', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  let preferences = {
+    title: 'Original Agent',
+    system_prompt: 'Be concise.',
+    prompt_supported: true,
+    prompt_pending: false,
+    revision: 1,
+  };
+  const writes: unknown[] = [];
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.event_head',
+          schema_version: 1,
+          agent_id: 'agt_contract',
+          incarnation: 'a'.repeat(64),
+          through_cursor: cursor(fixture.items.length),
+          active_turn: null,
+        },
+      }),
+    );
+    await page.route('**/api/v1/agents/agt_contract/preferences', (route) => {
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON() as {
+          title?: string;
+          system_prompt?: string;
+          expected_revision: number;
+        };
+        expect(body.expected_revision).toBe(preferences.revision);
+        expect(route.request().headers()['idempotency-key']).toBeTruthy();
+        writes.push(body);
+        preferences = { ...preferences, ...body, revision: preferences.revision + 1 };
+      }
+      return route.fulfill({ json: preferences });
+    });
+    await page.goto('/agents/agt_contract');
+    const message = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(message).toBeEnabled();
+    await message.fill('Keep my draft while changing Agent preferences.');
+    const original = await message.elementHandle();
+    await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Rename Agent', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Agent name', exact: true }).fill('Research partner');
+    await page
+      .getByRole('dialog', { name: 'Rename Agent' })
+      .getByRole('button', { name: 'Save', exact: true })
+      .click();
+    await expect(
+      page.getByRole('heading', { name: 'Research partner', exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Update system prompt', exact: true }).click();
+    await page
+      .getByRole('textbox', { name: 'Agent system prompt', exact: true })
+      .fill('Be precise and cite your sources.');
+    await page
+      .getByRole('dialog', { name: 'Update system prompt' })
+      .getByRole('button', { name: 'Save', exact: true })
+      .click();
+    await expect(page.getByRole('dialog', { name: 'Update system prompt' })).toHaveCount(0);
+    expect(writes).toHaveLength(2);
+    await expect(message).toHaveValue('Keep my draft while changing Agent preferences.');
+    expect(await message.evaluate((node, previous) => node === previous, original)).toBe(true);
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});

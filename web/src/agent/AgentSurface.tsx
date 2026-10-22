@@ -200,6 +200,7 @@ export function AgentSurface({
     <section className="agent-surface">
       {connections.dialog}
       <OwnerAgentHeader
+        onTitleUpdated={controller.applyAgentTitle}
         detail={detail}
         availability={controller.resourceAvailability}
         readOnly={readOnly}
