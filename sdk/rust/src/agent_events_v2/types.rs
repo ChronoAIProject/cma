@@ -12,6 +12,27 @@ string_enum! { /// Exact transport eligibility resource discriminator.
 string_enum! { /// Exact snapshot resource discriminator.
     pub enum EventPageObject { EventPage => "cma.agent.event_page" }
 }
+string_enum! { /// Exact live-head resource discriminator.
+    pub enum EventHeadObject { EventHead => "cma.agent.event_head" }
+}
+/// Current live baseline, independent of a complete historical snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentEventHead {
+    /// Exact resource discriminator.
+    pub object: EventHeadObject,
+    /// Head schema, currently one.
+    pub schema_version: u16,
+    /// Requested Agent identity.
+    pub agent_id: String,
+    /// Incarnation bound into every coordinate.
+    pub incarnation: String,
+    /// Server-issued tail boundary; does not acknowledge historical rows.
+    pub through_cursor: AgentCursor,
+    /// Exact active turn-start row and its response binding, or null when idle.
+    #[serde(deserialize_with = "required_nullable")]
+    pub active_turn: Option<AgentEventItem>,
+}
 /// Authenticated observation for selecting a new tab's transport, never command authority.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]

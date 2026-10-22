@@ -7,6 +7,7 @@ use cma_sdk::{
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let api = c.client.agent_events_v2();
     match c.case.operation.as_str() {
+        "GET /api/v2/agents/{agent_id}/events/head" => c.check(api.head(c.param("agent_id")).await),
         "GET /api/v2/ui/transport" => c.check(api.read_transport_eligibility().await),
         "GET /api/v2/agents/{agent_id}/events/snapshot" => c.check(
             api.snapshot(

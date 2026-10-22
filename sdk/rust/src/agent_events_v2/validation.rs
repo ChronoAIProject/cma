@@ -1,8 +1,38 @@
 use super::{
-    AgentEventKind, AgentEventPage, AgentPageCursor, ResponseBinding, UiTransport,
+    AgentEventHead, AgentEventKind, AgentEventPage, AgentPageCursor, ResponseBinding, UiTransport,
     cursor::{identifier, valid_incarnation},
 };
 use crate::{Error, Result};
+
+pub(super) fn head(value: AgentEventHead, agent_id: &str) -> Result<AgentEventHead> {
+    if value.schema_version != 1
+        || value.agent_id != agent_id
+        || !valid_incarnation(&value.incarnation)
+        || value.through_cursor.incarnation() != value.incarnation
+    {
+        return Err(Error::protocol(
+            "Agent head changed identity or incarnation",
+        ));
+    }
+    if let Some(turn) = &value.active_turn {
+        if turn.cursor.incarnation() != value.incarnation
+            || turn.cursor.sequence() != turn.sequence
+            || turn.sequence > value.through_cursor.sequence()
+            || !matches!(turn.kind, Some(AgentEventKind::TurnStarted { .. }))
+        {
+            return Err(Error::protocol(
+                "Agent head does not identify a current turn within its boundary",
+            ));
+        }
+        payload(
+            turn.sequence,
+            &turn.appended_at,
+            turn.kind.as_ref(),
+            turn.response_binding.as_ref(),
+        )?;
+    }
+    Ok(value)
+}
 
 pub(super) fn eligibility(value: UiTransport) -> Result<UiTransport> {
     if value.schema_version != 1
