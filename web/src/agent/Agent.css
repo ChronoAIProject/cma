@@ -68,16 +68,21 @@
   overflow-y: auto;
 }
 
+/*
+ * One centred reading axis of at most 768px, shared with the composer, so a reply
+ * keeps a comfortable measure on any screen. Pixels, not rem: the text-size
+ * preference scales the text, not the measure.
+ */
 .agent-surface__conversation > section {
   width: 100%;
-  padding: 24px 15%;
+  padding: 24px max(24px, calc((100% - 768px) / 2));
   margin: 0 auto;
 }
 
 .message-stream {
   width: 100%;
   min-height: 100%;
-  padding: 28px 15% 40px;
+  padding: 28px max(24px, calc((100% - 768px) / 2)) 40px;
   margin: 0 auto;
 }
 
