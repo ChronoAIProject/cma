@@ -325,7 +325,7 @@ mod tests {
         let app = crate::auth::router(auth.clone())
             .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
         for (path, expected) in [
-            ("/auth/session", StatusCode::SERVICE_UNAVAILABLE),
+            ("/auth/session", StatusCode::UNAUTHORIZED),
             ("/auth/login", StatusCode::SEE_OTHER),
             ("/auth/callback", StatusCode::BAD_REQUEST),
             ("/auth/logout", StatusCode::SEE_OTHER),
