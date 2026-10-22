@@ -53,10 +53,9 @@ function Diagram({ source }: { readonly source: string }) {
   return (
     <div className="document-diagram" contentEditable={false}>
       {current?.svg ? (
-        <div
-          role="img"
-          aria-label="Mermaid diagram"
-          dangerouslySetInnerHTML={{ __html: current.svg }}
+        <img
+          alt="Mermaid diagram"
+          src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(current.svg)}`}
         />
       ) : (
         <p role="status">{current?.error ?? 'Rendering diagram…'}</p>
