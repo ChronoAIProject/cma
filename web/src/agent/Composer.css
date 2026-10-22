@@ -9,7 +9,8 @@
 
 .agent-composer {
   grid-row: 4;
-  padding: 8px 15% 16px;
+  /* The conversation's reading axis (Agent.css), so the box lines up with the history. */
+  padding: 8px max(24px, calc((100% - 768px) / 2)) 16px;
   background: var(--dsw-alias-bg-base);
 }
 
