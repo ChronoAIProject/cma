@@ -8,6 +8,7 @@ import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Alert } from '../ui/Alert';
 import { IconPlusOutline16 } from '../ui/icons';
+import { DocumentOutline } from './DocumentOutline';
 
 function uploadImage(file: File, editor: Editor, failure: (message: string) => void) {
   if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size > 600 * 1024) {
@@ -43,6 +44,7 @@ export default function RichDocumentEditor({
   const [imageUrl, setImageUrl] = useState('');
   const [imageAlt, setImageAlt] = useState('');
   const [error, setError] = useState<string>();
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
   const editor = useEditor({
@@ -192,115 +194,133 @@ export default function RichDocumentEditor({
     }
   };
   return (
-    <div className="document-editor">
-      {editable ? (
-        <div className="document-editor__toolbar" role="toolbar" aria-label="Document formatting">
-          <Picker
-            size="sm"
-            label="Paragraph style"
-            value={selected?.heading ?? 'paragraph'}
-            options={[
-              { value: 'paragraph', label: 'Text' },
-              { value: 'h1', label: 'Heading 1' },
-              { value: 'h2', label: 'Heading 2' },
-              { value: 'h3', label: 'Heading 3' },
-            ]}
-            onChange={(value) =>
-              value === 'paragraph'
-                ? editor?.chain().focus().setParagraph().run()
-                : editor
-                    ?.chain()
-                    .focus()
-                    .setHeading({ level: Number(value.slice(1)) as 1 | 2 | 3 })
-                    .run()
-            }
-          />
-          <Picker
-            size="sm"
-            label="Font"
-            value={selected?.font ?? 'sans'}
-            options={[
-              { value: 'sans', label: 'Sans' },
-              { value: 'serif', label: 'Serif' },
-              { value: 'mono', label: 'Mono' },
-            ]}
-            onChange={(value) =>
-              editor?.chain().focus().setMark('documentFont', { family: value }).run()
-            }
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Bold"
-            aria-pressed={selected?.bold}
-            onClick={() => editor?.chain().focus().toggleBold().run()}
-          >
-            <strong>B</strong>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Italic"
-            aria-pressed={selected?.italic}
-            onClick={() => editor?.chain().focus().toggleItalic().run()}
-          >
-            <em>I</em>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Underline"
-            aria-pressed={selected?.underline}
-            onClick={() => editor?.chain().focus().toggleUnderline().run()}
-          >
-            <u>U</u>
-          </Button>
-          <Menu
-            open={insertOpen}
-            label="Insert content"
-            anchor={
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={<IconPlusOutline16 />}
-                aria-label="Insert content"
-                aria-haspopup="menu"
-                aria-expanded={insertOpen}
-                onClick={() => setInsertOpen(!insertOpen)}
-              />
-            }
-            onClose={() => setInsertOpen(false)}
-            onSelect={insert}
-            items={[
-              { id: 'table', label: 'Table' },
-              { id: 'image', label: 'Image' },
-              { id: 'bullet', label: 'Bullet list' },
-              { id: 'ordered', label: 'Numbered list' },
-              { id: 'checklist', label: 'Checklist' },
-              { id: 'quote', label: 'Quote' },
-              { id: 'code', label: 'Code block' },
-              { id: 'mermaid', label: 'Mermaid diagram' },
-              { id: 'details', label: 'Dropdown section' },
-              { id: 'date', label: 'Date' },
-              { id: 'divider', label: 'Divider' },
-              ...(selected?.table
-                ? [
-                    { type: 'separator' as const, id: 'table-actions' },
-                    { id: 'row', label: 'Add row' },
-                    { id: 'column', label: 'Add column' },
-                    { id: 'remove-table', label: 'Delete table', danger: true },
-                  ]
-                : []),
-            ]}
-          />
-          <Button size="sm" variant="ghost" onClick={() => editor?.chain().focus().undo().run()}>
-            Undo
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => editor?.chain().focus().redo().run()}>
-            Redo
-          </Button>
-        </div>
-      ) : null}
+    <div className="document-editor" data-reading={!editable || undefined}>
+      <div
+        className="document-editor__toolbar"
+        role="toolbar"
+        aria-label={editable ? 'Document formatting' : 'Document navigation'}
+      >
+        {editable ? (
+          <>
+            <Picker
+              size="sm"
+              label="Paragraph style"
+              value={selected?.heading ?? 'paragraph'}
+              options={[
+                { value: 'paragraph', label: 'Text' },
+                { value: 'h1', label: 'Heading 1' },
+                { value: 'h2', label: 'Heading 2' },
+                { value: 'h3', label: 'Heading 3' },
+              ]}
+              onChange={(value) =>
+                value === 'paragraph'
+                  ? editor?.chain().focus().setParagraph().run()
+                  : editor
+                      ?.chain()
+                      .focus()
+                      .setHeading({ level: Number(value.slice(1)) as 1 | 2 | 3 })
+                      .run()
+              }
+            />
+            <Picker
+              size="sm"
+              label="Font"
+              value={selected?.font ?? 'sans'}
+              options={[
+                { value: 'sans', label: 'Sans' },
+                { value: 'serif', label: 'Serif' },
+                { value: 'mono', label: 'Mono' },
+              ]}
+              onChange={(value) =>
+                editor?.chain().focus().setMark('documentFont', { family: value }).run()
+              }
+            />
+            <span className="document-editor__separator" aria-hidden="true" />
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Bold"
+              aria-pressed={selected?.bold}
+              onClick={() => editor?.chain().focus().toggleBold().run()}
+            >
+              <strong>B</strong>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Italic"
+              aria-pressed={selected?.italic}
+              onClick={() => editor?.chain().focus().toggleItalic().run()}
+            >
+              <em>I</em>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Underline"
+              aria-pressed={selected?.underline}
+              onClick={() => editor?.chain().focus().toggleUnderline().run()}
+            >
+              <u>U</u>
+            </Button>
+            <span className="document-editor__separator" aria-hidden="true" />
+            <Menu
+              open={insertOpen}
+              label="Insert content"
+              anchor={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<IconPlusOutline16 />}
+                  aria-label="Insert content"
+                  aria-haspopup="menu"
+                  aria-expanded={insertOpen}
+                  onClick={() => setInsertOpen(!insertOpen)}
+                />
+              }
+              onClose={() => setInsertOpen(false)}
+              onSelect={insert}
+              items={[
+                { id: 'table', label: 'Table' },
+                { id: 'image', label: 'Image' },
+                { id: 'bullet', label: 'Bullet list' },
+                { id: 'ordered', label: 'Numbered list' },
+                { id: 'checklist', label: 'Checklist' },
+                { id: 'quote', label: 'Quote' },
+                { id: 'code', label: 'Code block' },
+                { id: 'mermaid', label: 'Mermaid diagram' },
+                { id: 'details', label: 'Dropdown section' },
+                { id: 'date', label: 'Date' },
+                { id: 'divider', label: 'Divider' },
+                ...(selected?.table
+                  ? [
+                      { type: 'separator' as const, id: 'table-actions' },
+                      { id: 'row', label: 'Add row' },
+                      { id: 'column', label: 'Add column' },
+                      { id: 'remove-table', label: 'Delete table', danger: true },
+                    ]
+                  : []),
+              ]}
+            />
+            <Button size="sm" variant="ghost" onClick={() => editor?.chain().focus().undo().run()}>
+              Undo
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => editor?.chain().focus().redo().run()}>
+              Redo
+            </Button>
+          </>
+        ) : (
+          <span className="document-editor__reading-label">Reading view</span>
+        )}
+        <Button
+          size="sm"
+          placement="document-editor__outline-toggle"
+          aria-expanded={outlineOpen}
+          onClick={() => setOutlineOpen(!outlineOpen)}
+        >
+          On this page
+        </Button>
+      </div>
       {error ? (
         <Alert
           tone="error"
@@ -313,8 +333,11 @@ export default function RichDocumentEditor({
           {error}
         </Alert>
       ) : null}
-      <div className="document-editor__paper">
-        <EditorContent editor={editor} />
+      <div className="document-editor__reading" data-outline={outlineOpen || undefined}>
+        <DocumentOutline editor={editor} open={outlineOpen} />
+        <div className="document-editor__paper">
+          <EditorContent editor={editor} />
+        </div>
       </div>
       <Modal
         open={imageOpen}
