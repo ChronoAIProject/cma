@@ -11,23 +11,23 @@ afterEach(() => {
   document.title = '';
 });
 
-it('names the tab after the view and restores the product name when it leaves', () => {
+it('keeps the full product title across view changes and unmount', () => {
   const { rerender, unmount } = render(<Title value="Atlas" />);
-  expect(document.title).toBe('Atlas · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
   rerender(<Title value="Prove lemma" />);
-  expect(document.title).toBe('Prove lemma · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
   unmount();
-  expect(document.title).toBe('CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
 });
 
-it('registers nothing for a name that is not known yet', () => {
+it('uses the product title even before a view name is known', () => {
   document.title = 'Before';
   render(<Title value={undefined} />);
   render(<Title value="   " />);
-  expect(document.title).toBe('Before');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
 });
 
-it('gives the title to the visible service and hands it back when that service hides', () => {
+it('keeps the product title when retained services switch visibility', () => {
   const draw = (gateway: boolean) => (
     <>
       <DocumentTitleScope visible={!gateway}>
@@ -39,11 +39,11 @@ it('gives the title to the visible service and hands it back when that service h
     </>
   );
   const { rerender } = render(draw(false));
-  expect(document.title).toBe('Prove lemma · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
   rerender(draw(true));
-  expect(document.title).toBe('Event Gateway · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
   rerender(draw(false));
-  expect(document.title).toBe('Prove lemma · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
 });
 
 it('keeps a nested scope hidden while its parent is hidden', () => {
@@ -57,5 +57,5 @@ it('keeps a nested scope hidden while its parent is hidden', () => {
       </DocumentTitleScope>
     </>,
   );
-  expect(document.title).toBe('Agent Manager · CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
 });

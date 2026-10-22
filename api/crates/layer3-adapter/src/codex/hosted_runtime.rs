@@ -20,6 +20,7 @@ impl HostedAgentRuntime for CodexRuntime {
             crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
+            context_refresh: None,
             permission_mode: Some(permission_mode.into()),
             own_credential: request.options.own_credential,
             channel_tool: None,

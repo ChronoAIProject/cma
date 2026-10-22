@@ -194,6 +194,8 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: super::super::ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
             observations: Default::default(),
             settings: None,
             conversation_id: Some("conversation-a".into()),

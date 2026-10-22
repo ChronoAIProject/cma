@@ -21,7 +21,9 @@ mod features;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
+mod documents;
 pub(crate) use bot_father::BotFatherConfig;
+pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 
@@ -161,6 +163,7 @@ pub struct Config {
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
     pub bot_father: Option<BotFatherConfig>,
+    pub document_storage: Option<DocumentStorageConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -351,6 +354,7 @@ impl Config {
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
+            document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,
         })
     }
 

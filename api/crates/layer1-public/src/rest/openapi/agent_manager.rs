@@ -10,12 +10,26 @@ const METHODS: &[&str] = &[
 /// Exact method selection prevents unrelated operations sharing a path from
 /// leaking into this contract. The full compatibility document is unchanged.
 const OPERATIONS: &[(&str, &[&str])] = &[
+    ("/api/v1/documents", &["get", "post"]),
+    ("/api/v1/documents/{id}", &["get", "patch"]),
+    ("/api/v1/documents/{id}/source", &["get"]),
+    ("/api/v1/documents/{id}/revisions", &["get"]),
+    ("/api/v1/documents/{id}/shares", &["get"]),
+    (
+        "/api/v1/documents/{id}/shares/{subject}",
+        &["put", "delete"],
+    ),
+    ("/api/v1/documents/{id}/share-links", &["get", "post"]),
+    ("/api/v1/documents/{id}/share-links/{link_id}", &["delete"]),
+    ("/api/v1/documents/{id}/comments", &["get", "post"]),
+    ("/api/v1/documents/{id}/comments/{comment_id}", &["delete"]),
     ("/api/v1/agents", &["get", "post"]),
     ("/api/v1/agents/{id}", &["get", "delete"]),
     ("/api/v1/agent-lifecycle/{id}", &["get"]),
     ("/api/v1/agents/{id}/transcript", &["get"]),
     ("/api/v1/agents/{id}/usage", &["get"]),
     ("/api/v1/agents/{id}/models", &["get"]),
+    ("/api/v1/agents/{id}/preferences", &["get", "patch"]),
     ("/api/v1/agents/{id}/settings", &["get", "patch"]),
     ("/api/v1/agents/{id}/message-feedback", &["get"]),
     (
@@ -86,7 +100,7 @@ const OPERATIONS: &[(&str, &[&str])] = &[
 
 /// Schemas, parameters, errors and operation identities come from the same
 /// handler annotations as `/openapi.json`; this does not introduce new APIs.
-pub(super) fn document() -> Value {
+pub fn document() -> Value {
     let full = serde_json::to_value(super::document()).expect("public OpenAPI serializes");
     project(full)
 }

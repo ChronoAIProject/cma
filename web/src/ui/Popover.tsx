@@ -35,6 +35,7 @@ export function Popover({
   align = 'end',
   placement,
   cardClassName,
+  autoFocus = true,
 }: {
   readonly open: boolean;
   /** The trigger, rendered in place. */
@@ -49,6 +50,8 @@ export function Popover({
   readonly placement?: string;
   /** Extra class on the card, for its owner's contents. */
   readonly cardClassName?: string;
+  /** Hover previews leave keyboard focus where it is. */
+  readonly autoFocus?: boolean;
 }) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -104,24 +107,24 @@ export function Popover({
 
   // Focus moves into the card when it opens, so its controls are reachable at once.
   useEffect(() => {
-    if (!interactive) return;
+    if (!interactive || !autoFocus) return;
     const card = cardRef.current;
     const first =
       card?.querySelector<HTMLElement>('[data-autofocus]') ??
       card?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus({ preventScroll: true });
-  }, [interactive]);
+  }, [interactive, autoFocus]);
 
   // And back to the trigger when it closes, unless somebody pressed elsewhere.
   const wasOpen = useRef(false);
   useEffect(() => {
     const closing = wasOpen.current && !interactive;
     wasOpen.current = interactive;
-    if (!closing || parentExiting) return;
+    if (!closing || parentExiting || !autoFocus) return;
     const active = document.activeElement;
     if (active === null || active === document.body || cardRef.current?.contains(active) === true)
       rootRef.current?.querySelector<HTMLElement>('button')?.focus();
-  }, [interactive, parentExiting]);
+  }, [interactive, parentExiting, autoFocus]);
 
   const card = !present ? null : (
     <div

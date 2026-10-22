@@ -188,6 +188,8 @@ pub(crate) struct AgentListItemView {
     profile: AgentProfileSummaryView,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_title: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -202,6 +204,7 @@ impl From<Agent> for AgentListItemView {
             status: agent.status,
             profile: (&agent).into(),
             runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
+            owner_title: agent.conversation.preferences.title,
             title: agent.title,
             created_at: agent.created_at,
             updated_at: agent.updated_at,
@@ -240,6 +243,8 @@ pub(crate) struct AgentView {
     reach: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     paused_notice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -336,6 +341,7 @@ impl AgentView {
                 .into_iter()
                 .map(|service| service.to_string())
                 .collect(),
+            owner_title: agent.conversation.preferences.title,
             title: agent.title,
             paused_notice,
             first_message,

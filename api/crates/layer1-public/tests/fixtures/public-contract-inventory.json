@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 210,
+  "openapi_operations": 227,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -3002,6 +3002,232 @@
         "invalid_agent_events_query",
         "agent_history_unavailable",
         "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v1/documents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/source": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/shares": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "PUT /api/v1/documents/{id}/shares/{subject}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/shares/{subject}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/share-links/{link_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/comments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents/{id}/comments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/comments/{comment_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "store_failed"
       ]
     }
   }

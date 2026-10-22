@@ -94,6 +94,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             get(super::agent_skills::read).post(super::agent_skills::install),
         )
         .route(
+            "/api/v1/agents/{id}/preferences",
+            get(super::agent_preferences::read).patch(super::agent_preferences::update),
+        )
+        .route(
             "/api/v1/agents/{id}/settings",
             get(super::agent_settings::read).patch(super::agent_settings::update),
         )

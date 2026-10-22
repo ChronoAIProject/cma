@@ -32,8 +32,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 48);
-    assert_eq!(operation_count, 56);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 59);
+    assert_eq!(operation_count, 73);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
@@ -179,9 +179,13 @@ fn pruning_removes_all_unreachable_components_and_tags_without_dangling_referenc
         focused_bytes * 4 < full_bytes * 3,
         "projection must materially shrink the full contract"
     );
-    println!("Agent Manager contract: paths={}, operations=45, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
-        focused["paths"].as_object().unwrap().len(), focused["components"]["schemas"].as_object().unwrap().len(),
-        full["paths"].as_object().unwrap().len(), full["components"]["schemas"].as_object().unwrap().len());
+    println!(
+        "Agent Manager contract: paths={}, operations=45, schemas={}, bytes={focused_bytes}; full paths={}, schemas={}, bytes={full_bytes}",
+        focused["paths"].as_object().unwrap().len(),
+        focused["components"]["schemas"].as_object().unwrap().len(),
+        full["paths"].as_object().unwrap().len(),
+        full["components"]["schemas"].as_object().unwrap().len()
+    );
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! Hosted sandbox implementation shared by agent providers.
 
 mod acp;
+mod acp_context_refresh;
 mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
@@ -17,6 +18,7 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod managed_context;
 mod memory;
 mod provider_backend;
 mod provider_endpoint;
@@ -45,6 +47,7 @@ pub(crate) use deployment::{
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
+pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{

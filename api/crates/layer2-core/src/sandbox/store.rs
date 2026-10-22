@@ -70,6 +70,7 @@ mod agent_work_prepared_pair;
 pub use agent_work_prepared_open_ready::{
     validate_prepared_agent_open_ready, PreparedAgentOpenContext,
 };
+mod agent_work_identity;
 mod agent_work_transition_validation;
 mod agent_work_validation;
 mod agent_worktree_validation;

@@ -30,6 +30,7 @@ impl From<&Agent> for AgentHierarchySummary {
             status: value.status,
             profile_id: value.profile.id.to_string(),
             profile_revision: value.profile.revision,
+            owner_title: value.conversation.preferences.title.clone(),
             title: value.title.clone(),
             updated_at: value.updated_at.clone(),
         }

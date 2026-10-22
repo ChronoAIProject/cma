@@ -14,14 +14,15 @@ fn historical(mut plan: NativePreparedPlan, revision: u32, prompt: &str) -> Nati
 #[test]
 fn native_prepared_guidance_revision_reads_old_plans_without_rewriting_their_identity() {
     let current = plan();
-    assert_eq!(current.warm.workspaces[0].agents[0].revision, 3);
+    assert_eq!(current.warm.workspaces[0].agents[0].revision, 4);
     assert_eq!(
         current.warm.workspaces[0].agents[0].content.system_prompt,
-        crate::agent_lifecycle::guidance::managed_v2()
+        crate::agent_lifecycle::guidance::managed_v3()
     );
     for (revision, prompt) in [
         (1, ""),
         (2, crate::agent_lifecycle::guidance::GITHUB_API_V1),
+        (3, crate::agent_lifecycle::guidance::managed_v2()),
     ] {
         let old = historical(current.clone(), revision, prompt);
         let decoded: NativePreparedPlan =
@@ -51,10 +52,11 @@ async fn native_prepared_guidance_revision_replaces_only_unclaimed_older_homes()
     for (revision, prompt) in [
         (1, ""),
         (2, crate::agent_lifecycle::guidance::GITHUB_API_V1),
+        (3, crate::agent_lifecycle::guidance::managed_v2()),
     ] {
         let (client, name, store) = database().await;
         let current = plan();
-        assert_eq!(current.warm.workspaces[0].agents[0].revision, 3);
+        assert_eq!(current.warm.workspaces[0].agents[0].revision, 4);
         let old = historical(current.clone(), revision, prompt);
         assert_ne!(old, current);
         store

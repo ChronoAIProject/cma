@@ -279,6 +279,10 @@ export function AppFrame({
           side="sidebar"
           at={columns.sidebar}
           label="Resize navigation"
+          value={columns.sidebar}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          onResize={onSidebarDrag}
           onDrag={(dx) => {
             onSidebarDrag(sidebarDragStart.current + dx);
           }}
@@ -295,6 +299,10 @@ export function AppFrame({
           side="details"
           at={columns.sidebar + columns.center}
           label="Resize the details column"
+          value={columns.details}
+          min={DETAILS_MIN}
+          max={Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)}
+          onResize={onDetailsDrag}
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.
             onDetailsDrag(detailsDragStart.current - dx);
@@ -328,15 +336,36 @@ interface DragHandleProps {
   /** Where the border it straddles currently is. */
   readonly at: number;
   readonly label: string;
+  readonly value: number;
+  readonly min: number;
+  readonly max: number;
+  readonly onResize: (width: number) => void;
   readonly onDrag: (dx: number) => void;
   readonly onDraggingChange: (dragging: boolean) => void;
 }
 
-function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandleProps) {
+function DragHandle({
+  side,
+  at,
+  label,
+  value,
+  min,
+  max,
+  onResize,
+  onDrag,
+  onDraggingChange,
+}: DragHandleProps) {
   const [dragging, setDragging] = useState(false);
   const origin = useRef(0);
   const latest = useRef(0);
   const frame = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
 
   const report = useCallback(() => {
     frame.current = null;
@@ -352,6 +381,30 @@ function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandlePro
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
+      tabIndex={value >= min ? 0 : -1}
+      aria-valuenow={value}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuetext={`${Math.round(value)} pixels`}
+      onKeyDown={(event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 48 : 16;
+        const direction = (event.key === 'ArrowRight' ? 1 : -1) * (side === 'details' ? -1 : 1);
+        onResize(
+          event.key === 'Home'
+            ? min
+            : event.key === 'End'
+              ? max
+              : clampWidth(value + direction * step, min, max),
+        );
+      }}
+      onLostPointerCapture={() => {
+        if (frame.current !== null) cancelAnimationFrame(frame.current);
+        frame.current = null;
+        setDragging(false);
+        onDraggingChange(false);
+      }}
       onPointerDown={(event) => {
         event.preventDefault();
         /*

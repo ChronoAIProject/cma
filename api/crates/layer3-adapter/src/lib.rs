@@ -63,11 +63,11 @@ pub use checkpoint::{
 pub use conversation::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel,
     ConversationId, ConversationInput, ConversationInputGuard, ConversationInputSender,
-    ConversationSendOutcome, ConversationUpdate, MessageId, PermissionDecision, PermissionLocator,
-    PermissionOption, PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
-    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage,
-    UsageUpdate,
+    ConversationSendOutcome, ConversationSettingsSupport, ConversationUpdate, MessageId,
+    PermissionDecision, PermissionLocator, PermissionOption, PermissionOptionId,
+    PermissionOptionKind, PermissionRequest, PromptResponse, RequestPermissionRequest,
+    SessionUpdate, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+    ToolKind, TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{
