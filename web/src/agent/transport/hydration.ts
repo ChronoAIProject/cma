@@ -10,6 +10,7 @@ export class ConversationHydration extends HydrationEvents {
   private incarnation?: string;
   private baseline?: ConversationState;
   private transcript?: ConversationState;
+  private authoritative?: Pick<ConversationState, 'cursor' | 'activeRunId'>;
 
   override reset(snapshot?: ConversationState) {
     super.reset(snapshot);
@@ -17,6 +18,10 @@ export class ConversationHydration extends HydrationEvents {
     this.incarnation = snapshot?.agentIncarnation;
     this.baseline = undefined;
     this.transcript = undefined;
+    this.authoritative =
+      snapshot?.agentIncarnation === undefined
+        ? undefined
+        : { cursor: snapshot.cursor, activeRunId: snapshot.activeRunId };
   }
 
   applyV2(
@@ -25,6 +30,21 @@ export class ConversationHydration extends HydrationEvents {
     agent: string,
     buffering: boolean,
   ): ConversationState {
+    // HTTP history can overtake an already released SSE fragment. Only an
+    // authoritative newer prefix can prove that its old turn is now obsolete;
+    // keep the reducer's identity and same-boundary protocol checks intact.
+    if (
+      (frame.type === 'cma.agent.live' || frame.type === 'cma.agent.live_gap') &&
+      frame.data.agent_id === agent &&
+      frame.data.incarnation === state.agentIncarnation &&
+      this.incarnation === state.agentIncarnation &&
+      this.authoritative !== undefined &&
+      frame.data.turn_sequence !== null &&
+      String(frame.data.turn_sequence) !== this.authoritative.activeRunId &&
+      (frame.type === 'cma.agent.live' ? frame.data.after_sequence : frame.data.turn_sequence) <
+        this.authoritative.cursor
+    )
+      return state;
     const next = foldV2Frame(state, frame, agent);
     this.incarnation = next.agentIncarnation;
     if (buffering && frame.type !== 'cma.agent.error') {
@@ -71,6 +91,8 @@ export class ConversationHydration extends HydrationEvents {
     if (this.incarnation !== undefined && snapshot.agentIncarnation !== this.incarnation)
       throw new Error('Agent snapshot changed conversation identity.');
     this.incarnation = snapshot.agentIncarnation;
+    if (this.authoritative === undefined || snapshot.cursor >= this.authoritative.cursor)
+      this.authoritative = { cursor: snapshot.cursor, activeRunId: snapshot.activeRunId };
     let conversation = snapshot;
     this.frames = this.frames.filter((frame) => {
       if (frame.type === 'cma.agent.event') {
