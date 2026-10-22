@@ -28,6 +28,7 @@ export function useAgentSummary(
           Date.parse(summary.updatedAt) > Date.parse(current.detail.updatedAt)
             ? summary.status
             : current.detail.status;
+        const ownerTitle = summary.ownerTitle ?? current.detail.ownerTitle;
         const title = summary.title?.trim() ? summary.title : current.detail.title;
         const runtimeMetadata = mergeRuntimeMetadata(
           current.detail.runtimeMetadata,
@@ -36,6 +37,7 @@ export function useAgentSummary(
         if (
           current.detail.status === status &&
           current.detail.title === title &&
+          current.detail.ownerTitle === ownerTitle &&
           current.detail.runtimeMetadata === runtimeMetadata
         )
           return current;
@@ -45,6 +47,7 @@ export function useAgentSummary(
             ...current.detail,
             status,
             title,
+            ownerTitle,
             runtimeMetadata,
             updatedAt: summary.updatedAt,
           },

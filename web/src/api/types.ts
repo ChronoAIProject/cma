@@ -171,6 +171,7 @@ export interface AgentRuntimeMetadata {
   readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
+  readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly worktreeId: string;
@@ -225,6 +226,7 @@ export interface FirstMessageState {
 }
 
 export interface AgentDetail {
+  readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly status: AgentStatus;
