@@ -65,6 +65,21 @@ it('uses one personal identity for recorded and optimistic messages and one Agen
   expect(agents[1]).toHaveAttribute('data-streaming');
 });
 
+it('offers votes only for Agent replies while retaining copy and timestamps on every message', () => {
+  render(draw(user));
+  for (const row of screen.getAllByRole('article', { name: 'Ada Lovelace' })) {
+    expect(within(row).queryByRole('button', { name: 'Upvote message' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: 'Downvote message' })).toBeNull();
+    expect(within(row).getByRole('button', { name: 'Copy content' })).toBeEnabled();
+    expect(within(row).getByText('Time unavailable')).toBeInTheDocument();
+  }
+  for (const row of screen.getAllByRole('article', { name: 'Chrono Agent' })) {
+    expect(within(row).getByRole('button', { name: 'Upvote message' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Downvote message' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Copy content' })).toBeEnabled();
+  }
+});
+
 it('falls back after an image error and recovers when the account supplies a different image', () => {
   const view = render(draw(user));
   const avatar = screen.getAllByRole('article', { name: 'Ada Lovelace' })[0]!.querySelector('img')!;

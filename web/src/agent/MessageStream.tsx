@@ -183,6 +183,7 @@ export function MessageStream({
             </span>
             <MessageFooter
               id={message.id}
+              canVote={false}
               at={message.at}
               content={message.content}
               committed={false}

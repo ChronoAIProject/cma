@@ -166,3 +166,129 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const authenticated of [false, true]) {
+  test(`LOCAL landing cannot expand navigation when ${authenticated ? 'signed in' : 'signed out'}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    if (!authenticated)
+      await page.route('**/auth/session', (route) =>
+        route.fulfill({ json: { authenticated: false } }),
+      );
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
+    for (const width of [1440, 800, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await settleShell(page, width, rail(width));
+      await expect(page.getByRole('button', { name: /(?:Show|Hide) navigation/ })).toHaveCount(0);
+      await expect(page.getByRole('separator', { name: 'Resize navigation' })).toHaveCount(0);
+      await expect(page.locator('.frame[data-sidebar-overlay]')).toHaveCount(0);
+    }
+    if (authenticated) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.getByRole('button', { name: 'Get Started' }).click();
+      await expect(
+        page.getByRole('button', { name: 'Hide navigation', exact: true }),
+      ).toBeVisible();
+      await page.getByRole('link', { name: 'CMA home' }).click();
+      await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
+      await expect(page.getByRole('button', { name: /(?:Show|Hide) navigation/ })).toHaveCount(0);
+    }
+    expect(boundary.writes).toEqual([]);
+  });
+}
+
+test('LOCAL system text scales user and Agent content together without changing message geometry', async ({
+  page,
+  baseURL,
+}, info) => {
+  const fixture = new LocalAgentV2();
+  fixture.append({ type: 'message', role: 'user', content: 'Review this example.' });
+  fixture.append({
+    type: 'message',
+    role: 'assistant',
+    content:
+      '# Example\n\nReadable explanation with `inline code`.\n\n```text\nconst value = 42;\n```\n\n- A useful list item\n\n| Name | Value |\n| --- | --- |\n| example | 42 |',
+  });
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/agents/agt_contract/queued-inputs', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.queued_inputs',
+          agent_id: 'agt_contract',
+          data: [],
+          next_after: null,
+        },
+      }),
+    );
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/agents/agt_contract');
+    await expect(page.locator('.agent-content h2')).toHaveText('Example');
+    await expect(
+      page.locator('.message--user').getByRole('button', { name: /vote message/ }),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.message--assistant').getByRole('button', { name: /vote message/ }),
+    ).toHaveCount(2);
+    const measurements = () =>
+      page.evaluate(() => {
+        const sample = (selector: string) => {
+          const element = document.querySelector(selector)!;
+          const style = getComputedStyle(element);
+          return { size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight) };
+        };
+        return {
+          text: [
+            '.message--user p',
+            '.agent-content p',
+            '.agent-content h2',
+            '.agent-content code',
+            '.agent-content pre',
+            '.agent-content li',
+            '.agent-content table',
+          ].map(sample),
+          avatar: document.querySelector('.message__avatar')!.getBoundingClientRect().width,
+          padding: getComputedStyle(document.querySelector('.message-stream')!).paddingLeft,
+          pageOverflow: document.documentElement.scrollWidth > innerWidth,
+        };
+      });
+    const baseline = await measurements();
+    for (const [name, factor] of [
+      ['Small', 0.9],
+      ['Large', 1.15],
+      ['Medium', 1],
+    ] as const) {
+      await page.getByRole('button', { name: /account menu/i }).click();
+      await page
+        .getByRole('group', { name: 'System text size' })
+        .getByRole('menuitemradio', { name })
+        .click();
+      await page.keyboard.press('Escape');
+      const current = await measurements();
+      for (let index = 0; index < baseline.text.length; index++) {
+        expect(current.text[index]!.size).toBeCloseTo(baseline.text[index]!.size * factor, 2);
+        expect(current.text[index]!.line).toBeCloseTo(baseline.text[index]!.line * factor, 2);
+      }
+      expect(current.avatar).toBe(baseline.avatar);
+      expect(current.padding).toBe(baseline.padding);
+      expect(current.pageOverflow).toBe(false);
+      await page.setViewportSize({ width: 320, height: 900 });
+      await settleShell(page, 320, 0);
+      await insideViewport(page.getByRole('textbox', { name: 'Message', exact: true }));
+      expect((await measurements()).pageOverflow).toBe(false);
+      await page.screenshot({
+        path: info.outputPath(`conversation-${name.toLowerCase()}-320.png`),
+      });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await settleShell(page, 1440, 344);
+    }
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.writes).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
