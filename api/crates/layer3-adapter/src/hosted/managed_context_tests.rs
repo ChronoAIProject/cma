@@ -51,7 +51,7 @@ impl HostedBackend for Files {
                     agent_skill_install: false,
                     agent_model_catalog: false,
                     sandbox_id: identity.sandbox_id,
-                    generation: identity.generation,
+                    generation: identity.generation + u64::from(self.fault == 5),
                     home_identity: identity.home_identity,
                     boot_id: if self.fault == 4 && reads > 0 {
                         "b".repeat(32)
@@ -116,6 +116,13 @@ impl HostedBackend for Files {
     }
 }
 pub(in crate::hosted) fn binding(fault: u8) -> (HostedContextRefresh, Arc<Files>) {
+    binding_with_tools(fault, Vec::new())
+}
+
+pub(in crate::hosted) fn binding_with_tools(
+    fault: u8,
+    tools: Vec<serde_json::Value>,
+) -> (HostedContextRefresh, Arc<Files>) {
     let files = Arc::new(Files {
         text: Mutex::new("Old managed\n\nOwner exact text  \n".into()),
         status_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -132,7 +139,7 @@ pub(in crate::hosted) fn binding(fault: u8) -> (HostedContextRefresh, Arc<Files>
         },
         "/home/cma/.cma/agents/agent/home",
         "/home/cma/work".into(),
-        Vec::new(),
+        tools,
     )
     .unwrap();
     (binding, files)
