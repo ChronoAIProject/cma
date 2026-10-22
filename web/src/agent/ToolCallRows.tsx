@@ -48,7 +48,7 @@ function ToolCallLine({
   );
 }
 
-/** A lone call keeps the same frame as a group, so one and many read as the same kind of thing. */
+/** A lone call sits in the same quiet container as a group, so one and many read alike. */
 export function ToolCallRow({
   tool,
   activeRunId,
@@ -74,8 +74,11 @@ export function ToolCallGroup({
   const [chosen, setChosen] = useState<boolean>();
   const open = chosen ?? group.failed;
   const rowsId = useId();
-  const latest = group.items.at(-1)!;
-  const latestWord = toolOutcomeWord(toolOutcome(latest, activeRunId), latest.status);
+  // A settled group repeats no command line: only work still running or calls that
+  // failed are worth a reader's glance before they choose to open it.
+  const outcomes = group.items.map((tool) => toolOutcome(tool, activeRunId));
+  const running = group.items[outcomes.lastIndexOf('running')];
+  const failures = outcomes.filter((outcome) => outcome === 'failed').length;
   return (
     <div className="tool-calls" data-group="">
       <button
@@ -88,10 +91,20 @@ export function ToolCallGroup({
         <span className="tool-calls__chevron" aria-hidden="true">
           {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </span>
-        <span className="tool-calls__count">{group.items.length} tool calls</span>{' '}
-        <span className="tool-calls__latest">
-          Latest: {latest.title} · {latestWord}
-        </span>
+        <span className="tool-calls__count">{group.items.length} tool calls</span>
+        {/* Spaces between the parts keep the accessible name readable; flex drops them visually. */}
+        {running === undefined ? null : (
+          <>
+            {' '}
+            <span className="tool-calls__running">· Running {running.title}</span>
+          </>
+        )}
+        {failures === 0 ? null : (
+          <>
+            {' '}
+            <span className="tool-calls__failed">· {failures} failed</span>
+          </>
+        )}
       </button>
       {open ? (
         <div className="tool-calls__rows" id={rowsId}>
