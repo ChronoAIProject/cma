@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import type { AuthProvider, AuthState, SignInOptions } from './types';
 import { parseRoute, routePath } from '../routing/routes';
+import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 
 /**
@@ -61,6 +62,10 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         const current = parseRoute(window.location.pathname);
         if (current.kind === 'agent_share') {
           retainAgentShareForSignIn(current.shareId);
+          returnTo = routePath(current);
+        }
+        if (current.kind === 'document') {
+          retainDocumentShareToken(current.documentId, true);
           returnTo = routePath(current);
         }
         await provider.signIn(returnTo, options);
