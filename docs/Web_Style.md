@@ -1327,10 +1327,12 @@ runtime authority, or internal checkpoint writer identifier is displayed.
 
 **Service access** in the drawer is read-only. The NyxID key belongs to the
 Sandbox, not to one Agent, so it is edited in one place, the Sandbox page's
-Access tab (§17). The drawer lists the effective services as catalog-name links,
-with chrono-llm-public and ornn-api marked Required, and ends with **Manage on
-Sandbox**, a real link to `/sandboxes/<id>?tab=access`. **Sandbox operation
-progress** opens the same page's Activity tab.
+Access tab (§17). The drawer lists the effective services as plain rows of
+catalog names, with chrono-llm-public and ornn-api followed by the word Required
+in the tertiary label colour, and ends with **Manage on Sandbox**, a real link to
+`/sandboxes/<id>?tab=access`. **Sandbox operation progress** opens the same
+page's Activity tab. How the panel is laid out is specified under Agent details
+panel below.
 
 Usage and context are read from the composer's context ring and its tooltip, with
 tabular figures. Missing usage is not zero. Without a reported ceiling, the tooltip
@@ -3100,3 +3102,44 @@ and stream without rereading the transcript; actual stream disconnection repairs
 the durable view before reconnecting.
 
 | 2026-10-22 | Flatten Agents navigation, fix global New agent to a new Sandbox, select Operations owners by name, lock the landing sidebar, apply text preferences to conversations, limit voting to Agent replies, center the green favicon, and decouple input/latest-message display from historical activity loading. |
+
+
+### Agent details panel (2026-10-22)
+
+The Agent details panel is a calm side panel, not a settings form. Below its
+header it scrolls as one region with a 16px inset; no list, catalogue or section
+inside it has a scroll area of its own. Sections are separated by 24px of space,
+never by hairlines, and appear in the order Files, Sharing, Service access and
+Skills, followed by the Sandbox operation progress action.
+
+Section headings are sentence case at 13px, weight 500, in
+`--dsw-alias-label-primary`, without uppercase or the code face. A section's
+explanatory sentence is 13px in `--dsw-alias-label-secondary`; code-face values
+such as `/home/` stay code. Every text action in the panel (Browse files, Manage
+share links, Manage on Sandbox, Sandbox operation progress, Refresh skill status,
+Retry installation, Retry Ornn catalog and More Ornn skills) uses one quiet-link
+style: 13px text in `--dsw-alias-label-secondary` with no fill, border, icon or
+indent, starting flush with the text above it, underlined on hover, with the
+shared `--focus-ring` on keyboard focus and the existing disabled treatment. Each
+keeps its accessible name and role: navigation stays a link, commands stay
+buttons.
+
+Service access lists each effective service as a plain row: its catalog name in
+the primary label colour, underlined on hover where it links, and, for
+chrono-llm-public and ornn-api, the word Required after it in
+`--dsw-alias-label-tertiary` rather than a bordered badge. Manage on Sandbox
+remains the single action.
+
+Skills lists the Agent's installed skills as plain rows: the name in the primary
+label colour, then its version and installation state (Installed, Installing…
+or Installation failed) in the tertiary colour, with an installation error on its
+own line beneath. Pending, unavailable and busy explanations and the install
+error with Refresh skill status remain directly under the list. The available
+Ornn catalogue sits behind a native **Add skills** disclosure, collapsed by
+default. Opening it reveals the search field, the catalogue rows with their
+version picker and Install button, the catalogue loading, empty and error
+states, Retry Ornn catalog and More Ornn skills. Catalogue rows grow with the
+panel and are separated by 12px of space, without a bordered box. Installing,
+version choice, same-key retry and lifecycle gating are unchanged.
+
+| 2026-10-22 | Calmed the Agent details panel. Section headings became sentence case at 13px weight 500 in the primary label colour (Files, Sharing, Service access, Skills; "Session sharing" became Sharing), sections are separated by 24px of space instead of hairlines, and every text action shares one quiet-link style flush with the text above it. Required services read as tertiary text instead of bordered badges. Installed skills are plain name and version rows, and the Ornn catalogue moved behind a collapsed Add skills disclosure that holds its error and retry states, so the panel scrolls as one region without nested scroll areas. |
