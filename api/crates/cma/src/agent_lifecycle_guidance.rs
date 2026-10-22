@@ -31,6 +31,47 @@ pub(crate) fn managed_v3() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{}\n\n{DOCUMENTS_V1}", managed_v2()))
 }
 
+/// Split only exact, already-versioned guidance with its original separator.
+/// Similar owner-authored text is never treated as platform instructions.
+pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
+    for managed in [managed_v3(), managed_v2(), GITHUB_API_V1] {
+        if prompt == managed {
+            return (Some(managed), "");
+        }
+        if let Some(owner) = prompt
+            .strip_prefix(managed)
+            .and_then(|tail| tail.strip_prefix("\n\n"))
+        {
+            return (Some(managed), owner);
+        }
+    }
+    (None, prompt)
+}
+
+pub(crate) fn compose_managed(managed: Option<&str>, owner: &str) -> String {
+    match managed {
+        Some(managed) if owner.is_empty() => managed.to_owned(),
+        Some(managed) => format!("{managed}\n\n{owner}"),
+        None => owner.to_owned(),
+    }
+}
+
+/// Owner edits cannot remove CMA's deployment-managed instructions. The exact
+/// desired composition is persisted before dispatch, never recomputed on replay.
+pub(crate) struct ManagedInstructionPolicy;
+impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
+    fn owner_prompt(&self, agent: &layer2_core::sandbox::Agent) -> String {
+        split_managed(agent.system_prompt()).1.to_owned()
+    }
+    fn compose(&self, agent: &layer2_core::sandbox::Agent, owner: &str) -> String {
+        let managed = (agent.conversation.managed_guidance_revision >= 1)
+            .then_some(managed_v3())
+            .or_else(|| split_managed(agent.system_prompt()).0)
+            .or_else(|| split_managed(&agent.profile.content.system_prompt).0);
+        compose_managed(managed, owner)
+    }
+}
+
 pub(crate) fn profile_with_instructions(
     mut profile: AgentLifecycleProfile,
     instructions: Option<&str>,

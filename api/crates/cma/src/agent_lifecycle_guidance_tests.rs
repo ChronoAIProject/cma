@@ -3,6 +3,23 @@ use crate::store::{LifecycleBehavior, LifecycleInput};
 use layer2_core::profiles::content_digest;
 
 #[test]
+fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
+    for managed in [GITHUB_API_V1, managed_v2(), managed_v3()] {
+        let owner = "  Keep citations.\n\nDo not change my formatting.\n";
+        let original = compose_managed(Some(managed), owner);
+        assert_eq!(split_managed(&original), (Some(managed), owner));
+        assert_eq!(split_managed(managed), (Some(managed), ""));
+        let replacement = compose_managed(split_managed(&original).0, "New owner instructions");
+        assert_eq!(replacement, format!("{managed}\n\nNew owner instructions"));
+        assert_eq!(compose_managed(split_managed(&original).0, ""), managed);
+    }
+    for owner in ["", "CMA GitHub workflow:\nUser-authored text", "  owner\n"] {
+        assert_eq!(split_managed(owner), (None, owner));
+        assert_eq!(compose_managed(None, owner), owner);
+    }
+}
+
+#[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
     for instructions in [GITHUB_API_V1, managed_v2(), managed_v3()] {
         for (sandbox, workspace) in [
