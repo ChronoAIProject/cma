@@ -162,3 +162,28 @@ it.each(['read', 'comment'] as const)(
     expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
   },
 );
+
+it('keeps image source that arrives asynchronously while an earlier save is being acknowledged', async () => {
+  let acknowledge: ((document: DocumentView) => void) | undefined;
+  const api = client({
+    update: vi.fn(
+      () =>
+        new Promise<DocumentView>((resolve) => {
+          acknowledge = resolve;
+        }),
+    ),
+  });
+  page(api);
+  const content = await screen.findByRole('textbox', { name: 'Document content' });
+  fireEvent.change(content, { target: { value: '# Initial edit' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(acknowledge).toBeDefined());
+  // FileReader completion dispatches the editor's onChange even while typing is locked.
+  const withImage = '# Initial edit\n\n![Pasted image](data:image/png;base64,aGVsbG8=)';
+  fireEvent.change(content, { target: { value: withImage } });
+  acknowledge!({ ...view, revision: 4, source_revision: 4 });
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes'));
+  expect(content).toHaveValue(withImage);
+  expect(documentDraft('owner', id)?.markdown).toBe(withImage);
+  expect(documentDraft('owner', id)?.sourceRevision).toBe(4);
+});
