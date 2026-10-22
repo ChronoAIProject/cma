@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MessageStream } from './MessageStream';
 import { conversationFromTranscript } from './conversation';
 import type { ConversationMessage } from './model';
@@ -31,7 +31,7 @@ function draw(identity?: MessageUser) {
   );
 }
 
-it('uses one personal identity for recorded and optimistic messages and one Agent mark for replay and live text', () => {
+it('uses one personal identity for recorded and optimistic messages and one Agent mark per run', () => {
   render(draw(user));
   const own = screen.getAllByRole('article', { name: 'Ada Lovelace' });
   expect(own).toHaveLength(2);
@@ -47,7 +47,11 @@ it('uses one personal identity for recorded and optimistic messages and one Agen
   expect(within(own[1]!).getByRole('status')).toHaveTextContent('Sending…');
   const agents = screen.getAllByRole('article', { name: 'Chrono Agent' });
   expect(agents).toHaveLength(2);
-  for (const row of agents) {
+  // The live reply continues the recorded one, so only the first draws the identity.
+  expect(within(agents[1]!).queryByText('Chrono Agent')).toBeNull();
+  expect(agents[1]!.querySelector('.message__avatar')).toHaveAttribute('data-continued');
+  expect(agents[1]!.querySelector('.message__avatar')!.childElementCount).toBe(0);
+  for (const row of agents.slice(0, 1)) {
     expect(within(row).getByText('Chrono Agent')).toBeVisible();
     // The mark is inline SVG painted with currentColor, never a raster with its own ground.
     const avatar = row.querySelector('.message__avatar')!;
@@ -126,4 +130,74 @@ it('does not attribute unknown shared authors to the current viewer', () => {
     'Recorded message',
   );
   expect(screen.queryByRole('article', { name: 'You' })).not.toBeInTheDocument();
+});
+
+describe('identity runs', () => {
+  const base = conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] });
+  const named = (row: HTMLElement) => row.querySelector('.message__role')?.textContent ?? null;
+
+  it('shows the identity once per run, across tool calls, and again after the other author', () => {
+    render(
+      <MessageStream
+        conversation={{
+          ...base,
+          messages: [
+            { order: 1, id: 'ask', role: 'user', content: 'Deploy it', status: 'complete' },
+            { order: 2, id: 'more', role: 'user', content: 'Then report', status: 'complete' },
+            { order: 3, id: 'first', role: 'assistant', content: 'Starting', status: 'complete' },
+            { order: 5, id: 'second', role: 'assistant', content: 'Live now', status: 'complete' },
+            { order: 6, id: 'thanks', role: 'user', content: 'Thanks', status: 'complete' },
+          ],
+          toolCalls: [{ order: 4, id: 'call', title: 'Check status', status: 'completed' }],
+        }}
+        onApproval={vi.fn()}
+        user={user}
+      />,
+    );
+    const own = screen.getAllByRole('article', { name: 'Ada Lovelace' });
+    const agent = screen.getAllByRole('article', { name: 'Chrono Agent' });
+    expect(own.map(named)).toEqual(['Ada Lovelace', null, 'Ada Lovelace']);
+    expect(agent.map(named)).toEqual(['Chrono Agent', null]);
+    expect(own[1]!.querySelector('img')).toBeNull();
+    expect(agent[1]!.querySelector('.message__avatar svg')).toBeNull();
+    expect(screen.getByRole('article', { name: 'Tool call: Check status' })).toBeInTheDocument();
+  });
+
+  it('continues a run into optimistic messages only when the last recorded message is the same author', () => {
+    const view = render(
+      <MessageStream
+        conversation={{
+          ...base,
+          messages: [{ id: 'ask', role: 'user', content: 'Deploy it', status: 'complete' }],
+        }}
+        onApproval={vi.fn()}
+        user={user}
+        optimisticMessages={[
+          { id: 'one', content: 'Also this', state: 'sending' },
+          { id: 'two', content: 'And this', state: 'sending' },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole('article', { name: 'Ada Lovelace' }).map(named)).toEqual([
+      'Ada Lovelace',
+      null,
+      null,
+    ]);
+    view.rerender(
+      <MessageStream
+        conversation={{ ...base, messages }}
+        onApproval={vi.fn()}
+        user={user}
+        optimisticMessages={[
+          { id: 'one', content: 'Also this', state: 'sending' },
+          { id: 'two', content: 'And this', state: 'sending' },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole('article', { name: 'Ada Lovelace' }).map(named)).toEqual([
+      'Ada Lovelace',
+      'Ada Lovelace',
+      null,
+    ]);
+  });
 });
