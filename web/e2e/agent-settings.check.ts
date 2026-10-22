@@ -375,7 +375,7 @@ test('LOCAL composer settings apply only after a confirmed runtime response and 
   expect(boundary.errors).toEqual([]);
 });
 
-test('LOCAL composer and Details use model and skill catalogs in bounded responsive containers and confirms stop progress', async ({
+test('LOCAL composer and Details use model and skill catalogs in responsive containers and confirms stop progress', async ({
   page,
   baseURL,
 }, info) => {
@@ -459,6 +459,9 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
     'href',
     '/sandboxes/sbx_route?tab=access',
   );
+  // The catalogue is management detail behind a closed disclosure.
+  await expect(details.getByRole('button', { name: 'Install Skill 0', exact: true })).toBeHidden();
+  await details.getByText('Add skills', { exact: true }).click();
   await expect(
     details.getByRole('list', { name: 'Available Ornn skills' }).getByRole('listitem'),
   ).toHaveCount(20);
@@ -466,17 +469,18 @@ test('LOCAL composer and Details use model and skill catalogs in bounded respons
     await page.setViewportSize({ width, height: 1000 });
     await expect(details).toBeVisible();
     await details.getByRole('heading', { name: 'Details', exact: true }).scrollIntoViewIfNeeded();
-    for (const name of ['Available Ornn skills']) {
-      const list = details.getByRole('list', { name, exact: true });
-      expect(
-        await list.evaluate(
-          (el) =>
-            el.clientHeight <= 320 &&
-            el.scrollHeight > el.clientHeight &&
-            el.scrollWidth <= el.clientWidth + 1,
-        ),
-      ).toBe(true);
-    }
+    // The panel is the one scroll region; the catalogue grows inside it.
+    const list = details.getByRole('list', { name: 'Available Ornn skills', exact: true });
+    expect(
+      await list.evaluate(
+        (el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1,
+      ),
+    ).toBe(true);
+    expect(
+      await details
+        .locator('.agent-details__scroll')
+        .evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
     expect(await details.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.screenshot({
       path: info.outputPath(`details-catalogs-${width}.png`),
