@@ -52,10 +52,8 @@ describe('the retained application shell', () => {
     expect(
       await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show navigation' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.queryByRole('button', { name: 'Show navigation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
     expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hide navigation' })).toHaveAttribute(
@@ -75,10 +73,8 @@ describe('the retained application shell', () => {
     expect(await screen.findByRole('button', { name: 'Get Started' })).toBeEnabled();
     expect(screen.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Show navigation' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.queryByRole('button', { name: 'Show navigation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
     const services = screen.getByRole('menu', { name: 'CMA services' });

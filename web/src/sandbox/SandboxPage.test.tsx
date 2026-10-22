@@ -209,8 +209,8 @@ it('refreshes lifecycle phases and restores Pause only after authoritative eligi
     screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
   ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
-  expect(screen.getByRole('button', { name: 'New agent in this Sandbox' })).toBeEnabled();
   openMoreActions();
+  expect(menuItem('New agent')).not.toHaveAttribute('aria-disabled', 'true');
   expect(menuItem('New workspace')).not.toHaveAttribute('aria-disabled', 'true');
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
   await act(() => vi.advanceTimersByTimeAsync(1500));
@@ -301,12 +301,15 @@ it.each(['active'] as const)(
         onNavigate={vi.fn()}
       />,
     );
-    const agent = await screen.findByRole('button', { name: 'New agent in this Sandbox' });
-    expect(agent).toBeEnabled();
-    expect(agent).not.toHaveAttribute('aria-describedby');
+    await screen.findByRole('heading', { name: 'Atlas' });
+    expect(
+      screen.queryByRole('button', { name: 'New agent in this Sandbox' }),
+    ).not.toBeInTheDocument();
     openMoreActions();
+    expect(menuItem('New agent')).not.toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(menuItem('New workspace'));
-    agent.click();
+    openMoreActions();
+    fireEvent.click(menuItem('New agent'));
     fireEvent.click(screen.getByRole('tab', { name: 'Workspaces' }));
     const here = await screen.findByRole('button', { name: 'New agent in chrono-bot' });
     expect(here).toBeEnabled();
@@ -333,8 +336,9 @@ it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'
         onNavigate={vi.fn()}
       />,
     );
-    expect(await screen.findByRole('button', { name: 'New agent in this Sandbox' })).toBeDisabled();
+    await screen.findByRole('heading', { name: 'Atlas' });
     openMoreActions();
+    expect(menuItem('New agent')).toHaveAttribute('aria-disabled', 'true');
     expect(menuItem('New workspace')).toHaveAttribute('aria-disabled', 'true');
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     fireEvent.click(screen.getByRole('tab', { name: 'Workspaces' }));
@@ -486,13 +490,15 @@ it('deletes from the last More actions row and explains held header actions', as
       onNavigate={vi.fn()}
     />,
   );
-  const agent = await screen.findByRole('button', { name: 'New agent in this Sandbox' });
-  expect(agent).toBeDisabled();
-  expect(agent).toHaveAccessibleDescription('Wait for the current Sandbox operation to finish.');
+  await screen.findByRole('heading', { name: 'Atlas' });
   expect(screen.getByRole('button', { name: 'Pause' })).toHaveAccessibleDescription(
     'Sandbox work is in progress. This action will be available when it finishes.',
   );
   openMoreActions();
+  const agent = menuItem('New agent');
+  expect(agent).toHaveAttribute('aria-disabled', 'true');
+  expect(agent).toHaveTextContent('Wait for the current Sandbox operation to finish.');
+  fireEvent.click(agent);
   const items = screen.getAllByRole('menuitem');
   expect(items.at(-1)).toBe(menuItem('Delete Sandbox'));
   expect(menuItem('Delete Sandbox')).toHaveAttribute('aria-disabled', 'true');

@@ -31,6 +31,8 @@ const READ_ONLY: TreePermissions = {
 function renderTree(
   options: {
     readonly viewerId?: string;
+    readonly view?: 'agent' | 'sandbox';
+    readonly statusFilter?: string;
     readonly route?: AppRoute;
     readonly permissions?: TreePermissions;
     readonly paused?: boolean;
@@ -47,6 +49,8 @@ function renderTree(
   return render(
     <Tree
       viewerId={options.viewerId ?? 'viewer-one'}
+      view={options.view}
+      statusFilter={options.statusFilter}
       items={options.items ?? navigationFixture(options.paused === true ? 'paused' : 'active')}
       refreshError={options.refreshError}
       lifecycleBusy={options.lifecycleBusy}
@@ -522,5 +526,89 @@ describe('activity labels', () => {
     expect(activityLabel('2026-09-06T01:00:00Z', now)).toBe('5m');
     expect(activityLabel('2026-09-05T23:05:00Z', now)).toBe('2h');
     expect(activityLabel('not-a-date', now)).toBe('Unknown activity');
+  });
+});
+
+describe('Flat Agent navigation', () => {
+  it('interleaves Agents from different parents by recent activity without parent rows', async () => {
+    const base = navigationFixture()[0]!;
+    const workspace = base.workspaces[0]!;
+    const agent = workspace.agents[0]!;
+    const onNavigate = vi.fn();
+    const items = [
+      {
+        ...base,
+        workspaces: [
+          {
+            ...workspace,
+            agents: [
+              { ...agent, id: 'older', title: 'Older Agent', updatedAt: '2026-10-20T08:00:00Z' },
+              { ...agent, id: 'newest', title: 'Newest Agent', updatedAt: '2026-10-22T08:00:00Z' },
+              { ...agent, id: 'gone', title: 'Deleted Agent', status: 'deleted' as const },
+            ],
+          },
+        ],
+      },
+      {
+        sandbox: { ...base.sandbox, id: 'sbx_other', name: 'Other Sandbox' },
+        workspaces: [
+          {
+            ...workspace,
+            id: 'wsp_other',
+            name: 'Other Workspace',
+            agents: [
+              { ...agent, id: 'middle', title: 'Middle Agent', updatedAt: '2026-10-21T08:00:00Z' },
+            ],
+          },
+        ],
+      },
+    ];
+    renderTree({ items, view: 'agent', onNavigate });
+    const tree = screen.getByRole('tree', { name: 'Personal Agents' });
+    const rows = within(tree).getAllByRole('treeitem');
+    expect(rows.map((row) => row.dataset.nodeId)).toEqual([
+      'agent:newest',
+      'agent:middle',
+      'agent:older',
+    ]);
+    expect(within(tree).queryByRole('group')).not.toBeInTheDocument();
+    for (const name of [
+      'Atlas',
+      'Other Sandbox',
+      'Other Workspace',
+      '/workspaces/chrono-bot',
+      'Deleted Agent',
+    ])
+      expect(within(tree).queryByText(name)).not.toBeInTheDocument();
+    for (const row of rows) {
+      expect(row).toHaveAttribute('aria-level', '1');
+      expect(row).not.toHaveAttribute('aria-expanded');
+    }
+    rows[0]!.focus();
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'middle' });
+  });
+
+  it('preserves parent pause status and action barriers without grouping', async () => {
+    renderTree({ items: navigationFixture('paused'), view: 'agent', statusFilter: 'paused' });
+    const tree = screen.getByRole('tree', { name: 'Personal Agents' });
+    expect(within(tree).getByRole('link', { name: /Agent one/ })).toHaveTextContent('Paused');
+    expect(within(tree).getByRole('treeitem')).toHaveAttribute('data-dimmed');
+    await userEvent.click(within(tree).getByRole('button', { name: 'Options for Agent one' }));
+    expect(screen.getByRole('menuitem', { name: /^Stop/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByRole('menuitem', { name: 'Export history' })).toHaveAttribute(
+      'aria-disabled',
+      'false',
+    );
+  });
+
+  it('keeps Sandboxes and Workspaces in Sandbox view', () => {
+    renderTree({ view: 'sandbox' });
+    expect(screen.getByText('Atlas')).toBeInTheDocument();
+    expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
+    expect(screen.getByText('Agent one')).toBeInTheDocument();
   });
 });

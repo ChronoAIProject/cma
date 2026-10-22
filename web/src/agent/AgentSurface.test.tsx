@@ -107,7 +107,7 @@ it('shows authorized history while later pages load and preserves the editable d
   const draft = screen.getByRole('textbox', { name: 'Message' });
   expect(draft).toBeEnabled();
   fireEvent.change(draft, { target: { value: 'Keep this draft' } });
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
   // Retain the node: a busy test worker can finish the exit before waitFor resolves.
@@ -160,7 +160,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     const draft = screen.getByRole('textbox', { name: 'Message' });
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: 'Retain this unsubmitted draft' } });
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
     unavailable = false;
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(

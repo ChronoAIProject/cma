@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it('starts one check during an authorized load and keeps Send behind complete history and fresh parent state', async () => {
+it('allows Send during history loading after current connection and parent checks', async () => {
   const pending = deferred<ConnectionReport>();
   vi.mocked(connectionClient.check).mockReturnValueOnce(pending.promise);
   const ready = controller();
@@ -85,8 +85,6 @@ it('starts one check during an authorized load and keeps Send behind complete hi
       controller={{ ...ready, state: { ...ready.state, historyLoading: true } }}
     />,
   );
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-  view.rerender(<AgentSurface {...view.props} controller={ready} />);
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   expect(connectionClient.check).toHaveBeenCalledOnce();
   const fresh = deferred<ConnectionReport>();

@@ -43,7 +43,8 @@ it.each([
 ])('expands %s from home and on direct entry', async (service, path, heading) => {
   const home = show();
   await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
+  expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
   chooseService(service as 'Agent Manager' | 'Event Gateway');
   await screen.findByRole('heading', { name: heading });
   expect(window.location.pathname).toBe(path);
@@ -58,8 +59,7 @@ it.each([
 it('retains manual toggles across service navigation and resets on home visits and history', async () => {
   show();
   await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
-  fireEvent.click(screen.getByRole('button', { name: 'Show navigation' }));
-  expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
   chooseService('Agent Manager');
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   fireEvent.click(screen.getByRole('button', { name: 'Hide navigation' }));
@@ -71,14 +71,16 @@ it('retains manual toggles across service navigation and resets on home visits a
   chooseService('Agent Manager');
   expect(screen.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
   fireEvent.click(screen.getByRole('link', { name: 'CMA home' }));
-  expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
+  expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
 
   window.history.back();
   await waitFor(() => expect(window.location.pathname).toBe('/agent-manager'));
   expect(await screen.findByRole('button', { name: 'Hide navigation' })).toBeVisible();
   window.history.forward();
   await waitFor(() => expect(window.location.pathname).toBe('/'));
-  expect(await screen.findByRole('button', { name: 'Show navigation' })).toBeVisible();
+  await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' });
+  expect(screen.queryByRole('button', { name: /(?:Show|Hide) navigation/ })).toBeNull();
 });
 
 it('keeps narrow-screen automatic collapse when entering a service from home', async () => {

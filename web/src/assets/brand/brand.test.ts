@@ -62,13 +62,13 @@ describe('the CMA mark', () => {
     }
   });
 
-  it('selects the favicon ink from the operating-system scheme', () => {
+  it('keeps the centered favicon green in either operating-system scheme', () => {
     const favicon = documentFor('cma-favicon.svg');
     const style = favicon.querySelector('style')?.textContent ?? '';
     expect(markParts(favicon)).toHaveLength(5);
     expect(markParts(favicon).every((element) => paintIs(element, 'currentColor'))).toBe(true);
-    expect(style).toContain('svg{color:#0E61AC}');
-    expect(style).toContain('@media(prefers-color-scheme:dark){svg{color:#C3FD43}}');
+    expect(style).toBe('svg{color:#C3FD43}');
+    expect(favicon.documentElement.getAttribute('viewBox')).toBe('12 7.288 76 76');
   });
 });
 

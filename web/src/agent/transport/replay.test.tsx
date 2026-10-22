@@ -352,7 +352,7 @@ it('clears uncommitted fragments on a gap and suppresses text already covered by
   unmount();
 });
 
-it('keeps the latest authorized transcript visible while incomplete rich history holds actions and tail', async () => {
+it('keeps the latest transcript and input available while incomplete rich history holds controls and tail', async () => {
   const h = harness();
   vi.mocked(h.client.readAgentTranscript).mockResolvedValue({
     agentId: 'agt_1',
@@ -408,13 +408,13 @@ it('keeps the latest authorized transcript visible while incomplete rich history
     },
   });
   await act(async () => {
-    await result.current.send('Must remain unsent');
+    await result.current.send('Continue while activity recovers');
     await result.current.interrupt();
     await result.current.approve('approval', 'allow');
     await result.current.stop();
   });
   expect(h.streaming).toBe(false);
-  expect(h.post).not.toHaveBeenCalled();
+  expect(h.post).toHaveBeenCalledOnce();
   expect(h.control).not.toHaveBeenCalled();
   unmount();
 });

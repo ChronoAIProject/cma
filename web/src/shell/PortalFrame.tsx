@@ -25,6 +25,7 @@ export function PortalFrame({
   readonly onSidebarCollapsedChange: (collapsed: boolean) => void;
 }) {
   const { state, signOut, signIn } = useAuth();
+  const navigationLocked = landing || route.kind === 'home';
   return (
     <AppFrame
       phoneTitle={
@@ -36,11 +37,12 @@ export function PortalFrame({
       }
       detailsOpen={false}
       sidebarCollapsed={sidebarCollapsed}
+      sidebarLocked={navigationLocked}
       onSidebarCollapsedChange={onSidebarCollapsedChange}
       sidebar={({ collapsed, onToggle, onNavigate: closeNavigation }) => (
         <Sidebar
           collapsed={collapsed}
-          onToggleCollapsed={onToggle}
+          onToggleCollapsed={navigationLocked ? undefined : onToggle}
           route={route}
           onNavigate={(next) => {
             closeNavigation();

@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
 import { Alert } from '../ui/Alert';
 import { StatusBadge } from '../ui/Badge';
@@ -13,6 +13,7 @@ import type { OperatorClient } from './client';
 import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { SandboxDetail } from './SandboxDetail';
+import { useSandboxOwners } from './useSandboxOwners';
 
 const COLUMNS = [
   { header: 'Sandbox' },
@@ -37,7 +38,17 @@ const statuses: readonly SandboxStatus[] = [
   'retired',
 ];
 
-export function Sandboxes({
+export function Sandboxes(props: {
+  readonly client: OperatorClient;
+  readonly canControl: boolean;
+}) {
+  const [scope, setScope] = useState({ client: props.client, generation: 0 });
+  if (scope.client !== props.client)
+    setScope({ client: props.client, generation: scope.generation + 1 });
+  return <SandboxInventory key={scope.generation} {...props} />;
+}
+
+function SandboxInventory({
   client,
   canControl,
 }: {
@@ -48,6 +59,8 @@ export function Sandboxes({
   const [status, setStatus] = useState<SandboxStatus | ''>('');
   const [version, setVersion] = useState('');
   const [filters, setFilters] = useState({ owner, status, version });
+  const owners = useSandboxOwners(client);
+  const ownerHintId = useId();
   return (
     <section aria-label="Sandbox inventory">
       <h2>Sandboxes</h2>
@@ -68,13 +81,32 @@ export function Sandboxes({
       >
         <label className="operator-field">
           <span>Owner</span>
-          <Input
-            aria-label="Sandbox owner"
+          <Picker
+            label="Sandbox owner"
             value={owner}
-            onChange={(event) => setOwner(event.target.value)}
-            maxLength={255}
+            onChange={setOwner}
+            options={[
+              { value: '', label: 'All owners' },
+              ...(owners.state.status === 'ready' ? owners.state.options : []),
+            ]}
+            disabled={owners.state.status !== 'ready'}
+            describedBy={owners.state.status === 'ready' ? undefined : ownerHintId}
           />
+          {owners.state.status === 'loading' ? (
+            <span id={ownerHintId} role="status">
+              Loading owners…
+            </span>
+          ) : owners.state.status === 'error' ? (
+            <span id={ownerHintId} role="alert">
+              Owner choices could not be loaded.
+            </span>
+          ) : null}
         </label>
+        {owners.state.status === 'error' ? (
+          <Button size="sm" onClick={owners.retry}>
+            Retry owner choices
+          </Button>
+        ) : null}
         <label className="operator-field">
           <span>Status</span>
           <Picker

@@ -24,7 +24,7 @@ it('copies actual content, acknowledges success, and handles clipboard failure w
   const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   render(
     <article className="message">
-      <MessageFooter id="live" content={'**Exact**\nmessage'} committed={false} />
+      <MessageFooter id="live" canVote content={'**Exact**\nmessage'} committed={false} />
     </article>,
   );
   const button = screen.getByRole('button', { name: 'Copy content' });
@@ -53,6 +53,7 @@ function FeedbackMessages({
         <article key={id} aria-label={id} className="message">
           <MessageFooter
             id={id}
+            canVote
             at="2026-10-20T00:00:00Z"
             content={id}
             committed
