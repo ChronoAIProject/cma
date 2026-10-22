@@ -211,7 +211,7 @@ export function SharedAgent({
           .catch((cause: unknown) => {
             if (stream.signal.aborted) return;
             buffering = false;
-            buffered.reset();
+            buffered.discardBuffered();
             if (accessFailure(cause)) {
               onAccessChanged();
               return;
@@ -227,7 +227,7 @@ export function SharedAgent({
       .catch((cause: unknown) => {
         if (stream.signal.aborted) return;
         buffering = false;
-        buffered.reset();
+        buffered.discardBuffered();
         if (accessFailure(cause)) {
           onAccessChanged();
           return;
