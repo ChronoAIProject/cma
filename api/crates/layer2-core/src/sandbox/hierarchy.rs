@@ -124,6 +124,8 @@ pub struct WorktreeHierarchySummary {
 #[serde(deny_unknown_fields)]
 pub struct AgentHierarchySummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_metadata: Option<super::AgentRuntimeMetadata>,
     pub id: AgentId,
     pub worktree_id: WorktreeId,

@@ -1,3 +1,4 @@
+use super::agent_work_identity::immutable_agent_fields_changed;
 use crate::sandbox::{
     Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
     Worktree,
@@ -233,22 +234,6 @@ pub(super) fn validate_common(
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())
-}
-
-fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {
-    current.id != next.id
-        || current.worktree_id != next.worktree_id
-        || current.workspace_id != next.workspace_id
-        || current.sandbox_id != next.sandbox_id
-        || current.owner != next.owner
-        || current.creation_key != next.creation_key
-        || current.creation_fingerprint != next.creation_fingerprint
-        || current.profile != next.profile
-        || current.conversation.settings != next.conversation.settings
-        || current.capabilities != next.capabilities
-        || current.title != next.title
-        || current.created_at != next.created_at
-        || current.origin != next.origin
 }
 
 fn worktree_matches_agent(worktree: &Worktree, agent: &Agent) -> bool {

@@ -33,6 +33,7 @@ mod agent_channel_usage;
 mod agent_command_admission;
 mod agent_models;
 mod agent_operate;
+mod agent_preferences;
 mod agent_settings;
 mod agent_skills;
 mod message_feedback;

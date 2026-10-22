@@ -21,6 +21,8 @@ pub struct AgentSettings {
     pub model: String,
     pub reasoning_effort: ThinkingEffort,
     pub permission_mode: PermissionLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 impl AgentSettings {
@@ -32,6 +34,15 @@ impl AgentSettings {
         {
             return Err(SandboxModelError::invalid_value("agent.settings.model"));
         }
+        if self
+            .system_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.len() > 32 * 1024 || prompt.contains('\0'))
+        {
+            return Err(SandboxModelError::invalid_value(
+                "agent.settings.system_prompt",
+            ));
+        }
         Ok(())
     }
 
@@ -39,6 +50,7 @@ impl AgentSettings {
         use layer3_adapter::{PermissionLevel as Permission, ReasoningEffort as Effort};
         layer3_adapter::ConversationInput::Configure {
             model: self.model.clone(),
+            system_prompt: self.system_prompt.clone(),
             reasoning_effort: match self.reasoning_effort {
                 ThinkingEffort::Minimal => Effort::Minimal,
                 ThinkingEffort::Low => Effort::Low,
@@ -70,6 +82,7 @@ impl Agent {
                 model: self.profile.content.model.clone().unwrap_or_default(),
                 reasoning_effort: self.profile.content.thinking_effort,
                 permission_mode: self.profile.content.permission_level,
+                system_prompt: None,
             })
     }
 
@@ -95,12 +108,43 @@ impl AgentOperationService {
         id: &AgentId,
         settings: AgentSettings,
     ) -> Result<Agent, AgentOperationError> {
+        self.update_settings_inner(caller, id, settings, None).await
+    }
+
+    pub(super) async fn update_settings_with_revision(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        settings: AgentSettings,
+        expected_revision: u64,
+    ) -> Result<Agent, AgentOperationError> {
+        self.update_settings_inner(caller, id, settings, Some(expected_revision))
+            .await
+    }
+
+    async fn update_settings_inner(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        settings: AgentSettings,
+        expected_revision: Option<u64>,
+    ) -> Result<Agent, AgentOperationError> {
         self.require_owner_authority(caller)?;
         settings
             .validate()
             .map_err(|error| AgentOperationError::InvalidRequest(error.to_string()))?;
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
+            let mut settings = settings.clone();
+            if settings.system_prompt.is_none() {
+                settings.system_prompt = current.settings().system_prompt;
+            }
+            self.validate_preferences_revision(&current)?;
+            if expected_revision
+                .is_some_and(|revision| revision != current.conversation.preferences.revision)
+            {
+                return Err(AgentOperationError::Conflict);
+            }
             if current.work.step != super::AgentWorkStep::None
                 || current.status != AgentStatus::Ready
                 || current.conversation.active_turn.is_some()
@@ -132,11 +176,29 @@ impl AgentOperationService {
             let target = runtime_target(&current)?;
             let required = vec![RuntimeCapability::Conversation];
             self.require_runtime(&target, &required).await?;
+            if settings.system_prompt != current.settings().system_prompt
+                && !self.system_prompt_supported(&current).await
+            {
+                return Err(AgentOperationError::InvalidRequest(
+                    "Update this Sandbox runtime when idle before changing Agent instructions"
+                        .into(),
+                ));
+            }
             let at = now_rfc3339();
             let sequence = next_sequence(current.conversation.last_seq)?;
             let previous = current.conversation.settings.clone();
             let mut next = current.clone();
             next.conversation.settings = Some(settings.clone());
+            if settings.system_prompt != current.settings().system_prompt {
+                next.conversation.preferences.revision = current
+                    .conversation
+                    .preferences
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        AgentOperationError::Corrupt("preferences revision overflow".into())
+                    })?;
+            }
             next.conversation.operation = Some(new_operation(
                 sequence,
                 &target,

@@ -18,9 +18,35 @@ impl Bridge {
                 model,
                 reasoning_effort,
                 permission,
+                system_prompt,
             } => {
-                self.configure_settings(&session, &model, reasoning_effort, permission)
-                    .await
+                self.configure_settings(
+                    &session,
+                    &model,
+                    reasoning_effort,
+                    permission,
+                    system_prompt.as_deref(),
+                )
+                .await
+            }
+            ConversationInput::RefreshContext {
+                previous_guidance,
+                working_directory,
+                guidance,
+                model,
+                reasoning_effort,
+                permission,
+            } => {
+                self.refresh_context(
+                    &session,
+                    &guidance,
+                    &previous_guidance,
+                    &model,
+                    reasoning_effort,
+                    permission,
+                    working_directory.as_deref(),
+                )
+                .await
             }
             ConversationInput::Prompt(content) => {
                 self.drive_prompt(session, content, None, updates).await

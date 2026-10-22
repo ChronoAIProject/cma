@@ -52,4 +52,20 @@ impl AgentReadService {
             .await
             .map_err(super::authorized::access_error)
     }
+    pub async fn authorize_preferences_update(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentId,
+        update: &crate::sandbox::AgentPreferencesUpdate,
+    ) -> Result<crate::sandbox::AgentSettingsAuthorization, AgentReadError> {
+        self.access
+            .as_ref()
+            .ok_or_else(|| {
+                AgentReadError::Unavailable("resource access service is not composed".into())
+            })?
+            .authorize_agent_preferences(context, credential, id, update)
+            .await
+            .map_err(super::authorized::access_error)
+    }
 }
