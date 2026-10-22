@@ -1,6 +1,6 @@
 import { Presence } from './ui/Presence';
 import { SkeletonRows } from './ui/Skeleton';
-import { Operations, TriggerPublisherPage } from './ConsolePages';
+import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -24,7 +24,7 @@ import { useNavigation } from './shell/navigation';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
-import { IconGoalOutline16 } from './ui/icons';
+import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { NotFoundView, UnavailableView, WelcomeView } from './ConsoleViews';
 import { useDocumentTitle } from './ui/useDocumentTitle';
@@ -185,7 +185,11 @@ function ConsoleContent({
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
-    route.kind === 'docs' ? (
+    route.kind === 'artifacts' || route.kind === 'document' ? (
+      <Suspense fallback={<SkeletonRows rows={3} label="Opening Artifacts" />}>
+        <Documents route={route} user={user} onNavigate={onNavigate} />
+      </Suspense>
+    ) : route.kind === 'docs' ? (
       <DocsPage view={route.view} onNavigate={onNavigate} />
     ) : isBotRoute(route) ? (
       <BotManagement user={user} route={route} onNavigate={onNavigate} />
@@ -409,22 +413,11 @@ function ConsoleContent({
               : undefined
           }
           onSearch={user.visitor ? undefined : () => setCommandsOpen(true)}
-          links={
-            canOpenTriggers
-              ? [
-                  {
-                    id: 'triggers',
-                    label: 'Triggers',
-                    icon: <IconGoalOutline16 />,
-                    route: { kind: 'triggers' },
-                    current:
-                      route.kind === 'triggers' ||
-                      route.kind === 'trigger' ||
-                      route.kind === 'trigger_embed',
-                  },
-                ]
-              : []
-          }
+          links={consoleLinks(
+            route,
+            canOpenTriggers,
+            client.documents !== undefined && !user.visitor,
+          )}
           onHome={() => {
             setDetailsOpen(false);
             onSidebarNavigate();
