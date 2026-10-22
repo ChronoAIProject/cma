@@ -269,6 +269,42 @@ it('keeps a transcript-started stream when the head finishes later', async () =>
   expect(test.replayAgent).toHaveBeenCalledOnce();
 });
 
+it('keeps the transcript boundary after activity fails so late old replies cannot reappear', async () => {
+  const test = fixture({
+    headValue: {
+      ...head,
+      through_cursor: `ag1.${incarnation}.2`,
+      active_turn: {
+        ...head.active_turn,
+        cursor: `ag1.${incarnation}.1`,
+        sequence: 1,
+        kind: { type: 'turn_started', turn_sequence: 1 },
+      },
+    },
+  });
+  test.readAgentEvents.mockRejectedValueOnce(new Error('Activity temporarily unavailable'));
+  test.show();
+  await waitFor(() => expect(test.replayAgent).toHaveBeenCalledOnce());
+  await act(async () => test.transcript.resolve(AGENT_TRANSCRIPT));
+  await screen.findByText(
+    'Conversation activity could not be loaded. Your recorded messages are shown.',
+  );
+  await act(async () => {
+    test.emit({ ...liveReply, runId: '1', delta: 'Obsolete reply fragment' });
+    test.emit(event('RUN_STARTED', { runId: '1', cursor: 1 }));
+  });
+  expect(screen.queryByText('Obsolete reply fragment')).not.toBeInTheDocument();
+  await waitFor(() => expect(document.querySelector('.active-thinking')).not.toBeInTheDocument());
+  expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+  await act(async () => {
+    test.emit(event('RUN_STARTED', { cursor: 5 }));
+    test.emit(liveReply);
+  });
+  expect(screen.getAllByText('A reply before history arrives.')).toHaveLength(1);
+  expect(document.querySelector('.active-thinking')).toBeInTheDocument();
+  expect(test.replayAgent).toHaveBeenCalledOnce();
+});
+
 it('hydrates the gap between an older transcript and the newer idle live baseline', async () => {
   const test = fixture({
     headValue: { ...head, through_cursor: `ag1.${incarnation}.8`, active_turn: null },
