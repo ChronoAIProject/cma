@@ -63,7 +63,7 @@ export function PortalFrame({
             ) : (
               <button
                 type="button"
-                className="sidebar__new"
+                className="sidebar__sign-in"
                 title="Sign in"
                 aria-label="Sign in"
                 onClick={() => void signIn('/agent-manager')}
