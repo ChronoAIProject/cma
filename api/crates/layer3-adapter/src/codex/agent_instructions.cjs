@@ -9,6 +9,9 @@ const method = `  async cmaAgentInstructions(params) {
         typeof params.systemPrompt !== "string" || Buffer.byteLength(params.systemPrompt, "utf8") > 32768 ||
         params.systemPrompt.includes("\\0")) throw RequestError.invalidParams();
     const session = this.getSessionState(params.sessionId);
+    const mcpServers = session.cmaInstructionMcpServers;
+    if (!Array.isArray(mcpServers))
+      throw RequestError.invalidRequest("Reload the Agent session before updating instructions");
     const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
     const home = process.env.CODEX_HOME;
     if (!home || !path.isAbsolute(home)) throw RequestError.invalidRequest("Agent home unavailable");
@@ -39,7 +42,7 @@ const method = `  async cmaAgentInstructions(params) {
     await this.codexAcpClient.closeSession(params.sessionId);
     const resumed = await this.codexAcpClient.resumeSession({
       sessionId: params.sessionId, cwd: snapshot.thread.cwd ?? session.cwd,
-      additionalDirectories: session.additionalDirectories, mcpServers: session.sessionMcpServers
+      additionalDirectories: session.additionalDirectories, mcpServers
     });
     session.cwd = snapshot.thread.cwd ?? session.cwd;
     if (resumed.sessionId !== params.sessionId) throw new Error("Instruction update changed thread identity");
@@ -54,6 +57,8 @@ const method = `  async cmaAgentInstructions(params) {
   }
 `;
 const recording = `    this.sessions.set(sessionId, sessionState);
+    // ACP's sessionMcpServers contains names for display, not resume definitions.
+    sessionState.cmaInstructionMcpServers = structuredClone(requestedMcpServers);
     this.cmaInstructionHashes ??= new Map();
     try {
       const file = require("node:path").join(process.env.CODEX_HOME, "AGENTS.md");
