@@ -205,6 +205,8 @@ pub struct Worktree {
 pub struct HierarchyAgentSummary {
     /// Canonical runtime metadata for this owned Agent.
     pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
     /// Allocated Worktree identifier.

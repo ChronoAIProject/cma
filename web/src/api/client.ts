@@ -86,6 +86,19 @@ export interface AgentModelOption {
   readonly available: boolean;
 }
 
+export interface AgentPreferencesView {
+  readonly title?: string;
+  readonly system_prompt: string;
+  readonly prompt_pending: boolean;
+  readonly prompt_supported: boolean;
+  readonly revision: number;
+}
+export interface UpdateAgentPreferences {
+  readonly expected_revision: number;
+  readonly title?: string;
+  readonly system_prompt?: string;
+}
+
 export interface AgentSettingsView {
   readonly pending?: boolean;
   readonly model: string;
@@ -192,6 +205,15 @@ export interface CmaWebClient {
     id: string,
     options?: ReadOptions,
   ) => Promise<readonly AgentModelOption[]>;
+  readonly readAgentPreferences?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly updateAgentPreferences?: (
+    id: string,
+    preferences: UpdateAgentPreferences,
+    options: CommandOptions,
+  ) => Promise<AgentPreferencesView>;
   readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
   readonly updateAgentSettings?: (
     id: string,

@@ -1,3 +1,4 @@
+import { object, text } from './conversationValues';
 import type { AgentRuntimeMetadata } from '../api/types';
 
 export function descriptionSource(value: unknown): AgentRuntimeMetadata['descriptionSource'] {
@@ -36,4 +37,19 @@ export function mergeRuntimeMetadata(
     result.descriptionIsSetupPreview === previous?.descriptionIsSetupPreview
     ? previous
     : result;
+}
+
+export function durableRuntimeMetadata(value: unknown): AgentRuntimeMetadata | undefined {
+  const metadata = object(value);
+  return metadata === undefined
+    ? undefined
+    : {
+        workingDirectory: text(metadata.working_directory),
+        description: text(metadata.description),
+        descriptionSource: descriptionSource(metadata.description_source),
+        descriptionIsSetupPreview:
+          typeof metadata.description_is_setup_preview === 'boolean'
+            ? metadata.description_is_setup_preview
+            : undefined,
+      };
 }
