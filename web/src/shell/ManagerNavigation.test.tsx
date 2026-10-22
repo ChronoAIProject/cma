@@ -41,20 +41,28 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   const user = userEvent.setup();
   expect(screen.getByRole('button', { name: 'Agents' })).toHaveAttribute('aria-pressed', 'true');
   const summary = { selector: '.navigation-filters__summary' };
-  expect(screen.getByText('All statuses', summary)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Filter' }));
+  const filter = screen.getByRole('button', { name: 'Filter' });
+  // Defaults are not restated: no dot, no summary line, no description.
+  expect(document.querySelector('.navigation-filters__summary')).toBeNull();
+  expect(filter.querySelector('.navigation-filters__dot')).toBeNull();
+  expect(filter).not.toHaveAttribute('aria-describedby');
+  await user.click(filter);
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent(
     'All statuses',
   );
   expect(screen.getByRole('tree', { name: 'Personal Agents' })).toHaveTextContent('Agent one');
   await chooseOption(user, 'Agent status filter', 'Working');
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Filter, 1 applied' })).toBeInTheDocument();
+  expect(filter).toHaveAccessibleDescription('Working');
+  expect(filter.querySelector('.navigation-filters__dot')).not.toBeNull();
   expect(screen.getByText('Working', summary)).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Sandboxes' }));
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
+  // Each view has its own status, so the Sandbox view is back at its defaults.
+  expect(document.querySelector('.navigation-filters__summary')).toBeNull();
+  expect(filter.querySelector('.navigation-filters__dot')).toBeNull();
   expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('chrono-bot');
   await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
   await user.click(screen.getByRole('button', { name: 'Agents' }));
@@ -197,9 +205,17 @@ it('clears status and scope together and names the scope in the summary', async 
     />,
   );
   const user = userEvent.setup();
-  expect(screen.getByText('Shared · All statuses')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Filter, 1 applied' }));
+  const summary = () => document.querySelector('.navigation-filters__summary');
+  const filter = screen.getByRole('button', { name: 'Filter' });
+  // Only the non-default part is named; the default status is not restated.
+  expect(summary()).toHaveTextContent(/^Shared$/);
+  expect(filter).toHaveAccessibleDescription('Shared');
+  expect(filter.querySelector('.navigation-filters__dot')).not.toBeNull();
+  await user.click(filter);
   expect(screen.getByRole('group', { name: 'Navigation filters' })).toBeVisible();
+  await chooseOption(user, 'Agent status filter', 'Working');
+  expect(summary()).toHaveTextContent(/^Shared · Working$/);
   await user.click(screen.getByRole('button', { name: 'Clear filters' }));
   expect(onScope).toHaveBeenCalledWith('');
+  expect(summary()).toHaveTextContent(/^Shared$/);
 });
