@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
-import { IconChevronDownOutline14, IconChevronUpOutline14 } from '../ui/icons';
+import { IconPersonalizationOutline16 } from '../ui/icons';
 import { statusLabel } from '../vocabulary/status';
 export type NavigationView = 'agent' | 'sandbox';
 export const navigationStatuses = (view: NavigationView) => [
@@ -16,8 +16,10 @@ export const navigationStatuses = (view: NavigationView) => [
  * The navigation view and its filters — `docs/Web_Style.md` §10.
  *
  * The view switch stays visible because it changes what the list *is*. Scope
- * and status only narrow it, so they sit behind one Filter button whose count
- * and summary line say what is applied, and the list gets their row back.
+ * and status only narrow it, so they sit behind one Filter key on the same
+ * row. At their defaults nothing more is drawn: the dot and the summary line
+ * appear only once something narrows the list, and the summary names only
+ * what does, because restating the defaults is the noise this row removed.
  */
 export function NavigationFilters({
   scope,
@@ -30,7 +32,7 @@ export function NavigationFilters({
   onClear,
 }: {
   readonly scope?: ReactNode;
-  /** The chosen scope in words, for the summary line. */
+  /** The chosen scope in words, for the summary line when it is not the default. */
   readonly scopeSummary?: string;
   /** Whether the scope differs from the default, Personal. */
   readonly scopeActive?: boolean;
@@ -42,50 +44,51 @@ export function NavigationFilters({
 }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const statusSummary =
-    navigationStatuses(view).find((option) => option.value === status)?.label ?? 'All statuses';
-  const applied = (status === 'all' ? 0 : 1) + (scopeActive ? 1 : 0);
+  const summaryId = useId();
+  const filtered = scopeActive || status !== 'all';
+  const summary = [
+    scopeActive ? scopeSummary : undefined,
+    status === 'all'
+      ? undefined
+      : navigationStatuses(view).find((option) => option.value === status)?.label,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const described = filtered && summary !== '';
   return (
     <div className="navigation-filters">
-      <div
-        className="navigation-filters__views"
-        role="group"
-        aria-label="Navigation view"
-        data-view={view}
-      >
-        <span className="navigation-filters__indicator" aria-hidden="true" />
-        {(['agent', 'sandbox'] as const).map((value) => (
-          <button
-            type="button"
-            key={value}
-            aria-pressed={view === value}
-            onClick={() => onView(value)}
-          >
-            {value === 'agent' ? 'Agents' : 'Sandboxes'}
-          </button>
-        ))}
-      </div>
       <div className="navigation-filters__bar">
-        <span className="navigation-filters__summary">
-          {[scopeSummary, statusSummary].filter(Boolean).join(' · ')}
-        </span>
+        <div className="navigation-filters__views" role="group" aria-label="Navigation view">
+          {(['agent', 'sandbox'] as const).map((value) => (
+            <button
+              type="button"
+              key={value}
+              aria-pressed={view === value}
+              onClick={() => onView(value)}
+            >
+              {value === 'agent' ? 'Agents' : 'Sandboxes'}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className="navigation-filters__toggle"
+          aria-label="Filter"
+          title="Filter"
           aria-expanded={open}
           aria-controls={panelId}
-          aria-label={applied === 0 ? 'Filter' : `Filter, ${String(applied)} applied`}
+          aria-describedby={described ? summaryId : undefined}
           onClick={() => setOpen((wasOpen) => !wasOpen)}
         >
-          <span>Filter</span>
-          {applied === 0 ? null : (
-            <span className="navigation-filters__count" aria-hidden="true">
-              {applied}
-            </span>
-          )}
-          {open ? <IconChevronUpOutline14 /> : <IconChevronDownOutline14 />}
+          <IconPersonalizationOutline16 />
+          {filtered ? <span className="navigation-filters__dot" aria-hidden="true" /> : null}
         </button>
       </div>
+      {described ? (
+        <p id={summaryId} className="navigation-filters__summary">
+          {summary}
+        </p>
+      ) : null}
       <div
         id={panelId}
         className="navigation-filters__panel"
@@ -113,7 +116,7 @@ export function NavigationFilters({
             onChange={onStatus}
           />
         </div>
-        {applied === 0 || onClear === undefined ? null : (
+        {!filtered || onClear === undefined ? null : (
           <button type="button" className="navigation-filters__clear" onClick={onClear}>
             Clear filters
           </button>
