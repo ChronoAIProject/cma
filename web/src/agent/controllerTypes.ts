@@ -21,6 +21,7 @@ export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete'
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly applyAgentTitle?: (title: string) => void;
   readonly queuedMessage?: QueuedMessageControl;
   readonly queuedInputs?: QueuedInputsControl;
   readonly pendingMessage?: string;
