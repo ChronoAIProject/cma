@@ -32,6 +32,16 @@ impl From<layer2_core::sandbox::AgentResponseBinding> for ResponseBinding {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+pub(super) struct EventHead {
+    pub object: &'static str,
+    pub schema_version: u16,
+    pub agent_id: String,
+    pub incarnation: String,
+    pub through_cursor: String,
+    pub active_turn: Option<EventItem>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
 pub(super) struct EventPage {
     pub object: &'static str,
     pub schema_version: u16,

@@ -39,6 +39,7 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
+        || op == "GET /api/v2/agents/{agent_id}/events/head"
     {
         agent_events_v2::dispatch(c).await
     } else if op.contains("/api/v2") {

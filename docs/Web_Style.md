@@ -3191,3 +3191,15 @@ version choice, same-key retry and lifecycle gating are unchanged.
 | 2026-10-22 | Quiet the Agent conversation so reply text leads: identity once per run of one author's messages, the timestamp revealed with the message actions on hover or focus (always on touch), no usage line for a turn without a report, lighter inline code, and tool calls as frameless lines whose group header reads "<n> tool calls" plus only the running call or failure count. |
 | 2026-10-22 | Quiet the Agent Manager sidebar: New agent, Search and Triggers become plain 32px rows with no fill or border at rest; Agents \| Sandboxes becomes text tabs sharing one row with an icon-only Filter key that carries an accent dot, and a summary line naming only non-default filters appears only when one is applied; personal Agent rows become one 32px line with a state dot only for Starting, Working, Needs approval and Needs attention, the status word kept in the accessible name, and age and ⋯ shown only on hover, focus or the current row. |
 | 2026-10-22 | Cap the Agent conversation at a centred 768px reading axis shared by the history and the composer, replacing the 15%-per-side rule that let replies run past 900px on wide screens; the cap is in pixels so text size scales the text, not the measure. |
+
+### Live replies during conversation loading (2026-10-22)
+
+An authorized live Agent head starts real-time observation independently of
+transcript, rich event history and usage loading. A new message shows its usual
+Thinking, streaming reply and message arrival motion while older history loads.
+Historical rows remain static. Late history enriches the conversation without
+clearing new text, restoring a completed turn, duplicating messages or restarting
+a healthy live connection. An account, access or conversation identity change
+still cancels observation and prevents stale output from entering another view.
+
+| 2026-10-22 | Start live Agent replies independently of conversation history loading and preserve current Thinking, replies and arrival motion when historical records finish loading. |

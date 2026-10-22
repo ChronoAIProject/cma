@@ -54,6 +54,31 @@ export const v2AgentEventItem = strict(itemFields);
 export type V2AgentEventItem = Output<typeof v2AgentEventItem>;
 export const v2AgentEvent = strict({ ...itemFields, agent_id: identifier, incarnation });
 export type V2AgentEvent = Output<typeof v2AgentEvent>;
+const head = strict({
+  object: enumeration('cma.agent.event_head'),
+  schema_version: version,
+  agent_id: identifier,
+  incarnation,
+  through_cursor: cursor,
+  active_turn: nullable(v2AgentEventItem),
+});
+export type V2AgentEventHead = Output<typeof head>;
+/** A live baseline does not acknowledge any historical rows. */
+export function v2AgentEventHead(value: unknown, agentId: string): V2AgentEventHead {
+  const result = head(value);
+  if (
+    result.agent_id !== agentId ||
+    cursorIncarnation(result.through_cursor) !== result.incarnation
+  )
+    throw new ProtocolError('Agent head changed identity or incarnation');
+  if (result.active_turn !== null) {
+    const turn = result.active_turn;
+    validateItem(turn, result.incarnation, turn.sequence);
+    if (turn.kind?.type !== 'turn_started' || turn.sequence > cursorSequence(result.through_cursor))
+      throw new ProtocolError('Agent head does not identify an active turn within its boundary');
+  }
+  return result;
+}
 const page = strict({
   object: enumeration('cma.agent.event_page'),
   schema_version: version,
