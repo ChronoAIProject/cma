@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { Console } from '../Console';
-import { agentClient } from '../test/agent';
+import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { chooseOption } from '../test/select';
 import { loadSandbox, loadWorkspace } from './loadHierarchy';
@@ -76,7 +76,13 @@ function fixture(shared = false) {
       return Response.json({ items: [] });
     }
     if (url.pathname.endsWith('/agents/agt_1'))
-      return Response.json({ ...WIRE_AGENT, id: 'agt_1' });
+      return Response.json({
+        ...WIRE_AGENT,
+        id: AGENT_DETAIL.id,
+        worktree: { ...WIRE_AGENT.worktree, id: AGENT_DETAIL.worktree.id },
+        workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
+        sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
+      });
     if (state.revoked)
       return Response.json(
         { code: 'resource_not_found', detail: 'Access removed' },
