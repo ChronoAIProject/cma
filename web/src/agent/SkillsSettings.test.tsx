@@ -32,6 +32,9 @@ function profiles() {
     },
   };
 }
+// The catalogue waits behind the closed Add skills disclosure until asked for.
+const openCatalog = () => userEvent.click(screen.getByText('Add skills', { selector: 'summary' }));
+
 it('lists accessible Ornn releases and shows installed only after the Agent confirms it', async () => {
   const read = vi.fn().mockResolvedValue(empty);
   const install = vi.fn().mockImplementation(async () => {
@@ -46,6 +49,7 @@ it('lists accessible Ornn releases and shows installed only after the Agent conf
       <SkillsSettings agentId="agent-one" active busy={false} />
     </CmaClientProvider>,
   );
+  await openCatalog();
   const button = await screen.findByRole('button', { name: 'Install TypeScript' });
   await userEvent.click(button);
   await screen.findByText('Waiting for the Agent to confirm installation.');
@@ -77,6 +81,7 @@ it('retries the identical install intent after a lost response', async () => {
       <SkillsSettings agentId="agent-one" active busy={false} />
     </CmaClientProvider>,
   );
+  await openCatalog();
   await userEvent.click(await screen.findByRole('button', { name: 'Install TypeScript' }));
   await screen.findByText('Lost install response');
   expect(screen.getByRole('button', { name: 'Install TypeScript' })).toBeDisabled();
@@ -135,6 +140,7 @@ it('keeps catalog and installed status visible but disables installs on a retain
     </CmaClientProvider>,
   );
   expect(await screen.findByText('1.2 · Installed')).toBeVisible();
+  await openCatalog();
   expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeDisabled();
   expect(
     screen.getByText('This Agent runtime does not support installing skills yet.'),
@@ -180,6 +186,7 @@ it('retains a failed installation and does not offer an unsupported retry or ver
     </CmaClientProvider>,
   );
   expect(await screen.findByText('1.2 · Installation failed')).toBeVisible();
+  await openCatalog();
   const button = await screen.findByRole('button', { name: 'Install TypeScript' });
   expect(button).toBeDisabled();
   expect(button).toHaveTextContent('Installation failed');
@@ -216,3 +223,54 @@ it.each(['installed', 'pending', 'failed'] as const)(
     expect(version).toBeDisabled();
   },
 );
+
+it('lists installed skills while the catalogue stays behind a closed Add skills disclosure', async () => {
+  render(
+    <CmaClientProvider
+      client={agentClient({ readAgentSkills: async () => installed, installAgentSkill: vi.fn() })}
+      profiles={profiles()}
+    >
+      <SkillsSettings agentId="agent-one" active busy={false} />
+    </CmaClientProvider>,
+  );
+  const status = within(await screen.findByRole('list', { name: 'Agent skill status' }));
+  expect(await status.findByText('TypeScript')).toBeVisible();
+  expect(status.getByText('1.2 · Installed')).toBeVisible();
+  const disclosure = screen.getByText('Add skills', { selector: 'summary' }).closest('details');
+  expect(disclosure).not.toHaveAttribute('open');
+  const search = screen.getByRole('textbox', { name: 'Search available Ornn skills' });
+  const install = await screen.findByRole('button', { name: 'Install TypeScript' });
+  expect(search).not.toBeVisible();
+  expect(install).not.toBeVisible();
+  await openCatalog();
+  expect(disclosure).toHaveAttribute('open');
+  expect(search).toBeVisible();
+  expect(install).toBeVisible();
+  expect(disclosure).toContainElement(screen.getByRole('list', { name: 'Available Ornn skills' }));
+});
+
+it('shows a catalogue failure and its retry inside the Add skills disclosure', async () => {
+  const profileClient = profiles();
+  profileClient.authoring.searchSkills.mockRejectedValueOnce(new Error('Catalog offline'));
+  render(
+    <CmaClientProvider
+      client={agentClient({ readAgentSkills: async () => empty, installAgentSkill: vi.fn() })}
+      profiles={profileClient}
+    >
+      <SkillsSettings agentId="agent-one" active busy={false} />
+    </CmaClientProvider>,
+  );
+  const failure = await screen.findByText('Ornn skills could not be loaded.');
+  const disclosure = screen.getByText('Add skills', { selector: 'summary' }).closest('details');
+  expect(disclosure).toContainElement(failure);
+  expect(failure).not.toBeVisible();
+  expect(screen.getByText('No additional skills installed.')).toBeVisible();
+  await openCatalog();
+  expect(failure).toBeVisible();
+  const retry = screen.getByRole('button', { name: 'Retry Ornn catalog' });
+  expect(disclosure).toContainElement(retry);
+  await userEvent.click(retry);
+  expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeVisible();
+  expect(screen.queryByText('Ornn skills could not be loaded.')).not.toBeInTheDocument();
+  expect(profileClient.authoring.searchSkills).toHaveBeenCalledTimes(2);
+});
