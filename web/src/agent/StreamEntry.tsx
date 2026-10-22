@@ -24,6 +24,7 @@ export function StreamEntry({
   user,
   unknownUserName,
   feedback,
+  continued = false,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
@@ -36,6 +37,8 @@ export function StreamEntry({
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
   readonly feedback?: MessageFeedbackControls;
+  /** The previous message has the same author, so this one does not repeat the identity. */
+  readonly continued?: boolean;
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
@@ -47,9 +50,9 @@ export function StreamEntry({
         data-streaming={message.status === 'streaming' ? '' : undefined}
         data-message-key={`message:${message.id}`}
       >
-        <MessageAvatar identity={identity} />
+        <MessageAvatar identity={identity} continued={continued} />
         <div className="message__body">
-          <span className="message__role">{identity.name}</span>
+          {continued ? null : <span className="message__role">{identity.name}</span>}
           {message.role === 'user' ? (
             <UserMessage content={message.content} />
           ) : (
