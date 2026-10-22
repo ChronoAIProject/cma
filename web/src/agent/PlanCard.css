@@ -1,8 +1,8 @@
 /*
  * The plan card — `docs/Web_Style.md` §13.
  *
- * The same frame as the tool calls around it, so the timeline's non-message
- * entries read as one family; the badges carry the only colour.
+ * Framed, unlike the tool lines around it: a plan is something the reader
+ * returns to rather than passing activity. The badges carry the only colour.
  */
 
 .plan-card {
