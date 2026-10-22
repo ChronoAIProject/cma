@@ -5,6 +5,7 @@ mod adapter;
 mod bindings;
 mod bots;
 mod credentials;
+mod documents;
 mod event_routing;
 mod profiles;
 mod routes;
@@ -72,6 +73,7 @@ impl ControlPlaneComposition {
             .map_err(|error| format!("durable stores are not usable: {error}"))?,
         );
         let activity = ActivityService::new(stores.activity.clone());
+        let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -270,6 +272,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
+                managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
                     .runtime
                     .home_policy
@@ -345,7 +348,11 @@ impl ControlPlaneComposition {
             broker,
             resource_access.clone(),
             worker_holder,
-            access_tools,
+            access::ToolServices {
+                source: access_tools,
+                documents: config.document_storage.as_ref().map(|_| documents.clone()),
+                public_origin: config.public_url.clone(),
+            },
         );
         let command_service = agent_access.commands;
         let projections = projections.with_commands(command_service.clone());
@@ -370,6 +377,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))

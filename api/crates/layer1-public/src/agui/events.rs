@@ -177,7 +177,14 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
             "/firstMessage",
             json!({"state": state, "recoveryGeneration": recovery_generation}),
         )],
-        AgentLogKind::TitleSet { title, .. } => vec![delta("/title", json!(title))],
+        AgentLogKind::TitleSet { title, source } => vec![delta(
+            if source == "owner_override" {
+                "/ownerTitle"
+            } else {
+                "/title"
+            },
+            json!(title),
+        )],
         AgentLogKind::Stopped { reason } => vec![make(
             "RUN_ERROR",
             json!({"code": reason, "message": "The Agent stopped."}),

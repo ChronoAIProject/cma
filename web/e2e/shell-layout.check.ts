@@ -106,7 +106,6 @@ for (const width of [390, 360, 320]) {
           expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
           expect(bounds.height).toBeGreaterThanOrEqual(44);
         }
-        await page.locator('.agent-header__strip').hover();
         await page.getByRole('button', { name: 'More Agent actions' }).click();
         await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
         await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();

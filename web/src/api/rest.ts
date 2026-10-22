@@ -21,6 +21,7 @@ import { agentSettingsClient } from './rest/agentSettings';
 import { agentSkillsClient } from './rest/agentSkills';
 import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
+import { documentsClient } from './rest/documents';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -66,6 +67,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    documents: documentsClient(),
     files: agentFilesClient(),
     updateSandboxRuntime: async (id, targetVersion, options) => {
       const result = await sdk.sandboxes.updateRuntime(

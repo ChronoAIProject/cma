@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::conversation_channel::{
     ConversationChannel, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    ConversationSettingsSupport,
 };
 pub use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, MessageId,
@@ -58,6 +59,17 @@ pub enum PermissionDecision {
 pub enum ConversationInput {
     /// Absolute live settings, acknowledged only after each ACP operation succeeds.
     Configure {
+        model: String,
+        reasoning_effort: crate::ReasoningEffort,
+        permission: crate::PermissionLevel,
+        system_prompt: Option<String>,
+    },
+    RefreshContext {
+        operation_sequence: u64,
+        readiness_receipt: String,
+        previous_guidance: Vec<String>,
+        working_directory: Option<String>,
+        guidance: String,
         model: String,
         reasoning_effort: crate::ReasoningEffort,
         permission: crate::PermissionLevel,

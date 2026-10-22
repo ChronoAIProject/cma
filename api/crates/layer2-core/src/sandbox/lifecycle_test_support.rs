@@ -106,6 +106,8 @@ pub(super) fn agent(id: &str, conversation_id: &str, seq: u64) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
             observations: Default::default(),
             settings: None,
             conversation_id: Some(conversation_id.into()),

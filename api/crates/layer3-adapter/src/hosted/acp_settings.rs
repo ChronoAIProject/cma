@@ -8,6 +8,7 @@ impl Bridge {
         model: &str,
         effort: ReasoningEffort,
         permission: PermissionLevel,
+        system_prompt: Option<&str>,
     ) -> crate::Result<()> {
         if model.is_empty()
             || model.len() > 256
@@ -17,6 +18,18 @@ impl Bridge {
             return Err(AdapterError::Unsupported(
                 "invalid conversation model".into(),
             ));
+        }
+        if let Some(prompt) = system_prompt {
+            use crate::ConversationSettingsSupport;
+            if prompt.len() > 32 * 1024
+                || prompt.contains('\0')
+                || !self.system_prompt_supported().await
+            {
+                return Err(AdapterError::Unsupported(
+                    "this runtime cannot update Agent instructions; update the Sandbox when idle"
+                        .into(),
+                ));
+            }
         }
         // Use acknowledged requests; a successful channel write means all three
         // settings were accepted. An uncertain/partial result closes the writer
@@ -74,6 +87,66 @@ impl Bridge {
             }),
         )
         .await?;
+        if let Some(prompt) = system_prompt {
+            use sha2::{Digest, Sha256};
+            let answer = self
+                .call(
+                    "cma/agent-instructions",
+                    serde_json::json!({
+                        "action": "apply", "sessionId": session, "systemPrompt": prompt,
+                    }),
+                )
+                .await?;
+            let expected = format!("{:x}", Sha256::digest(prompt.as_bytes()));
+            if answer.get("applied").and_then(serde_json::Value::as_bool) != Some(true)
+                || answer.get("sessionId").and_then(serde_json::Value::as_str) != Some(session)
+                || answer.get("sha256").and_then(serde_json::Value::as_str)
+                    != Some(expected.as_str())
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime did not confirm Agent instructions".into(),
+                ));
+            }
+        }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::ConversationSettingsSupport for Bridge {
+    async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
+        self.context_readiness_receipt(sequence).await
+    }
+
+    async fn system_prompt_supported(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        match self.instructions_support.load(Ordering::Acquire) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.call(
+                "cma/agent-instructions",
+                serde_json::json!({"action":"support"}),
+            ),
+        )
+        .await;
+        match result {
+            Ok(Ok(value)) => {
+                let supported = value.get("supported").and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                    && value.get("version").and_then(serde_json::Value::as_u64) == Some(1);
+                self.instructions_support
+                    .store(if supported { 1 } else { 2 }, Ordering::Release);
+                supported
+            }
+            Ok(Err(AdapterError::Rejected(_))) => {
+                self.instructions_support.store(2, Ordering::Release);
+                false
+            }
+            _ => false,
+        }
     }
 }

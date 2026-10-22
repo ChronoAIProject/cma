@@ -339,7 +339,7 @@ fn detail_projection(
         model: agent.selected_model(),
         id: agent.id,
         status: agent.status,
-        title: agent.title,
+        title: agent.conversation.preferences.title.or(agent.title),
         created_at: agent.created_at,
         updated_at: agent.updated_at,
         ready_at: agent.ready_at,

@@ -119,13 +119,11 @@ for (const origin of ['manual', 'trigger'] as const) {
       element.setAttribute('data-continuity-fixture', 'original'),
     );
     const creationLabel = origin === 'manual' ? 'Created manually' : 'Created by Trigger';
-    await page.locator('.agent-header__strip').hover();
     await page.getByRole('button', { name: 'More Agent actions' }).click();
     await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
       creationLabel,
     );
     await page.keyboard.press('Escape');
-    await page.locator('.agent-header__strip').hover();
     await page.getByRole('button', { name: 'More Agent actions' }).click();
     await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
     await page.getByRole('button', { name: 'Sharing', exact: true }).click();
@@ -191,7 +189,6 @@ for (const origin of ['manual', 'trigger'] as const) {
     await expect(composer).toHaveValue('Keep my unsent personal work');
     await expect(composer).toHaveAttribute('data-continuity-fixture', 'original');
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
-    await page.locator('.agent-header__strip').hover();
     await page.getByRole('button', { name: 'More Agent actions' }).click();
     await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
       creationLabel,

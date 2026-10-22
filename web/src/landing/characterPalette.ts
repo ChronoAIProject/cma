@@ -26,21 +26,20 @@ export function readPalette(
     }
     return new THREE.Color(value);
   };
-  const dark = document.body.hasAttribute('data-ds-dark-theme');
 
   return {
     body: read(
       state === undefined || state === 'brand'
-        ? '--dsw-alias-brand-primary'
+        ? '--dsw-static-lime-400'
         : `--dsw-alias-character-${state}`,
     ),
-    lens: read('--dsw-alias-brand-primary-invert'),
-    sky: read(dark ? '--dsw-alias-label-primary' : '--dsw-alias-label-primary-foreground'),
-    ground: read('--dsw-alias-bg-layer-3'),
-    key: read(dark ? '--dsw-alias-label-primary' : '--dsw-alias-label-primary-foreground'),
-    fill: read('--dsw-alias-brand-primary'),
-    rim: read(dark ? '--dsw-alias-label-secondary' : '--dsw-alias-bg-layer-1'),
-    glint: read(dark ? '--dsw-alias-label-primary' : '--dsw-alias-label-primary-foreground'),
-    shadow: read(dark ? '--dsw-alias-brand-primary' : '--dsw-alias-label-primary'),
+    lens: read('--dsw-static-zinc-950'),
+    sky: read('--dsw-static-zinc-50'),
+    ground: read('--dsw-static-zinc-800'),
+    key: read('--dsw-static-zinc-50'),
+    fill: read('--dsw-static-lime-400'),
+    rim: read('--dsw-static-zinc-400'),
+    glint: read('--dsw-static-zinc-50'),
+    shadow: read('--dsw-static-lime-400'),
   };
 }

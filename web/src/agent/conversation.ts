@@ -10,7 +10,7 @@ import { durableUsage } from './usage';
 import { consumeLiveMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
 import { setPlan } from './plans';
-import { descriptionSource, mergeRuntimeMetadata } from './runtimeMetadata';
+import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
 import { sessionCommands } from './slashCommands';
 import { number, object, text } from './conversationValues';
 import type {
@@ -196,23 +196,18 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       });
     case 'usage_updated':
       return durableUsage(next, kind);
-    case 'runtime_metadata_changed': {
-      const metadata = object(kind.metadata);
-      return metadata === undefined
-        ? next
-        : {
-            ...next,
-            runtimeMetadata: mergeRuntimeMetadata(next.runtimeMetadata, {
-              workingDirectory: text(metadata.working_directory),
-              description: text(metadata.description),
-              descriptionSource: descriptionSource(metadata.description_source),
-              descriptionIsSetupPreview:
-                typeof metadata.description_is_setup_preview === 'boolean'
-                  ? metadata.description_is_setup_preview
-                  : undefined,
-            }),
-          };
-    }
+    case 'title_set':
+      return kind.source === 'owner_override' && text(kind.title) !== undefined
+        ? { ...next, ownerTitle: text(kind.title) }
+        : next;
+    case 'runtime_metadata_changed':
+      return {
+        ...next,
+        runtimeMetadata: mergeRuntimeMetadata(
+          next.runtimeMetadata,
+          durableRuntimeMetadata(kind.metadata),
+        ),
+      };
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
@@ -334,6 +329,7 @@ function patchState(
       ? state
       : { ...state, approvals: upsert(state.approvals, approval) };
   }
+  if (path === '/ownerTitle') return { ...state, ownerTitle: text(item.value) };
   if (path === '/runtimeMetadata') {
     const metadata = object(item.value);
     return metadata === undefined

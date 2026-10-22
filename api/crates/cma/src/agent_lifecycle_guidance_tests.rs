@@ -3,8 +3,25 @@ use crate::store::{LifecycleBehavior, LifecycleInput};
 use layer2_core::profiles::content_digest;
 
 #[test]
+fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
+    for managed in [GITHUB_API_V1, managed_v2(), managed_v3()] {
+        let owner = "  Keep citations.\n\nDo not change my formatting.\n";
+        let original = compose_managed(Some(managed), owner);
+        assert_eq!(split_managed(&original), (Some(managed), owner));
+        assert_eq!(split_managed(managed), (Some(managed), ""));
+        let replacement = compose_managed(split_managed(&original).0, "New owner instructions");
+        assert_eq!(replacement, format!("{managed}\n\nNew owner instructions"));
+        assert_eq!(compose_managed(split_managed(&original).0, ""), managed);
+    }
+    for owner in ["", "CMA GitHub workflow:\nUser-authored text", "  owner\n"] {
+        assert_eq!(split_managed(owner), (None, owner));
+        assert_eq!(compose_managed(None, owner), owner);
+    }
+}
+
+#[test]
 fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() {
-    for instructions in [GITHUB_API_V1, managed_v2()] {
+    for instructions in [GITHUB_API_V1, managed_v2(), managed_v3()] {
         for (sandbox, workspace) in [
             (None, None),
             (Some("sandbox-owned"), None),
@@ -43,7 +60,8 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
                 prompt,
                 &format!("{instructions}\n\nKeep the user's exact instructions.\n")
             );
-            assert_eq!(prompt.contains(MEMORY_V1), instructions == managed_v2());
+            assert_eq!(prompt.contains(MEMORY_V1), instructions != GITHUB_API_V1);
+            assert_eq!(prompt.contains(DOCUMENTS_V1), instructions == managed_v3());
             assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
             let restored: LifecycleInput =
                 serde_json::from_slice(&serde_json::to_vec(&input).unwrap()).unwrap();
@@ -109,7 +127,7 @@ fn retained_operations_preserve_their_original_profile_and_home_payload() {
 #[test]
 fn new_default_profile_matches_preparation_and_rejects_custom_prepared_instructions() {
     let request = serde_json::from_value(serde_json::json!({"name":"Default"})).unwrap();
-    let effective = provisioning_request(&request, Some(managed_v2()));
+    let effective = provisioning_request(&request, Some(managed_v3()));
     let profile = crate::agent_lifecycle::validation::agent_content_for(
         effective.profile.as_ref().unwrap(),
         LifecycleBehavior::PromptRepository,
@@ -122,7 +140,7 @@ fn new_default_profile_matches_preparation_and_rejects_custom_prepared_instructi
     assert!(is_prepared_prompt(&profile.system_prompt));
     assert!(is_prepared_prompt(""));
     assert!(is_prepared_prompt(GITHUB_API_V1));
-    assert_eq!(profile.system_prompt, managed_v2());
+    assert_eq!(profile.system_prompt, managed_v3());
     assert!(!is_prepared_prompt(&format!(
         "{}\nUser-specific text",
         profile.system_prompt
@@ -151,6 +169,10 @@ fn current_guidance_preserves_github_bytes_and_bounds_memory_management() {
     assert_eq!(
         managed_v2().strip_prefix(GITHUB_API_V1),
         Some(format!("\n\n{MEMORY_V1}").as_str())
+    );
+    assert_eq!(
+        managed_v3().strip_prefix(managed_v2()),
+        Some(format!("\n\n{DOCUMENTS_V1}").as_str())
     );
     for required in [
         "effective memory limits, total usage",

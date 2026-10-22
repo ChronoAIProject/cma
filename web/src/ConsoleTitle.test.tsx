@@ -52,7 +52,7 @@ it('adopts a title generated after the completed first turn without reloading or
   generated = true;
   await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(screen.getByRole('heading', { name: 'Repository introduction' })).toBeInTheDocument();
-  expect(document.title).toBe('Repository introduction \u00b7 CMA');
+  expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
   expect(screen.getByRole('link', { name: /Repository introduction/ })).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Keep this unsent draft');
@@ -116,7 +116,7 @@ it('shares setup filtering and live native titles across header, document and si
   await act(() => vi.advanceTimersByTimeAsync(0));
   const expectTitle = (title: string) => {
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
-    expect(document.title).toBe(`${title} · CMA`);
+    expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
     expect(document.querySelector('.tree-row[data-node-id="agent:agt_1"]')).toHaveTextContent(
       title,
     );
