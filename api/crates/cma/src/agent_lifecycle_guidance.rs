@@ -21,6 +21,16 @@ pub(crate) fn managed_v2() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{GITHUB_API_V1}\n\n{MEMORY_V1}"))
 }
 
+pub(crate) const DOCUMENTS_V1: &str = "CMA document artifacts (v1):\n\
+When producing a specification for review, a reference document, a substantial explanatory document, or information the user needs to preserve, automatically publish a Markdown document to the user's personal CMA Artifact registry using publish_document from the CMA tools. Include the confirmed artifact URL in your response. Prefer a concise chat reply pointing to the durable document instead of repeating its full body. Use descriptive titles and meaningful headings; tables, checklists, code fences, images and mermaid diagrams are supported.\n\
+Use update_document with the returned document ID and latest expected_revision when revising your own artifact. Keep the exact request_key and content on transport retries so one intended save never creates duplicates; use a new key for a new revision. If the owner has edited the document, preserve their changes and resolve the conflict instead of overwriting an old revision. Documents start private; the owner controls sharing and commenting in CMA. Never put credentials, private keys or tokens in a document. Publish only material authorized by the user's task. Do not claim successful persistence until the tool confirms it. If these tools are unavailable in a retained runtime, keep the source in the user's workspace and explain that publication is pending rather than inventing an artifact URL.";
+
+/// A new immutable revision; retained v1/v2 homes keep their original bytes.
+pub(crate) fn managed_v3() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{}\n\n{DOCUMENTS_V1}", managed_v2()))
+}
+
 pub(crate) fn profile_with_instructions(
     mut profile: AgentLifecycleProfile,
     instructions: Option<&str>,
@@ -50,7 +60,7 @@ pub(super) fn provisioning_request(
 
 /// Historical preparation had no instructions; new preparation pins this revision.
 pub(crate) fn is_prepared_prompt(prompt: &str) -> bool {
-    prompt.is_empty() || prompt == GITHUB_API_V1 || prompt == managed_v2()
+    prompt.is_empty() || prompt == GITHUB_API_V1 || prompt == managed_v2() || prompt == managed_v3()
 }
 
 #[cfg(test)]
