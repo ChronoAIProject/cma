@@ -15,6 +15,7 @@ export async function loadV2Agent(
   allowIncomplete = false,
   onProgress?: (ready: ReadyAgent) => void,
   lineage?: AgentLoadLineage,
+  onInputReady?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorize(signal);
   const readHierarchy = async () => {
@@ -71,17 +72,41 @@ export async function loadV2Agent(
       return undefined;
     }
   };
-  // Independent reads share one load, but no result is exposed until every
-  // required projection has settled and the account is checked again.
-  const [{ detail, workspace }, usage, transcript, firstPage] = await Promise.all([
-    readHierarchy(),
+  // Input authority and the latest transcript do not depend on rich event pages.
+  // Observe every parallel failure even if another read or early callback fails.
+  const hierarchy = readHierarchy().then(async (value) => {
+    if (onInputReady !== undefined) await v2.authorize(signal);
+    onInputReady?.({
+      ...value,
+      v2,
+      v2Items: [],
+      conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
+      historyLoading: true,
+    });
+    return value;
+  });
+  const projections = Promise.all([hierarchy, readTranscript()]).then(
+    async ([metadata, transcript]) => {
+      if (onInputReady !== undefined) await v2.authorize(signal);
+      const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
+      if (preview !== undefined)
+        onInputReady?.({
+          ...metadata,
+          v2,
+          v2Items: [],
+          conversation: preview,
+          historyLoading: true,
+        });
+      return { ...metadata, preview };
+    },
+  );
+  const [{ detail, workspace, preview: latest }, usage, firstPage] = await Promise.all([
+    projections,
     readUsage(),
-    readTranscript(),
     readPage(),
   ]);
   await v2.authorize(signal);
-  const preview =
-    transcript === undefined ? undefined : { ...conversationFromTranscript(transcript), usage };
+  const preview = latest === undefined ? undefined : { ...latest, usage };
   let conversation: ConversationState = {
     ...conversationFromTranscript({ agentId, throughSeq: 0, turns: [] }),
     usage,
@@ -106,7 +131,7 @@ export async function loadV2Agent(
       page = undefined;
     }
   }
-  let previewPublished = false;
+  let previewPublished = onInputReady !== undefined && preview !== undefined;
   while (page !== undefined) {
     if (incarnation !== undefined && incarnation !== page.incarnation)
       throw new Error('Agent snapshot changed conversation identity.');

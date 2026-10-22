@@ -387,7 +387,7 @@ export function AgentSurface({
           queueWhileRunning={state.v2 !== undefined}
           queueWhileStarting={state.v2 !== undefined}
           starting={starting}
-          controlsUnavailable={controller.controlsUnavailable}
+          controlsUnavailable={controller.controlsUnavailable || historyIncomplete}
           requestPending={
             controller.pendingMessage !== undefined || controller.pendingControl === true
           }
@@ -410,7 +410,6 @@ export function AgentSurface({
           }
           busy={
             connections.pending ||
-            historyIncomplete ||
             (controller.pending !== undefined && controller.pending !== 'send')
           }
           onSend={(content, onAccepted) => {

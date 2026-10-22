@@ -73,8 +73,8 @@ describe('Agent controller loading', () => {
       },
     });
     expect(client.replayAgent).not.toHaveBeenCalled();
-    await act(() => result.current.send('Must wait'));
-    expect(client.runAgent).not.toHaveBeenCalled();
+    await act(() => result.current.send('Continue while activity recovers'));
+    expect(client.runAgent).toHaveBeenCalledOnce();
     failSecondPage = false;
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(readAgentEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 2, 0, 2]);
@@ -593,21 +593,21 @@ describe('Agent controller operations', () => {
         type: 'TEXT_MESSAGE_START',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
         role: 'assistant',
       });
       options.onEvent({
         type: 'TEXT_MESSAGE_CONTENT',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
         delta: 'Live answer',
       });
       options.onEvent({
         type: 'TEXT_MESSAGE_END',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
       });
     });
     const client = readableClient({ replayAgent, runAgent });
