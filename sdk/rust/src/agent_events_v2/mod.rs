@@ -46,6 +46,16 @@ impl Client {
     }
 }
 impl AgentEventsV2<'_> {
+    /// Read the current tail boundary and active turn while history loads separately.
+    /// Rebase new frames over a complete snapshot before acknowledging its history.
+    pub async fn head(&self, agent_id: &str) -> Result<AgentEventHead> {
+        cursor::identifier(agent_id)?;
+        validation::head(
+            self.read(&["api", "v2", "agents", agent_id, "events", "head"], &[])
+                .await?,
+            agent_id,
+        )
+    }
     /// Observe eligibility for new-tab transport selection under authentication.
     pub async fn read_transport_eligibility(&self) -> Result<UiTransport> {
         validation::eligibility(self.read(&["api", "v2", "ui", "transport"], &[]).await?)

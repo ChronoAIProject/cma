@@ -15,6 +15,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "foreign",
         "anonymous",
         "corrupt",
+        "head_corrupt",
         "unavailable",
         "enabled",
         "off",
@@ -65,7 +66,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             append(&f.store, kind).await;
         }
     }
-    if mode == "corrupt" {
+    if matches!(mode, "corrupt" | "head_corrupt") {
         let agent = f
             .store
             .get_agent(&AgentId("agt_fixture".into()))
@@ -81,6 +82,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             },
         )
         .await;
+    }
+    if mode == "head_corrupt" {
+        let mut agent = f
+            .store
+            .get_agent(&AgentId("agt_fixture".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = agent.revision;
+        agent.conversation.active_turn = Some(agent.conversation.last_seq);
+        agent.status = layer2_core::sandbox::AgentStatus::Working;
+        agent.revision += 1;
+        f.store.save_agent(revision, agent).await.unwrap();
     }
     if mode == "shared" {
         f.access

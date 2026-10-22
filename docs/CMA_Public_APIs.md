@@ -51,7 +51,7 @@ of the public contract.
 | --- | ---: |
 | administration | 14 |
 | ag ui | 4 |
-| agent events v2 | 3 |
+| agent events v2 | 4 |
 | agent operations | 4 |
 | agent profiles | 9 |
 | agent usage | 2 |
@@ -111,6 +111,7 @@ of the public contract.
 | Method and path |
 | --- |
 | `GET /api/v2/agents/{agent_id}/events` |
+| `GET /api/v2/agents/{agent_id}/events/head` |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` |
 | `GET /api/v2/ui/transport` |
 

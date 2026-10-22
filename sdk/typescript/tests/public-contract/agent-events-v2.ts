@@ -1,6 +1,8 @@
 import type { Dispatch } from './context.js';
 
 export const agentEventsV2Dispatch: Record<string, Dispatch> = {
+  'GET /api/v2/agents/{agent_id}/events/head': ({ client, param }) =>
+    client.agentEventsV2.head(param('agent_id')),
   'GET /api/v2/ui/transport': ({ client }) => client.agentEventsV2.readTransportEligibility(),
   'GET /api/v2/agents/{agent_id}/events/snapshot': ({ client, param, query }) =>
     client.agentEventsV2.snapshot(param('agent_id'), {

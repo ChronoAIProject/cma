@@ -46,6 +46,28 @@ export async function loadSharedAgentAccess(
   };
 }
 
+/** A bounded live baseline has the same shared authority and deadline as history. */
+export async function loadSharedAgentHead(
+  client: ResourceViewsClient,
+  authorization: Awaited<ReturnType<typeof loadSharedAgentAccess>>['value'],
+  signal: AbortSignal,
+) {
+  if (client.agentEventsV2 === undefined) return undefined;
+  assertDeadline(authorization.deadline, signal);
+  const head = await client.agentEventsV2.head(authorization.agentId, { signal });
+  const current = await client.resourceAccess.effective('agent', authorization.agentId, { signal });
+  assertDeadline(
+    Math.min(authorization.deadline, accessDeadline(Date.now(), current.revalidate_at)),
+    signal,
+  );
+  if (
+    sharedAgentAuthority(current) !== sharedAgentAuthority(authorization.access) ||
+    !current.capabilities.includes('view_history')
+  )
+    throw new SharedAgentAccessChangedError();
+  return head;
+}
+
 /** Agent-only reads; a narrow grant does not authorize ancestry or profile requests. */
 export async function loadSharedAgentTranscript(
   web: CmaWebClient,
