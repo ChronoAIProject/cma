@@ -907,9 +907,11 @@ named, keyboard-focusable region so that scrolling does not need a pointer.
 
 An Agent owns one conversation in one Worktree, Workspace, and Sandbox. There is
 no separate Chat surface. The fixed header names the Agent and its Workspace and
-Sandbox ancestry. The conversation uses the available Agent panel width, with
-15% empty space on each side of the history and composer. The axis grows with
-the screen instead of stopping at 748px. Container queries measure the space
+Sandbox ancestry. The history and the composer share one centred reading axis, at most 768px wide
+including the avatar column, like a desktop agent client's reading column: a reply
+stays at a comfortable measure however wide the screen is. The cap is in pixels, so the
+reader's text-size preference scales the text and not the measure. Below it the axis
+keeps at least 24px of side gutter. Container queries measure the space
 remaining beside the sidebar: at 48rem or less, use 24px side gutters; at 30rem
 or less, use 14px. History, lifecycle sections and the composer share these
 gutters. Rows are neutral flow items; the composer has a stable seat below the scrollport.
@@ -3188,6 +3190,7 @@ version choice, same-key retry and lifecycle gating are unchanged.
 | 2026-10-22 | Calmed the Agent details panel. Section headings became sentence case at 13px weight 500 in the primary label colour (Files, Sharing, Service access, Skills; "Session sharing" became Sharing), sections are separated by 24px of space instead of hairlines, and every text action shares one quiet-link style flush with the text above it. Required services read as tertiary text instead of bordered badges. Installed skills are plain name and version rows, and the Ornn catalogue moved behind a collapsed Add skills disclosure that holds its error and retry states, so the panel scrolls as one region without nested scroll areas. |
 | 2026-10-22 | Quiet the Agent conversation so reply text leads: identity once per run of one author's messages, the timestamp revealed with the message actions on hover or focus (always on touch), no usage line for a turn without a report, lighter inline code, and tool calls as frameless lines whose group header reads "<n> tool calls" plus only the running call or failure count. |
 | 2026-10-22 | Quiet the Agent Manager sidebar: New agent, Search and Triggers become plain 32px rows with no fill or border at rest; Agents \| Sandboxes becomes text tabs sharing one row with an icon-only Filter key that carries an accent dot, and a summary line naming only non-default filters appears only when one is applied; personal Agent rows become one 32px line with a state dot only for Starting, Working, Needs approval and Needs attention, the status word kept in the accessible name, and age and ⋯ shown only on hover, focus or the current row. |
+| 2026-10-22 | Cap the Agent conversation at a centred 768px reading axis shared by the history and the composer, replacing the 15%-per-side rule that let replies run past 900px on wide screens; the cap is in pixels so text size scales the text, not the measure. |
 
 ### Live replies during conversation loading (2026-10-22)
 
