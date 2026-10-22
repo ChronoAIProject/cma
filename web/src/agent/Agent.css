@@ -429,12 +429,20 @@
 }
 .message-footer__actions {
   flex-wrap: nowrap;
-  opacity: 0;
   pointer-events: none;
+}
+/*
+ * At rest a message shows only its content; its time, usage and actions arrive
+ * with the reader's attention. Opacity rather than display, so nothing shifts.
+ */
+.message__timestamp,
+.message__usage,
+.message-footer__actions {
+  opacity: 0;
   transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.message:hover .message-footer__actions,
-.message:focus-within .message-footer__actions,
+.message:hover :is(.message__timestamp, .message__usage, .message-footer__actions),
+.message:focus-within :is(.message__timestamp, .message__usage, .message-footer__actions),
 .message-footer[data-voted] .message-footer__actions {
   opacity: 1;
   pointer-events: auto;
@@ -449,6 +457,8 @@
   margin-top: 4px;
 }
 @media (hover: none) {
+  .message__timestamp,
+  .message__usage,
   .message-footer__actions {
     opacity: 1;
     pointer-events: auto;
@@ -461,6 +471,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .message__timestamp,
+  .message__usage,
   .message-footer__actions {
     transition: none;
   }
