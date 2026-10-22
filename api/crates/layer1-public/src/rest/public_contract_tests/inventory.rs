@@ -62,7 +62,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
     let path = super::directory().with_file_name("public-contract-inventory.json");
     let inventory: Inventory = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(inventory.version, 1);
-    assert_eq!(inventory.openapi_operations, 225);
+    assert_eq!(inventory.openapi_operations, 227);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,
