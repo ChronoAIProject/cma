@@ -72,7 +72,7 @@ describe('Agent controller loading', () => {
         activeRunId: undefined,
       },
     });
-    expect(client.replayAgent).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 4 }));
     await act(() => result.current.send('Continue while activity recovers'));
     expect(client.runAgent).toHaveBeenCalledOnce();
     failSecondPage = false;
@@ -117,7 +117,8 @@ describe('Agent controller loading', () => {
     expect(result.current.state).toMatchObject({ status: 'ready', historyUnavailable: true });
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(result.current.state).toEqual({ status: 'error', message: 'Denied' });
-    expect(client.replayAgent).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledOnce();
+    expect(vi.mocked(client.replayAgent).mock.calls[0]![1].signal?.aborted).toBe(true);
   });
 
   it('backs off repeated transient recovery failures and cancels retries on unmount', async () => {
