@@ -11,7 +11,7 @@ import {
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
-import { Modal } from '../../ui/Modal';
+import { FileExplorerFrame } from './FileExplorerFrame';
 import { IconFolderOpen16 } from '../../ui/icons';
 import { FileToolbar } from './FileToolbar';
 import { FileTree } from './FileTree';
@@ -24,7 +24,9 @@ export function FileExplorer({
   readOnly,
   onClose,
   onAccessChanged,
+  panel = false,
 }: {
+  readonly panel?: boolean;
   readonly client: AgentFilesClient;
   readonly agentId: string;
   readonly readOnly: boolean;
@@ -299,14 +301,7 @@ export function FileExplorer({
   };
 
   return (
-    <Modal
-      open
-      title="Files"
-      description="Browse the persistent /home/ directory."
-      placement="agent-files"
-      dismissible={!busy}
-      onClose={() => guardDraft(onClose)}
-    >
+    <FileExplorerFrame panel={panel} busy={busy} onClose={() => guardDraft(onClose)}>
       <FileToolbar
         hidden={hidden}
         onHidden={setHidden}
@@ -475,6 +470,6 @@ export function FileExplorer({
           </Button>
         ) : null}
       </footer>
-    </Modal>
+    </FileExplorerFrame>
   );
 }
