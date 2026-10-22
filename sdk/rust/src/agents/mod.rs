@@ -1,9 +1,9 @@
 //! Agent REST commands and durable read projections, without live subscriptions.
 
 use crate::{
-    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
     instances::AgentStatus,
     resources::{identity, positive},
+    Client, EventOptions, IdempotencyKey, PageOptions, ResourcePage, Result,
 };
 use reqwest::{Method, StatusCode};
 
@@ -17,7 +17,9 @@ mod events;
 mod lifecycle;
 mod message_feedback;
 mod models;
+mod preferences;
 mod provenance;
+pub use preferences::*;
 mod settings;
 pub use message_feedback::*;
 mod shared;

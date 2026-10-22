@@ -3296,3 +3296,9 @@ Owners grant view/comment access by NyxID subject or create revocable view/comme
 
 
 | 2026-10-22 | Add the persistent document Artifact registry, rich Markdown editor, revision-safe drafts, secure diagram/image rendering, direct sharing and authenticated share links, and comments using the common controls and motion system. |
+
+
+The title menu also exposes owner-only Rename Agent and Update system prompt when the public preferences client is available. Rename remains available during work and updates the current header/sidebar through the controller without reloading or remounting the conversation. System prompt changes require an idle Agent and a runtime reporting real support; older runtimes explain the unavailable capability. Both forms use the shared Modal and public revision CAS. Uncertain replies retain the original body/idempotency key for exact retry; conflicts retain the draft until an explicit reload. A real browser check keeps the same composer DOM node and its unsent text through both successful changes.
+
+
+| 2026-10-22 | Preserve the live composer through revision-safe Agent rename and owner system-prompt dialogs, retaining uncertain edits for exact retry and explaining unavailable native capabilities. |

@@ -1,4 +1,9 @@
 import {
+  readAgentPreferences,
+  changeAgentPreferences,
+  type UpdateAgentPreferencesRequest,
+} from './agents/preferences.js';
+import {
   listMessageFeedback,
   setMessageFeedback,
   type MessageVote,
@@ -131,6 +136,14 @@ export class Agents {
     return installAgentSkill(this.config, id, body, options);
   }
 
+  /** Read editable owner preferences and current native instruction support. */
+  preferences(id: string, options: OperationOptions = {}) {
+    return readAgentPreferences(this.config, id, options);
+  }
+  /** Rename or update instructions using the last observed revision. */
+  updatePreferences(id: string, body: UpdateAgentPreferencesRequest, options: CommandOptions) {
+    return changeAgentPreferences(this.config, id, body, options);
+  }
   /** Read desired runtime settings and their confirmation state. */
   settings(id: string, options: OperationOptions = {}) {
     return readAgentSettings(this.config, id, options);
