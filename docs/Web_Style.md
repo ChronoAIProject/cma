@@ -3203,3 +3203,96 @@ a healthy live connection. An account, access or conversation identity change
 still cancels observation and prevents stale output from entering another view.
 
 | 2026-10-22 | Start live Agent replies independently of conversation history loading and preserve current Thinking, replies and arrival motion when historical records finish loading. |
+
+
+### Anonymous editorial home and fixed CMA identity (2026-10-22)
+
+Authenticated `/` immediately renders Agent Manager and replaces the home history
+entry with `/agent-manager`. No authenticated landing is painted. Public Trigger,
+Launch and connection-return routes retain their own behavior. Anonymous home
+retains its collapsed navigation and explicit NyxID sign-in.
+
+The anonymous landing uses an editorial composition inspired by Anthropic's
+public site: generous space, a large restrained headline, a character companion,
+and thin horizontal divisions rather than stacked rounded cards. It remains CMA,
+with Geist, the existing palette aliases and the existing 3D mark geometry.
+The content width is at most 1200px, with 48px total side clearance, 64px top and
+80px bottom padding and 80px between sections. The hero uses columns 1.2fr/1fr,
+a 48px gap and a 480px minimum height. Product eyebrow is 13/20 medium; display
+copy is clamp(40px,5.5vw,72px), weight 500, 1.04 leading, -0.045em tracking.
+Lede is 18/28, max 560px. Steps and services are three plain columns with 24px
+gaps and 24px top padding over a border-l2 rule. Step numbers are 12/20 code,
+section headings 32/40 medium, and body 15/24. At 900px the hero stacks with
+character after text and capped at 280px; at 760px the grids stack, side clearance
+is 32px, section gap 56px, padding 40px/56px, and section headings are 24/32.
+The hero arrives with opacity and 8px translate over the existing slow duration;
+reduced motion removes both entrance and sign-in transitions. Existing single
+sign-in admission, 200ms fade, failure retry and service return routes remain.
+
+The brand character has the same fixed studio palette in both themes: lime-400
+body and fill; zinc-950 black lenses; zinc-50 sky/key/glint; zinc-800 ground;
+zinc-400 rim; lime-400 shadow. Operational character body colors remain semantic.
+Its WebGL fallback uses the same lime mark and black lenses. The favicon uses
+exactly the conversation avatar paths, a lime #c3fd43 mark in a 20px inner square
+on a 32px #18181b dark circle with its quiet #27272a 1px outline; PNG and apple
+icons are rasterizations of that SVG, not crops of a screenshot.
+
+The browser document title is exactly `ChronoAI Managed Agent (CMA)` on every
+route. In-page headings continue to identify the current view. The portal's
+upper-left mark is 40px rather than 20px, within a 44px brand control. Collapsed
+navigation retains its 56px rail, with 6px inline padding to fit the control.
+
+### Compact Agent toolbar and file split (2026-10-22)
+
+Replace §13's collapsed/pinned Agent banner with one always-visible compact toolbar. It uses 48px minimum height, 8px 20px padding, base ground and no banner/breadcrumb/status strip. The 14/20 semibold Agent title is a truncating button with a down chevron and the shared accessible action menu. The heading stays focusable. Rename, Update system prompt, Update skills installed, existing provenance/details and permitted lifecycle actions use public APIs and existing authorization. The title's tooltip includes the current status.
+
+A 32px computer control follows the title. Hover opens a 360px-wide Sandbox preview constrained to 12px viewport margins without moving keyboard focus; a 150ms pointer-exit grace period allows reaching its portalled contents. Keyboard activation and touch press open the same card, Escape/outside press dismiss it. Show the real Sandbox ID, live CPU/RAM/network readings and the currently enabled agent-key scope; show unavailable/measuring states instead of invented zero values. Resource reads run only while open. Share uses the existing Agent share dialog; Files is immediately to its right.
+
+Files opens in the frame's right column, reusing its 300–520px width bounds and 640px center floor; on narrow screens it uses the existing right overlay. Header: 48px minimum with 8px 16px padding and Close files. Body: 12px padding and gaps, full-height scrolling; persistent /home/ tree, 40px rows (44px on phones), truncating names, existing file actions and a preview beneath the tree only when selected. Close/open keeps owner file selection and unsaved draft; shared file access is independently revalidated. Losing authorization clears access. The chat remains mounted and retains draft/live history when opening, closing, switching or resizing panels.
+
+The vertical separator remains 8px with pointer capture and frame-coalesced movement. It is keyboard focusable, announces its current/minimum/maximum pixel width, ArrowLeft/Right changes width by 16px (48px with Shift), Home/End selects the bounds. Pointer cancellation ends dragging cleanly. Keep existing eased grid transitions except while dragging and honor reduced motion. At narrow conversation widths toolbar padding is 8px, title target 44px, and existing mobile button targets remain 44px.
+
+New local browser acceptance runs at 1600px and 390px, light and dark, with only public HTTP fixtures; captures file-panel screenshots, checks drag/keyboard resize, viewport bounds and preservation of the exact chat input DOM node/draft across Files toggles. No production records are touched.
+
+| 2026-10-22 | Route signed-in home directly to Agent Manager; introduce the editorial anonymous Landing, consistent lime character, dark circular avatar favicon and exact CMA tab title; double the portal logo. Replace the Agent banner with a compact toolbar, accessible Sandbox preview, real Share action and adjustable file panel while retaining the conversation and draft. |
+
+
+### Document Artifacts
+
+The authenticated Artifacts navigation entry opens `/artifacts`. Its All, Yours, and Shared with you filters and debounced search call the public document registry with cursor pagination. A Docs tile creates a document through the same public API. Cards use authoritative title, access, and update metadata; they do not fetch every source or invent document previews. Opening a document uses `/artifacts/doc_<32 lowercase hex>`, including links emitted inside Agent conversations, without a full page reload.
+
+The document workspace has an editable owner title, explicit Save state, Share, and Comments controls. A compact formatting toolbar sits above an approximately 864 px centered document. The paper scrolls independently from the header. The right Comments column becomes an overlay within the workspace on narrow screens. Shared readers receive no editing toolbar or Save/Share controls; comment permission enables comment posting only. Shared Modal, Button, Picker, Menu, Alert, focus handling, tokens, and reduced-motion conventions apply.
+
+The rich editor is lazy-loaded Tiptap 3.32.0 with Markdown as durable source. It supports headings, bold, italic, underline, lists/checklists, tables with row/column controls, images by URL or bounded raster paste/drop/upload, code, quotes, divider, date, dropdown details, fonts, and Mermaid fenced diagrams. Mermaid is lazy, strict, bounded, and SVG-sanitized; executable image URLs and SVG data images are rejected. A document is at most 1 MiB. Embedded image uploads are at most 600 KiB to leave room for Markdown/base64 overhead.
+
+Standard formatting uses normal Markdown/GFM. Additional formatting uses these explicit source forms:
+
+- Font: `[font family="serif"]Text[/font]`; families are only `sans`, `serif`, `mono`.
+- Date: `[date value="2026-10-22"]`.
+- Underline: the Tiptap Markdown extension’s supported inline underline HTML.
+- Dropdown details: nested Tiptap block directives, for example:
+
+````markdown
+:::details {open=true}
+
+:::detailsSummary
+
+More information
+
+:::
+
+:::detailsContent
+
+A paragraph, list or table inside the dropdown.
+
+:::
+
+:::
+````
+
+Save uses an exact revision compare-and-swap and idempotency key. Uncertain saves keep the original request body/key, including while navigating within this tab. Unsaved drafts are bounded, memory-only, viewer/document-scoped, and reauthorized before restoration. A newer source never silently changes the draft's original baseline or enables overwriting another editor's work; a conflict retains the draft and offers explicit download/discard/reload. Metadata changes (comments/sharing) retain the loaded source unless their source revision changed, which triggers the same conflict protection.
+
+Owners grant view/comment access by NyxID subject or create revocable view/comment links. Link authority is generated in-browser, appears only in URL fragments, and is sent only in `X-CMA-Document-Share-Token`. A tab-local, expiring session record preserves fragment authority through sign-in while OAuth return URLs contain only the document path. Existing Agent recipient search requires an Agent ID/owner authority, so standalone documents do not call it with an invented Agent.
+
+
+| 2026-10-22 | Add the persistent document Artifact registry, rich Markdown editor, revision-safe drafts, secure diagram/image rendering, direct sharing and authenticated share links, and comments using the common controls and motion system. |
