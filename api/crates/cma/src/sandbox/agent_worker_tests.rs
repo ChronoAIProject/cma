@@ -665,7 +665,10 @@ async fn startup_is_isolated_receipted_published_and_records_runtime_updates() {
     .expect("runtime update persisted");
 }
 
-#[tokio::test]
+// These first-message fixtures reuse one wall-clock instant for startup steps.
+// Freeze elapsed time too, so a step cannot publish the next second while the
+// following claim still uses the previous one. Retry deadlines remain explicit.
+#[tokio::test(start_paused = true)]
 async fn worker_dispatches_a_configured_first_message_and_retires_lifecycle_work() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
@@ -691,7 +694,7 @@ async fn worker_dispatches_a_configured_first_message_and_retires_lifecycle_work
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn restart_reattaches_without_overwriting_first_message_work() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
@@ -756,7 +759,7 @@ async fn restart_reattaches_without_overwriting_first_message_work() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn worker_completes_an_unconfigured_dispatch_step_without_runtime_input() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
@@ -776,7 +779,7 @@ async fn worker_completes_an_unconfigured_dispatch_step_without_runtime_input() 
     assert!(completed.conversation.first_message.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
@@ -819,7 +822,7 @@ async fn worker_retries_only_a_proven_first_message_pre_write_failure() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn worker_retires_ambiguous_first_message_work_into_explicit_recovery() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
@@ -847,7 +850,7 @@ async fn worker_retires_ambiguous_first_message_work_into_explicit_recovery() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
     let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     harness.now = SystemTime::now();
