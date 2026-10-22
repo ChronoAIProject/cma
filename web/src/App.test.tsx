@@ -41,27 +41,33 @@ describe('the retained application shell', () => {
     expect(screen.getByRole('button', { name: /account menu/i })).toBeInTheDocument();
   });
 
-  it('keeps the home landing available after sign-in and enters Agent Manager without another login', async () => {
+  it('replaces authenticated home with Agent Manager without painting the landing', async () => {
     const provider = createMockAuthProvider({ initiallyAuthenticated: true });
     const signIn = vi.spyOn(provider, 'signIn');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    const push = vi.spyOn(window.history, 'pushState');
+    const paintedLanding: boolean[] = [];
+    const observer = new MutationObserver(() => {
+      paintedLanding.push(document.querySelector('.sign-in-landing') !== null);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
     render(
       <AuthContextProvider provider={provider}>
         <App />
       </AuthContextProvider>,
     );
-    expect(
-      await screen.findByRole('heading', { name: 'ChronoAI Managed Agent' }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show navigation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Get Started' }));
     expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Get Started' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Hide navigation' })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
     expect(window.location.pathname).toBe('/agent-manager');
+    expect(replace).toHaveBeenCalledWith(null, '', '/agent-manager');
+    expect(push).not.toHaveBeenCalled();
     expect(signIn).not.toHaveBeenCalled();
+    observer.disconnect();
+    expect(paintedLanding).not.toContain(true);
   });
 
   it('offers sign in to an anonymous visitor', async () => {
