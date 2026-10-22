@@ -6,6 +6,7 @@ fn desired() -> AgentSettings {
         model: "gpt-6".into(),
         reasoning_effort: ThinkingEffort::High,
         permission_mode: PermissionLevel::Autonomous,
+        system_prompt: None,
     }
 }
 

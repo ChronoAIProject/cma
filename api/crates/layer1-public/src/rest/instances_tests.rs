@@ -420,6 +420,8 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
             observations: Default::default(),
             settings: None,
             conversation_id: None,

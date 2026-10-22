@@ -27,6 +27,24 @@ pub struct AgentConversationMutation {
     pub agent_logs: Vec<AgentLogKind>,
 }
 
+impl AgentConversationMutation {
+    pub fn is_managed_context_admission(&self) -> bool {
+        self.admission_guard.is_some()
+            && self
+                .agent
+                .conversation
+                .operation
+                .as_ref()
+                .is_some_and(|operation| {
+                    operation.state == crate::sandbox::AgentOperationDelivery::DispatchFenced
+                        && matches!(
+                            operation.intent,
+                            crate::sandbox::AgentOperationIntent::RefreshContext { .. }
+                        )
+                })
+    }
+}
+
 /// Validate the parent read in the same transaction as the Agent mutation. A store
 /// must also write-fence this parent when the guard is present.
 #[doc(hidden)]
@@ -35,6 +53,8 @@ pub fn validate_agent_conversation_admission(
     parent: Option<&Sandbox>,
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
+    crate::sandbox::agent_preferences::validate_preferences_mutation(current, mutation)?;
+    crate::sandbox::agent_managed_context::validate_mutation(current, mutation)?;
     crate::sandbox::agent_settings_validation::validate_settings_mutation(current, mutation)?;
     let skill_admission =
         crate::sandbox::agent_live_skills::is_install_admission(current, &mutation.agent);
@@ -62,7 +82,9 @@ pub fn validate_agent_conversation_admission(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let admission = skill_admission || admits_input(current, mutation);
+    let admission = skill_admission
+        || current.conversation.preferences.title != mutation.agent.conversation.preferences.title
+        || admits_input(current, mutation);
     if [
         mutation.settings_fence.is_some(),
         mutation.execution_fence.is_some(),
