@@ -5,6 +5,8 @@ export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 export type AppRoute =
   | { readonly kind: 'home' }
   | { readonly kind: 'agent_manager' }
+  | { readonly kind: 'artifacts' }
+  | { readonly kind: 'document'; readonly documentId: string }
   | { readonly kind: 'event_gateway' }
   | { readonly kind: 'image_manager' }
   | { readonly kind: 'docs'; readonly view?: 'event_gateway_protocol' }
@@ -71,6 +73,8 @@ export function parseRoute(pathname: string): AppRoute {
         return { kind: 'event_gateway' };
       case 'image-manager':
         return { kind: 'not_found', pathname };
+      case 'artifacts':
+        return { kind: 'artifacts' };
       case 'docs':
         return { kind: 'docs' };
       case 'agent-manager':
@@ -99,6 +103,8 @@ export function parseRoute(pathname: string): AppRoute {
     if (resource === 'docs' && id === 'event-gateway')
       return { kind: 'docs', view: 'event_gateway_protocol' };
     if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
+    if (resource === 'artifacts' && /^doc_[a-f0-9]{32}$/.test(id))
+      return { kind: 'document', documentId: id };
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
@@ -153,6 +159,10 @@ export function routePath(route: AppRoute): string {
       return '/event-gateway';
     case 'image_manager':
       return '/image-manager';
+    case 'artifacts':
+      return '/artifacts';
+    case 'document':
+      return `/artifacts/${segment(route.documentId)}`;
     case 'docs':
       return route.view === 'event_gateway_protocol' ? '/docs/event-gateway' : '/docs';
     case 'sandbox':
