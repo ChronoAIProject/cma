@@ -218,7 +218,7 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
   }
 });
 
-test('LOCAL: incomplete snapshots block input and tail until the final page is released', async ({
+test('LOCAL: incomplete snapshots permit input while the tail waits for the final page', async ({
   page,
   baseURL,
 }) => {
@@ -230,17 +230,132 @@ test('LOCAL: incomplete snapshots block input and tail until the final page is r
     await open(page, fixture, baseURL!);
     await expect.poll(() => fixture.snapshots).toBe(2);
     await message(page).fill('Next request');
-    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
     expect(fixture.streams.size).toBe(0);
     await message(page).press('Enter');
-    expect(fixture.writes).toEqual([]);
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    await expect(message(page)).toHaveValue('');
     fixture.releaseSnapshot();
     await expect(page.locator('.message--assistant')).toContainText('Recorded answer');
-    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
     await expect.poll(() => fixture.streams.size).toBe(1);
-    expect(fixture.writes).toEqual([]);
+    expect(fixture.writes).toHaveLength(1);
     clean(fixture);
   } finally {
+    await fixture.close(page);
+  }
+});
+
+test('LOCAL: newest transcript and sending stay available during history loading and cached return', async ({
+  page,
+  baseURL,
+}, info) => {
+  const fixture = new LocalAgentV2();
+  const previousReply = 'The newest recorded answer is visible before history finishes.';
+  const nextInput = 'Continue while older activity is loading.';
+  const nextReply = 'The new response remains in the cached conversation.';
+  const oldBinding = { response_id: 'resp_old', command_id: 'cmd_old', turn_sequence: 1 };
+  fixture.append({ type: 'turn_started', turn_sequence: 1 }, oldBinding);
+  fixture.append({ type: 'message', role: 'user', content: 'Previous request' });
+  fixture.append({ type: 'message', role: 'assistant', content: previousReply });
+  fixture.append({ type: 'turn_completed', turn_sequence: 1 });
+  fixture.holdSnapshot = true;
+  let releaseUsage!: () => void;
+  let releaseReturnTranscript!: () => void;
+  const usageGate = new Promise<void>((resolve) => (releaseUsage = resolve));
+  const returnGate = new Promise<void>((resolve) => (releaseReturnTranscript = resolve));
+  let usageReads = 0;
+  let transcriptReads = 0;
+  let returning = false;
+  const transcript = {
+    agent_id: 'agt_contract',
+    through_seq: 4,
+    turns: [
+      {
+        turn_sequence: 1,
+        started_at: fixture.started,
+        owner_message: 'Previous request',
+        agent_messages: [previousReply],
+        messages: [
+          { sequence: 2, role: 'user', content: 'Previous request', appended_at: fixture.started },
+          { sequence: 3, role: 'assistant', content: previousReply, appended_at: fixture.started },
+        ],
+        outcome: { type: 'completed', at: fixture.started },
+      },
+    ],
+  };
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v1/agents/agt_contract/transcript', async (route) => {
+      transcriptReads += 1;
+      if (returning) await returnGate;
+      await route.fulfill({ json: transcript });
+    });
+    await page.route('**/api/v1/agents/agt_contract/usage', async (route) => {
+      usageReads += 1;
+      await usageGate;
+      await route.fulfill({
+        json: {
+          agent_id: 'agt_contract',
+          through_seq: 4,
+          input_tokens: 12,
+          output_tokens: 24,
+          context_used: 36,
+        },
+      });
+    });
+    await page.goto('/agents/agt_contract');
+    await expect(page.getByText(previousReply, { exact: true })).toBeVisible();
+    await expect.poll(() => usageReads).toBe(1);
+    await expect.poll(() => fixture.snapshots).toBe(1);
+    await expect(page.locator('.active-thinking')).toHaveCount(0);
+    await message(page).fill(nextInput);
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    expect(fixture.writes[0]!.body).toEqual({ input: nextInput, stream: true });
+    await expect(message(page)).toHaveValue('');
+    await expect(page.locator('.message--user').filter({ hasText: nextInput })).toContainText(
+      'Sent',
+    );
+    await message(page).fill('Keep this unsent follow-up.');
+    releaseUsage();
+    await expect.poll(() => fixture.snapshots).toBe(2);
+    fixture.releaseSnapshot();
+    await expect.poll(() => fixture.streams.size).toBe(1);
+    await expect(message(page)).toHaveValue('Keep this unsent follow-up.');
+    await expect(page.locator('.message--user').filter({ hasText: nextInput })).toHaveCount(1);
+    fixture.append({ type: 'turn_started', turn_sequence: 5 }, { ...binding, turn_sequence: 5 });
+    fixture.append({ type: 'message', role: 'user', content: nextInput });
+    fixture.append({ type: 'message', role: 'assistant', content: nextReply });
+    fixture.append({ type: 'turn_completed', turn_sequence: 5 });
+    await expect(page.getByText(nextReply, { exact: true })).toBeVisible();
+    await expect(page.locator('.message--user').filter({ hasText: nextInput })).toHaveCount(1);
+    await expect(page.locator('.message__delivery')).toHaveCount(0);
+    await expect(message(page)).toHaveValue('Keep this unsent follow-up.');
+    await page.screenshot({
+      path: info.outputPath('nonblocking-history.png'),
+      animations: 'disabled',
+    });
+    const loadedSnapshots = fixture.snapshots;
+    const loadedTranscripts = transcriptReads;
+    returning = true;
+    await page.getByRole('link', { name: 'CMA home', exact: true }).click();
+    await expect(page).toHaveURL(new URL('/', baseURL!).href);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/agents\/agt_contract$/);
+    // A return transcript request would remain held. The current cached tail
+    // must already be visible without rereading the old rich event pages.
+    await expect(page.getByText(nextReply, { exact: true })).toBeVisible();
+    expect(fixture.snapshots).toBe(loadedSnapshots);
+    expect(transcriptReads).toBe(loadedTranscripts);
+    await expect(page.locator('.message--user').filter({ hasText: nextInput })).toHaveCount(1);
+    await expect(message(page)).toHaveValue('Keep this unsent follow-up.');
+    await expect(page.locator('.active-thinking')).toHaveCount(0);
+    expect(fixture.writes).toHaveLength(1);
+    clean(fixture);
+  } finally {
+    releaseUsage();
+    releaseReturnTranscript();
     await fixture.close(page);
   }
 });

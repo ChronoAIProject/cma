@@ -193,9 +193,13 @@ for (const target of ['new', 'contextual'] as const) {
     );
     const open = async () => {
       await page.goto('/sandboxes/sbx_route');
-      if (target === 'contextual')
-        await page.getByRole('button', { name: 'New agent in this Sandbox' }).click();
-      else {
+      if (target === 'contextual') {
+        await page
+          .locator('.sandbox-page')
+          .getByRole('button', { name: 'More actions', exact: true })
+          .click();
+        await page.getByRole('menuitem', { name: 'New agent', exact: true }).click();
+      } else {
         await page
           .locator('.sidebar')
           .getByRole('button', { name: 'New agent', exact: true })
@@ -206,6 +210,8 @@ for (const target of ['new', 'contextual'] as const) {
     await open();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await expect(dialog.getByLabel('GitHub repository (optional)')).toBeVisible();
+    await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
+    await expect(dialog.getByText('Where it works', { exact: true })).toHaveCount(0);
     expect(await dialog.locator('input').count()).toBe(1);
     await dialog.getByLabel('GitHub repository (optional)').fill('https://github.com/org/research');
     await capture(page, info, `${target}-creation`);

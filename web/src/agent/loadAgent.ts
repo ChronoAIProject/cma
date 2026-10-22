@@ -46,6 +46,7 @@ export async function loadAgent(
   allowIncompleteHistory = false,
   onHistoryProgress?: (ready: ReadyAgent) => void,
   lineage?: AgentLoadLineage,
+  onInputReady?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
   if (v2 !== undefined)
@@ -57,20 +58,53 @@ export async function loadAgent(
       allowIncompleteHistory,
       onHistoryProgress,
       lineage,
+      onInputReady,
     );
-  const [detail, transcript, usage] = await Promise.all([
-    client.readAgent(agentId, { signal }),
+  const hierarchy = (async () => {
+    const detail = await client.readAgent(agentId, { signal });
+    signal.throwIfAborted();
+    if (
+      detail.id !== agentId ||
+      (lineage !== undefined &&
+        (lineage.agentId !== agentId ||
+          lineage.workspaceId !== detail.workspace.id ||
+          lineage.sandboxId !== detail.sandbox.id))
+    )
+      throw new Error('Agent projections referred to different resources.');
+    const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+    signal.throwIfAborted();
+    if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
+      throw new Error('Agent projections referred to different resources.');
+    onInputReady?.({
+      detail,
+      workspace,
+      conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
+      historyLoading: true,
+    });
+    return { detail, workspace };
+  })();
+  const projections = Promise.all([
+    hierarchy,
     client.readAgentTranscript(agentId, { signal }),
+  ]).then(([metadata, transcript]) => {
+    signal.throwIfAborted();
+    if (transcript.agentId !== agentId)
+      throw new Error('Agent projections referred to different resources.');
+    onInputReady?.({
+      ...metadata,
+      conversation: conversationFromTranscript(transcript),
+      historyLoading: true,
+      historyUnavailable: false,
+    });
+    return { ...metadata, transcript };
+  });
+  const [{ detail, workspace, transcript }, usage] = await Promise.all([
+    projections,
     client.readAgentUsage(agentId, { signal }),
   ]);
-  if (detail.id !== agentId || transcript.agentId !== agentId || usage.agentId !== agentId) {
+  signal.throwIfAborted();
+  if (transcript.agentId !== agentId || usage.agentId !== agentId)
     throw new Error('Agent projections referred to different resources.');
-  }
-
-  const workspace = await client.readWorkspace(detail.workspace.id, { signal });
-  if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id) {
-    throw new Error('Agent projections referred to different resources.');
-  }
   let conversation = conversationFromTranscript({ ...transcript, turns: [], throughSeq: 0 });
   const durableEvents: AgentEvent[] = [];
   let cursor: number | undefined = 0;
@@ -78,7 +112,7 @@ export async function loadAgent(
   let historyUnavailable = false;
   const snapshot = conversationFromTranscript(transcript);
   const preview = withUsage(snapshot, usage);
-  let previewPublished = false;
+  let previewPublished = onInputReady !== undefined;
   const projectedConversation = () => {
     const merged = mergeTranscriptSnapshot(conversation, snapshot, conversation.cursor, true);
     return usage.throughSeq >= (merged.usage?.throughSeq ?? 0) ? withUsage(merged, usage) : merged;

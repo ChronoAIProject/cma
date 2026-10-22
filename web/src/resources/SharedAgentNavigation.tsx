@@ -82,7 +82,12 @@ export function SharedAgentNavigation({
           {current.state.value.items.length === 0 ? (
             <p>No Agents match this scope and status on this page.</p>
           ) : (
-            <div role="tree" aria-label={label} onKeyDown={keyboardNavigation}>
+            <div
+              className="agent-navigation"
+              role="tree"
+              aria-label={label}
+              onKeyDown={keyboardNavigation}
+            >
               {current.state.value.items.map((row) => (
                 <TreeRow
                   key={row.agent_id}

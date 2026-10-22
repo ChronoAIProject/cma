@@ -240,6 +240,37 @@ describe('the page frame', () => {
     );
   });
 
+  it.each([390, 800, 1440])(
+    'locks landing navigation at %dpx even after a prior explicit expansion',
+    (width) => {
+      const onChange = vi.fn();
+      const draw = (locked: boolean) => (
+        <AppFrame
+          detailsOpen={false}
+          sidebarLocked={locked}
+          onSidebarCollapsedChange={onChange}
+          sidebar={({ onToggle }) => <button onClick={onToggle}>External toggle</button>}
+          center={<p>landing</p>}
+        />
+      );
+      const view = render(draw(false));
+      measure(width);
+      act(() =>
+        screen
+          .getByRole('button', { name: width < 640 ? 'Show navigation' : 'External toggle' })
+          .click(),
+      );
+      view.rerender(draw(true));
+      onChange.mockClear();
+      if (width >= 640) act(() => screen.getByRole('button', { name: 'External toggle' }).click());
+      expect(tracks().startsWith(`${width < 640 ? 0 : SIDEBAR_COLLAPSED}px`)).toBe(true);
+      expect(screen.queryByRole('button', { name: /show navigation/i })).toBeNull();
+      expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
+      expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+
   it('replaces the rail on a phone with a top bar and opens the sidebar as a sheet', () => {
     render(
       <AppFrame

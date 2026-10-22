@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ApiError } from '@chronoai/cma-sdk';
+import { errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent, SandboxEvent } from '../api/types';
 import { readSandboxHistory } from '../sandbox/eventHistory';
-import { currentAgentStatus, sameAgent } from './status';
+import { currentAgentStatus } from './status';
 import { useSandboxInput } from './sandboxInput';
-import { foldLiveEvent } from './conversation';
+import { HydrationEvents } from './mergeHydration';
 import { useRetainedAgentState } from './retainedState';
 import { reopenAgent, refreshConversation } from './reopenAgent';
 import { foldV2Frame } from './transport/projection';
@@ -18,7 +18,7 @@ import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { presentAgent } from './presentation';
-import { mergeRuntimeMetadata } from './runtimeMetadata';
+import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type {
   AgentCommand,
@@ -26,13 +26,6 @@ export type {
   AgentResourceState,
   ApprovalDecision,
 } from './controllerTypes';
-
-function errorMessage(error: unknown): string {
-  if (isIdentityChanged(error)) return new IdentityChangedError().message;
-  if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
-    return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
-  return error instanceof Error ? error.message : 'The Agent operation did not complete.';
-}
 
 export function useAgentController(
   client: CmaWebClient,
@@ -96,6 +89,7 @@ export function useAgentController(
   const actionKindRef = useRef<AgentCommand | undefined>(undefined);
   const replayAbortRef = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
+  const hydration = useRef(new HydrationEvents());
   const onIdentityChange = useCallback(
     (error: unknown) => {
       if (!isIdentityChanged(error)) return false;
@@ -116,59 +110,43 @@ export function useAgentController(
 
   const summary = options.summary;
   const detail = state.status === 'ready' ? state.detail : undefined;
-  useEffect(() => {
-    if (summary === undefined || detail === undefined || summary.id !== agentId) return;
-    let cancelled = false;
-    // Reuse fresh tree metadata without reloading or replacing conversation history.
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setState((current) => {
-        if (
-          current.status !== 'ready' ||
-          !sameAgent(current.detail, summary) ||
-          !(Date.parse(summary.updatedAt) >= Date.parse(current.detail.updatedAt))
-        )
-          return current;
-        const status =
-          Date.parse(summary.updatedAt) > Date.parse(current.detail.updatedAt)
-            ? summary.status
-            : current.detail.status;
-        const title = summary.title?.trim() ? summary.title : current.detail.title;
-        const runtimeMetadata = mergeRuntimeMetadata(
-          current.detail.runtimeMetadata,
-          summary.runtimeMetadata,
-        );
-        if (
-          current.detail.status === status &&
-          current.detail.title === title &&
-          current.detail.runtimeMetadata === runtimeMetadata
-        )
-          return current;
-        return {
-          ...current,
-          detail: {
-            ...current.detail,
-            status,
-            title,
-            runtimeMetadata,
-            updatedAt: summary.updatedAt,
-          },
-        };
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentId, detail, summary, setState]);
+  useAgentSummary(agentId, detail, summary, setState);
 
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
       if (agentId === undefined) return;
       setState((current) => {
         if (current.status !== 'ready' || current.detail.id !== agentId) return current;
-        const conversation = foldLiveEvent(current.conversation, event, agentId);
+        const conversation = hydration.current.apply(
+          current.conversation,
+          event,
+          agentId,
+          current.historyLoading === true || current.historyUnavailable === true,
+        );
         liveCursor.current = conversation.cursor;
         return { ...current, conversation };
+      });
+    },
+    [agentId, setState],
+  );
+
+  const publishHistory = useCallback(
+    (ready: import('./loadAgent').ReadyAgent, preserveEmpty = false) => {
+      if (agentId === undefined) return;
+      setState((current) => {
+        const conversation =
+          preserveEmpty &&
+          current.status === 'ready' &&
+          ready.conversation.cursor === 0 &&
+          ready.conversation.messages.length === 0
+            ? current.conversation
+            : hydration.current.merge(
+                ready.conversation,
+                agentId,
+                !ready.historyLoading && !ready.historyUnavailable,
+              );
+        liveCursor.current = conversation.cursor;
+        return { status: 'ready', ...ready, conversation };
       });
     },
     [agentId, setState],
@@ -199,8 +177,9 @@ export function useAgentController(
       const reopen =
         retained.status === 'ready' && !retained.historyLoading && !retained.historyUnavailable;
       loaded.current = { client, agentId, revision, lineage };
-      if (!reopen) setState({ status: 'loading' });
-      else liveCursor.current = retained.conversation.cursor;
+      hydration.current.reset(reopen ? retained.conversation : undefined);
+      if (!reopen && retained.status !== 'ready') setState({ status: 'loading' });
+      else if (reopen) liveCursor.current = retained.conversation.cursor;
       void (
         reopen
           ? reopenAgent(client, retained, controller.signal, lineage)
@@ -210,29 +189,44 @@ export function useAgentController(
               controller.signal,
               true,
               (ready) => {
-                if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
+                if (!controller.signal.aborted) publishHistory(ready);
               },
               lineage,
+              (ready) => {
+                if (!controller.signal.aborted) publishHistory(ready, true);
+              },
             )
       )
         .then((ready) => {
           if (controller.signal.aborted) return;
           setState((current) => {
             const conversation =
-              reopen && current.status === 'ready' ? current.conversation : ready.conversation;
+              reopen && current.status === 'ready'
+                ? current.conversation
+                : hydration.current.merge(ready.conversation, agentId, !ready.historyUnavailable);
             liveCursor.current = conversation.cursor;
             return { status: 'ready', ...ready, conversation };
           });
         })
         .catch((error: unknown) => {
-          if (!controller.signal.aborted)
+          if (!controller.signal.aborted) {
+            controller.abort();
+            const retained = retainHistoryOnFailure(error, stateRef.current, agentId);
+            if (retained !== undefined) {
+              setState(retained);
+              return;
+            }
+            actionAbortRef.current?.abort();
+            replayAbortRef.current?.abort();
+            hydration.current.reset();
             setState({ status: 'error', message: errorMessage(error) });
+          }
         });
     });
     return () => {
       controller.abort();
     };
-  }, [agentId, applyLive, client, lineage, revision, setState, stateRef, suspended]);
+  }, [agentId, client, lineage, publishHistory, revision, setState, stateRef, suspended]);
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
@@ -250,14 +244,18 @@ export function useAgentController(
       try {
         const ready = await loadAgent(client, agentId, request.signal);
         if (request.signal.aborted) return;
-        liveCursor.current = ready.conversation.cursor;
-        setState({ status: 'ready', ...ready });
+        publishHistory(ready);
       } catch (error) {
         if (request.signal.aborted) return;
         if (transientReadFailure(error)) {
           retryDelay = Math.min(retryDelay * 2, 30000);
           timer = setTimeout(() => void recover(), retryDelay);
-        } else setState({ status: 'error', message: errorMessage(error) });
+        } else {
+          actionAbortRef.current?.abort();
+          replayAbortRef.current?.abort();
+          hydration.current.reset();
+          setState({ status: 'error', message: errorMessage(error) });
+        }
       }
     };
     timer = setTimeout(() => void recover(), 5000);
@@ -265,7 +263,7 @@ export function useAgentController(
       request.abort();
       clearTimeout(timer);
     };
-  }, [agentId, client, historyUnavailable, setState, suspended]);
+  }, [agentId, client, historyUnavailable, publishHistory, setState, suspended]);
 
   const replayEnabled =
     !suspended &&
@@ -330,13 +328,15 @@ export function useAgentController(
     queueMicrotask(() => {
       if (!controller.signal.aborted) setReplayError(undefined);
     });
+    const after =
+      stateRef.current.status === 'ready'
+        ? stateRef.current.conversation.cursor
+        : liveCursor.current;
+    hydration.current.replayFrom(after);
     const replay =
       v2 === undefined
         ? client.replayAgent(agentId, {
-            after:
-              stateRef.current.status === 'ready'
-                ? stateRef.current.conversation.cursor
-                : liveCursor.current,
+            after,
             signal: controller.signal,
             onEvent: (event) => {
               if (!controller.signal.aborted) applyLive(event);
