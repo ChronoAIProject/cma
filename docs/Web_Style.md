@@ -455,33 +455,55 @@ its label, and never routes. Consumer routes belong to Event Gateway. Collapsed,
 only its glyph. The build revision is no longer in the header; it is the copyable **Build `<rev>`**
 row of the account menu.
 
-**Action row.** Directly under the header, in this order:
+**Action row.** Directly under the header, in this order. Every entry is a plain full-width row,
+32px high: a 16px glyph, 8px gap, and a 14px label in the primary ink, with no border and no fill
+at rest and the hover ground on hover. Nothing in the sidebar is filled at rest, so the list of
+Agents, not the chrome around it, is what the eye lands on.
 
-- **New agent**, the sidebar's one primary button, 36px, drawn as the shared primary. It is shown
-  whenever the caller holds `use_own_sandboxes` and is not a visitor. When it cannot be used right
-  now it stays in place, `aria-disabled`, with its reason in 12px secondary text beneath it and as
-  its accessible description: *Switch to Personal to create an Agent.* in Shared or Organization
-  scope, *Checking your access.* while the scope is still being confirmed.
-- **Search**, a 36px field-like button with a `⌘K` (Ctrl K elsewhere) key hint, which opens the
-  command menu below. Visitors do not get it.
+- **New agent** is shown whenever the caller holds `use_own_sandboxes` and is not a visitor. When
+  it cannot be used right now it stays in place, `aria-disabled` at 40% opacity, with its reason in
+  12px secondary text beneath it and as its accessible description: *Switch to Personal to create
+  an Agent.* in Shared or Organization scope, *Checking your access.* while the scope is still
+  being confirmed.
+- **Search**, with its `⌘K` (Ctrl K elsewhere) key hint at the right in the tertiary ink and no
+  key-cap border, opens the command menu below. Visitors do not get it.
 - **Triggers**, a navigation row to `/triggers/manage` for callers who may publish Triggers and are
-  not visitors, current on every Trigger route. It replaces the old *New agent trigger* row.
+  not visitors, current on every Trigger route, where it takes the active-item ground and medium
+  weight. It replaces the old *New agent trigger* row.
 
 Collapsed, each keeps only its glyph and a hover title. Below 30rem every row is 44px.
 
-**Filters.** The Agents | Sandboxes switch stays visible because it changes what the list is.
-Scope and status only narrow it, so they sit behind one **Filter** button beside a one-line
-summary such as *Personal · All statuses*. The button names how many filters are applied (*Filter,
-1 applied*) and shows the count; it discloses a bordered panel with labelled **Scope** (Personal,
-Shared, `<Org> (Organization)`) and **Status** pickers and, once anything is applied, **Clear
-filters**, which returns both to their defaults. Each view keeps its own status choice.
+**Filters.** One row holds the **Agents | Sandboxes** switch and the **Filter** key. The switch
+stays visible because it changes what the list is; it is two text tabs at 13px with no filled
+track: the selected one in the primary ink at weight 500, the other in the secondary ink. They
+keep their pressed-button semantics (`aria-pressed`, one Tab stop each) inside the group named
+**Navigation view**. Scope and status only narrow the list, so they sit behind the **Filter** key
+at the row's right: a 28px icon button (44px below 30rem) with the sliders glyph, named *Filter*.
+When any filter differs from its default (Personal, All statuses) a 6px accent dot sits at its
+top-right corner, and a 12px secondary summary line under the row names only the non-default
+parts, joined by ` · ` — *Shared*, *Working*, or *Shared · Working* — and serves as the key's
+accessible description. With every filter at its default there is no dot and no summary line. The
+key discloses a bordered panel with labelled **Scope** (Personal, Shared, `<Org> (Organization)`)
+and **Status** pickers and, once anything is applied, **Clear filters**, which returns both to
+their defaults. Each view keeps its own status choice.
 
-**Agents view.** Agents are grouped by Workspace, each group headed by the Workspace's source glyph,
-its name and its Sandbox name, and announced as a group named `<workspace> · <sandbox>`. Within a
-group Agents are ordered by most recent activity; groups are ordered by their most recent Agent.
-Each row shows the Agent title, its status word with any dot (§12.1), and relative time. Deleted
-Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still open
-their conversation.
+**Agents view.** One flat list of every Agent the scope shows, most recently active first, with no
+Workspace or Sandbox group headings. Each row is one line, 32px high (44px below 30rem):
+
+- A 16px leading slot that holds a 8px state dot (§12.1) only for a state that needs attention or
+  shows work — Starting, Working, Needs approval, Needs attention. Ready, Paused and Stopped draw
+  none; the slot stays so titles align with each other and with the action-row labels. The slot's
+  hover title is the status word.
+- The Agent title in 13px, truncated on one line with an ellipsis, full text on hover.
+- The relative age (12px tertiary, tabular) and the row's **⋯** menu at the right, shown only while
+  the row is hovered, holds focus, or is the current Agent. At rest the menu keeps its place
+  invisibly, so revealing it never shifts the title; it is still reached with Tab from its row.
+
+The status word is part of the row's accessible name even where no dot or word is drawn, so the
+list reads the same to a screen reader as before. The current row takes the active-item ground.
+Deleted Agents and removed Workspaces are absent; Agents of a paused Sandbox are dimmed but still
+open their conversation. The Shared and Organization Agent lists keep their two-line rows, which
+also carry each Agent's creation, channel and access facts.
 
 **Sandboxes view.** The tree is Sandbox -> Workspace -> Agent, grouped Live and Paused. Sandbox rows
 use the Sandbox's own name — the same selector the Sandbox page uses — never a generated
@@ -626,7 +648,9 @@ pressable. Selection is an inset ring rather than a border, so moving it along a
 the row.
 
 A **state dot** is reinforcement and never the signal — it is `aria-hidden`, and every caller pairs it
-with the word, so a state reads the same to somebody who cannot distinguish the colours. Three of its
+with the word, so a state reads the same to somebody who cannot distinguish the colours. The
+one-line personal Agent list (§10) is the single place the word is not drawn beside the dot: there
+it is carried in the row's accessible name and the dot's hover title instead. Three of its
 four states are a solid core inside a same-coloured halo. The fourth is not colour alone: _running_ is
 a claim about right now, so its solid live core sends one expanding ping ring on a quiet loop. Under
 `prefers-reduced-motion: reduce` the ring is absent and the labelled core stays still. This replaces
@@ -3165,4 +3189,5 @@ version choice, same-key retry and lifecycle gating are unchanged.
 
 | 2026-10-22 | Calmed the Agent details panel. Section headings became sentence case at 13px weight 500 in the primary label colour (Files, Sharing, Service access, Skills; "Session sharing" became Sharing), sections are separated by 24px of space instead of hairlines, and every text action shares one quiet-link style flush with the text above it. Required services read as tertiary text instead of bordered badges. Installed skills are plain name and version rows, and the Ornn catalogue moved behind a collapsed Add skills disclosure that holds its error and retry states, so the panel scrolls as one region without nested scroll areas. |
 | 2026-10-22 | Quiet the Agent conversation so reply text leads: identity once per run of one author's messages, the timestamp revealed with the message actions on hover or focus (always on touch), no usage line for a turn without a report, lighter inline code, and tool calls as frameless lines whose group header reads "<n> tool calls" plus only the running call or failure count. |
+| 2026-10-22 | Quiet the Agent Manager sidebar: New agent, Search and Triggers become plain 32px rows with no fill or border at rest; Agents \| Sandboxes becomes text tabs sharing one row with an icon-only Filter key that carries an accent dot, and a summary line naming only non-default filters appears only when one is applied; personal Agent rows become one 32px line with a state dot only for Starting, Working, Needs approval and Needs attention, the status word kept in the accessible name, and age and ⋯ shown only on hover, focus or the current row. |
 | 2026-10-22 | Cap the Agent conversation at a centred 768px reading axis shared by the history and the composer, replacing the 15%-per-side rule that let replies run past 900px on wide screens; the cap is in pixels so text size scales the text, not the measure. |
