@@ -22,8 +22,15 @@ for (const width of [1600, 390]) {
       await expect(content).toBeVisible();
       await expect(content.getByRole('table')).toBeVisible();
       await expect(content.getByRole('checkbox').first()).toBeChecked();
-      await expect(page.locator('.document-diagram svg')).toBeVisible();
-      await expect(page.locator('.document-diagram svg')).toContainText('Research');
+      await expect(page.locator('.document-diagram img')).toBeVisible();
+      await expect(page.locator('.document-diagram img')).toHaveAttribute('src', /Research/);
+      await expect
+        .poll(() =>
+          page
+            .locator('.document-diagram img')
+            .evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth > 0),
+        )
+        .toBe(true);
       await expect(page.locator('[data-type=detailsContent]')).toContainText(
         'Useful hidden context.',
       );
