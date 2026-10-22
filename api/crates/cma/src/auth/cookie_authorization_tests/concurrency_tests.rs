@@ -4,7 +4,7 @@ fn key(state: &SubjectAuthState) -> VerificationKey {
     VerificationKey::new(state, state.tokens.as_ref().unwrap())
 }
 
-async fn participants(auth: &AuthState, state: &SubjectAuthState, expected: usize) {
+pub(super) async fn participants(auth: &AuthState, state: &SubjectAuthState, expected: usize) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let joined = auth
@@ -226,7 +226,11 @@ async fn verification_registry_is_bounded_and_never_reuses_a_completed_flight() 
     let original = key(&state);
     let first = flights.acquire(&original).await;
     assert!(Arc::ptr_eq(&first, &flights.acquire(&original).await));
-    assert!(first.set(Err(())).is_ok());
+    assert!(first
+        .set(Err(ProviderVerificationError::Unavailable(
+            "fixture".into()
+        )))
+        .is_ok());
     let replacement = flights.acquire(&original).await;
     assert!(!Arc::ptr_eq(&first, &replacement));
     flights.release(&original, &first).await;
