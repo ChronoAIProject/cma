@@ -126,6 +126,11 @@
   object-fit: cover;
 }
 
+/* A continuation keeps the column so its text aligns, but draws nothing in it. */
+.message__avatar[data-continued] {
+  visibility: hidden;
+}
+
 /* The Agent's mark takes the brand ink on a layer circle, so it follows both appearances. */
 .message__avatar[data-agent] {
   color: var(--dsw-alias-brand-primary);
