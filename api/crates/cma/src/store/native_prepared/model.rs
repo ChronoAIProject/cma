@@ -40,7 +40,9 @@ impl NativePreparedPlan {
             id: AgentProfileId("agp_native_prepared_default".into()),
             // New guidance gets a new preparation identity. Replenish unclaimed
             // older homes; never replay changed bytes into an owned Agent home.
-            revision: if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v2() {
+            revision: if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v3() {
+                4
+            } else if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v2() {
                 3
             } else {
                 2
