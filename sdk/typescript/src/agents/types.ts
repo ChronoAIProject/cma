@@ -97,6 +97,7 @@ export const agentTurnUsage = object({
 export type AgentTurnUsage = Output<typeof agentTurnUsage>;
 export const agentSummary = object({
   runtime_metadata: optional(agentRuntimeMetadata),
+  owner_title: optional(text),
   id: text,
   sandbox_id: text,
   workspace_id: text,
@@ -110,6 +111,7 @@ export const agentSummary = object({
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
   runtime_metadata: optional(agentRuntimeMetadata),
+  owner_title: optional(text),
   id: text,
   status: agentStatus,
   profile: agentProfileSummary,

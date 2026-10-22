@@ -60,7 +60,7 @@ it('places the Workspace in its Sandbox and states its facts', async () => {
   expect(fact('Branch or ref')).toHaveTextContent('Default branch');
   expect(fact('Resolved commit')).toHaveTextContent('abc123');
   // The tab is named in an effect after the heading paints.
-  await waitFor(() => expect(document.title).toBe('chrono-bot · CMA'));
+  await waitFor(() => expect(document.title).toBe('ChronoAI Managed Agent (CMA)'));
 });
 
 it('pairs each Agent with its Worktree', async () => {

@@ -7,8 +7,9 @@ The general public `POST /api/v1/mcp` interface remains unsupported and returns
 conversation operations.
 
 CMA also supplies each authenticated runtime Agent a limited MCP capability at
-`POST /api/v1/agent-tools`. That capability exposes only
-`agent_key_scope_revision`, which records a request for owner approval. The tool
+`POST /api/v1/agent-tools`. That capability exposes
+`agent_key_scope_revision`, which records a request for owner approval, and the
+bounded document tools below when durable document storage is configured. The access tool
 cannot approve access. Its `request_key`, `services` and `reason` identify an
 immutable attempt; an optional `retry_of` links a new attempt to a failed request
 from the same Agent creation and original conversation.
@@ -67,3 +68,32 @@ notification intent, plus the `updating` workflow phase and
 reader and rollback image must retain the compatible readers. Reverting to an
 older binary with strict decoding is not a supported rollback. Historical
 additive grants and already-paused access workflows remain readable.
+
+
+## Document publication
+
+`publish_document` accepts `{request_key, title, markdown}` and creates a private
+document in the authenticated Agent owner's personal registry. `update_document`
+accepts `{request_key, document_id, expected_revision, title?, markdown?}` and
+revises only a document previously authored by that exact Agent. The runtime
+cannot select an owner, upload destination, share grant or comment authority.
+The owner can independently read and edit these documents through public REST
+and the Artifacts UI, even after deleting the originating Sandbox.
+
+A confirmed tool result includes the durable document metadata and an
+`/artifacts/{document_id}` link. Return that link to the user. A storage failure
+is an explicit tool error; retry its exact key and body without claiming a save.
+A stale expected revision preserves the owner's newer work. All metadata commits
+recheck the full current Agent, runtime and conversation identity after object
+upload. User-supplied REST origin labels cannot forge runtime write authority.
+
+Sources are at most 1 MiB UTF-8 Markdown; the JSON envelope accommodates escaped
+text. Other tool requests retain the original 16 KiB bound. All tools share the
+existing rate, concurrency and request deadlines. Machine storage credentials
+are confined to the control plane. They are never the runtime tool credential.
+
+Versioned managed guidance asks new Agents to publish specifications, reference
+documents and substantial explanations automatically. The server tool
+instructions carry the same policy. Existing conversation tool catalogs must
+be refreshed only at a fenced idle boundary, preserving the original conversation
+and current owner settings; an active turn is never restarted for discovery.

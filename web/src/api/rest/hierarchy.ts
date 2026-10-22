@@ -183,6 +183,7 @@ function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
     profile: value.profile,
     title: value.title,
     runtimeMetadata: runtimeMetadata(value.runtime_metadata),
+    ownerTitle: value.owner_title,
     updatedAt: value.updated_at,
   };
 }
@@ -243,6 +244,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
     reach: value.reach,
     title: value.title,
     runtimeMetadata: runtimeMetadata(value.runtime_metadata),
+    ownerTitle: value.owner_title,
     pausedNotice: value.paused_notice,
     firstMessage: firstMessage(value.first_message),
     failure: value.failure,

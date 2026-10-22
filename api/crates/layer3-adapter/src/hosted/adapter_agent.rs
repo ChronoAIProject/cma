@@ -289,7 +289,8 @@ pub(super) async fn open_agent(
     settings.recovered_prompt = recovered_prompt;
     // Provider rendering has no authority to add channel tools. Only the
     // configured control-plane source can prove an eligible creation record.
-    if settings.channel_tool.is_some()
+    if settings.context_refresh.is_some()
+        || settings.channel_tool.is_some()
         || settings.provider_tool.is_some()
         || settings.access_tool.is_some()
     {
@@ -348,6 +349,9 @@ pub(super) async fn open_agent(
             "agent launch changed its operation, slot, working directory, or home".into(),
         ));
     }
+    settings.context_refresh = adapter
+        .bind_context_refresh(handle, request, &settings)
+        .await?;
     let (channel, receipt) = adapter
         .backend
         .open_agent(

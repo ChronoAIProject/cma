@@ -260,3 +260,20 @@ CMA callback continuation, local path/method, optional body/owner, and a require
 `idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
 before treating the inner operation as successful. These provider APIs require
 the configured Bot Father binding; they never accept or return user credentials.
+
+## Persistent documents
+
+`client.documents()` exposes `list`, `create`, `read`, `update`, `source`,
+`revisions`, `shares`, `grant`, `revoke`, `links`, `create_link`, `revoke_link`,
+`comments`, `comment`, and `remove_comment`. Types live in `cma_sdk::documents`.
+The registry is independent of Agent and Sandbox lifetimes. `DocumentListOptions`
+supports literal title `q`, `scope`, `cursor`, and page `limit` (1–50).
+
+All writes take `&IdempotencyKey`; preserve the original key when retrying an
+uncertain result. Versioned mutations take `expected_revision`; source reads
+may select an immutable revision. Recipient grants are `Read` or `Comment`.
+The optional token on read/comment calls goes only in
+`X-CMA-Document-Share-Token` and still requires user authentication.
+`create_link` accepts a caller-generated random 256-bit lowercase hex token;
+returned metadata never includes it. Keep share tokens out of logs and URL
+queries. Link access alone never exposes a user's registry inventory.

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
@@ -388,7 +388,10 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
   expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
-  expect(document.querySelector('.agent-header .badge')).toHaveTextContent('Working');
+  expect(screen.getByRole('button', { name: 'More Agent actions' })).toHaveAttribute(
+    'title',
+    'Agent one · Working',
+  );
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));
@@ -460,17 +463,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
       onNavigate={vi.fn()}
     />,
   );
-  const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
-  expect(within(crumbs).getByRole('link', { name: 'Atlas' })).toHaveAttribute(
-    'href',
-    '/sandboxes/sbx_1',
-  );
-  // Workspace details remain available from the Sandbox view. The Agent view
-  // intentionally omits the Workspace crumb because several Sandboxes can
-  // share the same workspace directory.
-  expect(within(crumbs).queryByRole('link', { name: 'chrono-bot' })).not.toBeInTheDocument();
-  expect(within(crumbs).getByText('Agent one')).toHaveAttribute('aria-current', 'page');
-  expect(screen.getByTitle('Worktree branch agent/one')).toHaveTextContent('agent/one');
+  expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();

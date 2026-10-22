@@ -42,6 +42,12 @@ async fn every_selected_method_and_path_exists_in_the_actual_routers() {
     let (files, _) = layer3_adapter::codex::CodexAdapter::in_memory(Default::default());
     let router = agents
         .router
+        .merge(rest::documents_router(
+            layer2_core::document_artifacts::DocumentService::new(
+                Arc::new(layer2_core::document_artifacts::memory::MemoryDocuments::default()),
+                Arc::new(layer2_core::document_artifacts::memory::MemoryDocumentBlobs::default()),
+            ),
+        ))
         .merge(hierarchy.router)
         .merge(events.router)
         .merge(access)

@@ -35,6 +35,8 @@ interface Props {
   readonly web: CmaWebClient;
   readonly detail: SharedAgentDetail;
   readonly onAccessChanged: () => void;
+  readonly filesOpen?: boolean;
+  readonly onFilesOpenChange?: (open: boolean) => void;
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate?: (route: AppRoute) => void;
@@ -45,6 +47,8 @@ export function SharedAgent({
   web,
   detail,
   onAccessChanged,
+  filesOpen,
+  onFilesOpenChange,
   detailsOpen,
   onDetailsOpenChange,
   onNavigate,
@@ -344,6 +348,8 @@ export function SharedAgent({
           },
           { label: title },
         ]}
+        filesOpen={filesOpen}
+        onFilesOpenChange={can('view_files') ? onFilesOpenChange : undefined}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={onDetailsOpenChange}
         menu={[{ type: 'label', id: 'creation-origin', text: creationLabel(provenance) }]}

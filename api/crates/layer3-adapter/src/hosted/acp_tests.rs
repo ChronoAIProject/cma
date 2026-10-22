@@ -22,6 +22,8 @@ mod provider_tool_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
 
+#[path = "acp_context_refresh_tests.rs"]
+mod context_refresh_tests;
 #[path = "acp_output_tests.rs"]
 mod output_tests;
 #[path = "acp_settings_tests.rs"]
@@ -113,6 +115,7 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
 
 fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        context_refresh: None,
         permission_mode: permission_mode.map(str::to_string),
         own_credential,
         channel_tool: None,

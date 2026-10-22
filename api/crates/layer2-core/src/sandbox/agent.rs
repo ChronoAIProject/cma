@@ -18,6 +18,10 @@ pub struct ConversationState {
     /// Durable owner overrides; published profiles and open receipt identities stay immutable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<super::AgentSettings>,
+    #[serde(default, skip_serializing_if = "super::AgentPreferences::is_empty")]
+    pub preferences: super::AgentPreferences,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub managed_guidance_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -140,6 +144,8 @@ impl Agent {
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
             || self.conversation.settings.is_some()
+            || !self.conversation.preferences.is_empty()
+            || self.conversation.managed_guidance_revision != 0
             || !self.conversation.observations.is_empty()
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
@@ -212,6 +218,7 @@ impl Agent {
             .settings
             .as_ref()
             .is_some_and(|settings| settings.validate().is_err())
+            || self.conversation.preferences.validate().is_err()
             || !identity_shape
             || (requires_identity && self.conversation.conversation_id.is_none())
             || self
@@ -371,4 +378,8 @@ impl Agent {
         }
         Ok(())
     }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }

@@ -45,6 +45,7 @@ impl TryFrom<UpdateAgentSettingsRequest> for AgentSettings {
     type Error = InstanceProblem;
     fn try_from(value: UpdateAgentSettingsRequest) -> Result<Self, Self::Error> {
         let settings = Self {
+            system_prompt: None,
             model: value.model,
             reasoning_effort: match value.reasoning_effort.as_str() {
                 "minimal" => ThinkingEffort::Minimal,

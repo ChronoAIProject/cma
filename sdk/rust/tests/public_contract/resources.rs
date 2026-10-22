@@ -158,6 +158,15 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     .await,
             )
         }
+        "GET /api/v1/agents/{id}/preferences" => {
+            c.check(client.agents().preferences(c.param("id")).await)
+        }
+        "PATCH /api/v1/agents/{id}/preferences" => c.check(
+            client
+                .agents()
+                .update_preferences(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/settings" => {
             c.check(client.agents().settings(c.param("id")).await)
         }

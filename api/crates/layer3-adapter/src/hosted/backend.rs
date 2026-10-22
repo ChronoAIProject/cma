@@ -10,6 +10,8 @@ use crate::{
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
+    /// Trusted control-plane binding; never supplied by a provider renderer.
+    pub context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub permission_mode: Option<String>,
     pub own_credential: bool,
     pub channel_tool: Option<super::HostedChannelToolBinding>,
@@ -26,6 +28,7 @@ pub trait HostedAgentRuntime: Send + Sync {
 
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
+            context_refresh: None,
             permission_mode: None,
             own_credential: request.options.own_credential,
             channel_tool: None,

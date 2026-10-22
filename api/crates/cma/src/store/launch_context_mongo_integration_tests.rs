@@ -472,6 +472,8 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
             observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),

@@ -96,6 +96,7 @@ export interface ConversationState {
     readonly parts: readonly { readonly id: string; readonly text: string }[];
   };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
+  readonly ownerTitle?: string;
   readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */

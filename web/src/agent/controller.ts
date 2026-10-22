@@ -1,3 +1,4 @@
+import { useAgentTitle } from './useAgentTitle';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
@@ -394,6 +395,7 @@ export function useAgentController(
     };
   }, [agentId, client, options.viewerId, suspended]);
 
+  const applyAgentTitle = useAgentTitle(agentId, setState);
   const reload = useCallback(() => {
     setActionError(undefined);
     setReplayError(undefined);
@@ -466,6 +468,7 @@ export function useAgentController(
     pending,
     actionError: actionError ?? replayError,
     reload,
+    applyAgentTitle,
     clearActionError: () => {
       setActionError(undefined);
       setReplayError(undefined);

@@ -19,6 +19,35 @@ const components: Components = {
   h4: ({ children }) => <h5>{children}</h5>,
   h5: ({ children }) => <h6>{children}</h6>,
   a: ({ href, children }) => {
+    let documentHref: string | undefined;
+    if (href) {
+      try {
+        const url = new URL(href, window.location.origin);
+        if (
+          url.origin === window.location.origin &&
+          /^\/artifacts\/doc_[a-f0-9]{32}$/.test(url.pathname) &&
+          !url.search
+        )
+          documentHref = url.pathname + url.hash;
+      } catch {
+        /* External links keep the existing URL policy. */
+      }
+    }
+    if (documentHref)
+      return (
+        <a
+          href={documentHref}
+          onClick={(event) => {
+            if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+              return;
+            event.preventDefault();
+            window.history.pushState(null, '', documentHref);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+        >
+          {children}
+        </a>
+      );
     const safeHref = safeHttpUrl(href);
     return safeHref === undefined ? (
       <span>{children}</span>

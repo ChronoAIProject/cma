@@ -11,9 +11,7 @@ describe('the signed-out landing', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'ChronoAI Managed Agent' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('Run coding agents in the cloud. Nothing to install.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/A little direction.*A world of possibility/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Get Started' })).toBeEnabled();
     expect(screen.getByText('Sign in with NyxID. You’ll come straight back.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'See how it works' })).toHaveAttribute(
@@ -30,7 +28,7 @@ describe('the signed-out landing', () => {
   it('introduces the services, marking Image Manager as not yet available', () => {
     render(<SignInLanding onSignIn={vi.fn()} />);
     const services = screen.getByRole('region', {
-      name: 'One console for your Agents and what feeds them',
+      name: 'Your work, connected.',
     });
     for (const name of ['Agent Manager', 'Event Gateway']) {
       expect(screen.getByRole('button', { name: `Open ${name}` })).toBeEnabled();
@@ -41,7 +39,7 @@ describe('the signed-out landing', () => {
 
   it('explains how it works in three ordered steps', () => {
     render(<SignInLanding onSignIn={vi.fn()} />);
-    const how = screen.getByRole('region', { name: 'One Agent, one Worktree, one conversation' });
+    const how = screen.getByRole('region', { name: 'From a first thought to work in motion' });
     expect(how.querySelectorAll('ol > li')).toHaveLength(3);
   });
 

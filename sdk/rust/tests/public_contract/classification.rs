@@ -13,6 +13,63 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("document-create-missing-key", Classification::Local),
+    ("document-create-invalid-key", Classification::Local),
+    ("document-create-malformed-json", Classification::RawJson),
+    (
+        "document-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-update-missing-key", Classification::Local),
+    ("document-update-invalid-key", Classification::Local),
+    ("document-update-malformed-json", Classification::RawJson),
+    (
+        "document-update-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-source-invalid", Classification::TypedShape),
+    ("document-grant-missing-key", Classification::Local),
+    ("document-grant-invalid-key", Classification::Local),
+    ("document-grant-malformed-json", Classification::RawJson),
+    (
+        "document-grant-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-revoke-missing-key", Classification::Local),
+    ("document-revoke-invalid-key", Classification::Local),
+    ("document-revoke-malformed-json", Classification::RawJson),
+    (
+        "document-revoke-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-link-missing-key", Classification::Local),
+    ("document-link-invalid-key", Classification::Local),
+    ("document-link-malformed-json", Classification::RawJson),
+    (
+        "document-link-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-unlink-missing-key", Classification::Local),
+    ("document-unlink-invalid-key", Classification::Local),
+    ("document-unlink-malformed-json", Classification::RawJson),
+    (
+        "document-unlink-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-comment-missing-key", Classification::Local),
+    ("document-comment-invalid-key", Classification::Local),
+    ("document-comment-malformed-json", Classification::RawJson),
+    (
+        "document-comment-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-uncomment-missing-key", Classification::Local),
+    ("document-uncomment-invalid-key", Classification::Local),
+    ("document-uncomment-malformed-json", Classification::RawJson),
+    (
+        "document-uncomment-missing-media-type",
+        Classification::MediaType,
+    ),
     (
         "filesystem-tree-reject-unknown-query",
         Classification::QueryShape,
@@ -86,6 +143,34 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         Classification::MediaType,
     ),
     ("settings-state-agent-invalid-input", Classification::Local),
+    (
+        "preferences-state-agent-invalid-input",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body-reused-key",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "preferences-malformed-post-api-v1-agents-id-input",
+        Classification::RawJson,
+    ),
     (
         "settings-agent-input-unavailable-invalid-key",
         Classification::Local,

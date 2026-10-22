@@ -13,6 +13,7 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
@@ -164,7 +165,20 @@ impl MongoStores {
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
         );
+        super::schema::initialize_collections(
+            &client.database(database),
+            &[crate::document_artifacts::COLLECTION],
+        )
+        .await?;
+        let document_artifacts = Arc::new(crate::document_artifacts::MongoDocumentStore::new(
+            client.database(database),
+        ));
+        document_artifacts
+            .ensure_indexes()
+            .await
+            .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
         let stores = Self {
+            document_artifacts,
             message_feedback,
             native_warm_pools,
             event_workers,

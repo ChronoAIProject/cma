@@ -154,7 +154,7 @@ it.each(
         </StrictMode>,
       );
       await screen.findByRole('heading', {
-        name: path === '/' ? 'ChronoAI Managed Agent' : PUBLIC_PREVIEW.title,
+        name: path === '/' ? 'Welcome to CMA' : PUBLIC_PREVIEW.title,
       });
       await waitFor(() =>
         expect(requests.slice(before)).toContainEqual(
@@ -165,7 +165,7 @@ it.each(
       );
       await act(async () => undefined);
       expect(requests.slice(before)).toContainEqual({ method: 'GET', path: '/auth/session' });
-      expect(window.location.pathname).toBe(path);
+      expect(window.location.pathname).toBe(path === '/' ? '/agent-manager' : path);
       expect(sessionStorage.length).toBe(0);
       expect(rejectedRequests).toEqual([]);
       expect(resourceWrites).toEqual({

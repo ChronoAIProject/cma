@@ -8,28 +8,28 @@ import './SignInLanding.css';
 const SERVICES = [
   {
     name: 'Agent Manager',
-    summary: 'Create and run Agents, each with its own Worktree, Workspace and Sandbox.',
+    summary: 'A place to think, build and return to your work. Give every Agent its own workspace.',
     path: '/agent-manager',
   },
   {
     name: 'Event Gateway',
-    summary: 'Connect event channels and deliver verified events to your Agents.',
+    summary: 'Bring your Agents into the flow of your work with connected event channels.',
     path: '/event-gateway',
   },
 ] as const;
 
 const STEPS = [
   {
-    title: 'Choose an image and settings',
-    body: 'Pick the runtime image, the model, how hard it thinks, and how much it may do without asking.',
+    title: 'Start with an idea',
+    body: 'Open an Agent in a ready-to-use cloud environment. Add a GitHub repository if you have one.',
   },
   {
     title: 'Describe the work',
-    body: 'Point it at a public GitHub repository or start from an empty folder, then write the first message.',
+    body: 'Ask a question, share files, or describe what you want to build. Your Agent gets to work.',
   },
   {
     title: 'Steer, approve, come back',
-    body: 'Approve what needs you, steer while it works, and pick up any conversation later on any device.',
+    body: 'Guide the work as it happens. Your files and conversation stay together when you return.',
   },
 ] as const;
 
@@ -75,16 +75,15 @@ export function SignInLanding({
         <section className="sign-in-landing__hero" aria-labelledby="sign-in-landing-title">
           <div className="sign-in-landing__copy">
             <h1 id="sign-in-landing-title" className="sign-in-landing__eyebrow">
-              <span aria-hidden="true" />
               ChronoAI Managed Agent
             </h1>
             <p className="sign-in-landing__headline">
-              Run coding agents in the cloud. Nothing to install.
+              A little direction.
+              <br />A world of possibility.
             </p>
             <p className="sign-in-landing__lede">
-              Every Agent works in its own git Worktree inside a private Sandbox. Pause it, close
-              the tab, come back next week: the files and the whole conversation are where you left
-              them.
+              Your ideas deserve room to grow. Work with a coding Agent in its own private cloud
+              environment, with your files, tools and conversation in one place. Nothing to install.
             </p>
             <div className="sign-in-landing__actions">
               <Button variant="primary" onClick={() => activate()} disabled={busy}>
@@ -119,12 +118,12 @@ export function SignInLanding({
           aria-labelledby="sign-in-landing-how-title"
         >
           <p className="sign-in-landing__kicker">How it works</p>
-          <h2 id="sign-in-landing-how-title">One Agent, one Worktree, one conversation</h2>
+          <h2 id="sign-in-landing-how-title">From a first thought to work in motion</h2>
           <ol className="sign-in-landing__grid">
             {STEPS.map((step, index) => (
               <li key={step.title} className="sign-in-landing__card">
                 <span className="sign-in-landing__step" aria-hidden="true">
-                  {index + 1}
+                  {String(index + 1).padStart(2, '0')}
                 </span>
                 <h3>{step.title}</h3>
                 <p>{step.body}</p>
@@ -138,9 +137,7 @@ export function SignInLanding({
           aria-labelledby="sign-in-landing-services-title"
         >
           <p className="sign-in-landing__kicker">Services</p>
-          <h2 id="sign-in-landing-services-title">
-            One console for your Agents and what feeds them
-          </h2>
+          <h2 id="sign-in-landing-services-title">Your work, connected.</h2>
           <div className="sign-in-landing__grid">
             {SERVICES.map((service) => (
               <article key={service.name} className="sign-in-landing__card">

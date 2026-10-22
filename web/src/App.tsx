@@ -12,7 +12,7 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useLayoutEffect, useState } from 'react';
 import { Presence } from './ui/Presence';
 import { Button } from './ui/Button';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
@@ -33,9 +33,21 @@ import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
 import { PortalFrame } from './shell/PortalFrame';
 
+const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
+
 export function App() {
-  const router = useAppRouter();
+  const browserRouter = useAppRouter();
   const { state: identity } = useAuth();
+  const { navigate } = browserRouter;
+  const redirectHome = identity.status === 'authenticated' && browserRouter.route.kind === 'home';
+  useLayoutEffect(() => {
+    if (redirectHome) navigate(AUTHENTICATED_HOME_ROUTE, { replace: true });
+  }, [redirectHome, navigate]);
+  // Render the destination immediately, before the home URL is replaced, so
+  // resolving identity never paints the anonymous landing for a signed-in owner.
+  const router: AppRouter = redirectHome
+    ? { ...browserRouter, route: AUTHENTICATED_HOME_ROUTE }
+    : browserRouter;
   const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
   const service =
     router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;

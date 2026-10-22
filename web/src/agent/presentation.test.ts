@@ -209,3 +209,27 @@ describe('metadata replay and presentation', () => {
     expect(agentDisplayTitle(state.detail)).toBe(AGENT_DETAIL.title);
   });
 });
+
+it('keeps an owner rename above native titles while preserving all conversation content', () => {
+  const conversation = {
+    ...conversationFromTranscript(AGENT_TRANSCRIPT),
+    ownerTitle: 'Owner chosen name',
+  };
+  const state: AgentResourceState = {
+    status: 'ready',
+    detail: {
+      ...AGENT_DETAIL,
+      runtimeMetadata: {
+        description: 'Native generated name',
+        descriptionSource: 'provider_title',
+      },
+    },
+    workspace: workspaceFixture(),
+    conversation,
+  };
+  const renamed = presentAgent(state);
+  if (renamed.status !== 'ready') throw new Error('Expected retained Agent');
+  expect(agentDisplayTitle(renamed.detail)).toBe('Owner chosen name');
+  expect(renamed.conversation).toBe(conversation);
+  expect(renamed.detail.id).toBe(state.detail.id);
+});
