@@ -30,6 +30,8 @@ impl Bridge {
                 .await
             }
             ConversationInput::RefreshContext {
+                operation_sequence,
+                readiness_receipt,
                 previous_guidance,
                 working_directory,
                 guidance,
@@ -39,6 +41,8 @@ impl Bridge {
             } => {
                 self.refresh_context(
                     &session,
+                    operation_sequence,
+                    &readiness_receipt,
                     &guidance,
                     &previous_guidance,
                     &model,

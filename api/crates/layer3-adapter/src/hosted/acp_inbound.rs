@@ -109,6 +109,7 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
+        self.observe_context_goal(session, value).await;
         if let Some(update) = super::acp_observations::observation(value) {
             self.route_update(session, update, updates).await;
             return;

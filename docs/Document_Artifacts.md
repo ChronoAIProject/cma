@@ -66,7 +66,8 @@ when the user navigates away and returns.
 Markdown supports headings, quotes, lists/checklists, tables, code fences,
 images and Mermaid diagrams, with editor extensions for dates, fonts and
 collapsible content. Diagrams render locally with strict Mermaid settings and
-sanitized SVG. No remote diagram service receives document text. Embedded
+sanitized SVG embedded as an isolated image, so diagram styles cannot affect the
+portal. No remote diagram service receives document text. Embedded
 raster images are bounded, and the full source must fit the UTF-8 document limit.
 
 Limits are 1 MiB source, 240-byte title, 160-byte search, 8 KiB comment, 256
@@ -103,7 +104,59 @@ home/profile bytes remain immutable. Retained Agents require an acknowledged
 idle reload of their original native conversation before new instructions or
 tools can be reported as applied; changing a file alone is insufficient.
 
+When document storage is configured, retained live Agents receive one automatic
+managed-context revision at a positively observed idle boundary. Active turns,
+approvals, first messages, pending lifecycle work,
+legacy queued messages and the durable command queue defer admission. The
+operation is committed with the parent and dispatch fences before any runtime
+write. Its exact desired guidance and recognized previous prefixes are retained
+for recovery; the immutable creation profile and receipts are not rewritten.
+Native autonomous goals also defer refresh: the old bridge must explicitly
+report no goal, and any goal observed on that connection keeps new refresh
+admission disabled until a later connection proves it safe. An already-attached runtime
+without that observation remains deferred rather than being interrupted to
+discover its state.
+The adapter supplies a readiness receipt bound to that exact conversation,
+runtime generation, boot, home and operation sequence before admission. The
+transaction rechecks idle state and both queues before persisting that receipt;
+a racing owner message wins. Recovery can use only this recorded receipt when
+the goal snapshot is unavailable on a new connection. A changed runtime identity
+retires the obsolete maintenance fence without advancing the applied revision,
+then leaves the conversation usable for a fresh safe attempt.
+
+The adapter uses the existing supervisor filesystem API to read and replace
+only that Agent's `AGENTS.md`, with its current boot identity and expected file
+digest. It replaces the longest recognized managed prefix and preserves the
+remaining owner instructions byte for byte. Then it closes the idle native
+subscription and loads the same conversation ID with the existing working
+directory and current MCP bindings. Model, reasoning effort and permission mode
+are restored before success is acknowledged. The sandbox process, persistent
+home and dirty workspace remain in place. This path works with the retained
+pinned bridge; it does not require the new owner-instructions extension.
+
+Only the acknowledged operation advances `managed_guidance_revision`.
+Uncertain file writes, reloads or lost acknowledgments retain the dispatch fence
+and replay before the conversation is reattached. Repeated file writes do not
+duplicate the managed prefix. A refusal before any effect leaves user input
+available and delays the next maintenance attempt. An existing mutable prompt overlay receives that same managed prefix atomically
+with the acknowledgment, preserving its owner text and preference revision.
+After this revision is applied, owner prompt edits continue preserving the
+managed V3 prefix.
+
+The pinned native regression executes both document tools after refresh and
+checks the next inference uses the original thread ID, retained history,
+selected model/effort and unchanged dirty file. Domain tests additionally cover
+busy-state refusal, both queue types, recoverable acknowledgment and one-time
+completion. These are local protocol/domain proofs; production verification
+uses an isolated test Agent after deployment.
+
 ## Release and verification
+
+After a durable `RefreshContext` intent or mutable Agent preference overlay has
+been admitted, an API rollback must retain compatible readers and recovery for
+those records. An older binary that rejects them is not a safe rollback target.
+Web rollback can retain the new compatible API and configured runtime default;
+it does not authorize replacement of users' live runtimes.
 
 Promote CI-built API, Web and compatible runtime artifacts. Apply only CMA's
 configuration and deployments. Preserve existing runtime identities, PVCs,

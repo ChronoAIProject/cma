@@ -80,3 +80,42 @@ impl HostedAdapter {
         }))
     }
 }
+
+impl HostedAdapter {
+    pub(super) async fn bind_context_refresh(
+        &self,
+        handle: &crate::RuntimeHandle,
+        request: &crate::AgentOpenRequest,
+        settings: &super::super::HostedAgentOpenSettings,
+    ) -> crate::Result<Option<super::super::HostedContextRefresh>> {
+        let state = self.known_state(handle).await?;
+        let Some(home) = state
+            .home_volume
+            .as_ref()
+            .filter(|home| home.request.policy.mounts_full_home())
+        else {
+            return Ok(None);
+        };
+        let tools = settings
+            .channel_tool
+            .as_ref()
+            .map(|b| b.acp_server())
+            .into_iter()
+            .chain(settings.provider_tool.as_ref().map(|b| b.acp_server()))
+            .chain(settings.access_tool.as_ref().map(|b| b.acp_server()))
+            .collect();
+        super::super::HostedContextRefresh::new(
+            self.backend.clone(),
+            handle.clone(),
+            crate::RuntimeStatusRequest {
+                sandbox_id: state.provision.sandbox_id,
+                generation: state.provision.generation,
+                home_identity: home.identity()?,
+            },
+            &request.options.home_directory,
+            request.options.working_directory.clone(),
+            tools,
+        )
+        .map(Some)
+    }
+}

@@ -9,6 +9,9 @@ pub(super) fn validate_settings_mutation(
     if current.conversation.settings == next.conversation.settings {
         return Ok(());
     }
+    if super::agent_managed_context::valid_settings_confirmation(current, mutation) {
+        return Ok(());
+    }
     let Some(operation) = next.conversation.operation.as_ref() else {
         return Err(SandboxStoreError::Conflict);
     };
@@ -30,9 +33,17 @@ pub(super) fn validate_settings_mutation(
                 .queued_messages
                 .iter()
                 .all(|message| message.state == QueuedMessageState::Delivered)
+            && current.conversation.preferences.title == next.conversation.preferences.title
+            && if current.settings().system_prompt != next.settings().system_prompt {
+                current.conversation.preferences.revision.checked_add(1)
+                    == Some(next.conversation.preferences.revision)
+            } else {
+                current.conversation.preferences == next.conversation.preferences
+            }
             && previous == &current.conversation.settings
             && next.conversation.settings.as_ref() == Some(settings);
-    let rollback = operation.state == AgentOperationDelivery::PreWriteFailed
+    let rollback = current.conversation.preferences == next.conversation.preferences
+        && operation.state == AgentOperationDelivery::PreWriteFailed
         && mutation.admission_guard.is_none()
         && current
             .conversation

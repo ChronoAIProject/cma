@@ -35,6 +35,9 @@ pub trait ConversationInputGuard: Send + Sync {
 #[async_trait::async_trait]
 pub trait ConversationSettingsSupport: Send + Sync {
     async fn system_prompt_supported(&self) -> bool;
+    async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
+        None
+    }
 }
 
 /// What is known about one attempt to hand input to the runtime link.
@@ -119,10 +122,13 @@ impl ConversationInputSender {
                     input,
                     ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
                 );
+                let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
                 let result = handler(input).await;
                 // Configure handlers reserve Unsupported for a definitive
                 // refusal before any setting changes; later failures are ambiguous.
-                let refused = configuring && matches!(result, Err(AdapterError::Unsupported(_)));
+                let refused = configuring && matches!(result, Err(AdapterError::Unsupported(_)))
+                    || refreshing
+                        && matches!(result, Err(AdapterError::OperationIdentityConflict(_)));
                 let failed = result.is_err() && !refused;
                 let outcome = match result {
                     Err(error) if refused => ConversationSendOutcome::PreWriteFailure(error),
@@ -153,6 +159,13 @@ impl ConversationInputSender {
             Some(support) => support.system_prompt_supported().await,
             None => false,
         }
+    }
+
+    pub async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
+        self.settings_support
+            .as_ref()?
+            .managed_context_receipt(sequence)
+            .await
     }
 
     /// Wait for the local writer to confirm the operation was written.
