@@ -8,14 +8,15 @@ import { useAuthorizedRead } from './useAuthorizedRead';
 import {
   hydrateSharedAgent,
   loadSharedAgentAccess,
+  loadSharedAgentHead,
   loadSharedAgentTranscript,
   sharedAgentAuthority,
   SharedAgentAccessChangedError,
 } from './loadSharedAgent';
 import { MessageStream } from '../agent/MessageStream';
 import { Composer } from '../agent/Composer';
-import { foldLiveEvent, type ConversationState } from '../agent/conversation';
-import type { AgentLiveEvent } from '../api/types';
+import { conversationFromTranscript, type ConversationState } from '../agent/conversation';
+import { HydrationEvents } from '../agent/mergeHydration';
 import { useAgentProvenance, creationLabel } from '../agent/provenance';
 import { Button } from '../ui/Button';
 import { AgentHeader } from '../agent/AgentHeader';
@@ -84,7 +85,6 @@ export function SharedAgent({
   const [live, setLive] = useState<{
     readonly basis: typeof basis;
     readonly conversation: ConversationState;
-    readonly hydrated: boolean;
   }>();
   const [hydrationRevision, setHydrationRevision] = useState(0);
   const [historyError, setHistoryError] = useState<{
@@ -92,7 +92,10 @@ export function SharedAgent({
     readonly revision: number;
     readonly message: string;
   }>();
-  const historyComplete = basis !== undefined && live?.basis === basis && live.hydrated;
+  const liveRef = useRef(live);
+  useEffect(() => {
+    liveRef.current = live;
+  }, [live]);
   const [command, setCommand] = useState<AbortController>();
   const busy = command !== undefined && !command.signal.aborted;
   const [error, setError] = useState<string>();
@@ -108,15 +111,22 @@ export function SharedAgent({
     }
     const stream = new AbortController();
     let retry: ReturnType<typeof setTimeout> | undefined;
-    let hydrated = false;
-    let conversation: ConversationState;
-    let buffered: AgentLiveEvent[] | undefined = [];
-    const publish = () => setLive({ basis, conversation, hydrated });
+    let buffering = true;
+    let conversation =
+      liveRef.current?.basis === basis
+        ? liveRef.current.conversation
+        : conversationFromTranscript({ agentId, turns: [], throughSeq: 0 });
+    const buffered = new HydrationEvents();
+    let replayStarted = false;
+    let liveBaseline = 0;
+    const publish = () => setLive({ basis, conversation });
     const accessFailure = (cause: unknown) =>
       cause instanceof SharedAgentAccessChangedError ||
       (cause instanceof ApiError && [401, 403, 404, 409].includes(cause.status));
     const replay = async () => {
-      if (stream.signal.aborted) return;
+      if (stream.signal.aborted || replayStarted) return;
+      replayStarted = true;
+      buffered.replayFrom(conversation.cursor);
       try {
         stream.signal.throwIfAborted();
         await web.replayAgent(agentId, {
@@ -124,8 +134,7 @@ export function SharedAgent({
           signal: stream.signal,
           onEvent: (event) => {
             if (stream.signal.aborted) return;
-            buffered?.push(event);
-            conversation = foldLiveEvent(conversation, event, agentId);
+            conversation = buffered.apply(conversation, event, agentId, buffering);
             publish();
           },
         });
@@ -142,29 +151,67 @@ export function SharedAgent({
       if (!stream.signal.aborted)
         retry = setTimeout(() => setHydrationRevision((revision) => revision + 1), 5_000);
     };
+    void loadSharedAgentHead(client, authorization, stream.signal)
+      .then((head) => {
+        if (stream.signal.aborted || replayStarted || head === undefined) return;
+        liveBaseline = Number(head.through_cursor.split('.').at(-1));
+        if (head.active_turn !== null) {
+          conversation = buffered.apply(
+            conversation,
+            {
+              type: 'RUN_STARTED',
+              threadId: agentId,
+              runId: String(head.active_turn.sequence),
+              cursor: head.active_turn.sequence,
+              timestamp: head.active_turn.appended_at,
+            },
+            agentId,
+            true,
+          );
+        } else {
+          conversation = buffered.apply(
+            conversation,
+            { type: 'RUN_FINISHED', threadId: agentId, runId: '', cursor: liveBaseline },
+            agentId,
+            true,
+          );
+        }
+        // The SDK validates this public cursor; it starts only the live tail and
+        // never acknowledges or skips the independent historical page reads.
+        conversation = { ...conversation, cursor: liveBaseline };
+        publish();
+        void replay();
+      })
+      .catch((cause: unknown) => {
+        if (!stream.signal.aborted && accessFailure(cause)) onAccessChanged();
+        // Older clients or a temporary head outage retain transcript-first replay.
+      });
     void loadSharedAgentTranscript(web, client, authorization, stream.signal)
       .then(({ value: snapshot }) => {
         if (stream.signal.aborted) return;
-        conversation = snapshot.conversation;
+        conversation = buffered.merge(snapshot.conversation, agentId, false);
         publish();
-        // Replay starts from the transcript immediately. Rich history is bounded
+        // Either the bounded head or transcript starts replay. Rich history is bounded
         // to that exact snapshot; replay its buffered new frames once onto the
         // rebuilt state so late history cannot replace newer messages or controls.
         void replay();
-        void hydrateSharedAgent(web, client, snapshot, stream.signal, snapshot.conversation.cursor)
+        void hydrateSharedAgent(
+          web,
+          client,
+          snapshot,
+          stream.signal,
+          Math.max(snapshot.conversation.cursor, liveBaseline),
+        )
           .then((rebuilt) => {
             if (stream.signal.aborted) return;
-            conversation = (buffered ?? []).reduce(
-              (current, event) => foldLiveEvent(current, event, agentId),
-              rebuilt,
-            );
-            buffered = undefined;
-            hydrated = true;
+            conversation = buffered.merge(rebuilt, agentId, true);
+            buffering = false;
             publish();
           })
           .catch((cause: unknown) => {
             if (stream.signal.aborted) return;
-            buffered = undefined;
+            buffering = false;
+            buffered.reset();
             if (accessFailure(cause)) {
               onAccessChanged();
               return;
@@ -179,6 +226,8 @@ export function SharedAgent({
       })
       .catch((cause: unknown) => {
         if (stream.signal.aborted) return;
+        buffering = false;
+        buffered.reset();
         if (accessFailure(cause)) {
           onAccessChanged();
           return;
@@ -339,7 +388,7 @@ export function SharedAgent({
             conversation={conversation}
             approvalBusy={busy}
             approvalReadOnly={!can('resolve_approval')}
-            arrivalsEnabled={historyComplete}
+            arrivalsEnabled={ready !== undefined}
             onApproval={approve}
           />
         )}
