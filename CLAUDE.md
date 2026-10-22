@@ -229,7 +229,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 2 | **Responses** | compatible conversation clients; `conversation` is the Agent id | `layer1-public/src/responses/` |
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
-| 5 | **MCP** | `agent_key_scope_revision` proposes owner consent using a limited runtime capability; other operations remain explicitly unsupported | `layer1-public/src/mcp/` |
+| 5 | **MCP** | Limited runtime capabilities propose owner service consent and publish/update their own document artifacts; broader resource operations remain unsupported | `layer1-public/src/mcp/` |
 | 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
@@ -250,6 +250,9 @@ It owns:
 - Append-only Sandbox and Agent event logs, per-object monotonic sequences,
   approval state, usage, idempotency and optimistic concurrency.
 - Platform defaults, count-based quotas, operator settings and audit events.
+- User-owned document artifacts, immutable source revisions, explicit sharing,
+  comments and bounded runtime-authorized publication. Document ownership is
+  independent of the originating Agent's lifecycle.
 
 Layer 2 is protocol-agnostic and provider-agnostic. **No protocol name or
 provider implementation name belongs in Layer 2 identifiers, types, or

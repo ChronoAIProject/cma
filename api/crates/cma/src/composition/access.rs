@@ -21,6 +21,11 @@ pub(super) struct AccessComposition {
     pub owner_routes: Router,
     pub tool_routes: Router,
 }
+pub(super) struct ToolServices {
+    pub source: Arc<MongoAgentAccessToolSource>,
+    pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    pub public_origin: String,
+}
 
 pub(super) fn compose(
     stores: &MongoStores,
@@ -29,7 +34,7 @@ pub(super) fn compose(
     broker: Arc<dyn ServiceConnectionBroker>,
     resource_access: Arc<ResourceAccessService>,
     holder: String,
-    tools: Arc<MongoAgentAccessToolSource>,
+    tools: ToolServices,
 ) -> AccessComposition {
     let commands =
         AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone());
@@ -46,6 +51,11 @@ pub(super) fn compose(
         worker,
         owner_routes: layer1_public::rest::agent_access_requests_router(service.clone()),
         // Tool capabilities authenticate independently from human browser auth.
-        tool_routes: layer1_public::mcp::agent_access_router(tools, service),
+        tool_routes: layer1_public::mcp::agent_tools_router(
+            tools.source,
+            service,
+            tools.documents,
+            &tools.public_origin,
+        ),
     }
 }
