@@ -211,8 +211,8 @@
   flex: none;
   display: grid;
   min-width: 0;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 2px;
+  margin-bottom: 8px;
 }
 .navigation-filters__bar {
   display: flex;
@@ -220,23 +220,71 @@
   align-items: center;
   min-width: 0;
 }
-.navigation-filters__summary {
+/* Words, not a track: the switch changes the list, it is not an action. */
+.navigation-filters__views {
+  display: flex;
   flex: 1;
+  gap: 16px;
   min-width: 0;
+  padding-left: 8px;
+}
+.navigation-filters__views button {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.navigation-filters__views button:hover,
+.navigation-filters__views button[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+}
+.navigation-filters__views button[aria-pressed='true'] {
+  font-weight: 500;
+}
+.navigation-filters__toggle {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+/* The only mark a narrowed list leaves on the row; the summary line says what. */
+.navigation-filters__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 50%;
+}
+.navigation-filters__summary {
+  min-width: 0;
+  margin: 0;
   overflow: hidden;
-  padding-left: 2px;
+  padding-left: 8px;
   color: var(--dsw-alias-label-secondary);
   font-size: 0.75rem;
   line-height: 1rem;
-  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.navigation-filters__toggle,
 .navigation-filters__clear {
   display: inline-flex;
-  flex: none;
-  gap: 6px;
+  justify-self: start;
   align-items: center;
   min-height: 28px;
   padding: 0 8px;
@@ -255,25 +303,16 @@
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-interactive-bg-hover);
 }
+.navigation-filters__views button:focus-visible,
 .navigation-filters__toggle:focus-visible,
 .navigation-filters__clear:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-.navigation-filters__count {
-  min-width: 16px;
-  padding: 0 4px;
-  box-sizing: border-box;
-  color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-button-primary-fill);
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  line-height: 1rem;
-  text-align: center;
-}
 .navigation-filters__panel {
   display: grid;
   gap: 8px;
+  margin-top: 6px;
   padding: 8px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
@@ -292,9 +331,6 @@
   line-height: 1rem;
   font-weight: 500;
 }
-.navigation-filters__clear {
-  justify-self: start;
-}
 .navigation-filters__picker {
   min-width: 0;
 }
@@ -303,50 +339,6 @@
   min-width: 0;
   font-size: 0.8125rem;
 }
-.navigation-filters__views {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  isolation: isolate;
-  padding: 3px;
-  border-radius: 7px;
-  background: var(--dsw-alias-bg-layer-2);
-}
-.navigation-filters__indicator {
-  position: absolute;
-  z-index: -1;
-  inset: 3px auto 3px 3px;
-  width: calc((100% - 6px) / 2);
-  background: var(--dsw-specific-sidebar-nav-item-active);
-  border-radius: 4px;
-  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-.navigation-filters__views[data-view='sandbox'] .navigation-filters__indicator {
-  transform: translateX(100%);
-}
-.navigation-filters__views button {
-  min-height: 32px;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  border-radius: 4px;
-}
-.navigation-filters__views button[aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  font-weight: 600;
-}
-.navigation-filters__views button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-@media (prefers-reduced-motion: reduce) {
-  .navigation-filters__indicator {
-    transition: none;
-  }
-}
 /* Touch targets, after every rule they override. */
 @media (max-width: 30rem) {
   .sidebar__new,
@@ -354,9 +346,17 @@
   .sidebar__link,
   .sidebar__sign-in,
   .sidebar__toggle,
+  .navigation-filters__views button,
   .navigation-filters__toggle,
   .navigation-filters__clear,
   .navigation-filters__picker > button {
     min-height: 44px;
+  }
+  .navigation-filters__toggle {
+    width: 44px;
+  }
+  .navigation-filters__dot {
+    top: 12px;
+    right: 12px;
   }
 }
