@@ -2,6 +2,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
+import type { AgentFilesClient } from '../api/agentFiles';
+import type { ResourceViewsClient } from '../resources/client';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { NamedReferences } from '../test/references';
 import { AgentDetails } from './Details';
@@ -106,4 +108,37 @@ it('focuses the Details heading on open and restores the opener on close', async
   expect(onClose).toHaveBeenCalledOnce();
   view.rerender(draw(false));
   expect(opener).toHaveFocus();
+});
+
+it('orders the calm sections and gives every text action the same quiet link', () => {
+  // Neither client is read until its action is used, so inert stubs suffice.
+  const files = {} as AgentFilesClient;
+  const resourceViews = {} as ResourceViewsClient;
+  const draw = (open: boolean) => (
+    <CmaClientProvider client={agentClient({ files, resourceViews })}>
+      <AgentDetails detail={AGENT_DETAIL} open={open} onOpenSandbox={vi.fn()} />
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Files',
+    'Sharing',
+    'Service access',
+    'Skills',
+  ]);
+  const actions = [
+    panel.getByRole('button', { name: 'Browse files' }),
+    panel.getByRole('button', { name: 'Manage share links' }),
+    panel.getByRole('link', { name: 'Manage on Sandbox' }),
+    panel.getByRole('button', { name: 'Sandbox operation progress' }),
+  ];
+  for (const action of actions) {
+    expect(action).toHaveClass('agent-details__link');
+    expect(action).not.toHaveClass('button');
+  }
+  expect(panel.getByRole('button', { name: 'Manage share links' })).toBeEnabled();
+  view.rerender(draw(false));
+  expect(screen.getByRole('button', { name: 'Manage share links' })).toBeDisabled();
 });

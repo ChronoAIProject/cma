@@ -32,7 +32,7 @@ export function DetailsServiceAccess({
     .sort();
   const headingId = `${detail.id}-service-access`;
   return (
-    <section className="agent-details__access" aria-labelledby={headingId}>
+    <section className="agent-details__band agent-details__access" aria-labelledby={headingId}>
       <h2 id={headingId}>Service access</h2>
       <p>These services are shared by all Agents in this Sandbox.</p>
       <ul aria-label="Services this Agent can use">
@@ -49,6 +49,7 @@ export function DetailsServiceAccess({
         ))}
       </ul>
       <a
+        className="agent-details__link"
         href={sandboxTabPath(detail.sandbox.id, 'access')}
         onClick={(event) => {
           if (onOpenSandbox === undefined || !plainClick(event)) return;
