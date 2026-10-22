@@ -1,50 +1,39 @@
 /*
  * Tool calls in the conversation timeline — `docs/Web_Style.md` §13.
  *
- * One bordered frame holds either a lone call or a group of consecutive calls,
- * so a single row and a group read as the same kind of thing. Rows inside a
- * group are separated by hairlines rather than nested frames, because a border
- * inside a border only adds weight.
+ * Tool activity is the Agent at work between replies, so it is one quiet line
+ * rather than a box: no border, ground or radius, in secondary ink. Expanded
+ * rows hang under the summary against a single left rule instead of a frame.
  */
 
 .tool-calls {
   width: 100%;
   margin: 0 0 16px;
   color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
 }
 
 .tool-calls__toggle {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 12px;
-  color: var(--dsw-alias-label-primary);
+  max-width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  margin-left: -8px;
+  color: var(--dsw-alias-label-secondary);
   font: inherit;
   font-size: 13px;
   line-height: 20px;
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .tool-calls__toggle:hover {
   background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/*
- * The frame does not clip, so the shared focus ring stays whole; the hover
- * ground follows the frame's corners instead.
- */
-.tool-calls__toggle[aria-expanded='true'] {
-  border-radius: 7px 7px 0 0;
 }
 
 .tool-calls__chevron {
@@ -55,23 +44,25 @@
 
 .tool-calls__count {
   flex: none;
-  font-weight: 500;
 }
 
-.tool-calls__latest {
+.tool-calls__running {
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.tool-calls__rows {
-  border-top: 1px solid var(--dsw-alias-border-l1);
+.tool-calls__failed {
+  flex: none;
+  color: var(--dsw-alias-state-error-primary);
 }
 
-.tool-calls__rows > .agent-event--tool + .agent-event--tool {
-  border-top: 1px solid var(--dsw-alias-border-l1);
+/* Indented past the chevron (14px and the 6px gap) so rows hang under the count. */
+.tool-calls__rows {
+  margin: 4px 0 0 7px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
 }
 
 .agent-event--tool {
@@ -79,7 +70,7 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 0;
 }
 
 .tool-call__line {
@@ -105,8 +96,8 @@
 .agent-event--tool strong {
   flex: 1 1 12rem;
   min-width: 0;
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 400;
   overflow-wrap: anywhere;
 }
 
