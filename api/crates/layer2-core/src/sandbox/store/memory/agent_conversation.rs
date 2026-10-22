@@ -126,6 +126,13 @@ fn apply_conversation(
         return Err(SandboxStoreError::AgentLogCapacityExceeded);
     }
     validate_mutation(candidate, &mutation)?;
+    if mutation.is_managed_context_admission()
+        && candidate.agent_commands.values().any(|command| {
+            command.receipt.envelope.agent_id == mutation.agent.id && !command.status.is_terminal()
+        })
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     if let Some(fence) = &mutation.settings_fence {
         let snapshot = super::resource_access::snapshot(candidate, fence.target())
             .map_err(|_| SandboxStoreError::Conflict)?;

@@ -65,6 +65,8 @@ pub enum ConversationInput {
         system_prompt: Option<String>,
     },
     RefreshContext {
+        operation_sequence: u64,
+        readiness_receipt: String,
         previous_guidance: Vec<String>,
         working_directory: Option<String>,
         guidance: String,

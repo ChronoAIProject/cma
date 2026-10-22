@@ -114,6 +114,10 @@ impl Bridge {
 
 #[async_trait::async_trait]
 impl crate::ConversationSettingsSupport for Bridge {
+    async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
+        self.context_readiness_receipt(sequence).await
+    }
+
     async fn system_prompt_supported(&self) -> bool {
         use std::sync::atomic::Ordering;
         match self.instructions_support.load(Ordering::Acquire) {

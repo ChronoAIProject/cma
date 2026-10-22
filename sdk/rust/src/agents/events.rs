@@ -18,7 +18,7 @@ string_enum! { /// Durable Agent worker step.
     }
 }
 string_enum! { /// Semantic kind of an Agent command.
-    pub enum AgentOperationKind { SendMessage => "send_message", Steer => "steer", Interrupt => "interrupt", AnswerApproval => "answer_approval" }
+    pub enum AgentOperationKind { SendMessage => "send_message", Steer => "steer", Interrupt => "interrupt", AnswerApproval => "answer_approval", UpdateSettings => "update_settings", RefreshContext => "refresh_context" }
 }
 string_enum! { /// Durable command-delivery state; write confirmation is not execution.
     pub enum AgentOperationDelivery {
