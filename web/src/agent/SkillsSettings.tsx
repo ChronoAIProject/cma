@@ -156,7 +156,7 @@ export function SkillsSettings({
     saved.pending ||
     !client.installAgentSkill;
   return (
-    <section className="agent-skills" aria-label="Agent skills">
+    <section className="agent-details__band agent-skills" aria-label="Agent skills">
       <h2>Skills</h2>
       {saved ? (
         saved.items.length ? (
