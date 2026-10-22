@@ -93,7 +93,7 @@
   align-items: start;
   gap: 12px;
   max-width: 100%;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .message--user {
@@ -446,6 +446,11 @@
 .message-footer[data-voted] .message-footer__actions {
   opacity: 1;
   pointer-events: auto;
+}
+/* Compact keys: the footer is reserved under every message, so its height is the rhythm. */
+.message-footer__actions .button {
+  width: 28px;
+  height: 28px;
 }
 .message-footer__actions .button[aria-pressed='true'] {
   color: var(--dsw-alias-state-business-primary);
