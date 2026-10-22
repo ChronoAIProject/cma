@@ -106,6 +106,15 @@ describe('history and concurrent AG-UI hydration', () => {
     };
     expect(buffer.merge(resolved, 'agt_1', true)).toEqual(resolved);
   });
+  it('discards retained overlap while preserving the snapshot and actual stream anchor', () => {
+    const buffer = new HydrationEvents();
+    apply(buffer, empty, frame('RUN_STARTED', { cursor: 1 }));
+    const active = buffer.merge({ ...snapshot, activeRunId: '1' }, 'agt_1', false);
+    buffer.discardBuffered();
+    expect(apply(buffer, active, live('Obsolete same-turn text'))).toEqual(active);
+    const next = apply(buffer, active, message(3, '')[2]!, live('Fresh next text'));
+    expect(next.messages.at(-1)?.content).toBe('Fresh next text');
+  });
   it('accepts auxiliary stream metadata without an active run', () => {
     const buffer = new HydrationEvents();
     buffer.reset(snapshot);

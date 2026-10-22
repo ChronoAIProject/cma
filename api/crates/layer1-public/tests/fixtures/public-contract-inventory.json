@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 209,
+  "openapi_operations": 210,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2991,6 +2991,17 @@
         "not_authenticated",
         "resource_forbidden",
         "resource_not_found"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events/head": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/head.rs# Current Agent head reads at most one active turn and revalidates held history authority before publication.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
       ]
     }
   }

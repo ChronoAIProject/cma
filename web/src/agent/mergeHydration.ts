@@ -74,6 +74,11 @@ export class HydrationEvents {
     this.streamCursor = cursor;
   }
 
+  /** Stop retaining history overlap without losing its stale-frame boundary. */
+  discardBuffered() {
+    this.events = [];
+  }
+
   apply(state: ConversationState, event: AgentLiveEvent, agent: string, buffering: boolean) {
     if (event.threadId !== agent) return state;
     const entry = { event, afterSequence: this.streamCursor };
