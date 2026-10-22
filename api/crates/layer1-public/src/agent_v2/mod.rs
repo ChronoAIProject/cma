@@ -10,6 +10,9 @@ mod eligibility;
 mod error;
 #[cfg(test)]
 pub(crate) mod fixtures;
+mod head;
+#[cfg(test)]
+mod head_tests;
 #[cfg(test)]
 mod message_binding_tests;
 mod parse;
@@ -60,6 +63,7 @@ impl AgentV2State {
 pub fn router(state: AgentV2State) -> Router {
     Router::new()
         .route("/api/v2/ui/transport", get(eligibility::read))
+        .route("/api/v2/agents/{agent_id}/events/head", get(head::read))
         .route(
             "/api/v2/agents/{agent_id}/events/snapshot",
             get(snapshot::read),
@@ -72,8 +76,9 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
     use utoipa::OpenApi;
     #[derive(OpenApi)]
     #[openapi(
-        paths(eligibility::read, snapshot::read, stream::read),
+        paths(eligibility::read, head::read, snapshot::read, stream::read),
         components(schemas(
+            shapes::EventHead,
             shapes::EventPage,
             shapes::EventItem,
             shapes::ResponseBinding,

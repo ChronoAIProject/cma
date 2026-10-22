@@ -63,6 +63,21 @@ export function harness(storage: Storage = sessionStorage) {
   const snapshot = vi
     .fn<(url: string) => Promise<Response>>()
     .mockImplementation(async () => json(page([], 0)));
+  // Existing fixtures model servers without a live-head observation. Tests of
+  // loading overlap explicitly provide the authoritative head they exercise.
+  const head = vi.fn(async () =>
+    json(
+      {
+        error: {
+          type: 'server_error',
+          code: 'agent_read_unavailable',
+          message: 'Head temporarily unavailable',
+          param: null,
+        },
+      },
+      503,
+    ),
+  );
   const cancel = vi.fn();
   const currentUser = vi.fn(async () => 'alice' as string | undefined);
   const listQueued = vi.fn(async () =>
@@ -123,6 +138,7 @@ export function harness(storage: Storage = sessionStorage) {
     const target = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/controls$/.exec(url);
     if (target) return init?.method === 'POST' ? control(target[1]!, init) : observe(target[1]!);
     if (url.startsWith('/api/v2/agents/agt_1/events/snapshot')) return snapshot(url);
+    if (url === '/api/v2/agents/agt_1/events/head') return head();
     if (url.startsWith('/api/v2/agents/agt_1/events?'))
       return new Response(
         new ReadableStream({
@@ -159,6 +175,7 @@ export function harness(storage: Storage = sessionStorage) {
     fetch,
     post,
     snapshot,
+    head,
     cancel,
     currentUser,
     listQueued,

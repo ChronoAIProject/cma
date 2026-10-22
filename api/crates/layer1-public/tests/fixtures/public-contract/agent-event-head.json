@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-events-v2-head-rich",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "object": "cma.agent.event_head",
+          "active_turn": {
+            "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "sequence": 4,
+            "appended_at": "2026-09-16T00:00:01Z",
+            "kind": {
+              "type": "turn_started",
+              "turn_sequence": 4
+            },
+            "response_binding": {
+              "command_id": "cmd_control_source",
+              "response_id": "resp_control_source",
+              "turn_sequence": 4
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "event_4_at": "/active_turn/appended_at"
+      }
+    },
+    {
+      "id": "agent-events-v2-head-shared",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+          "object": "cma.agent.event_head",
+          "active_turn": {
+            "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "sequence": 4,
+            "appended_at": "2026-09-16T00:00:01Z",
+            "kind": {
+              "type": "turn_started",
+              "turn_sequence": 4
+            },
+            "response_binding": {
+              "command_id": "cmd_control_source",
+              "response_id": "resp_control_source",
+              "turn_sequence": 4
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "event_4_at": "/active_turn/appended_at"
+      }
+    },
+    {
+      "id": "agent-events-v2-head-foreign",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "The Agent is unavailable to this caller.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-head-anonymous",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-head-corrupt",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_head_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-history-unavailable",
+          "title": "agent history unavailable",
+          "status": 503,
+          "detail": "The requested Agent history cannot be verified.",
+          "code": "agent_history_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-head-unavailable",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-read-unavailable",
+          "title": "agent read unavailable",
+          "status": 503,
+          "detail": "Agent history is temporarily unavailable.",
+          "code": "agent_read_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-head-query",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head?unknown=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-events-query",
+          "title": "invalid agent events query",
+          "status": 400,
+          "detail": "Supply the documented Agent event query exactly once per field.",
+          "code": "invalid_agent_events_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-v2-head-idle",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_off",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+          "object": "cma.agent.event_head",
+          "active_turn": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
