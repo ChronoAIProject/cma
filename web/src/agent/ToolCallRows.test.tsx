@@ -51,16 +51,16 @@ describe('ToolCallRow', () => {
 });
 
 describe('ToolCallGroup', () => {
-  it('starts collapsed with a count and the latest call, and toggles with a real button', () => {
+  it('starts collapsed with only a count when settled, and toggles with a real button', () => {
     render(
       <ToolCallGroup
         group={group([call('a', 'completed'), call('b', 'completed', { title: 'Run tests' })])}
         activeRunId={undefined}
       />,
     );
-    const toggle = screen.getByRole('button', {
-      name: '2 tool calls Latest: Run tests · Completed',
-    });
+    // A settled group repeats no command line.
+    const toggle = screen.getByRole('button', { name: '2 tool calls' });
+    expect(toggle).not.toHaveTextContent(/Latest|Run tests|Completed/);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('article')).not.toBeInTheDocument();
     fireEvent.click(toggle);
@@ -91,10 +91,39 @@ describe('ToolCallGroup', () => {
     );
     rerender(<ToolCallGroup group={failing} activeRunId={undefined} />);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(toggle).toHaveTextContent('3 tool calls');
+    expect(toggle).toHaveAccessibleName('3 tool calls · 1 failed');
+    expect(toggle.querySelector('.tool-calls__failed')).toHaveTextContent('· 1 failed');
     expect(screen.getByRole('article', { name: 'Tool call: Call c' })).toHaveTextContent('Failed');
     fireEvent.click(toggle);
     rerender(<ToolCallGroup group={failing} activeRunId={undefined} />);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('names the latest running call while the turn is active, and drops it once settled', () => {
+    const running = group([
+      call('a', 'completed'),
+      call('b', 'in_progress', { title: 'Run tests' }),
+      call('c', 'in_progress', { title: 'Build image' }),
+    ]);
+    const { rerender } = render(<ToolCallGroup group={running} activeRunId="1" />);
+    expect(
+      screen.getByRole('button', { name: '3 tool calls · Running Build image' }),
+    ).toBeVisible();
+    // The same pending calls after their turn ended are not running any more.
+    rerender(<ToolCallGroup group={running} activeRunId={undefined} />);
+    expect(screen.getByRole('button', { name: '3 tool calls' })).toBeVisible();
+  });
+
+  it('counts every failure in the group', () => {
+    render(
+      <ToolCallGroup
+        group={group([call('a', 'failed'), call('b', 'completed'), call('c', 'error')], true)}
+        activeRunId={undefined}
+      />,
+    );
+    expect(screen.getByRole('button', { name: '3 tool calls · 2 failed' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
   });
 });
