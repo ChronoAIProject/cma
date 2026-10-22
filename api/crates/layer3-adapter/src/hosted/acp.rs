@@ -92,6 +92,7 @@ pub(super) struct Bridge {
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
+    pub(super) context_goal: Mutex<Option<(String, bool)>>,
 }
 
 pub(super) struct OpenedBridge {
@@ -190,6 +191,7 @@ impl Bridge {
             retired: AtomicBool::new(false),
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
+            context_goal: Mutex::new(None),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
         let writer = Arc::clone(&bridge);

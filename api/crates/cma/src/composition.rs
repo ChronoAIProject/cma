@@ -272,6 +272,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
+                managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
                     .runtime
                     .home_policy
