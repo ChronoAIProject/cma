@@ -381,10 +381,8 @@
   border-radius: 12px;
   padding: 8px;
 }
-/* Conversation reading size is independent of the system UI preference.
- * Reset the inherited base too, not only explicit Markdown declarations. */
+/* Conversation text follows the same inherited preference as the rest of CMA. */
 .message-stream {
-  --cma-system-font-scale: 1;
   font-size: var(--text-ui);
   line-height: 1.5;
 }

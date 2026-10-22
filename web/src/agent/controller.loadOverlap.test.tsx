@@ -4,7 +4,7 @@ import type { SandboxDetail } from '../api/types';
 import { AGENT_DETAIL } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
 import { useAgentController } from './controller';
-import { harness, json, page } from './transport/controller.fixture';
+import { accepted, harness, json, page } from './transport/controller.fixture';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -21,7 +21,7 @@ const authorizedLineage = {
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
-it('starts current-personal Sandbox observation while history loads without admitting input early', async () => {
+it('allows an authorized input before the first history page resolves', async () => {
   const h = harness();
   const history = deferred<Response>();
   h.snapshot.mockReturnValueOnce(history.promise);
@@ -33,9 +33,12 @@ it('starts current-personal Sandbox observation while history loads without admi
   );
   await waitFor(() => expect(h.snapshot).toHaveBeenCalledOnce());
   expect(parentRead).toHaveBeenCalledOnce();
-  expect(view.result.current.state.status).toBe('loading');
-  await act(async () => view.result.current.send('Cannot send before full authorized history'));
-  expect(h.post).not.toHaveBeenCalled();
+  await waitFor(() => expect(view.result.current.inputAvailability.allowed).toBe(true));
+  expect(view.result.current.state).toMatchObject({ status: 'ready', historyLoading: true });
+  const accepted = vi.fn();
+  await act(async () => view.result.current.send('Send while history loads', accepted));
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(accepted).toHaveBeenCalledOnce();
   await act(async () => history.resolve(json(page([], 0))));
   await waitFor(() => expect(view.result.current.state.status).toBe('ready'));
   expect(view.result.current.inputAvailability.allowed).toBe(true);
@@ -155,9 +158,8 @@ it('requires a new paired Agent and parent observation when loading reveals boot
     useAgentController(h.client, AGENT_DETAIL.id, { viewerId: 'alice', authorizedLineage }),
   );
   await waitFor(() => expect(h.snapshot).toHaveBeenCalledOnce());
-  expect(parentRead).toHaveBeenCalledOnce();
-  await act(async () => history.resolve(json(page([], 0))));
   await waitFor(() => expect(parentRead).toHaveBeenCalledTimes(2));
+  await act(async () => history.resolve(json(page([], 0))));
   expect(view.result.current.state.status).toBe('ready');
   expect(view.result.current.inputAvailability.allowed).toBe(false);
   await act(async () =>
@@ -180,4 +182,67 @@ it('reloads and fails closed if a later access read unexpectedly changes immutab
   view.rerender({ lineage: { ...authorizedLineage, workspaceId: 'different-workspace' } });
   await waitFor(() => expect(view.result.current.state.status).toBe('error'));
   expect(h.post).not.toHaveBeenCalled();
+});
+
+it('shows the latest transcript while the first rich-history response is still pending', async () => {
+  const h = harness();
+  const history = deferred<Response>();
+  h.snapshot.mockReturnValueOnce(history.promise);
+  vi.spyOn(h.client, 'readAgentUsage').mockReturnValue(new Promise(() => {}));
+  vi.spyOn(h.client, 'readAgentTranscript').mockResolvedValue({
+    agentId: 'agt_1',
+    throughSeq: 0,
+    turns: [
+      {
+        turnSequence: 0,
+        startedAt: AGENT_DETAIL.createdAt,
+        ownerMessage: 'Latest question',
+        agentMessages: ['Latest answer'],
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Latest answer',
+            sequence: 0,
+            appendedAt: AGENT_DETAIL.createdAt,
+          },
+        ],
+        outcome: { type: 'completed' },
+      },
+    ],
+  });
+  const view = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() =>
+    expect(view.result.current.state).toMatchObject({
+      historyLoading: true,
+      conversation: { messages: [expect.objectContaining({ content: 'Latest answer' })] },
+    }),
+  );
+  expect(h.streaming).toBe(false);
+  view.unmount();
+});
+
+it('does not lose an in-flight send receipt when history finishes', async () => {
+  const h = harness();
+  const history = deferred<Response>();
+  const response = deferred<Response>();
+  h.snapshot.mockReturnValueOnce(history.promise);
+  h.post.mockReturnValueOnce(response.promise);
+  const view = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(view.result.current.inputAvailability.allowed).toBe(true));
+  const onAccepted = vi.fn();
+  let sent!: Promise<void>;
+  act(() => {
+    sent = view.result.current.send('Message during history', onAccepted);
+  });
+  await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+  await act(async () => history.resolve(json(page([], 0))));
+  await waitFor(() => expect(h.streaming).toBe(true));
+  await act(async () => {
+    response.resolve(accepted());
+    await sent;
+  });
+  expect(onAccepted).toHaveBeenCalledOnce();
+  expect(view.result.current.acceptedMessage).toBe('Message during history');
+  expect(h.post).toHaveBeenCalledOnce();
+  view.unmount();
 });

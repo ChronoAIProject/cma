@@ -9,7 +9,7 @@ import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
-import { IconPauseOutline16, IconPlayOutline16, IconPlusOutline16 } from '../ui/icons';
+import { IconPauseOutline16, IconPlayOutline16 } from '../ui/icons';
 import { MoreActions } from '../ui/MoreActions';
 import { sandboxCreateReason, sandboxHeaderMenu } from './sandboxHeaderActions';
 import {
@@ -279,25 +279,6 @@ export function SandboxPage({
         meta={<span className="page-header__chip">{sandbox.id}</span>}
         actions={
           <>
-            {permissions.createAgent ? (
-              <Button
-                size="sm"
-                variant="primary"
-                icon={<IconPlusOutline16 />}
-                disabled={createReason !== undefined}
-                aria-describedby={
-                  createReason === undefined
-                    ? undefined
-                    : createReason === lifecycleReason
-                      ? lifecycleReasonId
-                      : createReasonId
-                }
-                onClick={() => onAction({ kind: 'new_agent', sandboxId })}
-                aria-label="New agent in this Sandbox"
-              >
-                New agent
-              </Button>
-            ) : null}
             {permissions.pauseSandbox ? (
               <Button
                 size="sm"
@@ -326,7 +307,8 @@ export function SandboxPage({
             <MoreActions
               items={sandboxHeaderMenu(sandbox, permissions, actionContext, sharingAllowed)}
               onSelect={(id) => {
-                if (id === 'new_workspace') onAction({ kind: 'new_workspace', sandboxId });
+                if (id === 'new_agent') onAction({ kind: 'new_agent', sandboxId });
+                else if (id === 'new_workspace') onAction({ kind: 'new_workspace', sandboxId });
                 else if (id === 'delete_sandbox') onAction({ kind: 'delete_sandbox', sandboxId });
                 else if (id === 'sharing') setSharingFor(sharingClient);
                 else if (id === 'technical_details') setAdvanced(true);

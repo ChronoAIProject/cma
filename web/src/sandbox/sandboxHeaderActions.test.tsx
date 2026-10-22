@@ -34,6 +34,7 @@ function row(entries: readonly MenuEntry[], id: string) {
 
 it('orders routine rows first and Delete Sandbox last behind a separator', () => {
   expect(rows(sandboxHeaderMenu(sandboxFixture(), permissions, settled, true))).toEqual([
+    'new_agent',
     'new_workspace',
     'sharing',
     'technical_details',
@@ -50,7 +51,7 @@ it('lists Sharing only with current sharing authority and omits rows without per
     rows(
       sandboxHeaderMenu(
         sandboxFixture(),
-        { ...permissions, createWorkspace: false, deleteSandbox: false },
+        { ...permissions, createAgent: false, createWorkspace: false, deleteSandbox: false },
         settled,
         false,
       ),
@@ -60,7 +61,7 @@ it('lists Sharing only with current sharing authority and omits rows without per
 
 it('keeps unavailable rows in place with the reason they are unavailable', () => {
   const menu = sandboxHeaderMenu(pausing, permissions, settled, false);
-  for (const id of ['new_workspace', 'delete_sandbox'])
+  for (const id of ['new_agent', 'new_workspace', 'delete_sandbox'])
     expect(row(menu, id)).toMatchObject({
       disabled: true,
       reason: 'Wait for the current Sandbox operation to finish.',

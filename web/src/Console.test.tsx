@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import type { User } from './auth/types';
 import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
-import { agentClient } from './test/agent';
+import { agentClient, AGENT_DETAIL } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { WIRE_AGENT } from './test/rest';
@@ -215,7 +215,13 @@ it('disables personal creation with a reason in organization scope without repla
         items: [{ id: 'org_research', role: 'admin', display_name: 'Research' }],
       });
     if (url.pathname === '/api/v1/agents/agt_1')
-      return Response.json({ ...WIRE_AGENT, id: 'agt_1' });
+      return Response.json({
+        ...WIRE_AGENT,
+        id: AGENT_DETAIL.id,
+        worktree: { ...WIRE_AGENT.worktree, id: AGENT_DETAIL.worktree.id },
+        workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
+        sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
+      });
     if (url.pathname.includes('/resource-access/'))
       return Response.json({
         owner: { kind: 'person', is_current_person: true },

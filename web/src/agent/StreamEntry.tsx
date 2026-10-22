@@ -62,6 +62,7 @@ export function StreamEntry({
           ) : null}
           <MessageFooter
             id={message.id}
+            canVote={message.role === 'assistant'}
             at={message.at}
             content={message.content}
             committed={

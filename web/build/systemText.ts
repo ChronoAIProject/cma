@@ -1,7 +1,7 @@
 import type { Plugin } from 'postcss';
 
-/** Apply the user's text preference at the consuming element, so conversation
- * text can opt out without duplicating the shared typography token ramp. */
+/** Apply the user's text preference at the consuming element without scaling
+ * layout geometry or multiplying inherited text sizes a second time. */
 export function systemText(): Plugin {
   const scale = (value: string) => `calc(${value} * var(--cma-system-font-scale, 1))`;
   return {

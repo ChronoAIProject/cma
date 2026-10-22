@@ -78,10 +78,9 @@ export function useAgentActions({
       agentId,
       client,
       viewerId: options.viewerId,
-      historyIncomplete,
       allowed: inputAvailability.allowed,
     }),
-    [agentId, client, options.viewerId, historyIncomplete, inputAvailability.allowed],
+    [agentId, client, options.viewerId, inputAvailability.allowed],
   );
   const currentContext = useRef<typeof context | undefined>(undefined);
   useLayoutEffect(() => {
@@ -103,7 +102,7 @@ export function useAgentActions({
         currentContext.current !== context ||
         agentId === undefined ||
         actionAbortRef.current !== undefined ||
-        historyIncomplete ||
+        (historyIncomplete && typeof approval !== 'string') ||
         !inputAvailability.allowed
       )
         return;
