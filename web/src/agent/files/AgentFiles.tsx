@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { useCmaClient } from '../../api/context';
-import { Button } from '../../ui/Button';
 import { Presence } from '../../ui/Presence';
-import { IconFolderOpen16 } from '../../ui/icons';
 import { FileExplorer } from './FileExplorer';
 export { FileExplorer } from './FileExplorer';
 
@@ -26,9 +24,9 @@ export function AgentFiles({
       <p>
         <code>/home/</code>
       </p>
-      <Button icon={<IconFolderOpen16 />} onClick={() => setOpen(true)}>
+      <button type="button" className="agent-details__link" onClick={() => setOpen(true)}>
         Browse files
-      </Button>
+      </button>
       {active ? (
         <Presence>
           {open ? (

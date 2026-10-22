@@ -25,28 +25,68 @@
   font-size: 12px;
 }
 
+/*
+ * The panel scrolls as one region, and space rather than hairlines separates
+ * its sections: rules between every section read as a form's fieldsets.
+ */
 .agent-details__scroll {
+  display: grid;
+  align-content: start;
+  gap: 24px;
   min-height: 0;
+  padding: 16px;
   overflow-y: auto;
 }
 
 .agent-details__band {
-  padding: 16px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  min-width: 0;
 }
 
 .agent-details__band h2 {
-  margin-bottom: 10px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .agent-details__band > p {
-  color: var(--dsw-alias-label-tertiary);
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-secondary);
   font-size: 13px;
+  line-height: 20px;
+}
+
+/*
+ * The one text action of the panel. No padding, so it starts flush with the
+ * text above it; a capsule button's inset is what made actions look indented.
+ */
+.agent-details__link {
+  display: inline-block;
+  justify-self: start;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.agent-details__link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.agent-details__link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.agent-details__link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .agent-details__fact {
@@ -92,15 +132,6 @@
 }
 
 /* Read-only service access; the scope itself is edited on the Sandbox page. */
-.agent-details__access {
-  margin-bottom: 16px;
-}
-
-.agent-details__access p {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-}
-
 .agent-details__access ul {
   display: grid;
   gap: 6px;
@@ -124,7 +155,7 @@
   font-size: 11px;
 }
 
-.agent-details__access a {
+.agent-details__access li a {
   color: var(--dsw-alias-state-business-primary);
   font-size: 13px;
 }
