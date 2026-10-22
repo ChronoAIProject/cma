@@ -1,3 +1,4 @@
+import { documentDispatch } from './public-contract/documents.js';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -32,6 +33,7 @@ import {
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
 
 const dispatch = {
+  ...documentDispatch,
   ...botDispatch,
   ...eventWorkerDispatch,
   ...resourceDispatch,

@@ -32,6 +32,7 @@ pub mod cmaeg;
 mod conformance;
 pub mod defaults;
 pub mod discovery;
+pub mod documents;
 mod error;
 pub mod event_worker_profiles;
 pub mod gateway_interactions;

@@ -115,3 +115,5 @@ export type {
   MessageFeedback,
   MessageFeedbackPage,
 } from './agents/message-feedback.js';
+
+export * from './documents.js';

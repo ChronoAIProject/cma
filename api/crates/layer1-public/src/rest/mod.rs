@@ -62,6 +62,8 @@ mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 mod defaults;
+mod documents;
+pub use documents::documents_router;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
