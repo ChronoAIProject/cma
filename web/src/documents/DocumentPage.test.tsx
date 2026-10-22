@@ -56,12 +56,12 @@ it('preserves the same unsaved editor and source baseline through preview withou
   page(api);
   const content = await screen.findByRole('textbox', { name: 'Document content' });
   fireEvent.change(content, { target: { value: '# Unfinished draft' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Preview', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
   expect(screen.getByRole('textbox', { name: 'Document content' })).toBe(content);
   expect(content).toBeDisabled();
   expect(content).toHaveValue('# Unfinished draft');
   expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
-  fireEvent.click(screen.getByRole('button', { name: 'Edit', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
   expect(content).toBeEnabled();
   expect(documentDraft('owner', id)?.sourceRevision).toBe(1);
   expect(api.source).toHaveBeenCalledTimes(1);
