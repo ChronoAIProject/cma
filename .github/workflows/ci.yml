@@ -64,6 +64,9 @@ jobs:
         with:
           # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
           node-version: 24.15.0
+      - name: Select official Ubuntu archive for browser dependencies
+        # The hosted Azure mirror repeatedly stalled package downloads before tests.
+        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install pinned local browser
         timeout-minutes: 10
         working-directory: web
@@ -335,6 +338,9 @@ jobs:
           npm ci --prefix web
           npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
           npm run build --prefix web
+      - name: Select official Ubuntu archive for browser dependencies
+        working-directory: .
+        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install gateway contract browser
         timeout-minutes: 10
         working-directory: web

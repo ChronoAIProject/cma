@@ -89,6 +89,9 @@ jobs:
         run: npm ci --omit=dev --ignore-scripts
       - run: npm run e2e:typecheck
       - run: npm run test -- e2e/environment.test.ts
+      - name: Select official Ubuntu archive for browser dependencies
+        working-directory: .
+        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install pinned browser
         run: npx --no-install playwright install --with-deps chromium
       - name: Local harness guard mechanics, not staging proof
