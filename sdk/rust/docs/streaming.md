@@ -398,3 +398,12 @@ async fn edit_first_queued_input(
     Ok(())
 }
 ```
+
+For a live conversation while older history loads, call
+`client.agent_events_v2().head(agent_id)`. The bounded result contains the
+server-issued `through_cursor` and the exact active turn-start row, including
+its response binding, or `null` when idle. Start a tail at that cursor and
+buffer new frames while rebuilding the complete historical snapshot separately.
+Rebase those frames onto the complete snapshot to avoid losing live text or
+restoring a turn that has already completed. The head is a live baseline; it
+does not represent delivery of older messages, tools, approvals or usage.

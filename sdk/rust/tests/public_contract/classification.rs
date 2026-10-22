@@ -161,6 +161,7 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
     ("queued-input-v2-query-list", Classification::QueryShape),
     ("queued-input-v2-query-submit", Classification::QueryShape),
     ("agent-events-v2-snapshot-invalid", Classification::Local),
+    ("agent-events-v2-head-query", Classification::QueryShape),
     ("agent-events-v2-events-invalid", Classification::Local),
     ("agent-events-v2-snapshot-query", Classification::QueryShape),
     ("agent-events-v2-events-query", Classification::QueryShape),
@@ -1029,6 +1030,7 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 | "GET /api/v1/agents/{id}/files/download"
                 | "DELETE /api/v1/agents/{id}/files" => &["path", "max_bytes", "recursive"],
                 "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
+                "GET /api/v2/agents/{agent_id}/events/head" => &[],
                 "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
                 "GET /api/v2/agents/{agent_id}/queued-inputs" => &["after", "limit"],
                 "GET /api/v1/bridge-connectors/capabilities"
