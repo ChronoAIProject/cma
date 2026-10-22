@@ -966,8 +966,8 @@ counts and explicitly labelled estimates remain readable.
 Tool activity is one quiet line in the timeline, not a box: no border, ground
 or radius. It reads in 13/20 secondary ink, so the replies around it lead.
 Each settled tool call is a row inserted at its completion position and retained
-on reload, named **Tool call: <title>**. Rows use 8px vertical padding and the
-existing 16px entry rhythm. The
+on reload, named **Tool call: <title>**. Rows use 8px vertical padding; a tool
+line is 28px tall with 12px after it, and a message leaves 8px below its footer. The
 row leads with a state dot and pairs it with a plain word: **In progress** (the
 pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
 (error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
@@ -3000,7 +3000,8 @@ messages use the source event timestamp. The durable message timestamp replaces
 that provisional observation when the recorded message arrives.
 
 Reserve a compact footer for the timestamp and Copy content, Upvote and Downvote, using the existing
-copy/like/dislike glyphs and shared 32px Buttons. At rest a message shows only its
+copy/like/dislike glyphs on 28px keys (44px on a coarse pointer), because the footer
+is reserved under every message and its height sets the conversation's rhythm. At rest a message shows only its
 content. Fade the timestamp and these controls in on message
 hover or keyboard focus over the shared fast duration, with no movement or layout
 shift; keep them visible on touch devices. A copy, vote or feedback status stays
