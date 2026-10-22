@@ -33,11 +33,16 @@ export function AgentShareLinks({
   if (!client) return null;
   return (
     <section className="agent-details__band">
-      <h2>Session sharing</h2>
+      <h2>Sharing</h2>
       <p>Share this Agent conversation and files in its Sandbox home.</p>
-      <Button disabled={!active} onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className="agent-details__link"
+        disabled={!active}
+        onClick={() => setOpen(true)}
+      >
         Manage share links
-      </Button>
+      </button>
       <AgentShareLinksDialog
         key={agentId}
         client={client}
