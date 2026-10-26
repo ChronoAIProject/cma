@@ -7,6 +7,7 @@ mod config;
 pub mod connections;
 pub mod console;
 pub mod delivery;
+pub mod discord;
 pub mod hardening;
 pub mod http;
 pub mod ingress;
