@@ -51,8 +51,8 @@ pub struct FrozenTurn {
 }
 
 /// Reply presentation and policy are frozen with the provider request. The
-/// event reference carries the exact destination authority; credentials are
-/// always fetched separately. No platform send is authorized by this value.
+/// event reference carries origin authority; a default destination is bound
+/// separately without credentials. Current authorization is required to send.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenDelivery {
@@ -60,6 +60,8 @@ pub struct FrozenDelivery {
     pub label: String,
     pub auto_final: bool,
     pub destination: ReplyChoice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_destination: Option<super::DefaultDestination>,
     pub policy: ReplyPolicy,
 }
 impl FrozenTurn {
@@ -101,6 +103,8 @@ impl FrozenTurn {
             || self.delivery.consumer != target.launch.consumer
             || self.delivery.label.is_empty()
             || self.delivery.label.len() > 256
+            || (self.delivery.destination == ReplyChoice::Default)
+                != self.delivery.default_destination.is_some()
             || opened != delivery_event(plan, target)
             || self.event_context.validate().is_err()
             || self.input.is_empty()

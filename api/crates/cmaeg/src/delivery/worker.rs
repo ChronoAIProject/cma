@@ -57,12 +57,34 @@ async fn handle(
                 first_send_done: true,
                 gate: reply.gate.as_ref(),
             };
-            let (result, _) = sender.reply(&context, &reply.event, &reply.message).await;
+            let result = match &reply.default_destination {
+                Some((destination, operation)) => {
+                    sender
+                        .default_reply(
+                            &context,
+                            &reply.event,
+                            &reply.message,
+                            destination,
+                            operation,
+                        )
+                        .await
+                }
+                None => sender.reply(&context, &reply.event, &reply.message).await.0,
+            };
             let step = match reply.source {
                 ReplySource::Tool => DeliveryStep::ToolReply,
                 ReplySource::Stream => DeliveryStep::Answer,
             };
-            sender.observe(&reply.event, step, &result.delivery);
+            sender.observe_at(
+                &reply.event,
+                step,
+                &result.delivery,
+                if reply.default_destination.is_some() {
+                    crate::turns::observer::Destination::Default
+                } else {
+                    crate::turns::observer::Destination::Origin
+                },
+            );
             let _ = reply.receipt.send(result);
         }
         DeliveryCommand::Update {

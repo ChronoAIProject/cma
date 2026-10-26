@@ -87,13 +87,30 @@ existing independent durable receipt path after a proved terminal close or
 after original automatic-reply authority expires; unresolved sends cannot use
 terminal closure to bypass the guard.
 
-Ephemeral synchronous waiters cannot provide durable completion evidence and
-are explicitly unsupported in this lane. Default-destination projection is
-also explicitly unsupported until it has its own durable authority binding;
-it never falls back to the origin. These limitations do not affect the live
-default lane. Activation additionally needs the scheduler and projection state,
-per-platform recovery evidence and a shared Sync
-finalization design.
+Default replies pin a nonsecret destination during initial preparation:
+Telegram source/bot/chat/thread, relay source/platform/conversation route, or
+the exact result-webhook URL and signing-key-id list. The destination binding
+never stores the platform credential or signing key. Restored work retains that address.
+Every attempt requires fresh channel configuration to authorize the same
+destination and uses current credentials. Edits cannot redirect already
+prepared work; a revoked or changed destination refuses new delivery. A settled
+receipt can still be reused without sending, even after that configuration
+changes. Delivery observations identify the default destination separately from
+the origin.
+
+Native Telegram uses the existing chat transport. Relay defaults use the
+existing initiated-send contract with a stable target/frame/effect operation
+identity and no fabricated inbound-message authority. Webhook defaults use the
+existing fenced signing and transport path. Partial or uncertain delivery
+retains the existing conservative `Unknown` outcome.
+
+`validate_routed_delivery(channel, plan)` must run for new admissions before
+`Candidate::prepare`. It refuses a missing/unauthorized configured default and
+currently refuses Sync, whose process-local waiter cannot provide a durable
+platform receipt. That refusal prevents work from starting with an unavailable
+reply capability. Existing legacy delivery is unchanged. Activation additionally
+needs scheduler/projection composition, per-platform recovery evidence and a
+separate truthful local-stream finalization design for Sync.
 
 Tests exercise the real encrypted record HTTP/CAS protocol, delayed actual
 engine sends, queue refusal, missing receipts, abandoned intents, authority
