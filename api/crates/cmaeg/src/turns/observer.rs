@@ -35,7 +35,7 @@ pub enum LaunchClass {
 impl LaunchClass {
     pub fn of(outcome: &LaunchOutcome) -> Self {
         match outcome {
-            LaunchOutcome::Accepted { .. } => Self::Accepted,
+            LaunchOutcome::Accepted { .. } | LaunchOutcome::Admitted { .. } => Self::Accepted,
             LaunchOutcome::Deferred => Self::Deferred,
             LaunchOutcome::Refused(_) => Self::Refused,
         }

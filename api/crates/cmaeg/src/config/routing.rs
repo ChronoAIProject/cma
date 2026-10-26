@@ -12,6 +12,7 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 pub const CMAEG_NON_HUMAN_PROVIDERS: &str = "CMAEG_NON_HUMAN_PROVIDERS";
+pub const CMAEG_ROUTED_CHANNEL_RECORDS: &str = "CMAEG_ROUTED_CHANNEL_RECORDS";
 
 /// The one provider whose agents are known to answer custom events and
 /// hand-offs.
@@ -24,6 +25,8 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 /// registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutingConfig {
+    /// Explicit rollout selection; an empty set preserves all legacy ingress.
+    pub execution_records: BTreeSet<String>,
     /// Provider slugs whose agents answer non-human actors (custom events,
     /// hand-offs) by default. A consumer's `non_human` field overrides this
     /// per consumer.
@@ -43,8 +46,44 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     Ok(RoutingConfig {
+        execution_records: execution_records(
+            env::var(CMAEG_ROUTED_CHANNEL_RECORDS)
+                .map(Some)
+                .or_else(|error| match error {
+                    env::VarError::NotPresent => Ok(None),
+                    _ => Err(ConfigError::Routing(format!(
+                        "{CMAEG_ROUTED_CHANNEL_RECORDS} must be valid UTF-8"
+                    ))),
+                })?
+                .as_deref(),
+        )?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
     })
+}
+
+fn execution_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
+    let mut records = BTreeSet::new();
+    for value in value.unwrap_or_default().split(',').map(str::trim) {
+        if value.is_empty() {
+            continue;
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || cmaeg_core::ids::RecordId::new(value).is_err()
+        {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_CHANNEL_RECORDS} must contain explicit record IDs"
+            )));
+        }
+        records.insert(value.to_owned());
+        if records.len() > 64 {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_CHANNEL_RECORDS} allows at most 64 records"
+            )));
+        }
+    }
+    Ok(records)
 }
 
 /// Read the non-human provider set.
@@ -117,6 +156,29 @@ pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn execution_selection_defaults_off_and_rejects_broad_or_invalid_selection() {
+        assert!(execution_records(None).unwrap().is_empty());
+        assert!(execution_records(Some(" , ")).unwrap().is_empty());
+        let record = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(
+            execution_records(Some(&format!(" {record},{record} "))).unwrap(),
+            BTreeSet::from([record.to_owned()])
+        );
+        assert!(execution_records(Some("*")).is_err());
+        assert!(execution_records(Some("invalid/record")).is_err());
+        let records = (0..65)
+            .map(|n| format!("11111111-1111-4111-8111-{n:012}"))
+            .collect::<Vec<_>>();
+        assert!(execution_records(Some(&records.join(","))).is_err());
+        assert_eq!(
+            execution_records(Some(&records[..64].join(",")))
+                .unwrap()
+                .len(),
+            64
+        );
+    }
 
     fn registry(slugs: &[&str]) -> ProviderRegistry {
         let entries: Vec<_> = slugs
