@@ -1,5 +1,5 @@
 use super::{
-    event::{key, now, EventKey, EventState},
+    event::{key, normalized_consumer, now, EventKey, EventState},
     gate::Ungated,
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, SendContext, Sender},
@@ -19,7 +19,7 @@ pub(super) async fn run(
     config: DeliveryConfig,
     tracker: Arc<TurnTracker>,
 ) {
-    // Each event belongs to exactly one worker, so state requires no cross-worker lock.
+    // Each event/consumer belongs to one worker; the fixed state cap includes every consumer.
     let mut events = HashMap::<EventKey, EventState>::new();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -82,7 +82,11 @@ async fn handle(
             if receipt.is_closed() {
                 return;
             }
-            let id = key(event.channel_id.as_str(), event.event_id.as_str());
+            let id = key(
+                event.channel_id.as_str(),
+                event.event_id.as_str(),
+                event.consumer.as_ref(),
+            );
             if !reserve(events, &id) {
                 let mut result = unsupported();
                 result.delivery = DeliveryOutcome::Rejected {
@@ -127,10 +131,17 @@ async fn handle(
                 || opened.payload.channel_id != turn.channel.id
                 || opened.payload.event_id != turn.activity.event_id
                 || opened.payload.record_id != turn.channel.pointer.record_id
+                || opened.payload.conversation_id != turn.conversation_id
+                || normalized_consumer(opened.payload.consumer.as_ref())
+                    != normalized_consumer(turn.consumer.as_ref())
             {
                 return;
             }
-            let id = key(turn.channel.id.as_str(), turn.activity.event_id.as_str());
+            let id = key(
+                opened.payload.channel_id.as_str(),
+                opened.payload.event_id.as_str(),
+                opened.payload.consumer.as_ref(),
+            );
             if !reserve(events, &id) {
                 tracing::warn!("delivery event capacity reached");
                 return;

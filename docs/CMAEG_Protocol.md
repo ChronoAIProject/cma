@@ -2320,6 +2320,17 @@ when no committed/tool answer exists. A confirmed or unknown tool reply suppress
 later automatic answer delivery. A failure notice is attempted once unless a tool
 has already replied. Typing/acknowledgement alone does not mark an answer delivered.
 
+Delivery progress and suppression belong to the authenticated `(channel, event,
+consumer)` identity. A named consumer's tool reply, completion, failure or timer
+cannot suppress another consumer serving the same source event. Stream delivery
+checks the launch consumer and conversation against its sealed event reference
+before using that state. An omitted consumer and an internal `default` launch
+use the unchanged default lane. The existing eight workers, fixed queues and
+8,192-state cap per worker include all consumers; routing does not multiply those
+caps. Route pacing and single-use reply-token claims remain shared. This isolation
+does not enable fanout dispatch, change consumer reply destinations or add shared
+Sync-stream finalization; those require the routed execution contract.
+
 NyxID relay sends on every platform are paced at least three seconds apart per
 route. The first send may consume an unexpired single-use reply token; subsequent
 intentional sends use the channel key. Token selection happens after pacing; a
