@@ -3,6 +3,7 @@
 //! ```text
 //! lead        = *( WSP / bot-address / mention-key )
 //! bot-address = "@" <bot_username of input.chat_source>   ; case-insensitive, word-bounded
+//!             / "<@" [ "!" ] <native Discord bot_id> ">" ; exact receiving bot only
 //! mention-key = "@_user_" 1*DIGIT                          ; Lark/Feishu activities only
 //! command     = lead "/to" [ "@" <bot_username> ] 1*WSP target *( "," target ) ( 1*WSP rest / end )
 //! mentions    = lead "@" target [ "," / ":" ] *( 1*WSP "@" target [ "," / ":" ] ) ( 1*WSP rest / end )
