@@ -170,13 +170,27 @@ async fn uncertain_post_never_reposts_or_regenerates_frozen_body() {
 async fn cancellation_is_not_a_detached_start_and_recovered_starting_stays_unknown() {
     let setup = Setup::new(supported()).await;
     let http = HttpServer::start().await;
-    http.memory.lock().unwrap().config.post_idle = true;
+    let posted = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut memory = http.memory.lock().unwrap();
+        memory.config.post_idle = true;
+        let posted = posted.clone();
+        memory.config.on_post = Some(Arc::new(move || posted.notify_one()));
+    }
     let port = http_port(&setup, &http, true);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(80), dispatch(&setup, &port))
-            .await
-            .is_err()
-    );
+    let mut pending = Box::pin(dispatch(&setup, &port));
+    // Cancel only after the server has received the POST. A fixed sleep could
+    // expire during journal admission on a busy CI runner, testing no start.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            biased;
+            _ = posted.notified() => {}
+            _ = &mut pending => panic!("dispatch finished before cancellation"),
+        }
+    })
+    .await
+    .expect("provider receives the frozen POST");
+    drop(pending);
     assert_eq!(http.seen().len(), 1);
     setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
     assert!(matches!(
