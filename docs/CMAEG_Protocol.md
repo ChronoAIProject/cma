@@ -770,7 +770,9 @@ uses `bot_username` and only Lark/Feishu use `bot_id` as addressing evidence;
 elsewhere they are retained descriptions. `trust_normalized` defaults to false
 and is omitted from stored definitions while false. Slack still requires `trust_normalized:true`. Discord and WhatsApp may instead
 select `verify_raw_event:true`; the two options are mutually exclusive. Raw
-verification is a new stored shape gated by `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED`.
+verification is a new stored shape gated independently by
+`CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED`; it does not require or enable
+dynamic source topology.
 Other platforms refuse both explicit trust and this new verifier option. Creating or updating a Discord or WhatsApp source without either verification mode, or a Slack source without `trust_normalized:true`, fails fast with 400 `invalid_request` at `/sources/<n>/trust_normalized`,
 so no channel is stored that would refuse every message; a creator that
 receives this refusal should keep the bot on another delivery path. Unknown
@@ -883,7 +885,7 @@ differs is whether the gateway can corroborate the platform's own event.
 | Platform | Facts |
 | --- | --- |
 | Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages, media messages while the operator enables inbound media, and original private `managed_bot_created` receipts (see §7); `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`, read from `caption_entities` against the caption of a media message; reply evidence from the parent's `is_bot`. Media variants, captions, locators and the normalization of sender-declared facts are described under [Telegram media](#telegram-media); no attachment fact makes a callback answer 400. |
-| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is a bot and is refused as `bot_sender` unless the source explicitly opts in below; anything else is `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media, video and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media/video messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Rich-text posts are admitted too, flattened by the observer into the message text: the title, text, links, mentions rendered as names with the pinned bot's own mention removed, emotions, code blocks and rules; embedded images and videos are listed as attachments that are not retrievable, and a long post is truncated at 32 KiB with a marker. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
+| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; authenticated `card.action.trigger` is handled only for a bound CMA card as described below, and other `header.event_type` values are refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is a bot and is refused as `bot_sender` unless the source explicitly opts in below; anything else is `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media, video and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media/video messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Rich-text posts are admitted too, flattened by the observer into the message text: the title, text, links, mentions rendered as names with the pinned bot's own mention removed, emotions, code blocks and rules; embedded images and videos are listed as attachments that are not retrievable, and a long post is truncated at 32 KiB with a marker. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
 | Discord, Slack, WhatsApp with `trust_normalized:true` | The normalized envelope is trusted as-is. A definition without an admitted verification mode has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
 Discord and WhatsApp may instead use `verify_raw_event:true` to correlate the
@@ -905,15 +907,15 @@ supports a platform before any source for it is enabled.
 | Input | Human text, private managed-bot creation receipts and authenticated callbacks from gateway-issued inline controls; media messages with their captions while the operator enables inbound media; other edits, system input, and attachment input while media is off, refused | Human text messages; image, file, audio and media/video messages with `nyxid_relay` locators at NyxID's original index while the operator enables inbound media, with sender facts normalized rather than refused and an invalid key degraded to not retrievable, and rich-text posts flattened into text by the observer with embedded media listed as not retrievable; media messages carry no mention, so `mention` group admission refuses them; stickers, bot and system input, and attachment input while media is off, refused | Text from the trusted normalized envelope; actor kind `unknown` |
 | Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload | Mention `open_id` against the pinned `bot_id`, or any mention without one; no reply evidence | None |
 | Topics | Verified forum topic evidence required for thread partitioning | Raw `thread_id` | None |
-| Output | Escaped text; rich blocks degrade as §8 specifies | Plain text; buttons and choices degrade to numbered text | Plain text; buttons and choices degrade to numbered text |
+| Output | Escaped text; rich blocks degrade as §8 specifies | Plain text by default; gated native JSON 2.0 cards for eligible contexts | Plain text; buttons and choices degrade to numbered text |
 | Edit | Confirmed gateway interactive cards; gated ordinary relay text edits with an enriched reference | Gated ordinary single-part relay text edits | Gated ordinary single-part Discord relay text edits; Slack/WhatsApp unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
-| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Unsupported | Unsupported |
+| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Unsupported |
 | Attachments | Inbound media with relay or Bot API locators while enabled; native outbound media through the NyxID relay when enabled, otherwise links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
 
 Ordinary replies go through NyxID's generic `/api/v1/channel-relay/reply`;
 explicit native thread replies use the dedicated thread endpoint below. NyxID
-performs the platform send. Only Telegram replies carry `metadata.reply_markup`.
+performs the platform send. Telegram replies carry `metadata.reply_markup`; gated Lark/Feishu cards carry `metadata.card`.
 The table's grouped input/addressing/topic entries describe trusted-normalized
 Discord/Slack/WhatsApp sources; opted-in raw verification is described separately.
 Native media and ordinary text editing require their independently verified
@@ -980,6 +982,51 @@ trusted platforms still refuse attachments.
 - A message whose envelope lists attachments while its raw message has no media
   field, or whose media fields yield no usable attachment, is refused as
   `attachment_unsupported`.
+
+#### Lark and Feishu interactive cards
+
+`CMAEG_LARK_CARDS_ENABLED=true` enables JSON 2.0 native card rendering for existing
+`buttons`, single/multi `choice`, `card` and `link` blocks. Eligible verified human
+contexts advertise `buttons:"native_card"`, `cards:"native_card"`, `edit:true`.
+The default is off, preserving numbered-text delivery. This does not enable
+threaded or named-consumer contexts, native forms, or cards mixed with native
+attachments. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
+`behaviors` callback/open_url
+objects; display text uses `plain_text` and cannot inject mentions or card JSON.
+Multi-choice clicks return the selected set computed from the stored message;
+providers update the card after each accepted toggle, as for Telegram controls.
+
+The callback verifier checks the signed raw header/event, operator open ID, chat,
+source platform and original message against NyxID's envelope. Only button values
+containing a CMA-issued `cl1:<record>:<revision>:<action>` locator are candidates;
+no agent-supplied callback string, option value or form input becomes authority.
+The encrypted record binds actor, chat, platform, originating event, consumer,
+message receipt and current revision. Missing/unbound, expired, superseded,
+wrong-actor/chat/message/platform/revision and out-of-range actions fail closed.
+CMA derives selected values from the saved options and uses CAS to consume one
+click. Redelivery retains a stable platform-prefixed event ID and idempotency key.
+
+Lark normally omits `chat_type` on a card action. CMA recovers private/group kind
+only from that exact bound record before applying current source ACLs; an explicit
+conflicting type is rejected. A verified card click supplies addressing evidence
+but never overrides sender/chat denial or group denial. Callbacks from cards that
+CMA did not issue cannot launch a normal message turn. Native thread contexts
+remain unsupported because callbacks do not carry independently verified thread
+identity.
+
+Cards retain a 24-hour expiry. Disabling issuance leaves existing callback and
+edit readers active. Edits require the exact NyxID outbound ID and platform message
+ID, fence the previous revision before the external request, and accept only a
+correlated `upstream_message_id` plus valid `edited_at` receipt. Unknown outcomes
+are not retried and never reactivate old controls. Ordinary Telegram behavior and
+serialized default-card records are unchanged.
+
+Cards allow at most 4,000 displayed text characters, 100 elements/actions and
+28 KiB serialized card JSON, with a 32 KiB relay request bound. Over-limit cards
+are refused without truncation. Native forms degrade to text; URL card images
+become links, with explicit `plain_text_form`/`image_link` rendering outcomes.
+This is a verified code/adapter contract; real platform sends require separate
+production acceptance evidence.
 
 #### Lark and Feishu media
 
@@ -1556,7 +1603,11 @@ capabilities are `true,false,"inline_keyboard","text","link_text",4000`; other
 relay platforms are `false,false,"numbered_text","text","link_text",4000` by
 default. With `CMAEG_RELAY_TEXT_EDITS_ENABLED=true`, Lark/Feishu and Discord
 advertise `edit:true`; Discord's single-message hint becomes 2000 UTF-16 code
-units and Lark/Feishu retain 4000. WhatsApp, Slack and unsupported platforms do
+units and Lark/Feishu retain 4000. Independently, `CMAEG_LARK_CARDS_ENABLED=true`
+advertises native cards and editing for eligible verified human Lark/Feishu
+contexts as described in [Lark and Feishu interactive cards](#lark-and-feishu-interactive-cards).
+Retained card interaction contexts keep editing even after new issuance is disabled.
+WhatsApp, Slack and unsupported platforms do
 not advertise editing. Custom capabilities remain
 `false,false,"json","json","reference",32768`. `max_text_chars` retains its
 existing per-platform single-message/control hint meaning. It is not the tool
@@ -2759,3 +2810,105 @@ paths. Merely disabling the flag is **not** a downgrade migration:
 until no enriched reference remains usable; an event-reference TTL does not
 establish that condition. The flag is independent of the native-media and
 complete-reply gates, and neither of those gates enables text edit issuance.
+
+
+## Approved WhatsApp template replies
+
+`OutboundMessage.whatsapp_template` is an optional typed object. It is accepted
+only for a NyxID WhatsApp relay event when
+`CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`; `readEventContext` then includes
+`capabilities.whatsapp_templates: true`. It is absent for other destinations and
+while disabled. The template must already be approved in the destination
+WhatsApp Business account. Meta validates approval, the language variant and
+placeholder compatibility; the gateway does not create or approve templates.
+
+```json
+{
+  "whatsapp_template": {
+    "name": "order_update",
+    "language": { "code": "en_US" },
+    "components": [
+      { "type": "body", "parameters": [{ "type": "text", "text": "Order 42" }] },
+      { "type": "button", "sub_type": "url", "index": "0", "parameters": [{ "type": "text", "text": "42" }] }
+    ]
+  }
+}
+```
+
+Names contain 1–512 lowercase ASCII letters, digits or underscores. Language
+codes contain two or three lowercase ASCII letters and an optional underscore
+plus two uppercase region letters, such as `en`, `en_US` or `zh_CN`.
+`components` defaults to an empty array for parameterless templates. At most
+five components and twenty text parameters in total are accepted: one `header`
+with exactly one parameter, one `body` with one to twenty parameters, and unique
+URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Every
+parameter is `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without control
+characters. Image, currency, date/time, quick-reply and arbitrary parameter types
+are refused. URL button parameters substitute approved URL suffixes; they do not
+introduce gateway callbacks or change the delivery destination.
+
+Templates cannot be combined with `text`, nonempty `blocks`,
+`native_attachments`, `thread_reply:true` or `reply_to`. Unknown fields, arbitrary
+metadata, recipient and route overrides are rejected. The sealed event or
+reply-target reference remains the sole delivery destination and authority;
+this is not an initiated-send API. Unsupported destinations, disabled delivery
+and template edits return an unsupported receipt without dispatch. Invalid
+shapes return `invalid_request` before admission. Template message references
+never advertise edit authority.
+
+Delivery uses the existing consumer authorization, pacing, route admission,
+commit gate and single-use reply credential path. The gateway serializes the
+exact bounded template into NyxID `reply.metadata.template` before entering the
+gate. One logical reply makes one relay request. A missing platform receipt,
+transport failure or 429 is `unknown` and is never automatically retried: the
+platform may have accepted the message. Ordinary messages that omit the field
+retain their existing serialized form and behavior.
+
+## Relay authoring discovery and setup
+
+Authenticated `GET /v1/channel-capabilities` now includes optional
+`relay_authoring`. The existing `platforms` array still describes **native
+connection setup workflows (Telegram only)**. The separate relay platform list
+advertises supported ingestion verification modes: `native_event` for
+Telegram/Lark/Feishu, `raw_event` and explicit `trusted_normalized` for
+Discord/WhatsApp, and `trusted_normalized` for Slack. Each mode has
+`writes_enabled`; this describes new authoring, not upstream transport health,
+ordinary-message delivery, or bot provisioning.
+
+`relay_raw_verification_writes_enabled` is independent of
+`dynamic_sources_writes_enabled`, `multi_consumer_writes_enabled`,
+`native_bot_mentions_writes_enabled`, and `thread_contract_writes_enabled`.
+The dedicated default-off `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` flag
+admits raw-event verification after every active reader and rollback target can
+read it, without enabling additional source topology or partition extensions.
+When disabled, existing exact sources, partition and credentials can be retained
+through unrelated writes; new or changed raw sources receive
+`relay_raw_verification_writes_disabled`. A disabled broader gate still refuses
+new dynamic source/partition shapes. The server remains authoritative if flags
+change after discovery.
+
+Older gateways may omit `relay_authoring` or return 404 for discovery. Clients
+must retain saved/draft settings, refuse new unconfirmed raw opt-ins, and never
+substitute normalized trust automatically. Explicitly selected legacy trust
+remains distinct. The portal loads capabilities once per owner/permission
+context, shares them across retained editors and navigation, and offers an
+explicit retry after failure; it does not poll.
+
+NyxID owns bot and route setup. Its owner-authenticated public channel-bot and
+conversation APIs are separate from CMA's connection references. The current
+CMA gateway authenticator retains verified identity, not a reusable owner
+bearer for those APIs; the portal therefore gives platform-specific setup
+instructions rather than inventing an authenticated NyxID proxy or promising
+Discord/WhatsApp bot creation. Owners supply their exact issuer, signing key ID,
+route IDs and channel key, then configure the route with the saved channel's
+NyxID callback endpoint. Credentials stay in secret fields.
+
+The creation form can list existing **CMA-managed Telegram connections** via
+owner-fenced `GET /v1/channel-connections`, with explicit pagination and no
+polling. It selects a ready reference and explicit admission; the server also
+checks ownership, organization and whether another channel already bound it.
+Manual source/credential drafts survive switching this option on and off;
+managed create sends empty sources and omits manual platform credentials.
+New admission starts with an empty sender allowlist, never a silent all-senders
+grant. Creating a new connection still requires an admitted originating event
+and its agent authorization through the existing public workflow.

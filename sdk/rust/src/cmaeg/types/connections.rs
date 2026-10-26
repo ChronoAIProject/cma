@@ -36,8 +36,11 @@ pub struct CapabilityView {
     /// Additive source-policy features; absent on older gateways.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_features: Vec<String>,
-    /// Supported platforms.
+    /// Native connection workflows; not the relay ingestion platform list.
     pub platforms: Vec<PlatformCapability>,
+    /// Relay authoring metadata, absent on older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_authoring: Option<RelayAuthoringCapabilities>,
 }
 
 /// Owner-visible connection state without platform credentials.
@@ -78,4 +81,39 @@ pub struct CreateConnection {
     /// Optional user-facing suggestion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested_name: Option<String>,
+}
+
+/// Deployment gates for new relay authoring; existing exact records remain readable.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayAuthoringCapabilities {
+    /// Enables new dynamic-source and partition writes.
+    pub dynamic_sources_writes_enabled: bool,
+    /// Enables Discord/WhatsApp raw-event verification writes independently.
+    pub relay_raw_verification_writes_enabled: bool,
+    /// Enables new additional-consumer routing writes.
+    pub multi_consumer_writes_enabled: bool,
+    /// Enables new native-bot mention policy writes.
+    pub native_bot_mentions_writes_enabled: bool,
+    /// Enables new verified thread-following writes.
+    pub thread_contract_writes_enabled: bool,
+    /// Supported relay ingestion platforms, independently of native connection setup.
+    pub platforms: Vec<RelayPlatformCapability>,
+}
+/// Relay verification choices for one messaging platform.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayPlatformCapability {
+    /// Stable platform identifier.
+    pub id: String,
+    /// Display name.
+    pub label: String,
+    /// Supported verification choices, not a delivery-health attestation.
+    pub verification_modes: Vec<RelayVerificationCapability>,
+}
+/// A supported relay verification mode and its authoring availability.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayVerificationCapability {
+    /// native_event, raw_event or trusted_normalized; future identifiers are retained.
+    pub id: String,
+    /// Whether new writes selecting this mode are accepted.
+    pub writes_enabled: bool,
 }

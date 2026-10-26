@@ -97,8 +97,10 @@ impl App {
         let tracker = TurnTracker::new(http::readiness::Readiness::initialized());
         let (delivery, receiver) = mpsc::channel(16);
         let state = ToolsState {
+            whatsapp_templates_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: ChannelResolver::new(
                 Arc::new(records.clone()),
                 keys.clone(),

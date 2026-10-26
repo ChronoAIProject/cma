@@ -48,11 +48,11 @@ fn verified_relay_sources_are_an_explicit_compatible_management_opt_in() {
         validate_create_request(&serde_json::from_value(body.clone()).unwrap()).unwrap();
         let error = build(body.clone()).unwrap_err();
         assert_eq!(error.pointer, "/sources/0/verify_raw_event");
-        assert_eq!(error.message, "dynamic_sources_disabled");
+        assert_eq!(error.message, "relay_raw_verification_writes_disabled");
         let parsed = build_with_flags(
             body.clone(),
             WriteFlags {
-                dynamic_sources: true,
+                relay_raw_verification: true,
                 ..Default::default()
             },
         )
@@ -419,7 +419,7 @@ async fn verified_sources_are_refused_before_provider_effects_until_all_readers_
         let problem: serde_json::Value = response.json().await.unwrap();
         assert_eq!(
             problem["detail"],
-            "/sources/0/verify_raw_event: dynamic_sources_disabled"
+            "/sources/0/verify_raw_event: relay_raw_verification_writes_disabled"
         );
     }
     assert!(provider.requests().is_empty());

@@ -12,17 +12,21 @@
 //! sees the write, so a refused write reports exactly the error it got
 //! before readers widened and never touches the provider.
 use cmaeg_core::{
-    channel::{ChannelDefinition, Extensions, PartitionRule, RoutingPolicy, Secret, Source},
+    channel::{
+        ChannelDefinition, Extensions, PartitionRule, Platform, RoutingPolicy, Secret, Source,
+    },
     ids::ConsumerId,
     ValidationError,
 };
 
 /// The refusal of a legacy-valid write that still introduces a source extension.
 pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";
+/// Refusal of new or changed raw-event verification sources.
+pub const RELAY_RAW_VERIFICATION_DISABLED: &str = "relay_raw_verification_writes_disabled";
 /// The refusal of a write that introduces or modifies routing.
 pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 
-/// Flags that admit writes of new stored shapes. All false until the flags exist.
+/// Flags that admit writes of new stored shapes. Default off until explicitly enabled.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
     /// Admits explicit native bot mention opt-ins after all readers support them.
@@ -33,6 +37,8 @@ pub struct WriteFlags {
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
     pub dynamic_sources: bool,
+    /// Admits Discord/WhatsApp raw verification without enabling dynamic topology.
+    pub relay_raw_verification: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -80,6 +86,24 @@ pub(crate) fn check(
             "native_bot_mentions_writes_disabled",
         ));
     }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                verify_raw_event: true,
+                ..
+            }
+        )
+    }) {
+        if !flags.relay_raw_verification
+            && !current.is_some_and(|old| SourceExtension::of(old) == SourceExtension::of(next))
+        {
+            return Err(ValidationError::new(
+                format!("/sources/{index}/verify_raw_event"),
+                RELAY_RAW_VERIFICATION_DISABLED,
+            ));
+        }
+    }
     let extensions = Extensions::of(next);
     if extensions.legacy_compatible() {
         return Ok(());
@@ -88,7 +112,7 @@ pub(crate) fn check(
         current.is_some_and(|current| carries_through(current, next, Extension::Sources));
     let carried_routing =
         current.is_some_and(|current| carries_through(current, next, Extension::Routing));
-    let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
+    let sources = !dynamic_sources(next) || flags.dynamic_sources || carried_sources;
     let routing = !extensions.routing || flags.multi_consumer || carried_routing;
     if sources && routing {
         if carried_sources || carried_routing {
@@ -103,30 +127,8 @@ pub(crate) fn check(
     let error = if !sources {
         match next.validate_legacy() {
             Err(error) => error,
-            // Both fields are accepted by current validation but unreadable
-            // by an image that predates their introduction.
-            Ok(()) if next.partition.custom_key.is_some() => {
-                ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED)
-            }
-            Ok(()) => {
-                let index = next
-                    .sources
-                    .iter()
-                    .position(|source| {
-                        matches!(
-                            source,
-                            Source::NyxidRelay {
-                                verify_raw_event: true,
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap_or(0);
-                ValidationError::new(
-                    format!("/sources/{index}/verify_raw_event"),
-                    DYNAMIC_SOURCES_DISABLED,
-                )
-            }
+            // This optional partition shape is independent from raw verification.
+            Ok(()) => ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED),
         }
     } else if next.routing.is_some() {
         ValidationError::new("/routing", MULTI_CONSUMER_DISABLED)
@@ -141,6 +143,30 @@ pub(crate) fn check(
         "channel write refused by the write gate"
     );
     Err(error)
+}
+
+fn dynamic_sources(definition: &ChannelDefinition) -> bool {
+    definition.validate_legacy_sources_and_partition().is_err()
+        || definition.partition.custom_key.is_some()
+}
+fn without_relay_verification(sources: &[Source]) -> Vec<Source> {
+    sources
+        .iter()
+        .cloned()
+        .map(|mut source| {
+            if let Source::NyxidRelay {
+                platform: Platform::Discord | Platform::Whatsapp,
+                verify_raw_event,
+                trust_normalized,
+                ..
+            } = &mut source
+            {
+                *verify_raw_event = false;
+                *trust_normalized = false;
+            }
+            source
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -158,7 +184,20 @@ fn carries_through(
     let extensions = Extensions::of(current);
     match extension {
         Extension::Sources => {
-            extensions.sources && SourceExtension::of(current) == SourceExtension::of(next)
+            if !dynamic_sources(current) {
+                return false;
+            }
+            // A raw-only opt-in can preserve an existing broader source topology;
+            // its separate gate above still checks exact records when disabled.
+            let old_sources = without_relay_verification(&current.sources);
+            let new_sources = without_relay_verification(&next.sources);
+            SourceExtension {
+                sources: &old_sources,
+                ..SourceExtension::of(current)
+            } == SourceExtension {
+                sources: &new_sources,
+                ..SourceExtension::of(next)
+            }
         }
         Extension::Routing => {
             extensions.routing && RoutingExtension::of(current) == RoutingExtension::of(next)
@@ -214,3 +253,7 @@ impl<'a> SourceExtension<'a> {
 #[cfg(test)]
 #[path = "write_gate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "raw_verification_tests.rs"]
+mod raw_verification_tests;

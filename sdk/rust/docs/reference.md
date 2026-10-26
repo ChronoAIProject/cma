@@ -173,6 +173,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        whatsapp_template: None,
         native_attachments: None,
         thread_reply: None,
         text: Some("Received".into()), blocks: None, reply_to: None,
@@ -303,3 +304,42 @@ The optional token on read/comment calls goes only in
 `create_link` accepts a caller-generated random 256-bit lowercase hex token;
 returned metadata never includes it. Keep share tokens out of logs and URL
 queries. Link access alone never exposes a user's registry inventory.
+
+## Gateway native cards and relay authoring
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Disabled, threaded and non-default-consumer contexts
+retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.
+
+### Approved WhatsApp templates
+
+Approved WhatsApp templates use the optional `whatsapp_template` field on
+`OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
+before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the bounded
+name/language and positional text parameters. Templates are exclusive of ordinary
+text, blocks, native attachments and thread/reply targets. They reuse the event's
+authorized recipient, cannot be edited, and do not enable interactive callbacks
+or initiated sends. Templates must already be approved in the WhatsApp account;
+see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
+ordinary message behavior. An unknown receipt must not be retried automatically.
+
+### Relay authoring capabilities
+
+`get_channel_capabilities` also returns optional `relay_authoring`: relay platform verification
+modes and their `writes_enabled` status, plus independent raw-verification,
+dynamic-source, multi-consumer, native-mention and thread-contract writer gates.
+The existing `platforms` list remains native connection setup (Telegram only).
+Absent metadata means older discovery, not permission to opt into raw
+verification. Retain saved settings without silently switching to normalized
+trust. These capabilities do not attest upstream transport health or provide
+NyxID bot provisioning. Cache per authenticated owner context, not globally;
+the server still validates every write.

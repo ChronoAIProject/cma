@@ -220,8 +220,58 @@ async fn admit_callback(
         Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
+    if crate::interactions::lark::supported(platform) {
+        if let Some(callback) = &facts.callback {
+            let Some(store) = &state.interactions else {
+                return Err(refuse(Refusal::InteractiveActionUnsupported));
+            };
+            let kind = match store
+                .lark_context(
+                    &channel,
+                    platform,
+                    &verified.payload.conversation.id,
+                    &verified.payload.sender.platform_id,
+                    &verified.payload.conversation.platform_id,
+                    &callback.message_id,
+                    &callback.data,
+                )
+                .await
+            {
+                Ok(kind) => kind,
+                Err(crate::interactions::Error::Denied) => {
+                    return Err(refuse(Refusal::InteractionExpiredOrInvalid))
+                }
+                Err(crate::interactions::Error::Unavailable) => {
+                    return Err(problem(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        ProblemCode::ProviderUnavailable,
+                        "interaction_store_unavailable",
+                    ))
+                }
+            };
+            // The provider omits chat_type on normal card callbacks. A retained
+            // exact card supplies it; an explicit conflicting claim is invalid.
+            if verified
+                .payload
+                .raw_platform_data
+                .as_ref()
+                .and_then(|raw| raw.pointer("/event/context/chat_type"))
+                .is_some()
+                && facts.conversation != kind
+            {
+                return Err(reject(VerificationError("lark_callback_invalid")));
+            }
+            facts.conversation = kind;
+        }
+    }
     let mut selected_admission = std::borrow::Cow::Borrowed(admission);
-    if let Some(contract) = &channel.definition.reply.thread_contract {
+    if let Some(contract) = channel
+        .definition
+        .reply
+        .thread_contract
+        .as_ref()
+        .filter(|_| facts.callback.is_none())
+    {
         if let cmaeg_core::channel::Source::NyxidRelay {
             bot_id: Some(bot_id),
             platform: cmaeg_core::channel::Platform::Lark | cmaeg_core::channel::Platform::Feishu,

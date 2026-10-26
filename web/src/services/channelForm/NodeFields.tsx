@@ -1,3 +1,5 @@
+import type { Denied } from '../client';
+import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { Button } from '../../ui/Button';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { CredentialsFields } from './CredentialsFields';
@@ -13,6 +15,7 @@ export function NodeFields({
   section,
   create,
   sourceCount,
+  denied,
 }: {
   draft: Fields;
   onChange: (v: Fields) => void;
@@ -21,6 +24,7 @@ export function NodeFields({
   section: EditorSection;
   create: boolean;
   sourceCount: number;
+  denied: Denied;
 }) {
   const sources = records(draft.sources);
   if (!create && section.kind === 'producer' && section.index === sources.length)
@@ -30,7 +34,10 @@ export function NodeFields({
   return (
     <>
       {create || section.kind === 'channel' ? (
-        <ChannelPolicyFields value={draft} onChange={onChange} />
+        <ChannelPolicyFields value={draft} onChange={onChange} hideConnection={create} />
+      ) : null}
+      {create ? (
+        <ManagedConnectionFields value={draft} onChange={onChange} denied={denied} />
       ) : null}
       {create || section.kind === 'producer'
         ? sources.map((source, index) =>
@@ -80,7 +87,7 @@ export function NodeFields({
             ) : null,
           )
         : null}
-      {create ? (
+      {create && draft.connection_ref === undefined ? (
         <Button
           disabled={sources.length >= 4}
           onClick={() => set('sources', [...sources, defaultSource('custom')])}
@@ -104,7 +111,7 @@ export function NodeFields({
             value={credentials}
             onChange={onCredentials}
             keys={
-              create
+              create && draft.connection_ref === undefined
                 ? ['agent_key', 'channel_key', 'telegram_bot_token', 'telegram_webhook_secret']
                 : ['agent_key']
             }

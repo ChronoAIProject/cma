@@ -1,4 +1,6 @@
 import { Button } from '../../ui/Button';
+import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
+import { RelaySetupGuidance } from './RelaySetupGuidance';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, Section, StringList, TextField, Toggle } from './Fields';
 import { object, optional, strings, without, type Fields } from './model';
@@ -11,6 +13,13 @@ export function SourceFields({
   value: Fields;
   onChange: (v: Fields) => void;
 }) {
+  const discovery = useRelayCapabilities();
+  const rawUnavailable = modeUnavailable(discovery, String(value.platform), 'raw_event');
+  const trustedUnavailable = modeUnavailable(
+    discovery,
+    String(value.platform),
+    'trusted_normalized',
+  );
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
   if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
   if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
@@ -28,12 +37,21 @@ export function SourceFields({
             <Choice
               label="Messaging platform"
               value={value.platform}
-              options={platforms}
+              options={platforms.map((platform) => ({
+                value: platform,
+                label: platform,
+                ...(discovery.authoring &&
+                !discovery.authoring.platforms.some((v) => v.id === platform)
+                  ? { unavailable: 'Not supported by this gateway.' }
+                  : {}),
+              }))}
               onChange={(platform) => {
                 const updated = {
                   ...value,
                   platform,
-                  ...(['discord', 'whatsapp'].includes(platform) && !value.trust_normalized
+                  ...(['discord', 'whatsapp'].includes(platform) &&
+                  !value.trust_normalized &&
+                  !modeUnavailable(discovery, platform, 'raw_event')
                     ? { verify_raw_event: true }
                     : {}),
                 };
@@ -70,15 +88,24 @@ export function SourceFields({
               <Choice
                 label="Incoming message verification"
                 value={
-                  value.verify_raw_event
-                    ? 'verified'
-                    : value.trust_normalized
-                      ? 'trusted'
-                      : 'refuse'
+                  value.verify_raw_event ? 'verified' : value.trust_normalized ? 'trusted' : ''
                 }
                 options={[
-                  { value: 'verified', label: 'Verify original platform event' },
-                  { value: 'trusted', label: 'Trust normalized NyxID messages' },
+                  {
+                    value: '',
+                    label: 'Choose verification',
+                    unavailable: 'Select an explicit policy.',
+                  },
+                  {
+                    value: 'verified',
+                    label: 'Verify original platform event',
+                    unavailable: rawUnavailable,
+                  },
+                  {
+                    value: 'trusted',
+                    label: 'Trust normalized NyxID messages',
+                    unavailable: trustedUnavailable,
+                  },
                 ]}
                 onChange={(mode) =>
                   onChange({
@@ -93,9 +120,25 @@ export function SourceFields({
               <Toggle
                 label="Trust normalized NyxID messages"
                 value={value.trust_normalized}
+                disabled={Boolean(trustedUnavailable) && value.trust_normalized !== true}
                 onChange={(v) => set('trust_normalized', v)}
               />
             ) : null}
+            <RelayDiscoveryNotice />
+            {value.verify_raw_event === true && rawUnavailable ? (
+              <p className="channel-field-hint">
+                The saved or drafted raw verification setting is retained. This gateway must enable
+                writes before it can be added or changed; there is no automatic switch to normalized
+                trust.
+              </p>
+            ) : null}
+            {value.trust_normalized === true ? (
+              <p className="channel-field-hint">
+                This explicitly trusts NyxID's normalized message fields instead of checking the
+                original platform event.
+              </p>
+            ) : null}
+            <RelaySetupGuidance platform={String(value.platform)} />
           </>
         ) : null}
         <TextField

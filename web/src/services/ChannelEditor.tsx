@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
+import { useRelayCapabilities } from './RelayCapabilities';
+import { validateRelayAuthoring } from './channelForm/relayAuthoring';
 import { NodeFields, nodeCredentials } from './channelForm/NodeFields';
 import {
   ConsumerPolicyFields,
@@ -82,6 +84,7 @@ export function ChannelEditor({
   readonly onDone: (channel?: Channel) => void;
   readonly denied: Denied;
 }) {
+  const discovery = useRelayCapabilities();
   const [baseline, setBaseline] = useState(channel);
   const [draft, setDraft] = useState(() => channelDraft(channel, ownerSubject));
   const [routing, setRouting] = useState(() =>
@@ -145,6 +148,13 @@ export function ChannelEditor({
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
       const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      if (kind === 'channel')
+        validateRelayAuthoring(
+          discovery,
+          projected,
+          baseline ? channelDraft(baseline) : undefined,
+          baseline ? nodeCredentials(credentials, section) : credentials,
+        );
       const body =
         kind === 'routing'
           ? {
@@ -229,6 +239,7 @@ export function ChannelEditor({
               section={section}
               create={create}
               sourceCount={baseline?.definition.sources.length ?? 0}
+              denied={denied}
             />
           </fieldset>
           {!pending ? (

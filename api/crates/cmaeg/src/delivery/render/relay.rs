@@ -62,7 +62,13 @@ fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, 
         blocks: vec![],
     };
     for (index, block) in message.blocks.iter().enumerate() {
-        let (text, degradation) = render_block(block, capabilities.buttons == "inline_keyboard");
+        let (text, degradation) = render_block(
+            block,
+            matches!(
+                capabilities.buttons.as_str(),
+                "inline_keyboard" | "native_card"
+            ),
+        );
         if !text.is_empty() {
             sections.push(text);
         }
@@ -79,7 +85,10 @@ fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, 
         });
     }
     (
-        if sections.is_empty() && message.native_attachments.is_empty() {
+        if sections.is_empty()
+            && message.native_attachments.is_empty()
+            && message.whatsapp_template.is_none()
+        {
             "Choose an option".into()
         } else {
             sections.join("\n\n")

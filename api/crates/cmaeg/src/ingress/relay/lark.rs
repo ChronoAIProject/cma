@@ -35,6 +35,9 @@ pub fn observe(
     else {
         return Ok(Observation::Refused(Refusal::UnknownSender));
     };
+    if raw.pointer("/header/event_type").and_then(Value::as_str) == Some("card.action.trigger") {
+        return super::lark_callback::observe(payload, raw);
+    }
     if raw.pointer("/header/event_type").and_then(Value::as_str) != Some(MESSAGE_EVENT) {
         return Ok(Observation::Refused(Refusal::SystemEvent));
     }

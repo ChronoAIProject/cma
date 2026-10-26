@@ -179,6 +179,7 @@ it('reopens a legacy record only with its original channel ID and rejects an unr
   expect(fetcher.mock.calls.every(([, init]) => init?.method === undefined)).toBe(true);
   expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
     '/api/event-gateway/v1/channels',
+    '/api/event-gateway/v1/channel-capabilities',
     '/api/event-gateway/v1/channel-records/Legacy-record',
     '/api/event-gateway/v1/channels/Wrong-channel',
     '/api/event-gateway/v1/channels/Legacy-channel',
@@ -203,5 +204,5 @@ it('recovers legacy endpoints automatically when the original creation record is
   await select('Recovered');
   expect(await screen.findByLabelText('Channel name')).toBeEnabled();
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
