@@ -74,6 +74,11 @@ across the current and previous six UTC days; the encrypted byte budget may
 retain fewer. `has_more=true` explicitly indicates truncation. This is recent
 operational activity, not a complete audit history.
 
+Native Discord receipts become visible after durable inbox persistence, before
+dispatch capacity or provider execution. Inbox recovery preserves that original
+receipt time, including when the reply capability has expired; recording the
+receipt never renews the capability or starts expired work.
+
 For live updates, connect to
 `GET /v1/channels/{channel_id}/activity/stream`. Each SSE `activity` event carries
 a complete replacement snapshot with the same shape; its `id` is the opaque
@@ -86,7 +91,9 @@ immediately. While connected, a one-second server-side consistency refresh also
 observes commits from another Gateway process during rolling deployment; unchanged
 cursors do not emit duplicate activity frames. The refresh interval excludes
 record/authentication latency and does not replace normal immediate notifications.
-No client polling is required.
+With the configured Gateway-owned Mongo store, unchanged refreshes use one indexed
+metadata query for the seven bucket versions, plus the channel ownership check;
+they do not load or decrypt the complete snapshots. No client polling is required.
 
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs
