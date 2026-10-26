@@ -2,6 +2,42 @@ use super::{test_support::*, *};
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn first_replay_includes_event_zero_until_its_delivery_is_acknowledged() {
+    let setup = Setup::new(supported()).await;
+    let DispatchOutcome::Replay {
+        mut lease,
+        response_id,
+        durable_cursor,
+        ..
+    } = setup.dispatch().await.unwrap()
+    else {
+        panic!("accepted")
+    };
+    assert_eq!(durable_cursor, None);
+    setup.journal().release(&mut lease).await.unwrap();
+    let DispatchOutcome::Replay {
+        mut lease,
+        durable_cursor,
+        ..
+    } = setup.dispatch().await.unwrap()
+    else {
+        panic!("replay")
+    };
+    assert_eq!(durable_cursor, None);
+    setup
+        .journal()
+        .acknowledge_delivery(&mut lease, &response_id, 0)
+        .await
+        .unwrap();
+    setup.journal().release(&mut lease).await.unwrap();
+    let DispatchOutcome::Replay { durable_cursor, .. } = setup.dispatch().await.unwrap() else {
+        panic!("replay")
+    };
+    assert_eq!(durable_cursor, Some(0));
+    assert_eq!(setup.port.starts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn interrupted_start_stays_unknown_without_proven_exact_body_idempotency() {
     let setup = Setup::new(RecoverySupport {
         exact_body_idempotency: false,
@@ -74,7 +110,7 @@ async fn accepted_restart_replays_original_response_and_cursor_without_posting_a
         panic!("replay")
     };
     assert_eq!(restored, response_id);
-    assert_eq!(durable_cursor, 7);
+    assert_eq!(durable_cursor, Some(7));
     assert_eq!(
         super::storage::bytes(&body).unwrap(),
         super::storage::bytes(&replayed).unwrap()
@@ -90,7 +126,7 @@ async fn accepted_restart_replays_original_response_and_cursor_without_posting_a
     assert!(matches!(
         setup.dispatch().await.unwrap(),
         DispatchOutcome::Terminal(Phase::Completed {
-            durable_cursor: 7,
+            durable_cursor: Some(7),
             ..
         })
     ));

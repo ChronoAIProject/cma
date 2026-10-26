@@ -72,7 +72,7 @@ pub enum DispatchOutcome {
         lease: Box<Lease>,
         body: Box<FrozenTurn>,
         response_id: String,
-        durable_cursor: u64,
+        durable_cursor: Option<u64>,
     },
     Unknown,
     Retry,
@@ -247,7 +247,7 @@ impl Dispatcher {
                         lease,
                         Phase::Accepted {
                             response_id: response_id.clone(),
-                            durable_cursor: 0,
+                            durable_cursor: None,
                         },
                     )
                     .await?;
@@ -255,7 +255,7 @@ impl Dispatcher {
                     Ok(RunResult::Replay {
                         body: Box::new(body),
                         response_id,
-                        durable_cursor: 0,
+                        durable_cursor: None,
                     })
                 } else {
                     Err(ExecutionError::Unsupported)
@@ -281,7 +281,7 @@ enum RunResult {
     Replay {
         body: Box<FrozenTurn>,
         response_id: String,
-        durable_cursor: u64,
+        durable_cursor: Option<u64>,
     },
     Done(DispatchOutcome),
 }
