@@ -176,6 +176,7 @@ applies with all media flags off.**
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. No threaded or named-consumer cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2185,6 +2186,41 @@ chat or stale revision is refused, duplicate delivery creates no second provider
 turn, and two chats with equal platform message IDs edit their exact own message.
 Neither transport acknowledgment nor a confirmed card send proves child-bot
 provisioning succeeded; verify the provider's creation receipt separately.
+
+## Lark and Feishu card rollout
+
+Keep `CMAEG_LARK_CARDS_ENABLED=false` through the reader deployment. This preserves
+existing numbered-text replies and does not alter Telegram cards. Enable it only
+after every gateway reader supports the optional `lark` identity in sealed
+interaction records and the deployed NyxID relay accepts `metadata.card` for
+sends/edits and authenticated `card.action.trigger` callbacks. The upstream
+adapter contract is present in production NyxID `d102570afaab`; the same source
+blobs are present in fetched main `2ab239cecbda8`. Source compatibility does not
+prove a real bot's event subscription, scopes or actual platform rendering.
+
+Before activation, use an explicitly authorized test chat to verify a choice,
+replacement and link; restart a gateway between displaying and clicking a card.
+Verify private callbacks without `chat_type`, current chat/sender/group revocation,
+another actor, a copied message and stale revision. A single successful click
+must have one stable event ID and provider idempotency key across redelivery.
+Test both Lark and Feishu bot configurations before claiming both work live.
+No upstream deployment or new upstream feature is required by this CMA change.
+
+Disabling the gate stops new issuance; retained current cards still resolve and
+edit. Their records keep the normal 24-hour expiry and original expiry across
+replacement. Keep compatible readers and encryption keys until all issued Lark
+cards expire. A rollback that removes the callback reader before expiry abandons
+those controls. Existing Telegram record bytes and callback IDs are unchanged.
+
+Cards are limited to 4,000 displayed text characters, 100 elements/actions and
+28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
+cannot combine native media or a native thread reply. Thread contexts and named
+consumers are refused because the existing callback contract does not retain
+thread evidence or route non-default consumer clicks. Native forms are not
+advertised; their fields stay plain text. Image URLs in a card become an explicit
+link with a degraded rendering report; they are never invented platform image
+handles. A malformed/lost edit receipt stays unknown, and an old revision remains
+fenced even if its replacement is not confirmed.
 
 ## Coordinated complete-reply rollout
 

@@ -586,3 +586,15 @@ never appended to a URL. The caller generates a random 256-bit token for
 `createLink` and keeps it in the application URL fragment. CMA returns link
 metadata without the token. Revocation is effective on subsequent source reads,
 including downloads that were in progress when authority was revoked.
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Disabled, threaded and non-default-consumer contexts
+retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.

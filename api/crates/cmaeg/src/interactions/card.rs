@@ -1,5 +1,7 @@
 //! Interaction card records, their click and destination facts, and callback decoding.
 use cmaeg_core::{
+    activity::ConversationKind,
+    channel::Platform,
     ids::{ChannelId, ConsumerId, EventId, MessageRef},
     message::OutboundMessage,
 };
@@ -28,6 +30,14 @@ pub struct Card {
     /// names a consumer is sealed under kind `ic`, never `in`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumer: Option<ConsumerId>,
+    /// Absent on all legacy/Telegram records. New issuance is rollout-gated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lark: Option<LarkIdentity>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LarkIdentity {
+    pub platform: Platform,
+    pub conversation: ConversationKind,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Destination {
@@ -60,16 +70,30 @@ pub(super) struct Action {
 pub(super) fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
-pub(super) fn decode(value: &str) -> Result<(String, usize), Error> {
+pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error> {
     if value.len() > 64 {
         return Err(Error::Denied);
     }
     let mut parts = value.split(':');
-    if parts.next() != Some("ce1") {
+    let kind = parts.next();
+    if !matches!(kind, Some("ce1" | "cl1")) {
         return Err(Error::Denied);
     }
     let id =
         uuid::Uuid::parse_str(parts.next().ok_or(Error::Denied)?).map_err(|_| Error::Denied)?;
+    let revision = if kind == Some("cl1") {
+        Some(
+            parts
+                .next()
+                .ok_or(Error::Denied)?
+                .parse::<u64>()
+                .ok()
+                .filter(|v| *v > 0)
+                .ok_or(Error::Denied)?,
+        )
+    } else {
+        None
+    };
     let index = parts
         .next()
         .ok_or(Error::Denied)?
@@ -78,5 +102,5 @@ pub(super) fn decode(value: &str) -> Result<(String, usize), Error> {
     if id.get_version_num() != 4 || parts.next().is_some() {
         return Err(Error::Denied);
     }
-    Ok((id.to_string(), index))
+    Ok((id.to_string(), index, revision))
 }

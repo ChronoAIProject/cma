@@ -71,6 +71,8 @@ data:
   CMAEG_NYXID_NATIVE_MEDIA_ENABLED: "false"
   # Enable only after all gateway replicas can read enriched relay message references.
   CMAEG_RELAY_TEXT_EDITS_ENABLED: "false"
+  # Enable new Lark/Feishu cards only after every interaction reader is upgraded.
+  CMAEG_LARK_CARDS_ENABLED: "false"
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."

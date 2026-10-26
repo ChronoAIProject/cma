@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 mod card;
 mod keyboard;
+pub(crate) mod lark;
 
 pub use card::*;
 pub use keyboard::has_controls;
@@ -100,7 +101,20 @@ impl InteractionStore {
             );
             return Err(Error::Denied);
         }
-        if card.id != id || card.expires_at <= now() {
+        if card.id != id
+            || card.expires_at <= now()
+            || card.lark.as_ref().is_some_and(|identity| {
+                !lark::supported(identity.platform)
+                    || card.consumer.is_some()
+                    || card.thread.is_some()
+                    || card.revision == 0
+                    || !matches!(
+                        identity.conversation,
+                        cmaeg_core::activity::ConversationKind::Private
+                            | cmaeg_core::activity::ConversationKind::Group
+                    )
+            })
+        {
             return Err(Error::Denied);
         }
         Ok((card, value.version))
@@ -140,7 +154,24 @@ impl InteractionStore {
             } => crate::telegram::route(bot_id, chat_id),
             _ => return Err(Error::Denied),
         };
+        let lark = match &event.reply {
+            ReplyAddress::NyxidRelay { platform, .. } if lark::supported(*platform) => {
+                if event.consumer.is_some()
+                    || context.activity.actor.kind != cmaeg_core::activity::ActorKind::Human
+                    || context.activity.conversation.thread_id.is_some()
+                    || context.activity.thread.is_some()
+                {
+                    return Err(Error::Denied);
+                }
+                Some(LarkIdentity {
+                    platform: *platform,
+                    conversation: context.activity.conversation.kind,
+                })
+            }
+            _ => None,
+        };
         let card = Card {
+            lark,
             id: uuid::Uuid::new_v4().to_string(),
             owner: channel.definition.owner.subject.clone(),
             channel_id: channel.id.clone(),
@@ -160,7 +191,7 @@ impl InteractionStore {
             // its exact stored bytes.
             consumer: event.consumer.clone(),
         };
-        let markup = keyboard(&card)?;
+        let markup = markup(&card)?;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
             card,
@@ -222,6 +253,13 @@ impl InteractionStore {
         {
             return Err(Error::Denied);
         }
+        if old.lark.is_some() {
+            lark::render(
+                message,
+                &old.id,
+                old.revision.checked_add(1).ok_or(Error::Denied)?,
+            )?;
+        }
         // Fence old buttons before changing an external message. Uncertain edits cannot revive them.
         old.superseded = true;
         self.save(&old, Some(version)).await?;
@@ -233,7 +271,7 @@ impl InteractionStore {
         card.consumed = None;
         card.reference = None;
         card.message = message.clone();
-        let markup = keyboard(&card)?;
+        let markup = markup(&card)?;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
             card,
@@ -258,10 +296,22 @@ impl InteractionStore {
         platform_message_id: &str,
         admit: &Admit,
     ) -> Result<(InteractionResult, String), Error> {
-        let (id, index) = decode(data)?;
+        let (id, index, revision) = decode(data)?;
         for _ in 0..2 {
             let (mut card, version) = self.load(&id).await?;
+            let lark_matches = match &card.lark {
+                Some(lark) => {
+                    revision == Some(card.revision)
+                        && matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if platform == lark.platform)
+                        && activity.conversation.kind == lark.conversation
+                }
+                None => {
+                    revision.is_none()
+                        && !matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if lark::supported(platform))
+                }
+            };
             if card.channel_id != channel.id
+                || !lark_matches
                 || card.route_id != route
                 || card.actor != activity.actor.id
                 || card.chat != activity.conversation.id
@@ -332,5 +382,13 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         self.reference(&card)
+    }
+}
+
+fn markup(card: &Card) -> Result<serde_json::Value, Error> {
+    if card.lark.is_some() {
+        lark::markup(card)
+    } else {
+        keyboard(card)
     }
 }

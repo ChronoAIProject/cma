@@ -141,6 +141,7 @@ impl Fixture {
             advertise_public_api_url: true,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             media: None,
             downloads: Default::default(),
         };

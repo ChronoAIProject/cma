@@ -303,3 +303,15 @@ The optional token on read/comment calls goes only in
 `create_link` accepts a caller-generated random 256-bit lowercase hex token;
 returned metadata never includes it. Keep share tokens out of logs and URL
 queries. Link access alone never exposes a user's registry inventory.
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Disabled, threaded and non-default-consumer contexts
+retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.

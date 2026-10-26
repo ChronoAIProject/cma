@@ -2,6 +2,7 @@
 mod media;
 pub use media::supported as native_media_supported;
 mod edit;
+mod lark;
 
 use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
@@ -106,6 +107,7 @@ pub struct RelayClient {
     complete_replies: bool,
     native_media: bool,
     text_edits: bool,
+    lark_cards: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -115,6 +117,14 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Gate new card issuance until every reader understands retained Lark cards.
+    pub fn with_lark_cards(mut self, enabled: bool) -> Self {
+        self.lark_cards = enabled;
+        self
+    }
+    pub(super) fn lark_cards_enabled(&self) -> bool {
+        self.lark_cards
+    }
     /// Issue enriched text references only after every gateway reader supports them.
     /// Retained references remain editable when issuance is disabled again.
     pub fn with_text_edits(mut self, enabled: bool) -> Self {
@@ -174,6 +184,7 @@ impl RelayClient {
             complete_replies: false,
             native_media: false,
             text_edits: false,
+            lark_cards: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })

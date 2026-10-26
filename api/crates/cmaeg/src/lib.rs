@@ -135,8 +135,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let complete_replies = config::nyxid_complete_replies_from_env()?;
     let native_media = config::nyxid_native_media_from_env()?;
     let relay_text_edits = config::relay_text_edits_from_env()?;
+    let lark_cards = config::lark_cards_from_env()?;
     let config = Config::from_env()?;
-    serve::serve(config, complete_replies, native_media, relay_text_edits).await
+    serve::serve(
+        config,
+        complete_replies,
+        native_media,
+        relay_text_edits,
+        lark_cards,
+    )
+    .await
 }
 
 /// Replace Rust's default panic hook, which prints the panic payload to

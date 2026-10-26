@@ -25,6 +25,8 @@ pub struct ToolsState {
     pub native_media_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
+    /// Native Lark/Feishu card issuance after compatible readers are deployed.
+    pub lark_cards_enabled: bool,
     pub resolver: ChannelResolver,
     pub keys: Arc<MasterKeyRing>,
     pub providers: Arc<ProviderClient>,
