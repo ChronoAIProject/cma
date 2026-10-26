@@ -1,4 +1,5 @@
-use super::{tests::fixture, types::RETENTION_SECONDS, PlanStore};
+use super::{types::RETENTION_SECONDS, PlanStore};
+use crate::ingress::routing_plan::fixture;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -121,11 +122,7 @@ async fn write(
     let Ok(blob) = STANDARD.decode(input.blob) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    if input.expected_version.is_some()
-        || blob.len() > 65536
-        || input.expires_at <= now
-        || input.expires_at > now + RETENTION_SECONDS
-    {
+    if blob.len() > 65536 || input.expires_at <= now || input.expires_at > now + RETENTION_SECONDS {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let fault = {
@@ -139,21 +136,28 @@ async fn write(
     if fault.as_ref().is_some_and(|fault| !fault.store) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    {
+    let version = {
         let mut rows = state.rows.lock().unwrap();
-        if rows.contains_key(&id) {
-            return (StatusCode::CONFLICT, Json(json!({"actual":1}))).into_response();
+        let actual = rows.get(&id).map(|row| row.version);
+        if actual != input.expected_version {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"actual":actual.unwrap_or(0)})),
+            )
+                .into_response();
         }
+        let version = actual.unwrap_or(0) + 1;
         rows.insert(
             id,
             Row {
                 owner: input.owner,
                 blob,
                 expiry: input.expires_at,
-                version: 1,
+                version,
             },
         );
-    }
+        version
+    };
     state.writes.fetch_add(1, Ordering::SeqCst);
     if let Some(fault) = fault {
         if fault.lose_read {
@@ -161,7 +165,7 @@ async fn write(
         }
         StatusCode::SERVICE_UNAVAILABLE.into_response()
     } else {
-        Json(json!({"version":1})).into_response()
+        Json(json!({"version":version})).into_response()
     }
 }
 async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {

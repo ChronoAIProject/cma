@@ -7,6 +7,7 @@ pub mod outcomes;
 mod projection;
 pub mod render_input;
 pub mod render_media;
+pub mod routed;
 pub mod runner;
 pub mod sequencer;
 pub mod tracker;

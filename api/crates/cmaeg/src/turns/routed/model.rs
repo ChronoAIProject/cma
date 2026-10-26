@@ -1,0 +1,210 @@
+use crate::{
+    ingress::routing_store::{AdmittedPlan, StoredTarget},
+    providers::EventContextSnapshot,
+};
+use cmaeg_core::{
+    channel::{ReplyChoice, ReplyPolicy},
+    ids::{ConsumerId, ConversationId, IdempotencyKey},
+    seal::{EventRef, MasterKeyRing, ReplyAddress},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
+
+pub(super) const KIND: &str = "ordinary_route_execution_v1";
+pub(super) const BODY_KIND: &str = "ordinary_route_execution_body_v1";
+pub(super) const MAX_BODY: usize = 1024 * 1024;
+pub(super) const BODY_CHUNK: usize = 24 * 1024;
+pub(super) const LEASE_SECONDS: i64 = 30;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecutionError {
+    Invalid,
+    Unavailable,
+    Uncertain,
+    Corrupt,
+    LostLease,
+    Busy,
+    Expired,
+    AuthorityChanged,
+    Unsupported,
+}
+
+/// Capabilities proved against the configured provider, not inferred from a slug.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecoverySupport {
+    pub exact_body_idempotency: bool,
+    pub response_replay: bool,
+}
+
+/// Exact provider body fields. Credentials are injected only at the call site.
+/// No Debug implementation: input and event context can contain private data.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenTurn {
+    pub conversation_id: ConversationId,
+    pub idempotency_key: IdempotencyKey,
+    pub input: Vec<Value>,
+    pub metadata: BTreeMap<String, String>,
+    pub event_context: EventContextSnapshot,
+    pub delivery: FrozenDelivery,
+}
+
+/// Reply presentation and policy are frozen with the provider request. The
+/// event reference carries the exact destination authority; credentials are
+/// always fetched separately. No platform send is authorized by this value.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenDelivery {
+    pub consumer: ConsumerId,
+    pub label: String,
+    pub auto_final: bool,
+    pub destination: ReplyChoice,
+    pub policy: ReplyPolicy,
+}
+impl FrozenTurn {
+    /// The canonical Responses request bytes, excluding the credential and the
+    /// separately transmitted idempotency key. Adapters must send these fields
+    /// unchanged; delivery policy is a local journal field, never provider input.
+    pub fn provider_body(&self) -> Vec<u8> {
+        cmaeg_core::profile::canonical_json(serde_json::json!({
+            "conversation":self.conversation_id,"stream":true,"input":self.input,
+            "metadata":self.metadata,"event_context":self.event_context,
+        }))
+        .into_bytes()
+    }
+    pub fn event_ref(
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        keys: &MasterKeyRing,
+    ) -> Result<EventRef, ExecutionError> {
+        EventRef::seal(&delivery_event(plan, target), keys).map_err(|_| ExecutionError::Invalid)
+    }
+    pub(super) fn validate(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        keys: &MasterKeyRing,
+        now: i64,
+    ) -> Result<(), ExecutionError> {
+        let opened = self
+            .event_context
+            .event_ref
+            .open(keys, now)
+            .map_err(|_| ExecutionError::Expired)?
+            .payload;
+        if self.conversation_id != target.launch.event.conversation_id
+            || self.idempotency_key != target.launch.idempotency_key
+            || self.event_context.channel_id != plan.identity.channel_id
+            || self.event_context.conversation_id != self.conversation_id
+            || self.event_context.activity != plan.activity
+            || self.delivery.consumer != target.launch.consumer
+            || self.delivery.label.is_empty()
+            || self.delivery.label.len() > 256
+            || opened != delivery_event(plan, target)
+            || self.event_context.validate().is_err()
+            || self.input.is_empty()
+            || serde_json::to_vec(&self.input)
+                .map_err(|_| ExecutionError::Invalid)?
+                .len()
+                > 256 * 1024
+            || self.metadata.len() > 16
+            || self
+                .metadata
+                .iter()
+                .any(|(key, value)| key.len() > 64 || value.len() > 512)
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        Ok(())
+    }
+}
+fn delivery_event(plan: &AdmittedPlan, target: &StoredTarget) -> cmaeg_core::seal::EventRefPayload {
+    let mut event = target.launch.event.clone();
+    if plan
+        .targets
+        .first()
+        .is_some_and(|primary| primary.id != target.id)
+        && matches!(event.reply, ReplyAddress::Sync { .. })
+    {
+        event.reply = ReplyAddress::None;
+    }
+    event
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state", deny_unknown_fields)]
+pub enum Phase {
+    Pending,
+    Prepared,
+    Starting,
+    Unknown,
+    Accepted {
+        response_id: String,
+        durable_cursor: u64,
+    },
+    Completed {
+        response_id: String,
+        durable_cursor: u64,
+    },
+    Refused {
+        code: String,
+    },
+}
+impl Phase {
+    pub fn terminal(&self) -> bool {
+        matches!(self, Self::Completed { .. } | Self::Refused { .. })
+    }
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BodyReference {
+    pub hash: String,
+    pub len: usize,
+    pub chunks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Ownership {
+    pub worker: String,
+    pub claim: String,
+    pub epoch: u64,
+    pub until: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetState {
+    pub(super) kind: String,
+    pub id: String,
+    pub root: String,
+    pub owner: String,
+    pub request_hash: String,
+    pub retained_until: i64,
+    pub event_expires_at: i64,
+    pub phase: Phase,
+    pub(super) body: Option<BodyReference>,
+    pub(super) ownership: Ownership,
+    #[serde(skip)]
+    pub version: u64,
+}
+impl std::fmt::Debug for TargetState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TargetState")
+            .field("id", &self.id)
+            .field("phase", &self.phase)
+            .field("version", &self.version)
+            .finish()
+    }
+}
+
+/// An opaque local ownership receipt. Every mutation rechecks its CAS version.
+pub struct Lease {
+    pub(super) state: TargetState,
+}
+impl Lease {
+    pub fn state(&self) -> &TargetState {
+        &self.state
+    }
+}
