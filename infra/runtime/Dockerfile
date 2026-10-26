@@ -199,7 +199,7 @@ ARG NPM_VERSION=12.0.2
 ARG BRACE_EXPANSION_VERSION=5.0.12
 ARG IP_ADDRESS_VERSION=10.3.1
 ARG TAR_VERSION=7.5.21
-ARG UNDICI_VERSION=6.28.1
+ARG UNDICI_VERSION=6.29.1
 RUN set -eux; \
     npm install -g "npm@${NPM_VERSION}"; \
     bundled=/usr/local/lib/node_modules/npm/node_modules; \
