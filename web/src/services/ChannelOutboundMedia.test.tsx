@@ -183,6 +183,39 @@ it('keeps saved media review and status access when both write gates disappear',
   ).toHaveLength(1);
 });
 
+it.each([
+  [false, true],
+  [true, false],
+  [false, false],
+])(
+  'recovers a lost preparation with media gate %s and outbound gate %s without permitting send',
+  async (media, outbound) => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(new TypeError('lost preparation response'))
+      .mockResolvedValueOnce(json(receipt(), 201))
+      .mockResolvedValueOnce(json(receipt('cancelled')));
+    vi.stubGlobal('fetch', fetch);
+    const mounted = render(content(true));
+    add('https://media.example/original?version=reviewed');
+    fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+    await screen.findByText('lost preparation response');
+    mounted.unmount();
+    render(content(media, outbound));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Check saved request' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Check saved request' }));
+    expect(await screen.findByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(fetch.mock.calls[1]![1]!.body).toBe(fetch.mock.calls[0]![1]!.body);
+    expect(fetch.mock.calls[1]![1]!.headers).toEqual(fetch.mock.calls[0]![1]!.headers);
+    expect(screen.getByRole('button', { name: 'Check delivery status' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await screen.findByText('Cancelled before sending.');
+    expect(fetch.mock.calls.map((call) => call[1]!.method)).toEqual(['POST', 'POST', 'DELETE']);
+    expect(fetch.mock.calls.every((call) => !String(call[0]).endsWith('/send'))).toBe(true);
+  },
+);
+
 it('hides unavailable media composition without changing ordinary text review', () => {
   const mounted = render(content());
   expect(screen.queryByRole('button', { name: 'Add media attachment' })).not.toBeInTheDocument();

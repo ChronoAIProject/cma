@@ -3521,3 +3521,7 @@ review, cancellation and status requests retain the normal short budget. Reuse
 the existing Presence notice transition and reduced-motion behavior.
 
 | 2026-10-26 | Add typed URL-based native media to initiated channel messages with up to four image/file/audio/video entries, explicit review/send, media-only support, validation and exact versioned recovery. Preserve saved media and status access when write capabilities change. |
+
+| 2026-10-26 | Keep Check saved request available after an uncertain initiated-message preparation when either write capability disappears. Recover only the retained exact request; new review and Send remain gated, while recovered status and cancellation stay available. |
+
+| 2026-10-26 | Return an initiated-message draft to editing after a definite first HTTP 413 preparation rejection. Preserve any earlier uncertain request and its key when a recovery attempt receives the same rejection. |
