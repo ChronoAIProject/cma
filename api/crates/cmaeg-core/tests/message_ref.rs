@@ -15,6 +15,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
     .seal_id(keys)
     .unwrap();
     MessageRefPayload {
+        telegram_effect: None,
         channel_id,
         event_id: "event-1".parse().unwrap(),
         platform_message_id: "platform-message-1".into(),

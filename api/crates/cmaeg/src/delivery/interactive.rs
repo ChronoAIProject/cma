@@ -6,19 +6,83 @@ use super::{
     render::{RelayText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
-use crate::tools::Capabilities;
+use crate::{providers::EventContextSnapshot, tools::Capabilities};
 use cmaeg_core::{
-    channel::Platform,
+    activity::ActorKind,
+    channel::{Platform, Source},
     message::OutboundMessage,
     seal::{EventRefPayload, ReplyAddress},
 };
 
 impl Sender {
+    /// Native controls are an optional rendering of legacy structured replies.
+    /// Check eligibility before the send commit point; a valid but ineligible
+    /// context keeps its prior text rendering and exact reply destination.
+    pub(super) async fn relay_control_context(
+        &self,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
+    ) -> Result<Option<EventContextSnapshot>, crate::interactions::Error> {
+        if (event.consumer.is_some() && !self.relay.consumer_interactions_enabled())
+            || event.lineage.is_some()
+            || event.activity_sha256.is_none()
+            || ctx.channel.definition.secrets.channel_key.is_none()
+            || matches!(
+                event.reply,
+                ReplyAddress::NyxidRelay {
+                    thread_reply: true,
+                    ..
+                }
+            )
+        {
+            return Ok(None);
+        }
+        if let ReplyAddress::NyxidRelay {
+            platform: Platform::Whatsapp,
+            route_id,
+            ..
+        } = &event.reply
+        {
+            if !matches!(
+                ctx.channel.definition.relay_source_for_route(route_id),
+                Some(Source::NyxidRelay {
+                    verify_raw_event: true,
+                    ..
+                })
+            ) {
+                return Ok(None);
+            }
+        }
+        let Some(store) = &self.relay.interactions else {
+            return Ok(None);
+        };
+        let context = store.event_context(ctx.channel, event).await?;
+        if !crate::interactions::owner::eligible(ctx.channel, event, &context.activity) {
+            return Err(crate::interactions::Error::Denied);
+        }
+        let eligible = match event.reply {
+            ReplyAddress::NyxidRelay {
+                platform: Platform::Whatsapp,
+                ..
+            } => crate::interactions::whatsapp::eligible(ctx.channel, event, &context.activity),
+            ReplyAddress::NyxidRelay { platform, .. }
+                if crate::interactions::lark::supported(platform) =>
+            {
+                context.activity.actor.kind == ActorKind::Human
+                    && context.activity.conversation.thread_id.is_none()
+                    && context.activity.thread.is_none()
+            }
+            _ => false,
+        };
+        Ok(eligible.then_some(context))
+    }
+
     pub(super) async fn interactive_reply(
         &self,
         ctx: &SendContext<'_>,
         event: &EventRefPayload,
         message: &OutboundMessage,
+        context: Option<EventContextSnapshot>,
     ) -> (IntentReceipt, SendEffects) {
         let mut effects = SendEffects {
             first_send_done: ctx.first_send_done,
@@ -87,7 +151,15 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
-        let mut prepared = match store.prepare(ctx.channel, event, message).await {
+        let preparation = match context {
+            Some(context) => {
+                store
+                    .prepare_with_context(ctx.channel, event, message, context)
+                    .await
+            }
+            None => store.prepare(ctx.channel, event, message).await,
+        };
+        let mut prepared = match preparation {
             Ok(p) => p,
             Err(_) => return (rejected("interaction_state_unavailable"), effects),
         };

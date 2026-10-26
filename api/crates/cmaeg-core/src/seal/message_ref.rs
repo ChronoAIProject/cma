@@ -9,6 +9,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
+    /// Optional authority for new native Telegram delete/reaction tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_effect: Option<super::TelegramEffectAuthority>,
     pub channel_id: ChannelId,
     pub event_id: EventId,
     pub platform_message_id: String,
@@ -26,6 +29,21 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(effect) = &self.telegram_effect {
+            effect.validate()?;
+            if self.relay_message.is_some()
+                || self.route_id != format!("telegram:{}:{}", effect.bot_id, effect.chat_id)
+                || !self
+                    .platform_message_id
+                    .parse::<i64>()
+                    .is_ok_and(|n| n > 0 && n.to_string() == self.platform_message_id)
+            {
+                return Err(ValidationError::new(
+                    "/telegram_effect",
+                    "native confirmed message required",
+                ));
+            }
+        }
         require_string(&self.platform_message_id, "/platform_message_id", 1, 512)?;
         require_string(&self.route_id, "/route_id", 1, 512)?;
         if let Some(destination) = &self.relay_message {

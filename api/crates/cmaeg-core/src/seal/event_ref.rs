@@ -16,6 +16,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EventRefPayload {
+    /// Authenticated native Telegram admission evidence; absent before the reader rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_admission: Option<super::TelegramAdmissionProof>,
     pub v: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_sha256: Option<String>,
@@ -324,6 +327,18 @@ impl EventRefPayload {
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(proof) = &self.telegram_admission {
+            proof.validate()?;
+            if self.activity_sha256.is_none()
+                || !matches!(self.reply, ReplyAddress::Telegram { .. })
+                || self.lineage.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/telegram_admission",
+                    "native event required",
+                ));
+            }
+        }
         if self.activity_sha256.as_ref().is_some_and(|d| {
             d.len() != 64
                 || !d

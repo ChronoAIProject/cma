@@ -8,6 +8,7 @@ pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIO
 pub const CMAEG_WHATSAPP_INTERACTIONS_ENABLED: &str = "CMAEG_WHATSAPP_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
+pub const CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED";
 pub const CMAEG_ACK_TEXT: &str = "CMAEG_ACK_TEXT";
 pub const CMAEG_HEARTBEAT_MS: &str = "CMAEG_HEARTBEAT_MS";
 pub const CMAEG_FAILURE_TEXT: &str = "CMAEG_FAILURE_TEXT";
@@ -93,6 +94,18 @@ fn whatsapp_templates(value: Result<String, env::VarError>) -> Result<bool, Conf
 pub(crate) fn lark_cards_from_env() -> Result<bool, ConfigError> {
     lark_cards(env::var(CMAEG_LARK_CARDS_ENABLED))
 }
+pub(crate) fn telegram_message_effects_from_env() -> Result<bool, ConfigError> {
+    telegram_effects(env::var(CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED))
+}
+fn telegram_effects(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
+    match value.as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(env::VarError::NotPresent) => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED} must be true or false"),
+        }),
+    }
+}
 fn lark_cards(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
     match value.as_deref() {
         Ok("true") => Ok(true),
@@ -157,6 +170,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_effect_issuance_requires_explicit_reader_rollout() {
+        assert!(!telegram_effects(Err(env::VarError::NotPresent)).unwrap());
+        assert!(!telegram_effects(Ok("false".into())).unwrap());
+        assert!(telegram_effects(Ok("true".into())).unwrap());
+        for value in ["", "TRUE", "1", " true "] {
+            assert!(telegram_effects(Ok(value.into())).is_err());
+        }
+    }
     #[test]
     fn templates_require_explicit_relay_attestation() {
         assert!(!whatsapp_templates(Err(env::VarError::NotPresent)).unwrap());
