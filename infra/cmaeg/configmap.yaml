@@ -10,6 +10,7 @@ data:
   # Enable new native-thread policies only after all readers and NyxID support them.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "false"
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "false"
+  CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "false"
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"
   CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "false"
   CMAEG_MONGODB_DATABASE: "chrono-bot"

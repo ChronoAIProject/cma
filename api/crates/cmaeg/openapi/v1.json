@@ -1387,10 +1387,22 @@
       "CapabilityView": {
         "properties": {
           "platforms": {
+            "description": "Native connection setup workflows; separate from NyxID relay ingestion.",
             "items": {
               "$ref": "#/components/schemas/PlatformCapability"
             },
             "type": "array"
+          },
+          "relay_authoring": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelayAuthoringCapabilities",
+                "description": "Additive relay authoring discovery; older gateways omit this field."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_features": {
             "items": {
@@ -3800,6 +3812,40 @@
         ],
         "type": "object"
       },
+      "RelayAuthoringCapabilities": {
+        "properties": {
+          "dynamic_sources_writes_enabled": {
+            "type": "boolean"
+          },
+          "multi_consumer_writes_enabled": {
+            "type": "boolean"
+          },
+          "native_bot_mentions_writes_enabled": {
+            "type": "boolean"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/RelayPlatformCapability"
+            },
+            "type": "array"
+          },
+          "relay_raw_verification_writes_enabled": {
+            "type": "boolean"
+          },
+          "thread_contract_writes_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dynamic_sources_writes_enabled",
+          "relay_raw_verification_writes_enabled",
+          "multi_consumer_writes_enabled",
+          "native_bot_mentions_writes_enabled",
+          "thread_contract_writes_enabled",
+          "platforms"
+        ],
+        "type": "object"
+      },
       "RelayContent": {
         "additionalProperties": false,
         "properties": {
@@ -3844,6 +3890,28 @@
         ],
         "type": "object"
       },
+      "RelayPlatformCapability": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "verification_modes": {
+            "items": {
+              "$ref": "#/components/schemas/RelayVerificationCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "verification_modes"
+        ],
+        "type": "object"
+      },
       "RelaySender": {
         "additionalProperties": false,
         "properties": {
@@ -3859,6 +3927,23 @@
         },
         "required": [
           "platform_id"
+        ],
+        "type": "object"
+      },
+      "RelayVerificationCapability": {
+        "properties": {
+          "id": {
+            "description": "native_event, raw_event or trusted_normalized. Not a delivery-health claim.",
+            "type": "string"
+          },
+          "writes_enabled": {
+            "description": "Whether this deployment accepts new writes selecting this mode.\nExisting exact settings may be retained even while this is false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "writes_enabled"
         ],
         "type": "object"
       },

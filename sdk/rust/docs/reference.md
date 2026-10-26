@@ -327,3 +327,14 @@ authorized recipient, cannot be edited, and do not enable interactive callbacks
 or initiated sends. Templates must already be approved in the WhatsApp account;
 see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
 ordinary message behavior. An unknown receipt must not be retried automatically.
+
+
+`get_channel_capabilities` also returns optional `relay_authoring`: relay platform verification
+modes and their `writes_enabled` status, plus independent raw-verification,
+dynamic-source, multi-consumer, native-mention and thread-contract writer gates.
+The existing `platforms` list remains native connection setup (Telegram only).
+Absent metadata means older discovery, not permission to opt into raw
+verification. Retain saved settings without silently switching to normalized
+trust. These capabilities do not attest upstream transport health or provide
+NyxID bot provisioning. Cache per authenticated owner context, not globally;
+the server still validates every write.

@@ -770,7 +770,9 @@ uses `bot_username` and only Lark/Feishu use `bot_id` as addressing evidence;
 elsewhere they are retained descriptions. `trust_normalized` defaults to false
 and is omitted from stored definitions while false. Slack still requires `trust_normalized:true`. Discord and WhatsApp may instead
 select `verify_raw_event:true`; the two options are mutually exclusive. Raw
-verification is a new stored shape gated by `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED`.
+verification is a new stored shape gated independently by
+`CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED`; it does not require or enable
+dynamic source topology.
 Other platforms refuse both explicit trust and this new verifier option. Creating or updating a Discord or WhatsApp source without either verification mode, or a Slack source without `trust_normalized:true`, fails fast with 400 `invalid_request` at `/sources/<n>/trust_normalized`,
 so no channel is stored that would refuse every message; a creator that
 receives this refusal should keep the bot on another delivery path. Unknown
@@ -2861,3 +2863,52 @@ gate. One logical reply makes one relay request. A missing platform receipt,
 transport failure or 429 is `unknown` and is never automatically retried: the
 platform may have accepted the message. Ordinary messages that omit the field
 retain their existing serialized form and behavior.
+
+### Relay authoring discovery and setup
+
+Authenticated `GET /v1/channel-capabilities` now includes optional
+`relay_authoring`. The existing `platforms` array still describes **native
+connection setup workflows (Telegram only)**. The separate relay platform list
+advertises supported ingestion verification modes: `native_event` for
+Telegram/Lark/Feishu, `raw_event` and explicit `trusted_normalized` for
+Discord/WhatsApp, and `trusted_normalized` for Slack. Each mode has
+`writes_enabled`; this describes new authoring, not upstream transport health,
+ordinary-message delivery, or bot provisioning.
+
+`relay_raw_verification_writes_enabled` is independent of
+`dynamic_sources_writes_enabled`, `multi_consumer_writes_enabled`,
+`native_bot_mentions_writes_enabled`, and `thread_contract_writes_enabled`.
+The dedicated default-off `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` flag
+admits raw-event verification after every active reader and rollback target can
+read it, without enabling additional source topology or partition extensions.
+When disabled, existing exact sources, partition and credentials can be retained
+through unrelated writes; new or changed raw sources receive
+`relay_raw_verification_writes_disabled`. A disabled broader gate still refuses
+new dynamic source/partition shapes. The server remains authoritative if flags
+change after discovery.
+
+Older gateways may omit `relay_authoring` or return 404 for discovery. Clients
+must retain saved/draft settings, refuse new unconfirmed raw opt-ins, and never
+substitute normalized trust automatically. Explicitly selected legacy trust
+remains distinct. The portal loads capabilities once per owner/permission
+context, shares them across retained editors and navigation, and offers an
+explicit retry after failure; it does not poll.
+
+NyxID owns bot and route setup. Its owner-authenticated public channel-bot and
+conversation APIs are separate from CMA's connection references. The current
+CMA gateway authenticator retains verified identity, not a reusable owner
+bearer for those APIs; the portal therefore gives platform-specific setup
+instructions rather than inventing an authenticated NyxID proxy or promising
+Discord/WhatsApp bot creation. Owners supply their exact issuer, signing key ID,
+route IDs and channel key, then configure the route with the saved channel's
+NyxID callback endpoint. Credentials stay in secret fields.
+
+The creation form can list existing **CMA-managed Telegram connections** via
+owner-fenced `GET /v1/channel-connections`, with explicit pagination and no
+polling. It selects a ready reference and explicit admission; the server also
+checks ownership, organization and whether another channel already bound it.
+Manual source/credential drafts survive switching this option on and off;
+managed create sends empty sources and omits manual platform credentials.
+New admission starts with an empty sender allowlist, never a silent all-senders
+grant. Creating a new connection still requires an admitted originating event
+and its agent authorization through the existing public workflow.
