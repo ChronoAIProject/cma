@@ -154,3 +154,66 @@ async fn outbound_gate_preserves_reads_and_cancel_and_refuses_new_preparations()
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn initiated_template_headers_and_body_are_preserved_and_private_links_refused() {
+    let f = Fixture::new(Platform::Whatsapp).await;
+    let value = json!({"whatsapp_template":{"name":"invoice","language":{"code":"en_US"},"components":[
+        {"type":"header","parameters":[{"type":"video","video":{"link":"https://media.example/clip.mp4"}}]},
+        {"type":"body","parameters":[{"type":"currency","currency":{"fallback_value":"USD 10","code":"USD","amount_1000":10000}},{"type":"date_time","date_time":{"fallback_value":"Tomorrow"}}]}
+    ]}});
+    let request = PrepareOutboundMessage {
+        source_id: SourceId::parse("relay_whatsapp").unwrap(),
+        route_id: ROUTE.into(),
+        message: serde_json::from_value(value.clone()).unwrap(),
+    };
+    let receipt = outbound::prepare(
+        &f.state,
+        &owner(),
+        &f.channel,
+        "rich-template",
+        request.clone(),
+    )
+    .await
+    .unwrap();
+    outbound::commit(
+        &f.state,
+        &owner(),
+        &f.channel,
+        &receipt.delivery_id,
+        request.message,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        f.probe.bodies.lock().unwrap()[0]["message"]["metadata"]["template"],
+        value["whatsapp_template"]
+    );
+    for (index, link) in [
+        "https://127.0.0.1/a",
+        "https://169.254.169.254/a",
+        "https://files.internal/a",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut value = value.clone();
+        value["whatsapp_template"]["components"][0]["parameters"][0]["video"]["link"] = json!(link);
+        let request = PrepareOutboundMessage {
+            source_id: SourceId::parse("relay_whatsapp").unwrap(),
+            route_id: ROUTE.into(),
+            message: serde_json::from_value(value).unwrap(),
+        };
+        assert!(outbound::prepare(
+            &f.state,
+            &owner(),
+            &f.channel,
+            &format!("private-{index}"),
+            request
+        )
+        .await
+        .is_err());
+    }
+    assert_eq!(f.probe.calls.load(Ordering::SeqCst), 1);
+    f.close().await;
+}

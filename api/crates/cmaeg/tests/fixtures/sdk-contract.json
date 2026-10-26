@@ -5367,6 +5367,42 @@
     {
       "type": "text",
       "text": "Order 42"
+    },
+    {
+      "type": "image",
+      "image": {
+        "id": null,
+        "link": "https://media.example/approved-header.png"
+      }
+    },
+    {
+      "type": "video",
+      "video": {
+        "id": null,
+        "link": "https://media.example/approved-header.png"
+      }
+    },
+    {
+      "type": "document",
+      "document": {
+        "id": "123456789",
+        "link": null,
+        "filename": "invoice.pdf"
+      }
+    },
+    {
+      "type": "currency",
+      "currency": {
+        "fallback_value": "USD 100.99",
+        "code": "USD",
+        "amount_1000": 100990
+      }
+    },
+    {
+      "type": "date_time",
+      "date_time": {
+        "fallback_value": "26 October 2026"
+      }
     }
   ],
   "WhatsappTemplateButtonType": [
@@ -5530,6 +5566,31 @@
         "outcome": "confirmed",
         "platform_message_id": "fixture"
       }
+    }
+  ],
+  "WhatsappTemplateMedia": [
+    {
+      "id": null,
+      "link": "https://media.example/approved-header.png"
+    }
+  ],
+  "WhatsappTemplateDocument": [
+    {
+      "id": "123456789",
+      "link": null,
+      "filename": "invoice.pdf"
+    }
+  ],
+  "WhatsappTemplateCurrency": [
+    {
+      "fallback_value": "USD 100.99",
+      "code": "USD",
+      "amount_1000": 100990
+    }
+  ],
+  "WhatsappTemplateDateTime": [
+    {
+      "fallback_value": "26 October 2026"
     }
   ]
 }

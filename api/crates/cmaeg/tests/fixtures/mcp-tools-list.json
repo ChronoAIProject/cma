@@ -566,7 +566,7 @@
             "type": "string"
           },
           "WhatsappTemplateComponent": {
-            "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
             "oneOf": [
               {
                 "properties": {
@@ -641,6 +641,83 @@
               }
             ]
           },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "WhatsappTemplateLanguage": {
             "additionalProperties": false,
             "properties": {
@@ -652,6 +729,30 @@
             "required": [
               "code"
             ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
             "type": "object"
           },
           "WhatsappTemplateParameter": {
@@ -670,6 +771,96 @@
                 },
                 "required": [
                   "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
                   "type"
                 ],
                 "type": "object"
@@ -1260,7 +1451,7 @@
             "type": "string"
           },
           "WhatsappTemplateComponent": {
-            "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
             "oneOf": [
               {
                 "properties": {
@@ -1335,6 +1526,83 @@
               }
             ]
           },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "WhatsappTemplateLanguage": {
             "additionalProperties": false,
             "properties": {
@@ -1346,6 +1614,30 @@
             "required": [
               "code"
             ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
             "type": "object"
           },
           "WhatsappTemplateParameter": {
@@ -1364,6 +1656,96 @@
                 },
                 "required": [
                   "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
                   "type"
                 ],
                 "type": "object"
@@ -1958,7 +2340,7 @@
             "type": "string"
           },
           "WhatsappTemplateComponent": {
-            "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
             "oneOf": [
               {
                 "properties": {
@@ -2033,6 +2415,83 @@
               }
             ]
           },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "WhatsappTemplateLanguage": {
             "additionalProperties": false,
             "properties": {
@@ -2044,6 +2503,30 @@
             "required": [
               "code"
             ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
             "type": "object"
           },
           "WhatsappTemplateParameter": {
@@ -2062,6 +2545,96 @@
                 },
                 "required": [
                   "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
                   "type"
                 ],
                 "type": "object"
@@ -2648,7 +3221,7 @@
             "type": "string"
           },
           "WhatsappTemplateComponent": {
-            "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
             "oneOf": [
               {
                 "properties": {
@@ -2723,6 +3296,83 @@
               }
             ]
           },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
           "WhatsappTemplateLanguage": {
             "additionalProperties": false,
             "properties": {
@@ -2734,6 +3384,30 @@
             "required": [
               "code"
             ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
             "type": "object"
           },
           "WhatsappTemplateParameter": {
@@ -2752,6 +3426,96 @@
                 },
                 "required": [
                   "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
                   "type"
                 ],
                 "type": "object"
