@@ -82,7 +82,7 @@ export function NodeFields({
         : null}
       {create ? (
         <Button
-          disabled={sources.length >= 8}
+          disabled={sources.length >= 4}
           onClick={() => set('sources', [...sources, defaultSource('custom')])}
         >
           Add producer
