@@ -2,6 +2,8 @@ use super::{positive_duration, ConfigError};
 use std::{env, time::Duration};
 pub const CMAEG_NYXID_REPLY_TIMEOUT_MS: &str = "CMAEG_NYXID_REPLY_TIMEOUT_MS";
 pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
+pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
+pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
 pub const CMAEG_ACK_TEXT: &str = "CMAEG_ACK_TEXT";
 pub const CMAEG_HEARTBEAT_MS: &str = "CMAEG_HEARTBEAT_MS";
 pub const CMAEG_FAILURE_TEXT: &str = "CMAEG_FAILURE_TEXT";
@@ -37,6 +39,34 @@ pub(crate) fn nyxid_complete_replies_from_env() -> Result<bool, ConfigError> {
     complete_replies(env::var(CMAEG_NYXID_COMPLETE_REPLIES))
 }
 
+pub(crate) fn nyxid_native_media_from_env() -> Result<bool, ConfigError> {
+    native_media(env::var(CMAEG_NYXID_NATIVE_MEDIA_ENABLED))
+}
+
+pub(crate) fn relay_text_edits_from_env() -> Result<bool, ConfigError> {
+    relay_text_edits(env::var(CMAEG_RELAY_TEXT_EDITS_ENABLED))
+}
+
+fn relay_text_edits(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
+    match value.as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(env::VarError::NotPresent) => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_RELAY_TEXT_EDITS_ENABLED} must be true or false"),
+        }),
+    }
+}
+
+fn native_media(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
+    match value.as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(env::VarError::NotPresent) => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_NYXID_NATIVE_MEDIA_ENABLED} must be true or false"),
+        }),
+    }
+}
+
 fn complete_replies(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
     match value.as_deref() {
         Ok("true") => Ok(true),
@@ -60,6 +90,28 @@ fn text(name: &'static str, default: String) -> Result<String, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_text_edits_require_explicit_reader_rollout_attestation() {
+        assert!(!relay_text_edits(Err(env::VarError::NotPresent)).unwrap());
+        assert!(!relay_text_edits(Ok("false".into())).unwrap());
+        assert!(relay_text_edits(Ok("true".into())).unwrap());
+        for value in ["", "TRUE", "1", " true "] {
+            assert!(relay_text_edits(Ok(value.into())).is_err());
+        }
+        assert!(relay_text_edits(Err(env::VarError::NotUnicode("invalid".into()))).is_err());
+    }
+
+    #[test]
+    fn native_media_requires_explicit_operator_attestation() {
+        assert!(!native_media(Err(env::VarError::NotPresent)).unwrap());
+        assert!(!native_media(Ok("false".into())).unwrap());
+        assert!(native_media(Ok("true".into())).unwrap());
+        for value in ["", "TRUE", "1", " true "] {
+            assert!(native_media(Ok(value.into())).is_err());
+        }
+        assert!(native_media(Err(env::VarError::NotUnicode("invalid".into()))).is_err());
+    }
 
     #[test]
     fn complete_replies_requires_explicit_operator_attestation() {

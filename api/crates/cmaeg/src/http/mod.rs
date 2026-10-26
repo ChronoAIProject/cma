@@ -1,6 +1,7 @@
 //! HTTP projections for CMAEG management operations.
 
 pub mod callbacks;
+pub mod channel_nodes;
 mod chat_dispatch;
 pub(crate) mod connection_browser;
 pub mod connections;

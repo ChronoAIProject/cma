@@ -173,6 +173,7 @@ fn source_view(source: &Source) -> SourceView {
             bot_username,
             bot_id,
             trust_normalized,
+            verify_raw_event,
             admission,
             ..
         } => SourceView {
@@ -188,6 +189,7 @@ fn source_view(source: &Source) -> SourceView {
             settings: trust_normalized
                 .then(|| "trusts normalized events".to_owned())
                 .into_iter()
+                .chain(verify_raw_event.then(|| "verifies raw platform events".to_owned()))
                 .collect(),
         },
         Source::Custom {

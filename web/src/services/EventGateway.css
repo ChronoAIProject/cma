@@ -100,11 +100,19 @@
 .gateway-content {
   min-width: 0;
 }
+.gateway-content.gateway-content {
+  max-width: 1440px;
+  width: 100%;
+}
 .gateway-detail,
 .gateway-empty {
   max-width: 1000px;
   margin: 0 auto;
   padding: var(--space-6);
+}
+.gateway-detail {
+  container-type: inline-size;
+  max-width: 1440px;
 }
 .gateway-detail[hidden] {
   display: none;

@@ -97,6 +97,8 @@ impl App {
         let tracker = TurnTracker::new(http::readiness::Readiness::initialized());
         let (delivery, receiver) = mpsc::channel(16);
         let state = ToolsState {
+            native_media_enabled: false,
+            relay_text_edits_enabled: false,
             resolver: ChannelResolver::new(
                 Arc::new(records.clone()),
                 keys.clone(),

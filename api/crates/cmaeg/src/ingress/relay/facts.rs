@@ -1,7 +1,7 @@
 //! Platform-neutral facts observed from an authenticated relay callback.
 use super::{
-    generic, lark, payload::CallbackPayload, telegram, telegram_media::MediaIngress,
-    VerificationError,
+    discord, generic, lark, payload::CallbackPayload, telegram, telegram_media::MediaIngress,
+    whatsapp, VerificationError,
 };
 use crate::ingress::admission::Refusal;
 use cmaeg_core::{
@@ -71,6 +71,7 @@ pub fn observe(
         bot_username,
         bot_id,
         trust_normalized,
+        verify_raw_event,
         admission,
         ..
     } = source
@@ -91,6 +92,10 @@ pub fn observe(
             admission.native_bot_mentions(),
             media_enabled,
         ),
+        Platform::Discord if *verify_raw_event => {
+            discord::observe(payload, bot_id.as_deref(), media_enabled)
+        }
+        Platform::Whatsapp if *verify_raw_event => whatsapp::observe(payload, media_enabled),
         Platform::Discord | Platform::Slack | Platform::Whatsapp if *trust_normalized => {
             generic::observe(payload)
         }

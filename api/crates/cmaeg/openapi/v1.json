@@ -1352,6 +1352,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "native_media": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaCapabilities",
+                "description": "Explicit native attachments, absent until the relay deployment is verified."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "typing": {
             "type": "boolean"
           }
@@ -1915,6 +1926,43 @@
         "description": "A consumer's chat name, `^[a-z][a-z0-9_-]{1,31}$`, unique per channel.\nNames are lowercase, so comparing two of them is exact.\n\nReserved: `all`, `everyone`, `here`, `to`, any `csm_` prefix, and\n`default`, which only the default consumer may use. The grammar is a\nproperty of the type; the reserved words are refused by the channel\nreaders, which know whether a name belongs to the default consumer and\ncan point at the offending field.",
         "pattern": "^[a-z][a-z0-9_-]{1,31}$",
         "type": "string"
+      },
+      "ConsumerPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
       },
       "ConsumerReply": {
         "additionalProperties": false,
@@ -2973,6 +3021,122 @@
         ],
         "type": "object"
       },
+      "NativeAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NativeMediaKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NativeMediaSource"
+          }
+        },
+        "required": [
+          "kind",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NativeMediaCapabilities": {
+        "properties": {
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_inline_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kinds",
+          "sources",
+          "max_attachments",
+          "max_inline_bytes"
+        ],
+        "type": "object"
+      },
+      "NativeMediaKind": {
+        "enum": [
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "type": "string"
+      },
+      "NativeMediaSource": {
+        "oneOf": [
+          {
+            "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "url"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+            "properties": {
+              "data": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "base64"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "NyxIdIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -3012,6 +3176,13 @@
           "blocks": {
             "items": {
               "$ref": "#/components/schemas/Block"
+            },
+            "type": "array"
+          },
+          "native_attachments": {
+            "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+            "items": {
+              "$ref": "#/components/schemas/NativeAttachment"
             },
             "type": "array"
           },
@@ -3849,6 +4020,67 @@
         ],
         "type": "object"
       },
+      "RoutingPolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "consumers": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerPolicyRequest"
+            },
+            "type": "array"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "max_targets": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
       "RoutingRule": {
         "additionalProperties": false,
         "description": "A rule: events matching `when` target `targets`.",
@@ -3870,6 +4102,24 @@
         "required": [
           "id",
           "targets"
+        ],
+        "type": "object"
+      },
+      "RoutingUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "routing": {
+            "$ref": "#/components/schemas/RoutingPolicyRequest"
+          }
+        },
+        "required": [
+          "expected_version",
+          "routing"
         ],
         "type": "object"
       },
@@ -4085,6 +4335,10 @@
                   "nyxid_relay"
                 ],
                 "type": "string"
+              },
+              "verify_raw_event": {
+                "description": "Verify Discord/WhatsApp raw facts; omitted on retained normalized sources.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -4134,6 +4388,67 @@
             "type": "object"
           }
         ]
+      },
+      "SourceCheck": {
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SourceCheckStatus"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "status",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceCheckResponse": {
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/SourceCheck"
+            },
+            "type": "array"
+          },
+          "external_delivery_tested": {
+            "type": "boolean"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "source_index": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_index",
+          "platform",
+          "scope",
+          "external_delivery_tested",
+          "checks"
+        ],
+        "type": "object"
+      },
+      "SourceCheckStatus": {
+        "enum": [
+          "passed",
+          "unavailable"
+        ],
+        "type": "string"
       },
       "SourceId": {
         "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
@@ -4271,6 +4586,10 @@
                   "nyxid_relay"
                 ],
                 "type": "string"
+              },
+              "verify_raw_event": {
+                "description": "Opt into verified Discord/WhatsApp facts without changing retained sources.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -5210,6 +5529,59 @@
         ]
       }
     },
+    "/channels/{channel_id}/consumers/{consumer_id}/test": {
+      "post": {
+        "operationId": "testChannelConsumer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "consumer_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/events": {
       "post": {
         "operationId": "receiveCustomEvent",
@@ -5469,6 +5841,115 @@
         "security": [
           {
             "serviceBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/routing": {
+      "put": {
+        "operationId": "updateChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/sources/{source_index}/test": {
+      "post": {
+        "operationId": "testChannelSource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source_index",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCheckResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
           }
         ],
         "tags": [

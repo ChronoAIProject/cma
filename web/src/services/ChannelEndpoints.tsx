@@ -18,7 +18,11 @@ const ENDPOINTS: readonly (readonly [Endpoint, string, string])[] = [
  * lost; when the clipboard refuses, the row selects the URL instead so the
  * address can still be copied by hand.
  */
-export function ChannelEndpoints({ endpoints }: { readonly endpoints: Channel['endpoints'] }) {
+export function ChannelEndpoints({
+  endpoints,
+}: {
+  readonly endpoints: Partial<Channel['endpoints']>;
+}) {
   // Visited channels stay mounted side by side, so the heading id is per instance.
   const heading = useId();
   return (

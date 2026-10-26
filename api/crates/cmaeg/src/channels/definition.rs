@@ -223,7 +223,7 @@ pub fn channel_pointer(
 /// Validate a definition a management write would store, replacing `current`
 /// (`None` for a create). The write gate runs first, so a write it refuses
 /// reports the legacy error it always has before any check below can answer.
-fn validate_definition(
+pub(super) fn validate_definition(
     current: Option<&ChannelDefinition>,
     definition: &ChannelDefinition,
     flags: WriteFlags,

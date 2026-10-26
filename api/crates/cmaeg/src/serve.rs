@@ -16,6 +16,8 @@ use crate::{
 pub(crate) async fn serve(
     config: Config,
     complete_replies: bool,
+    native_media: bool,
+    relay_text_edits: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -42,6 +44,8 @@ pub(crate) async fn serve(
     state.media_enabled = config.media.enabled;
     state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
+    state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
+    state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
@@ -61,6 +65,8 @@ pub(crate) async fn serve(
             config.delivery.reply_timeout,
         )?
         .with_complete_replies(complete_replies)
+        .with_native_media(native_media)
+        .with_text_edits(relay_text_edits)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -120,6 +126,8 @@ pub(crate) async fn serve(
     .with_media_enabled(config.media.enabled)
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        native_media_enabled: native_media,
+        relay_text_edits_enabled: relay_text_edits,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
         providers,
