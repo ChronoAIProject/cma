@@ -18,6 +18,8 @@ pub mod fake_provider;
 mod integration;
 #[path = "delivery/multi_relay_cards.rs"]
 mod multi_relay_cards;
+#[path = "delivery/native_media.rs"]
+mod native_media;
 #[path = "delivery/observations.rs"]
 mod observations;
 #[path = "delivery/platforms.rs"]
@@ -40,3 +42,6 @@ pub mod signer;
 mod support;
 #[path = "delivery/transport.rs"]
 mod transport;
+
+#[path = "delivery/relay_edits.rs"]
+mod relay_edits;

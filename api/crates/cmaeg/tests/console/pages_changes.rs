@@ -138,6 +138,7 @@ impl SourceChanges for RecordingSources {
                     bot_username,
                     bot_id,
                     trust_normalized,
+                    verify_raw_event,
                     admission,
                 } => Source::NyxidRelay {
                     jwks_url: format!("{issuer}/jwks"),
@@ -148,6 +149,7 @@ impl SourceChanges for RecordingSources {
                     bot_username,
                     bot_id,
                     trust_normalized,
+                    verify_raw_event,
                     admission,
                 },
                 SourceRequest::Custom {

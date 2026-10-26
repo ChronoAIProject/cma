@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
@@ -35,6 +35,18 @@ pub fn management_router(state: ManagementState) -> Router {
             get(get_channel).put(update_channel).delete(delete_channel),
         )
         .route("/v1/channels/{channel_id}/test", post(test_channel))
+        .route(
+            "/v1/channels/{channel_id}/sources/{source_index}/test",
+            post(super::channel_nodes::test_source),
+        )
+        .route(
+            "/v1/channels/{channel_id}/consumers/{consumer_id}/test",
+            post(super::channel_nodes::test_consumer),
+        )
+        .route(
+            "/v1/channels/{channel_id}/routing",
+            put(super::channel_nodes::update_routing),
+        )
         .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
         .with_state(state)
         .layer(axum::middleware::from_fn(protocol_headers))

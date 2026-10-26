@@ -21,6 +21,10 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    /// Advertise native relay media only after the deployed NyxID contract is verified.
+    pub native_media_enabled: bool,
+    /// Issue and advertise ordinary relay text edits after all readers are upgraded.
+    pub relay_text_edits_enabled: bool,
     pub resolver: ChannelResolver,
     pub keys: Arc<MasterKeyRing>,
     pub providers: Arc<ProviderClient>,
@@ -245,6 +249,7 @@ impl ToolsState {
             activity,
             true,
             inbound_media,
+            self,
         ))
     }
     pub(super) async fn deliver<T>(
@@ -252,6 +257,14 @@ impl ToolsState {
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
+        // Native media materialization and platform uploads share a bounded 60 s
+        // transport attempt. Existing text/typing/edit calls keep their 8 s budget.
+        let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. } if !message.native_attachments.is_empty())
+        {
+            Duration::from_secs(65)
+        } else {
+            Duration::from_secs(8)
+        };
         let (channel, event_id) = match &command {
             DeliveryCommand::Reply { channel, event, .. }
             | DeliveryCommand::Typing { channel, event, .. } => {
@@ -268,7 +281,7 @@ impl ToolsState {
         };
         let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel), event_id);
         tokio::time::timeout(
-            Duration::from_secs(8),
+            timeout,
             async {
                 self.delivery.submit(command).await.map_err(|_| {
                     Problem::new(ProblemCode::Internal, 503, "delivery_unavailable")

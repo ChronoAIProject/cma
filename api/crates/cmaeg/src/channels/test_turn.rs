@@ -6,7 +6,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
-    ids::{ChannelId, ConversationId, IdempotencyKey},
+    ids::{ChannelId, ConsumerId, ConversationId, IdempotencyKey},
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -26,11 +26,23 @@ pub async fn test_turn(
     creator: &Creator,
     channel_id: &ChannelId,
 ) -> Result<TestResult, ManagementError> {
+    test_consumer(state, creator, channel_id, None).await
+}
+
+pub async fn test_consumer(
+    state: &ManagementState,
+    creator: &Creator,
+    channel_id: &ChannelId,
+    consumer_id: Option<&ConsumerId>,
+) -> Result<TestResult, ManagementError> {
     // A new profile binding may still be creating its Agent. Readiness has one
     // bounded allowance; it must not consume the admitted turn's output budget.
-    let (stream, level) = tokio::time::timeout(STARTUP_TIMEOUT, start(state, creator, channel_id))
-        .await
-        .map_err(|_| unavailable("test provider startup timed out"))??;
+    let (stream, level) = tokio::time::timeout(
+        STARTUP_TIMEOUT,
+        start(state, creator, channel_id, consumer_id),
+    )
+    .await
+    .map_err(|_| unavailable("test provider startup timed out"))??;
     tokio::time::timeout(TURN_TIMEOUT, complete(stream, level))
         .await
         .map_err(|_| unavailable("test turn timed out"))?
@@ -40,23 +52,30 @@ async fn start(
     state: &ManagementState,
     creator: &Creator,
     channel_id: &ChannelId,
+    consumer_id: Option<&ConsumerId>,
 ) -> Result<(TurnStream, ConformanceLevel), ManagementError> {
     let current = load(state, creator, channel_id).await?;
     let definition = current.definition;
-    // The test turn verifies the binding management created: the default
-    // consumer's.
     let consumer = definition
-        .consumer(None)
-        .ok_or_else(|| unavailable("channel consumer is not configured"))?;
+        .consumer(consumer_id)
+        .filter(|consumer| !consumer.pending)
+        .ok_or(ManagementError::NotFound)?;
     let provider = consumer.provider;
     let credential = consumer
         .credential
         .ok_or_else(|| unavailable("channel provider credential is unavailable"))?;
+    // Keep the legacy default test partition and isolate every additional
+    // consumer's diagnostic conversation from it and ordinary user work.
+    let partition = if consumer.id.is_default() {
+        "test".into()
+    } else {
+        format!("test:consumer:{}", consumer.id)
+    };
     let conversation_id = ConversationId::derive(
         &state.master_keys,
         channel_id,
         definition.partition.version,
-        "test",
+        &partition,
     );
     state
         .providers

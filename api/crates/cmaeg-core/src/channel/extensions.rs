@@ -22,14 +22,24 @@ impl Extensions {
     /// routing: the definition carries a routing policy or consumer keys,
     /// neither of which an older image can parse.
     /// sources: the legacy source and partition rules refuse the definition,
-    /// or its partition carries `custom_key`, which an older image cannot parse.
+    /// or its partition carries `custom_key`, or a relay opts into raw-event
+    /// verification; older readers cannot parse either optional field.
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
             native_bot_mentions: def.sources.iter().any(super::Source::native_bot_mentions),
             thread_contract: def.reply.thread_contract.is_some(),
             routing: def.routing.is_some() || !def.secrets.consumer_keys.is_empty(),
             sources: def.validate_legacy_sources_and_partition().is_err()
-                || def.partition.custom_key.is_some(),
+                || def.partition.custom_key.is_some()
+                || def.sources.iter().any(|source| {
+                    matches!(
+                        source,
+                        super::Source::NyxidRelay {
+                            verify_raw_event: true,
+                            ..
+                        }
+                    )
+                }),
         }
     }
 

@@ -1,4 +1,8 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+mod media;
+pub use media::supported as native_media_supported;
+mod edit;
+
 use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
 use cmaeg_core::{channel::Secret, seal::ReplyAddress};
@@ -24,6 +28,7 @@ pub(super) struct PreparedReply {
     body: Vec<u8>,
     message_id: String,
     thread_reply: bool,
+    native_media: bool,
 }
 
 pub enum Credential<'a> {
@@ -99,6 +104,8 @@ pub struct RelayClient {
     endpoint: Url,
     timeout: Duration,
     complete_replies: bool,
+    native_media: bool,
+    text_edits: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -108,6 +115,23 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Issue enriched text references only after every gateway reader supports them.
+    /// Retained references remain editable when issuance is disabled again.
+    pub fn with_text_edits(mut self, enabled: bool) -> Self {
+        self.text_edits = enabled;
+        self
+    }
+    pub(super) fn text_edits_enabled(&self) -> bool {
+        self.text_edits
+    }
+    /// Attest that every deployed NyxID replica honors bounded native media replies.
+    pub fn with_native_media(mut self, enabled: bool) -> Self {
+        self.native_media = enabled;
+        self
+    }
+    pub(super) fn native_media_enabled(&self) -> bool {
+        self.native_media
+    }
     /// Select complete ordinary replies in the delivery engine. Enabling this
     /// attests that NyxID splits ordinary/thread replies without truncation and
     /// acknowledges only all-parts acceptance. Low-level sends keep their
@@ -148,6 +172,8 @@ impl RelayClient {
             endpoint,
             timeout,
             complete_replies: false,
+            native_media: false,
+            text_edits: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })
@@ -213,6 +239,7 @@ impl RelayClient {
             body,
             message_id: message_id.clone(),
             thread_reply: *thread_reply,
+            native_media: false,
         })
     }
     pub(super) async fn send_prepared(
@@ -224,42 +251,25 @@ impl RelayClient {
             Ok(secret) => secret,
             Err(outcome) => return (outcome, None),
         };
-        tokio::time::timeout(self.timeout, self.post_prepared(secret, prepared))
+        let timeout = if prepared.native_media {
+            Duration::from_secs(60)
+        } else {
+            self.timeout
+        };
+        let result = tokio::time::timeout(timeout, self.post_prepared(secret, prepared, timeout))
             .await
-            .unwrap_or_else(|_| (unknown("response_lost"), None))
-    }
-    pub async fn edit(
-        &self,
-        secret: &Secret,
-        destination: &crate::interactions::Destination,
-        text: &str,
-        markup: &serde_json::Value,
-    ) -> DeliveryOutcome {
-        let Ok(endpoint) = self.endpoint.join("reply/update") else {
-            return DeliveryOutcome::Unsupported;
-        };
-        let Some(headers) = headers(secret) else {
-            return unknown("edit_unconfirmed");
-        };
-        let Ok(body) = serde_json::to_vec(
-            &serde_json::json!({"message_id":destination.platform_id,"outbound_message_id":destination.outbound_id,"reply":{"text":text,"metadata":{"reply_markup":markup}}}),
-        ) else {
-            return unknown("edit_unconfirmed");
-        };
-        match self
-            .transport
-            .post(endpoint, headers, body, self.timeout)
-            .await
-        {
-            Ok(reply) if reply.status.is_success() => DeliveryOutcome::Confirmed {
-                platform_message_id: Some(destination.platform_id.clone()),
-            },
-            Ok(reply) if reply.status == StatusCode::TOO_MANY_REQUESTS => {
-                DeliveryOutcome::RateLimited {
-                    retry_after: retry_after(&reply.headers),
+            .unwrap_or_else(|_| (unknown("response_lost"), None));
+        if prepared.native_media
+            && matches!(
+                result.0,
+                DeliveryOutcome::Confirmed {
+                    platform_message_id: None
                 }
-            }
-            _ => unknown("edit_unconfirmed"),
+            )
+        {
+            (unknown("receipt_invalid"), None)
+        } else {
+            result
         }
     }
     async fn post(
@@ -276,13 +286,14 @@ impl RelayClient {
         let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
             return (unknown("response_lost"), None);
         };
-        self.post_serialized(message_id, headers, body, thread_reply)
+        self.post_serialized(message_id, headers, body, thread_reply, self.timeout)
             .await
     }
     async fn post_prepared(
         &self,
         secret: &Secret,
         prepared: &PreparedReply,
+        timeout: Duration,
     ) -> (DeliveryOutcome, Option<String>) {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
@@ -292,6 +303,7 @@ impl RelayClient {
             headers,
             prepared.body.clone(),
             prepared.thread_reply,
+            timeout,
         )
         .await
     }
@@ -301,17 +313,14 @@ impl RelayClient {
         headers: HeaderMap,
         body: Vec<u8>,
         thread_reply: bool,
+        timeout: Duration,
     ) -> (DeliveryOutcome, Option<String>) {
         let mut endpoint = self.endpoint.clone();
         if thread_reply {
             // Old NyxID replicas must fail before sending, never ignore the flag.
             endpoint.set_path("/api/v1/channel-relay/thread-reply");
         }
-        let reply = match self
-            .transport
-            .post(endpoint, headers, body, self.timeout)
-            .await
-        {
+        let reply = match self.transport.post(endpoint, headers, body, timeout).await {
             Ok(reply) => reply,
             Err(_) => return (unknown("response_lost"), None),
         };

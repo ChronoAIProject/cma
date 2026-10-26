@@ -386,3 +386,55 @@ async fn context_projects_the_routing_decision_of_a_routed_activity() {
     assert_eq!(value["activity_verified"], true);
     assert_eq!(value["activity"]["routing"], routing);
 }
+
+#[tokio::test]
+async fn ordinary_relay_edit_discovery_follows_rollout_in_read_and_verified_context() {
+    for platform in ["telegram", "lark", "feishu"] {
+        let mut app = App::on(platform).await;
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            format!("Bearer {}", app.key).parse().unwrap(),
+        );
+        for enabled in [false, true] {
+            app.state.relay_text_edits_enabled = enabled;
+            let read = app
+                .state
+                .context(AgentCaller::from_headers(&headers).unwrap(), &app.event_ref)
+                .await
+                .unwrap();
+            let verified = app
+                .state
+                .verify_context(
+                    AgentCaller::from_headers(&headers).unwrap(),
+                    &app.event_ref,
+                    app.activity.clone(),
+                )
+                .await
+                .unwrap();
+            let expected_edit = platform == "telegram"
+                || (enabled && matches!(platform, "lark" | "feishu" | "discord"));
+            let expected_limit = if enabled && platform == "discord" {
+                2000
+            } else {
+                4000
+            };
+            for context in [read, verified] {
+                assert_eq!(
+                    context.capabilities.edit, expected_edit,
+                    "{platform}, enabled={enabled}"
+                );
+                assert_eq!(context.capabilities.max_text_chars, expected_limit);
+                assert!(!context.capabilities.typing);
+                assert_eq!(
+                    context.capabilities.buttons,
+                    if platform == "telegram" {
+                        "inline_keyboard"
+                    } else {
+                        "numbered_text"
+                    }
+                );
+            }
+        }
+    }
+}

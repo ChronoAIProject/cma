@@ -6,8 +6,6 @@ mod clear;
 pub mod fake_cma;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
-#[path = "audit_routing/hygiene.rs"]
-mod hygiene;
 #[path = "golden/previous_schema.rs"]
 mod previous_schema;
 #[path = "audit_routing/report.rs"]

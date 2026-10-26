@@ -102,6 +102,8 @@ impl ConsumerGateway {
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
+            native_media_enabled: false,
+            relay_text_edits_enabled: false,
             resolver: state.resolver.clone(),
             keys,
             providers,

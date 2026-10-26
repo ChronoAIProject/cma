@@ -75,6 +75,7 @@ impl CustomDelivery {
                     event,
                     Some(text),
                     Some(&OutboundMessage {
+                        native_attachments: Vec::new(),
                         thread_reply: false,
                         text: Some(text.clone()),
                         blocks: vec![],
@@ -263,6 +264,7 @@ mod tests {
 
     fn message() -> OutboundMessage {
         OutboundMessage {
+            native_attachments: Vec::new(),
             thread_reply: false,
             text: Some("hello".into()),
             blocks: vec![],

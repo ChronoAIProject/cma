@@ -40,7 +40,7 @@ impl Sender {
             capabilities.buttons = "numbered_text".into();
         }
         let (part, rendering) = RelayText.whole(message, &capabilities);
-        if part.text.is_empty() {
+        if part.text.is_empty() && message.native_attachments.is_empty() {
             return (
                 refused(
                     rendering,
@@ -57,10 +57,11 @@ impl Sender {
         if let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut address {
             *thread_reply = message.thread_reply;
         }
-        let prepared = match RelayClient::prepare(&address, &part.text, None) {
-            Ok(prepared) => prepared,
-            Err(outcome) => return (refused(rendering, outcome), effects),
-        };
+        let prepared =
+            match RelayClient::prepare_native(&address, &part.text, &message.native_attachments) {
+                Ok(prepared) => prepared,
+                Err(outcome) => return (refused(rendering, outcome), effects),
+            };
         let _ticket = match ctx.gate.enter_route(route_id).await {
             Ok(ticket) => ticket,
             Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
@@ -109,7 +110,7 @@ impl Sender {
             );
         };
         effects.first_send_done = true;
-        let (mut delivery, _) = self.relay.send_prepared(credential, &prepared).await;
+        let (mut delivery, outbound) = self.relay.send_prepared(credential, &prepared).await;
         drop(permit);
         if let DeliveryOutcome::RateLimited { retry_after } = delivery {
             slot.cooldown(retry_after);
@@ -128,6 +129,11 @@ impl Sender {
         {
             MessageRef::seal(
                 &MessageRefPayload {
+                    relay_message: self
+                        .relay
+                        .text_edits_enabled()
+                        .then(|| super::edit::destination(*platform, message, &part.text, outbound))
+                        .flatten(),
                     channel_id: event.channel_id.clone(),
                     event_id: event.event_id.clone(),
                     platform_message_id: id.clone(),

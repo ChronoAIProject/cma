@@ -18,13 +18,27 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             issuer,
             platform,
             trust_normalized,
+            verify_raw_event,
             ..
         } = source
         {
+            if *verify_raw_event
+                && (*trust_normalized
+                    || !matches!(
+                        platform,
+                        cmaeg_core::channel::Platform::Discord
+                            | cmaeg_core::channel::Platform::Whatsapp
+                    ))
+            {
+                return Err(ValidationError::new(
+                    format!("{pointer}/verify_raw_event"),
+                    "requires Discord or WhatsApp without trust_normalized",
+                ));
+            }
             // Refuse up front: a stored source like this would admit no callbacks,
             // so a bot moved onto it would go silent. Ingress still refuses one as
             // defense in depth for definitions stored before this check existed.
-            if !platform.verifies_raw_event() && !trust_normalized {
+            if !platform.verifies_raw_event() && !trust_normalized && !verify_raw_event {
                 return Err(ValidationError::new(
                     format!("{pointer}/trust_normalized"),
                     "the platform has no raw-event verifier; set trust_normalized to true to admit its normalized callbacks",
@@ -65,6 +79,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username,
                 bot_id,
                 trust_normalized,
+                verify_raw_event,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -75,6 +90,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username: bot_username.clone(),
                 bot_id: bot_id.clone(),
                 trust_normalized: *trust_normalized,
+                verify_raw_event: *verify_raw_event,
                 admission: admission.clone(),
             },
             SourceRequest::Custom {

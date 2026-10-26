@@ -127,6 +127,7 @@ impl App {
                 platform_message_id: "platform-1".into(),
                 route_id: "route-1".into(),
                 interaction_record_id: None,
+                relay_message: None,
                 consumer: None,
             },
             &fixture.state.master_keys,
@@ -195,6 +196,8 @@ impl App {
         );
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
+            native_media_enabled: false,
+            relay_text_edits_enabled: false,
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,

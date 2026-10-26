@@ -35,6 +35,8 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    pub multi_consumer_writes_enabled: bool,
+    pub dynamic_sources_writes_enabled: bool,
     /// Receives every record head management writes or deletes; a no-op
     /// unless the console is on.
     pub index: Arc<dyn super::observer::ChannelIndexObserver>,
@@ -50,6 +52,15 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
+        super::write_gate::WriteFlags {
+            native_bot_mentions: self.native_bot_mentions_writes_enabled,
+            thread_contract: self.thread_contract_writes_enabled,
+            multi_consumer: self.multi_consumer_writes_enabled,
+            dynamic_sources: self.dynamic_sources_writes_enabled,
+        }
+    }
+
     pub fn advertised_api_url(&self) -> &str {
         if self.advertise_public_api_url {
             &self.public_api_url
@@ -107,6 +118,8 @@ impl ManagementState {
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
+            multi_consumer_writes_enabled: false,
+            dynamic_sources_writes_enabled: false,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
