@@ -1,10 +1,13 @@
 //! Per-consumer tool authorization on a routed channel: each consumer's agent
 //! key acts only on the references issued to that consumer.
 use super::{
-    consumer_support::{call, issue, message_ref, reviewer, reviewer_key, routed},
+    consumer_support::{call, handoff, issue, message_ref, reviewer, reviewer_key, routed},
     support::{problem, App},
 };
-use cmaeg_core::ids::ConsumerId;
+use cmaeg_core::{
+    ids::{ConsumerId, RecordId},
+    seal::EventRef,
+};
 use reqwest::Method;
 use serde_json::{json, Value};
 
@@ -58,6 +61,51 @@ async fn a_consumer_key_cannot_act_on_another_consumers_event() {
         let response = call(&app, method.clone(), &path, &reviewer_key(), body).await;
         mismatched(response, &format!("reviewer on default: {method} {path}")).await;
     }
+    assert!(app.requests.lock().unwrap().is_empty(), "nothing was sent");
+}
+
+#[tokio::test]
+async fn default_origin_lineage_grants_no_publisher_or_cross_record_authority() {
+    let app = routed().await;
+    let mut lineage = handoff(&app);
+    lineage.path = vec![ConsumerId::default_consumer()];
+    let reference = issue(&app, &reviewer(), &reviewer_key(), Some(lineage)).await;
+    let path = format!("/v1/events/{}/context", reference.as_str());
+    let response = call(&app, Method::GET, &path, &reviewer_key(), None).await;
+    assert_eq!(response.status(), 200);
+    let context: Value = response.json().await.unwrap();
+    assert_eq!(context["consumer"]["id"], reviewer().as_str());
+    assert_eq!(context["capabilities"]["buttons"], "none");
+    assert_eq!(context["capabilities"]["cards"], "none");
+
+    // Being the sealed chain's publisher never grants access to its recipient.
+    for (method, path, body) in event_tools(&app, reference.as_str()) {
+        let response = call(&app, method, &path, &app.key, body).await;
+        mismatched(response, "default publisher on reviewer reference").await;
+    }
+    let outsider = "nyx_fixture_another_owner";
+    problem(
+        call(&app, Method::GET, &path, outsider, None).await,
+        403,
+        "forbidden",
+    )
+    .await;
+
+    // Even a gateway-sealed reference cannot substitute another record under
+    // the original channel and recipient key.
+    let mut payload = reference
+        .open(&app.state.keys, super::relay_support::now())
+        .unwrap()
+        .payload;
+    payload.record_id = RecordId::new("another-owner-record").unwrap();
+    let substituted = EventRef::seal(&payload, &app.state.keys).unwrap();
+    let path = format!("/v1/events/{}/context", substituted.as_str());
+    problem(
+        call(&app, Method::GET, &path, &reviewer_key(), None).await,
+        400,
+        "event_ref_invalid",
+    )
+    .await;
     assert!(app.requests.lock().unwrap().is_empty(), "nothing was sent");
 }
 
