@@ -77,6 +77,23 @@ function fixture(): Channel {
     },
   };
 }
+it('uses the registered CMA provider consistently for a new channel without changing retained providers', () => {
+  const fresh = channelDraft(undefined, 'owner');
+  expect(fresh).toMatchObject({
+    provider: { slug: 'cma_codex' },
+    profile: { metadata: { provider: 'cma_codex', owner: { subject: 'owner' } } },
+  });
+  const retained = fixture();
+  retained.definition.profile = {
+    ...object(retained.definition.profile),
+    metadata: { ...object(defaultProfile('owner').metadata), provider: 'cma' },
+  };
+  const draft = channelDraft(retained);
+  expect(draft).toMatchObject({
+    provider: { slug: 'cma', target: { type: 'existing_agent', agent_id: 'agt_retained' } },
+    profile: { metadata: { provider: 'cma' } },
+  });
+});
 it('preserves unknown writable fields and exact existing bindings while excluding server-only fields and unchanged credentials', () => {
   const source = fixture(),
     draft = channelDraft(source);

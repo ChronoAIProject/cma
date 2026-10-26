@@ -24,7 +24,7 @@ export function defaultProfile(owner = ''): Fields {
       name: 'Channel agent',
       description: '',
       owner: { kind: 'human', subject: owner },
-      provider: 'cma',
+      provider: 'cma_codex',
     },
     model: {
       access: 'managed',
@@ -58,7 +58,7 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
       schema_version: 1,
       name: '',
       profile: defaultProfile(owner),
-      provider: { slug: 'cma' },
+      provider: { slug: 'cma_codex' },
       sources: [defaultSource('nyxid_relay')],
       partition: { version: 1, key: 'conversation_and_sender' },
       reply: { auto_final: true, ack_after_ms: 1500, sinks: [{ type: 'source' }] },
