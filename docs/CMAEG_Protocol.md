@@ -910,7 +910,7 @@ supports a platform before any source for it is enabled.
 | Output | Escaped text; rich blocks degrade as §8 specifies | Plain text by default; gated native JSON 2.0 cards for eligible contexts | Plain text; buttons and choices degrade to numbered text |
 | Edit | Confirmed gateway interactive cards; gated ordinary relay text edits with an enriched reference | Gated ordinary single-part relay text edits | Gated ordinary single-part Discord relay text edits; Slack/WhatsApp unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
-| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Unsupported |
+| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Raw-verified WhatsApp: gated reply buttons / single-choice lists with durable authority; Discord/Slack unsupported |
 | Attachments | Inbound media with relay or Bot API locators while enabled; native outbound media through the NyxID relay when enabled, otherwise links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
 
 Ordinary replies go through NyxID's generic `/api/v1/channel-relay/reply`;
@@ -2912,3 +2912,55 @@ managed create sends empty sources and omits manual platform credentials.
 New admission starts with an empty sender allowlist, never a silent all-senders
 grant. Creating a new connection still requires an admitted originating event
 and its agent authorization through the existing public workflow.
+
+
+## WhatsApp native choices
+
+For a raw-verified WhatsApp private event, `readEventContext` reports
+`buttons:"native_interactive"` when `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=true`.
+It continues to report `edit:false`; callbacks remain usable after issuance is
+disabled. The existing `/v1` tool and REST request shapes are unchanged. No
+arbitrary metadata, phone-number destination, credential or unsigned callback
+payload is accepted from the caller.
+
+Use one ordinary `buttons` block for up to three reply buttons, or one
+`choice` with `multi:false` for up to ten list rows. Text blocks and top-level
+text form the body; all other block combinations are refused without sending.
+CMA limits body text to 1,024 characters, reply-button labels to 20, and list-row
+labels to 24. Labels must be unique, nonempty and without control characters.
+There is no silent label truncation. A non-default style or selected appearance
+is a declared `plain_option_style` degradation. Native media, threaded replies,
+named consumers and hand-offs cannot use this interaction contract.
+
+```json
+{
+  "text": "Choose the deployment region",
+  "blocks": [{
+    "type": "choice", "id": "region", "prompt": "Select one region",
+    "multi": false,
+    "options": [
+      {"id":"sg", "label":"Singapore"},
+      {"id":"us", "label":"United States"}
+    ]
+  }]
+}
+```
+
+NyxID receives `reply.metadata.interactive` carrying a native button or list.
+Option IDs are CMA record/revision/action locators, not the caller's action
+values. Only after an exact outbound/platform receipt is durably bound can a
+signed callback resolve that locator. CMA checks the current source ACL and
+exact channel, route, platform, sender, private destination, original platform
+message, control kind, revision and stored action. The resulting interaction
+has the existing `block_id`, `action_id` and stored `values.selected` contract;
+a callback title never becomes an action value. Duplicate delivery has the same
+provider event/idempotency key and stored timestamp. Other selection attempts
+on a consumed record are refused. Foreign controls remain ordinary messages.
+
+Unknown sends have no usable reference and are not automatically resent. A
+single definite 429 may retry the same card. A transient callback storage error
+is retryable; it does not consume the card. Controls expire after 24 hours.
+`updateMessage` remains unsupported for WhatsApp, so a subsequent choice is a
+new message. Templates and initiated sends have independent contracts/gates.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.

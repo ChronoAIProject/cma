@@ -296,6 +296,12 @@ pub(super) fn project(
         activity_verified,
         state.lark_cards_enabled,
     );
+    if state.whatsapp_interactions_enabled
+        && activity_verified
+        && crate::interactions::whatsapp::eligible(channel, event, &activity)
+    {
+        capabilities.buttons = "native_interactive".into();
+    }
     // A hand-off's actor is the publishing consumer, so no human click could
     // ever match a card prepared from it; its controls are refused, and the
     // projection says so up front so agents can plan around it.

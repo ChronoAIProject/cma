@@ -20,6 +20,7 @@ pub(crate) async fn serve(
     relay_text_edits: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
+    whatsapp_interactions: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -72,6 +73,7 @@ pub(crate) async fn serve(
         .with_text_edits(relay_text_edits)
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
+        .with_whatsapp_interactions(whatsapp_interactions)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -132,6 +134,7 @@ pub(crate) async fn serve(
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
         whatsapp_templates_enabled: whatsapp_templates,
+        whatsapp_interactions_enabled: whatsapp_interactions,
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
         lark_cards_enabled: lark_cards,

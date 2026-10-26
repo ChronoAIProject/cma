@@ -58,7 +58,7 @@ pub use config::{
     CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL, CMAEG_PUBLIC_URL,
     CMAEG_RELAY_TEXT_EDITS_ENABLED, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
     CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
-    CMAEG_WHATSAPP_TEMPLATES_ENABLED,
+    CMAEG_WHATSAPP_INTERACTIONS_ENABLED, CMAEG_WHATSAPP_TEMPLATES_ENABLED,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -137,6 +137,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let native_media = config::nyxid_native_media_from_env()?;
     let relay_text_edits = config::relay_text_edits_from_env()?;
     let lark_cards = config::lark_cards_from_env()?;
+    let whatsapp_interactions = config::whatsapp_interactions_from_env()?;
     let whatsapp_templates = config::whatsapp_templates_from_env()?;
     let config = Config::from_env()?;
     serve::serve(
@@ -146,6 +147,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         relay_text_edits,
         lark_cards,
         whatsapp_templates,
+        whatsapp_interactions,
     )
     .await
 }

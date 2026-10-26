@@ -44,6 +44,8 @@ pub mod signer;
 mod support;
 #[path = "delivery/transport.rs"]
 mod transport;
+#[path = "delivery/whatsapp_interactions.rs"]
+mod whatsapp_interactions;
 
 #[path = "delivery/relay_edits.rs"]
 mod relay_edits;

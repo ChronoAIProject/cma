@@ -11,6 +11,8 @@ pub mod fake_provider;
 mod lark_cards;
 #[path = "relay/support.rs"]
 pub mod relay_support;
+#[path = "interaction_whatsapp/callbacks.rs"]
+mod whatsapp_interactions;
 /// The media helpers the shared tools app is built with.
 pub mod media {
     #[path = "fakes.rs"]

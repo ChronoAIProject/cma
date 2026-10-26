@@ -625,3 +625,23 @@ verification. Retain saved settings without silently switching to normalized
 trust. These capabilities do not attest upstream transport health or provide
 NyxID bot provisioning. Cache per authenticated owner context, not globally;
 the server still validates every write.
+
+### WhatsApp reply buttons and lists
+
+Eligible raw-verified private contexts advertise `buttons: "native_interactive"`
+after the gateway operator enables WhatsApp interactions. Use existing
+`OutboundMessage.blocks`: one `buttons` block (1–3 options, labels at most 20
+characters) or one `choice` with `multi: false` (1–10 options, labels at most 24
+characters). Optional text is limited to 1,024 characters including the choice
+prompt. Multiple controls, multi-select, cards/forms/links, native media and
+threaded replies are refused. Check the returned rendering report for plain
+style/preselection degradation. There are no new SDK types or request fields.
+
+Only the exact original sender can consume a confirmed message's controls.
+Callbacks return the existing interaction activity with stored action IDs and
+selected values. They do not trust selection titles. Repeated delivery keeps
+one event/idempotency identity; a new choice requires a new message because
+WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
+to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.

@@ -20,6 +20,7 @@ use std::sync::Arc;
 mod card;
 mod keyboard;
 pub(crate) mod lark;
+pub(crate) mod whatsapp;
 
 pub use card::*;
 pub use keyboard::has_controls;
@@ -103,6 +104,7 @@ impl InteractionStore {
         }
         if card.id != id
             || card.expires_at <= now()
+            || !whatsapp::valid_record(&card)
             || card.lark.as_ref().is_some_and(|identity| {
                 !lark::supported(identity.platform)
                     || card.consumer.is_some()
@@ -170,8 +172,28 @@ impl InteractionStore {
             }
             _ => None,
         };
+        let whatsapp = if matches!(
+            event.reply,
+            ReplyAddress::NyxidRelay {
+                platform: cmaeg_core::channel::Platform::Whatsapp,
+                ..
+            }
+        ) {
+            if !whatsapp::eligible(channel, event, &context.activity) {
+                return Err(Error::Denied);
+            }
+            let (markup, _) = whatsapp::render(message, "00000000000000000000000000000000", 1)?;
+            Some(if markup["type"] == "button" {
+                WhatsappKind::Button
+            } else {
+                WhatsappKind::List
+            })
+        } else {
+            None
+        };
         let card = Card {
             lark,
+            whatsapp,
             id: uuid::Uuid::new_v4().to_string(),
             owner: channel.definition.owner.subject.clone(),
             channel_id: channel.id.clone(),
@@ -244,6 +266,7 @@ impl InteractionStore {
             .await?;
         let destination = old.destination.as_ref().ok_or(Error::Denied)?;
         if old.channel_id != channel.id
+            || old.whatsapp.is_some()
             || old.route_id != reference.route_id
             || old.event_id != reference.event_id
             || destination.platform_id != reference.platform_message_id
@@ -299,19 +322,35 @@ impl InteractionStore {
         let (id, index, revision) = decode(data)?;
         for _ in 0..2 {
             let (mut card, version) = self.load(&id).await?;
-            let lark_matches = match &card.lark {
-                Some(lark) => {
-                    revision == Some(card.revision)
-                        && matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if platform == lark.platform)
-                        && activity.conversation.kind == lark.conversation
-                }
-                None => {
-                    revision.is_none()
-                        && !matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if lark::supported(platform))
+            let platform_matches = if let Some(kind) = card.whatsapp {
+                data.starts_with(kind.prefix())
+                    && revision == Some(card.revision)
+                    && matches!(
+                        &activity.source,
+                        cmaeg_core::activity::SourceKind::NyxidRelay {
+                            platform: cmaeg_core::channel::Platform::Whatsapp,
+                            route_id
+                        } if route_id == route
+                    )
+                    && activity.conversation.kind == cmaeg_core::activity::ConversationKind::Private
+                    && activity.thread.is_none()
+            } else {
+                match &card.lark {
+                    Some(lark) => {
+                        data.starts_with("cl1:")
+                            && revision == Some(card.revision)
+                            && matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if platform == lark.platform)
+                            && activity.conversation.kind == lark.conversation
+                    }
+                    None => {
+                        data.starts_with("ce1:")
+                            && revision.is_none()
+                            && !matches!(activity.source, cmaeg_core::activity::SourceKind::NyxidRelay { platform, .. } if lark::supported(platform) || platform == cmaeg_core::channel::Platform::Whatsapp)
+                    }
                 }
             };
             if card.channel_id != channel.id
-                || !lark_matches
+                || !platform_matches
                 || card.route_id != route
                 || card.actor != activity.actor.id
                 || card.chat != activity.conversation.id
@@ -365,7 +404,13 @@ impl InteractionStore {
                 card.consumed.as_ref().unwrap().occurred_at.clone(),
             ));
         }
-        Err(Error::Denied)
+        // Repeated CAS contention has not established refusal. Let the relay
+        // retry a WhatsApp click instead of acknowledging and dropping it.
+        Err(if data.starts_with("cw1b:") || data.starts_with("cw1l:") {
+            Error::Unavailable
+        } else {
+            Error::Denied
+        })
     }
     pub async fn parent_reference(
         &self,
@@ -386,7 +431,9 @@ impl InteractionStore {
 }
 
 fn markup(card: &Card) -> Result<serde_json::Value, Error> {
-    if card.lark.is_some() {
+    if card.whatsapp.is_some() {
+        whatsapp::markup(card)
+    } else if card.lark.is_some() {
         lark::markup(card)
     } else {
         keyboard(card)
