@@ -21,17 +21,17 @@ spec:
       annotations:
         cma.chronoai.dev/thread-contract-writes: "v1"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "966e7b238d454339a61f6994124727470740c889"
-        cma.chronoai.dev/image-digest: "sha256:632250bf8c3f5b25ef3f1788da292651beeef006e43d71228eec9a5b645f25ea"
-        cma.chronoai.dev/image-source: "38fa8f87611d22addea4325dd40b6f0382f8c1b9"
+        cma.chronoai.dev/candidate: "204760fb45e749276268a07d39684c3093dee7d4"
+        cma.chronoai.dev/image-digest: "sha256:4d9e78b4191399e016fb26c2494cc35ae072c3d1acc788282e0ba4f6825fcaed"
+        cma.chronoai.dev/image-source: "9be609db5205ccce2d56125f3c8c5d1e8d1ef9b5"
         cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
-        cma.chronoai.dev/ci-artifact: "12635246508"
+        cma.chronoai.dev/ci-artifact: "12645383450"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "966e7b238d454339a61f6994124727470740c889"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:6cebd2c84a88d245608ace9ec95c66652ac541a259dd481c05e7a63fa5f950dd"
-        cma.chronoai.dev/ci-run: "40285790030"
+        cma.chronoai.dev/ci-head: "204760fb45e749276268a07d39684c3093dee7d4"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:22490ae320042b9a7ce50a854df51df308a692123e78ef84be1431a09d2d8380"
+        cma.chronoai.dev/ci-run: "40310614480"
         cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
-        cma.chronoai.dev/source-tree: "97b1957d6158e3c80a3635c7a767e531a7a93755"
+        cma.chronoai.dev/source-tree: "2f822b2823311ee26aa7526b6ab4c50f897fd53f"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
@@ -58,7 +58,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:632250bf8c3f5b25ef3f1788da292651beeef006e43d71228eec9a5b645f25ea
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:4d9e78b4191399e016fb26c2494cc35ae072c3d1acc788282e0ba4f6825fcaed
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
