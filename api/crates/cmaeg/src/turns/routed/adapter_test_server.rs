@@ -17,6 +17,7 @@ use std::{
 #[derive(Clone)]
 pub struct Config {
     pub replay_frames: Option<Vec<Value>>,
+    pub event_context: Option<Value>,
     pub replay_idle: bool,
     pub replay_tail: String,
     pub post_status: u16,
@@ -34,6 +35,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             replay_frames: None,
+            event_context: None,
             replay_idle: false,
             replay_tail: String::new(),
             post_status: 200,
@@ -168,6 +170,23 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
     if post && config.post_status != 200 {
         return Response::builder().status(config.post_status).header("content-type","application/json")
         .body(Body::from(json!({"error":{"code":if config.post_status==400 {"invalid_json"} else {"response_unavailable"}}}).to_string())).unwrap();
+    }
+    if parts.method == axum::http::Method::GET
+        && parts.uri.path().starts_with("/bindings/")
+        && parts.uri.path().contains("/conversations/")
+        && parts.uri.path().contains("/events/")
+    {
+        return Response::builder()
+            .status(if config.event_context.is_some() {
+                200
+            } else {
+                404
+            })
+            .header("content-type", "application/json")
+            .body(Body::from(
+                config.event_context.unwrap_or(Value::Null).to_string(),
+            ))
+            .unwrap();
     }
     let snapshot = |status: &str| json!({"id":"resp_accepted","object":"response","status":status,"conversation":{"id":config.native_agent},"metadata":metadata,"output":[]});
     if !post && !parts.uri.path().ends_with("/events") {
