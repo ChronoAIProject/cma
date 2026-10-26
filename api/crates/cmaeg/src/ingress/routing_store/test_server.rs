@@ -34,6 +34,7 @@ pub struct Fault {
 }
 pub struct Memory {
     pub rows: Mutex<BTreeMap<String, Row>>,
+    pub channels: Mutex<BTreeMap<String, Row>>,
     pub fault: Mutex<Option<Fault>>,
     pub clock: Arc<AtomicI64>,
     pub unavailable_reads: AtomicUsize,
@@ -53,12 +54,14 @@ impl Server {
     pub async fn start() -> Self {
         let memory = Arc::new(Memory {
             rows: Mutex::new(BTreeMap::new()),
+            channels: Mutex::new(BTreeMap::new()),
             fault: Mutex::new(None),
             clock: Arc::new(AtomicI64::new(fixture::NOW)),
             unavailable_reads: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
         });
         let app = Router::new()
+            .route("/api/v1/gateway/channel-records/{id}", get(read_channel))
             .route("/api/v1/gateway/interaction-records", get(list))
             .route(
                 "/api/v1/gateway/interaction-records/{id}",
@@ -109,6 +112,14 @@ impl Server {
             &serde_json::to_vec(&value).unwrap(),
         )
         .unwrap();
+    }
+}
+async fn read_channel(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
+    match state.channels.lock().unwrap().get(&id) {
+        Some(row) => {
+            Json(json!({"version":row.version,"blob":STANDARD.encode(&row.blob)})).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 #[derive(Deserialize)]
