@@ -13,6 +13,7 @@ export function PortalFrame({
   navigation,
   children,
   landing = false,
+  fullWidth = false,
   sidebarCollapsed,
   onSidebarCollapsedChange,
 }: {
@@ -21,6 +22,7 @@ export function PortalFrame({
   readonly navigation?: ReactNode;
   readonly children: ReactNode;
   readonly landing?: boolean;
+  readonly fullWidth?: boolean;
   readonly sidebarCollapsed: boolean;
   readonly onSidebarCollapsedChange: (collapsed: boolean) => void;
 }) {
@@ -75,7 +77,10 @@ export function PortalFrame({
         />
       )}
       center={
-        <div className={landing || route.kind === 'home' ? 'portal-home' : 'service-page'}>
+        <div
+          className={landing || route.kind === 'home' ? 'portal-home' : 'service-page'}
+          data-layout={fullWidth ? 'workspace' : undefined}
+        >
           {children}
         </div>
       }
