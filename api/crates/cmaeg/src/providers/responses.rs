@@ -14,6 +14,7 @@ pub enum ResponsesEvent {
     Created {
         response_id: String,
         thread_reply: bool,
+        native_agent_id: Option<String>,
     },
     InProgress,
     OutputItemAdded {
@@ -118,6 +119,16 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(object)?,
+            native_agent_id: value
+                .pointer("/response/conversation/id")
+                .and_then(Value::as_str)
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 256
+                        && id.trim() == *id
+                        && !id.chars().any(char::is_control)
+                })
+                .map(str::to_owned),
             thread_reply: value
                 .pointer("/response/thread_reply")
                 .map(|value| {
@@ -328,6 +339,7 @@ mod tests {
             )),
             Ok(ResponsesEvent::Created {
                 response_id: "resp_1".into(),
+                native_agent_id: None,
                 thread_reply: false
             })
         );
@@ -337,6 +349,32 @@ mod tests {
                 r#type: "response.future".into()
             })
         );
+    }
+
+    #[test]
+    fn native_agent_identity_is_optional_bounded_provider_evidence() {
+        for (value, expected) in [
+            (
+                serde_json::json!("agt_native_provider"),
+                Some("agt_native_provider"),
+            ),
+            (Value::Null, None),
+            (serde_json::json!(""), None),
+            (serde_json::json!(" "), None),
+            (serde_json::json!("x".repeat(257)), None),
+            (serde_json::json!("agent\nheader"), None),
+            (serde_json::json!(42), None),
+        ] {
+            let raw = serde_json::json!({"type":"response.created","response":{
+                "id":"resp_native","conversation":{"id":value}}});
+            let ResponsesEvent::Created {
+                native_agent_id, ..
+            } = parse_event(&frame(&raw.to_string())).unwrap()
+            else {
+                panic!("created")
+            };
+            assert_eq!(native_agent_id.as_deref(), expected);
+        }
     }
 
     #[test]
@@ -351,6 +389,7 @@ mod tests {
             )),
             Ok(ResponsesEvent::Created {
                 response_id: "resp_thread".into(),
+                native_agent_id: None,
                 thread_reply: true
             })
         );

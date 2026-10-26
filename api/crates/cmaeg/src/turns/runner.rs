@@ -157,6 +157,7 @@ impl TurnRunner {
                 turn.clone(),
                 &provider,
                 &*self.delivery,
+                self.activity.as_ref(),
                 &mut admitted,
             )
             .await
