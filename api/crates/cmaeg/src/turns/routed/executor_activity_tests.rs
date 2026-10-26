@@ -13,7 +13,7 @@ use crate::{
 };
 use cmaeg_core::seal::seal_blob;
 use serde_json::json;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn activity_terminal_outcome_survives_checkpoint_recovery_and_queued_replay() {
@@ -33,11 +33,7 @@ async fn activity_terminal_outcome_survives_checkpoint_recovery_and_queued_repla
             let request = request_for_record();
             let record = request.channel.definition.record_id.to_string();
             let owner = request.channel.definition.owner.subject.clone();
-            let activity_records = Server::start().await;
-            activity_records.memory.clock.store(
-                time::OffsetDateTime::now_utc().unix_timestamp(),
-                Ordering::SeqCst,
-            );
+            let activity_records = Server::start_realtime().await;
             activity_records.memory.channels.lock().unwrap().insert(
                 record.clone(),
                 Row {

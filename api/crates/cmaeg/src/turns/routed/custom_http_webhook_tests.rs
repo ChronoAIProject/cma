@@ -132,14 +132,14 @@ async fn webhook_only_custom_message_commit_and_completion_are_distinct_signed_c
     frames.insert(3, json!({"type":"response.output_text.done","sequence_number":3,"item_id":"m","text":"hello world"}));
     frames[4]["sequence_number"] = 4.into();
     app.provider.memory.lock().unwrap().config.replay_frames = Some(frames);
-    assert_eq!(
-        app.request(app.event("async-message").to_string(), false)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        202
-    );
+    let response = app
+        .request(app.event("async-message").to_string(), false)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 202, "{body}");
     settled(&app).await;
     app.drain().await;
     let events = receiver.0.lock().unwrap();
@@ -151,4 +151,26 @@ async fn webhook_only_custom_message_commit_and_completion_are_distinct_signed_c
         ["cmaeg.response.message", "cmaeg.response.completed"]
     );
     assert_ne!(events[0]["id"], events[1]["id"]);
+}
+
+#[tokio::test]
+async fn custom_webhook_retention_remains_valid_after_fixture_second_changes() {
+    let receiver = Arc::new(Receiver::default());
+    let mut app = app(true, receiver.clone()).await;
+    // Cross the fixture's creation second deliberately. Admission retention
+    // and the HTTP record service must use the same advancing clock.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let response = app
+        .request(app.event("later-admission").to_string(), false)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 202, "{body}");
+    settled(&app).await;
+    app.drain().await;
+    let events = receiver.0.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["type"], "cmaeg.response.completed");
 }

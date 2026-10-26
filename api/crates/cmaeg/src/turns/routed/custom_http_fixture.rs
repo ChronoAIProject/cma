@@ -33,11 +33,7 @@ use cmaeg_core::{
 };
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
-use std::{
-    collections::BTreeSet,
-    sync::{atomic::Ordering, Arc},
-    time::Duration,
-};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -91,9 +87,8 @@ impl App {
         media: Option<Arc<MediaService>>,
         webhook: Option<Arc<dyn WebhookTransport>>,
     ) -> Self {
-        let records = Server::start().await;
+        let records = Server::start_realtime().await;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        records.memory.clock.store(now, Ordering::SeqCst);
         let keys = Arc::new(fixture::keys());
         let record = uuid::Uuid::new_v4().to_string();
         let mut value = routing_fixture::routed_with_key(AGENT_KEY);
