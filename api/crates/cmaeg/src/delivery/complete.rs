@@ -144,6 +144,7 @@ impl Sender {
         {
             MessageRef::seal(
                 &MessageRefPayload {
+                    telegram_effect: None,
                     relay_message: self
                         .relay
                         .text_edits_enabled()
