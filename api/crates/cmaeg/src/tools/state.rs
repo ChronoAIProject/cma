@@ -33,6 +33,8 @@ pub struct ToolsState {
     pub relay_text_edits_enabled: bool,
     /// Advertise newly issued native Discord edit references after reader rollout.
     pub native_discord_edits_enabled: bool,
+    pub discord_effects_issuance_enabled: bool,
+    pub discord_effects: Option<Arc<super::DiscordEffectsClient>>,
     /// Native Lark/Feishu card issuance after compatible readers are deployed.
     pub lark_cards_enabled: bool,
     pub resolver: ChannelResolver,

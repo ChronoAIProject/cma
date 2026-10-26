@@ -188,6 +188,8 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         telegram_effects_issuance_enabled: false,
         telegram_effects: None,
         native_discord_edits_enabled: false,
+        discord_effects_issuance_enabled: false,
+        discord_effects: None,
         lark_cards_enabled: false,
         resolver: ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default()),
         keys,

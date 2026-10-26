@@ -112,6 +112,8 @@ impl ConsumerGateway {
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
             native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
             lark_cards_enabled: false,
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,

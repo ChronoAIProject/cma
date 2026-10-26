@@ -6,7 +6,7 @@ pub mod custom;
 mod default_reply;
 pub mod destination;
 mod discord;
-mod discord_edit;
+pub(crate) mod discord_edit;
 #[cfg(test)]
 mod discord_edit_tests;
 #[cfg(test)]

@@ -36,8 +36,8 @@ struct ReactionArguments {
 struct Schemas;
 const TOOLS: [ToolSpec; 3] = [
     ToolSpec { name: "readMessageCapabilities", description: "Check delete and reaction support for one confirmed CMA message reference. Relay transports and older references do not grant effects.", schema: "MessageArguments", read_only: true, destructive: false, idempotent: true, open_world: false },
-    ToolSpec { name: "deleteMessage", description: "Delete one confirmed native Telegram bot message, subject to Telegram age and permission limits. Requires a CMA-issued message_ref and stable idempotency_key. Unknown outcomes must not be resent under a new key.", schema: "DeleteArguments", read_only: false, destructive: true, idempotent: true, open_world: true },
-    ToolSpec { name: "setMessageReaction", description: "Set or clear the native Telegram bot's reaction on one confirmed CMA bot message. Zero or one reaction; paid reactions are unsupported. Requires a stable idempotency_key; never resend an unknown outcome under a new key.", schema: "ReactionArguments", read_only: false, destructive: true, idempotent: true, open_world: true },
+    ToolSpec { name: "deleteMessage", description: "Delete one confirmed native Telegram or Discord bot message, subject to platform age and permission limits. Requires an effect-capable CMA message_ref and stable idempotency_key. Unknown outcomes must not be resent under a new key.", schema: "DeleteArguments", read_only: false, destructive: true, idempotent: true, open_world: true },
+    ToolSpec { name: "setMessageReaction", description: "Set or clear the native Telegram or Discord bot's reaction on one confirmed CMA bot message. Zero or one reaction; paid reactions are unsupported. Only the bot's own reactions are changed. Requires a stable idempotency_key; never resend an unknown or partially applied outcome under a new key.", schema: "ReactionArguments", read_only: false, destructive: true, idempotent: true, open_world: true },
 ];
 pub(super) fn handles(name: &str) -> bool {
     TOOLS.iter().any(|tool| tool.name == name)

@@ -20,6 +20,7 @@ pub(crate) async fn serve(
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
+    native_discord_effects: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
@@ -95,6 +96,7 @@ pub(crate) async fn serve(
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_native_discord_edits(native_discord_edits)
+        .with_native_discord_effects(native_discord_effects)
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
@@ -190,6 +192,10 @@ pub(crate) async fn serve(
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits,
+        discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
+        discord_effects: Some(std::sync::Arc::new(tools::DiscordEffectsClient::new(
+            crate::discord::DiscordRest::new()?,
+        ))),
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

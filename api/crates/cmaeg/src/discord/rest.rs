@@ -1,4 +1,7 @@
 //! Native Discord REST. Bot credentials go only to the fixed official API origin.
+mod effects;
+#[cfg(test)]
+pub(crate) mod effects_tests;
 use crate::{
     channels::resolver::ResolvedChannel,
     media::{
