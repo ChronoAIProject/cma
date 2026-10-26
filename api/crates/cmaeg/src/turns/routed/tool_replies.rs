@@ -53,6 +53,23 @@ impl RoutedToolReplies {
         message: OutboundMessage,
         delayed: bool,
     ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        self.reply_with_idempotency(caller, _channel, event, message, delayed, None)
+            .await
+    }
+    pub async fn reply_with_idempotency(
+        &self,
+        caller: AgentCaller,
+        _channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: OutboundMessage,
+        delayed: bool,
+        idempotency_key: Option<&str>,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        if idempotency_key.is_some_and(|key| {
+            key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| (33..=126).contains(&byte))
+        }) {
+            return Err(ExecutionError::Invalid);
+        }
         let Some(binding) = self.journal.tool_reply_binding(event).await? else {
             return Ok(None);
         };
@@ -109,7 +126,17 @@ impl RoutedToolReplies {
         message.validate().map_err(|_| ExecutionError::Invalid)?;
         let operation = storage::hash(&storage::bytes(&(&target.id, &message))?);
         let store = ReplyStore(self.journal.clone());
-        let claim = match store.admit(&plan, target, Kind::Tool, operation).await? {
+        let admission = if let Some(key) = idempotency_key {
+            let operation =
+                storage::hash(&storage::bytes(&("reply-operation-v1", &target.id, key))?);
+            let content_hash = storage::hash(&storage::bytes(&message)?);
+            store
+                .admit_keyed(&plan, target, operation, content_hash)
+                .await?
+        } else {
+            store.admit(&plan, target, Kind::Tool, operation).await?
+        };
+        let claim = match admission {
             Admission::Claimed(claim) => claim,
             Admission::Replay(receipt) => return Ok(Some(receipt)),
             Admission::Pending => return Err(ExecutionError::Busy),

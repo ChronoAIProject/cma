@@ -49,3 +49,6 @@ pub mod signer;
 mod support;
 #[path = "tools/whatsapp_templates.rs"]
 mod whatsapp_templates;
+
+#[path = "tools/reply_idempotency.rs"]
+mod reply_idempotency;

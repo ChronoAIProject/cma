@@ -24,6 +24,9 @@ pub struct EventArguments {
 pub struct ReplyArguments {
     pub event_ref: String,
     pub message: OutboundMessage,
+    /// Stable operation ID for durable routed replies; reuse on retries, change for a new send.
+    #[schema(min_length = 1, max_length = 128, pattern = "^[!-~]+$")]
+    pub idempotency_key: Option<String>,
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -45,8 +48,8 @@ pub struct AttachmentArguments {
 #[derive(OpenApi)]
 #[openapi(components(schemas(EventArguments, ReplyArguments, UpdateArguments)))]
 struct Schemas;
-/// The attachment tool's schemas are kept apart so that the four original
-/// tools' `$defs`, and so their listing, stay byte for byte unchanged.
+/// Keep attachment schemas apart from the original tools' shared definitions.
+/// The optional reply key is an explicit additive extension to those definitions.
 #[derive(OpenApi)]
 #[openapi(components(schemas(AttachmentArguments, AttachmentViewKind)))]
 struct AttachmentSchemas;
@@ -67,7 +70,7 @@ pub(super) struct ToolSpec {
 const TOOLS: [ToolSpec; 4] = [
     ToolSpec {
         name: "replyToEvent",
-        description: "Send a message in reply to an event.",
+        description: "Send a message in reply to an event. For durable routed events, supply an idempotency_key of 1–128 visible ASCII bytes: keep the same key and message when retrying, and use a new key for a new send, even when its content is identical. Reusing a key with different content is refused. Never change the key to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
         schema: "ReplyArguments",
         read_only: false,
         destructive: false,
@@ -186,7 +189,7 @@ pub async fn call(
             let args: ReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
             serde_json::to_value(
                 state
-                    .reply(caller, &event_ref(&args.event_ref)?, args.message)
+                    .reply_with_idempotency(caller, &event_ref(&args.event_ref)?, args.message, args.idempotency_key.as_deref())
                     .await?,
             )
         }

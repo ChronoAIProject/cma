@@ -51,12 +51,13 @@ pub fn router(state: ToolsState) -> Router {
     )
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/replies",operation_id="replyToEvent",tag="tools",
-    security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=OutboundMessage,
+    security(("agentBearer"=[])),params(("event_ref"=String,Path),("Idempotency-Key"=Option<String>,Header,min_length=1,max_length=128,pattern="^[!-~]+$",description="Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.")),request_body=OutboundMessage,
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_event(
     State(state): State<ToolsState>,
     caller: AgentCaller,
     Path(reference): Path<String>,
+    headers: HeaderMap,
     body: Result<Json<OutboundMessage>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let message = match json(body) {
@@ -67,7 +68,15 @@ pub async fn reply_to_event(
         Ok(value) => value,
         Err(error) => return result::<IntentReceipt>(Err(error)),
     };
-    result(state.reply(caller, &reference, message).await)
+    let key = match reply_key(&headers) {
+        Ok(key) => key,
+        Err(error) => return result::<IntentReceipt>(Err(error)),
+    };
+    result(
+        state
+            .reply_with_idempotency(caller, &reference, message, key)
+            .await,
+    )
 }
 #[utoipa::path(post,path="/v1/messages/{message_ref}/update",operation_id="updateMessage",tag="tools",
     security(("agentBearer"=[])),params(("message_ref"=String,Path)),request_body=OutboundMessage,
@@ -282,4 +291,24 @@ pub(crate) fn result<T: Serialize>(value: Result<T, Problem>) -> Response {
             error.detail.unwrap_or_default(),
         ),
     }
+}
+
+fn reply_key(headers: &HeaderMap) -> Result<Option<&str>, Problem> {
+    let mut values = headers.get_all("idempotency-key").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    let invalid = || {
+        Problem::new(
+            ProblemCode::InvalidRequest,
+            400,
+            "at most one valid Idempotency-Key header is allowed",
+        )
+    };
+    let key = value.to_str().map_err(|_| invalid())?;
+    if values.next().is_some() {
+        return Err(invalid());
+    }
+    crate::tools::validate_reply_key(Some(key))?;
+    Ok(Some(key))
 }

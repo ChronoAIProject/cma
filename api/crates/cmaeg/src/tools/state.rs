@@ -108,6 +108,17 @@ impl ToolsState {
         reference: &EventRef,
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
+        self.reply_with_idempotency(caller, reference, message, None)
+            .await
+    }
+    pub async fn reply_with_idempotency(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        message: OutboundMessage,
+        idempotency_key: Option<&str>,
+    ) -> Result<IntentReceipt, Problem> {
+        super::validate_reply_key(idempotency_key)?;
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
             crate::telemetry::names::TOOL,
@@ -121,7 +132,14 @@ impl ToolsState {
             let expires_at = event.expires_at;
             if let Some(routed) = &self.routed_replies {
                 if let Some(receipt) = routed
-                    .reply(caller, &channel, &event, message.clone(), false)
+                    .reply_with_idempotency(
+                        caller,
+                        &channel,
+                        &event,
+                        message.clone(),
+                        false,
+                        idempotency_key,
+                    )
                     .await
                     .map_err(super::routed_reply_error)?
                 {

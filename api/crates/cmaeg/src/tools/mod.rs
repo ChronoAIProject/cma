@@ -34,6 +34,10 @@ fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core
     use crate::turns::routed::ExecutionError;
     use cmaeg_core::problem::{Problem, ProblemCode};
     let (code, status, detail) = match error {
+        ExecutionError::IdempotencyConflict => {
+            (ProblemCode::Conflict, 409, "reply_idempotency_conflict")
+        }
+        ExecutionError::OperationLimit => (ProblemCode::RateLimited, 429, "reply_operation_limit"),
         ExecutionError::Busy => (ProblemCode::Conflict, 409, "routed_reply_in_progress"),
         ExecutionError::AuthorityChanged => (ProblemCode::Forbidden, 403, "routed_reply_revoked"),
         ExecutionError::Expired => (ProblemCode::EventRefExpired, 410, "event_ref_expired"),
@@ -41,4 +45,17 @@ fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core
         _ => (ProblemCode::Internal, 503, "routed_reply_unavailable"),
     };
     Problem::new(code, status, detail)
+}
+
+pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::problem::Problem> {
+    if key.is_some_and(|key| {
+        key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| (33..=126).contains(&byte))
+    }) {
+        return Err(cmaeg_core::problem::Problem::new(
+            cmaeg_core::problem::ProblemCode::InvalidRequest,
+            400,
+            "Idempotency-Key must contain 1..128 visible ASCII bytes",
+        ));
+    }
+    Ok(())
 }
