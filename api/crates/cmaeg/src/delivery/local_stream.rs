@@ -51,6 +51,9 @@ impl CustomStreamEffect {
     pub(crate) fn terminal(&self) -> bool {
         matches!(self, Self::Completed { .. } | Self::Failed)
     }
+    pub(crate) fn webhook(&self) -> bool {
+        !matches!(self, Self::Delta { .. })
+    }
     pub(crate) fn frame(&self, event: &EventRefPayload) -> (&'static str, Value) {
         match self {
             Self::Delta { text } => (
@@ -125,7 +128,7 @@ impl CustomDelivery {
         }
     }
     /// One explicit frozen webhook leg. This method never emits a local frame.
-    pub(crate) async fn terminal_webhook(
+    pub(crate) async fn send_webhook(
         &self,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
@@ -133,7 +136,7 @@ impl CustomDelivery {
         destination: &WebhookDestination,
         gate: &dyn SendGate,
     ) -> DeliveryOutcome {
-        if !effect.terminal() || !webhook_authorized(channel, destination) {
+        if !effect.webhook() || !webhook_authorized(channel, destination) {
             return DeliveryOutcome::Rejected {
                 reason: "webhook_destination_revoked".into(),
             };
@@ -153,10 +156,11 @@ impl CustomDelivery {
             Ok(ticket) => ticket,
             Err(refusal) => return refusal.outcome(),
         };
-        let kind = if matches!(effect, CustomStreamEffect::Completed { .. }) {
-            "cmaeg.response.completed"
-        } else {
-            "cmaeg.response.failed"
+        let kind = match effect {
+            CustomStreamEffect::Message { .. } => "cmaeg.response.message",
+            CustomStreamEffect::Completed { .. } => "cmaeg.response.completed",
+            CustomStreamEffect::Failed => "cmaeg.response.failed",
+            CustomStreamEffect::Delta { .. } => unreachable!("delta refused before send"),
         };
         let (_, data) = effect.frame(event);
         let envelope = custom::result(&self.public_origin, event, kind, data);

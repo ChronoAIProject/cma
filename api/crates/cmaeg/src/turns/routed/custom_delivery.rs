@@ -26,7 +26,7 @@ pub(super) struct CustomFrame<'a> {
     pub body: &'a FrozenTurn,
     pub effect: &'a CustomStreamEffect,
 }
-pub(super) fn is_custom_stream(body: &FrozenTurn) -> bool {
+pub(super) fn is_custom_origin(body: &FrozenTurn) -> bool {
     body.event_context.activity.source == SourceKind::Custom
         && body.delivery.destination == ReplyChoice::Origin
         && body
@@ -34,7 +34,7 @@ pub(super) fn is_custom_stream(body: &FrozenTurn) -> bool {
             .policy
             .sinks
             .iter()
-            .any(|sink| matches!(sink, Sink::Sync {}))
+            .any(|sink| matches!(sink, Sink::Sync {} | Sink::ResultWebhook { .. }))
 }
 pub(super) fn effect_for(
     body: &FrozenTurn,
@@ -42,7 +42,7 @@ pub(super) fn effect_for(
     effect: &ReplayEffect,
 ) -> Result<Option<CustomStreamEffect>, ExecutionError> {
     if let ReplayEffect::Custom(effect) = effect {
-        if !is_custom_stream(body)
+        if !is_custom_origin(body)
             || effect.terminal()
                 != matches!(
                     frame.event,
@@ -56,7 +56,7 @@ pub(super) fn effect_for(
         return Ok(Some(effect.clone()));
     }
     // A terminal control is independent of whether projection produced an answer.
-    if is_custom_stream(body) && matches!(effect, ReplayEffect::NoEffect) {
+    if is_custom_origin(body) && matches!(effect, ReplayEffect::NoEffect) {
         return Ok(match frame.event {
             ResponsesEvent::Completed { .. } => {
                 Some(CustomStreamEffect::Completed { final_text: None })
@@ -100,7 +100,7 @@ impl RoutedDelivery {
             .as_ref()
             .and_then(|checkpoint| checkpoint.custom.clone())
             .ok_or(ExecutionError::Corrupt)?;
-        if !evidence.valid_for(&CustomCheckpoint::new(&event, body, effect.terminal())) {
+        if !evidence.valid_for(&CustomCheckpoint::new(&event, body, effect.webhook())) {
             return Err(ExecutionError::Corrupt);
         }
         if recovering {
@@ -185,7 +185,7 @@ impl RoutedDelivery {
             let cancel = CancelSend(gate.clone());
             let outcome = tokio::time::timeout(
                 SEND_WINDOW,
-                custom.terminal_webhook(&current, &event, effect, &destination, gate.as_ref()),
+                custom.send_webhook(&current, &event, effect, &destination, gate.as_ref()),
             )
             .await
             .unwrap_or_else(|_| DeliveryOutcome::Unknown {

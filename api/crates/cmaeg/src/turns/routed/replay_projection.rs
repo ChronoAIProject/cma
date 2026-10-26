@@ -120,7 +120,7 @@ impl ReplayProjection {
     pub fn needs_tool_receipt(&self, frame: &RecoveryEvent, body: &FrozenTurn) -> bool {
         match &frame.event {
             ResponsesEvent::OutputTextDelta { .. }
-                if super::custom_delivery::is_custom_stream(body) =>
+                if super::custom_delivery::is_custom_origin(body) =>
             {
                 body.delivery.auto_final && !self.tool_replied
             }
@@ -154,7 +154,7 @@ impl ReplayProjection {
             .projection
             .event(frame.event.clone())
             .map_err(|_| ExecutionError::Invalid)?;
-        let custom = super::custom_delivery::is_custom_stream(body);
+        let custom = super::custom_delivery::is_custom_origin(body);
         let custom_effect = outcome.as_ref().and_then(|outcome| {
             crate::delivery::local_stream::CustomStreamEffect::project(
                 outcome,

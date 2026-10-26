@@ -4,8 +4,12 @@ use crate::{
     auth::webhook,
     channels::{resolver::ChannelResolver, routing_fixture},
     delivery::{
-        custom::CustomDelivery, durable::DeliveryCoordinator, intents::DeliveryCommand,
-        router::ShardedScheduler, sync::SyncRegistry,
+        custom::CustomDelivery,
+        durable::DeliveryCoordinator,
+        intents::DeliveryCommand,
+        router::ShardedScheduler,
+        sync::SyncRegistry,
+        webhook_client::{WebhookClient, WebhookTransport},
     },
     http::{events::CustomIngressState, readiness::Readiness},
     ingress::{
@@ -40,6 +44,7 @@ use tokio::{
 };
 
 struct NoLegacy;
+pub(super) const AGENT_KEY: &str = "nyx_cmaeg_custom_http_default_fixture";
 impl TurnLauncher for NoLegacy {
     fn launch(&self, _: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
         panic!("selected routed HTTP ingress must never launch the legacy runner")
@@ -76,6 +81,14 @@ impl App {
         edit: impl FnOnce(&mut Value),
         media: Option<Arc<MediaService>>,
     ) -> Self {
+        Self::with_delivery(auto_final, edit, media, None).await
+    }
+    pub async fn with_delivery(
+        auto_final: bool,
+        edit: impl FnOnce(&mut Value),
+        media: Option<Arc<MediaService>>,
+        webhook: Option<Arc<dyn WebhookTransport>>,
+    ) -> Self {
         let records = Server::start().await;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         records.memory.clock.store(now, Ordering::SeqCst);
@@ -89,6 +102,8 @@ impl App {
         value["reply"]["auto_final"] = auto_final.into();
         value["routing"]["consumers"] = json!([]);
         value["secrets"]["consumer_keys"] = json!([]);
+        value["secrets"]["provider_credential"] = AGENT_KEY.into();
+        value["secrets"]["agent_key_hash"] = routing_fixture::hash(AGENT_KEY).into();
         edit(&mut value);
         let definition = routing_fixture::definition(value);
         definition.validate().unwrap();
@@ -119,7 +134,11 @@ impl App {
         let store = PlanStore::new(records.records.clone(), keys.clone());
         let journal = Journal::new(records.records.clone(), keys.clone());
         let provider = HttpServer::start().await;
-        provider.memory.lock().unwrap().config.replay_frames = Some(executor_tests::frames());
+        {
+            let mut memory = provider.memory.lock().unwrap();
+            memory.config.replay_frames = Some(executor_tests::frames());
+            memory.config.mirror_replay_metadata = true;
+        }
         let providers = provider.client(true, Duration::from_secs(5));
         let builder = Arc::new(
             ProductionFrozenTurnBuilder::new(providers.clone(), keys.clone())
@@ -137,7 +156,10 @@ impl App {
             authority.clone(),
         ));
         let waiters = Arc::new(SyncRegistry::default());
-        let custom = CustomDelivery::new("https://gateway.example".into(), waiters.clone());
+        let mut custom = CustomDelivery::new("https://gateway.example".into(), waiters.clone());
+        if let Some(webhook) = webhook {
+            custom.webhooks = WebhookClient::with_transport(webhook);
+        }
         let (tx, rx) = mpsc::channel(1);
         let delivery_sink = Arc::new(ShardedScheduler::new(tx));
         let delivery = RoutedDelivery::new(

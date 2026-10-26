@@ -179,7 +179,7 @@ impl RoutedDelivery {
                 CustomCheckpoint::new(
                     &super::model::delivery_event(&plan, target),
                     &body,
-                    effect.terminal(),
+                    effect.webhook(),
                 )
             }),
             terminal: matches!(

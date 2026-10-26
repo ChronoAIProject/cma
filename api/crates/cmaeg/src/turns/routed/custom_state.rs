@@ -29,7 +29,7 @@ impl CustomCheckpoint {
     pub(super) fn new(
         event: &cmaeg_core::seal::EventRefPayload,
         body: &super::FrozenTurn,
-        terminal: bool,
+        webhook: bool,
     ) -> Self {
         Self {
             local: matches!(event.reply, ReplyAddress::Sync { .. })
@@ -40,7 +40,7 @@ impl CustomCheckpoint {
                 .sinks
                 .iter()
                 .filter_map(|sink| match sink {
-                    Sink::ResultWebhook { url, hmac_key_id } if terminal => Some(WebhookLeg {
+                    Sink::ResultWebhook { url, hmac_key_id } if webhook => Some(WebhookLeg {
                         destination: WebhookDestination {
                             url: url.clone(),
                             hmac_key_id: hmac_key_id.clone(),
