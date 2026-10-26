@@ -75,7 +75,7 @@ export function ChannelActivity({
                 </p>
                 <dl>
                   <div>
-                    <dt>Source event time</dt>
+                    <dt>Event time</dt>
                     <dd>
                       <Timestamp value={event.occurred_at} />
                     </dd>

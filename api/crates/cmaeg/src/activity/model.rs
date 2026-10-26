@@ -21,7 +21,7 @@ pub struct ChannelActivity {
     pub source: SourceKind,
     pub actor: Actor,
     pub conversation: ActivityConversation,
-    /// Timestamp supplied by the source, not gateway receipt time.
+    /// Normalized event time: source timestamp when supplied, otherwise gateway normalization time.
     pub occurred_at: String,
     /// Gateway receive timestamp, persisted before provider launch.
     pub received_at: String,

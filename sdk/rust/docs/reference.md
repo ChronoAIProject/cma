@@ -212,7 +212,10 @@ following revision; other stale revisions conflict. The SDK never retries it.
 observations. Use `Default::default()` for the authenticated creator or select an
 organization owner for that request. The page advertises `retention_days`,
 `limit` and `has_more`; it is a bounded recent view, not a complete audit log.
-`occurred_at` is source time and `received_at` is gateway receipt time. Processing
+`occurred_at` is normalized event time: the source timestamp when supplied, or
+gateway normalization time for custom CloudEvents without `time`. The original
+CloudEvent's `time` stays absent in that case; `occurred_at` alone does not establish
+a source timestamp. `received_at` is gateway receipt time. Processing
 completion does not itself prove delivery: inspect each delivery's `outcome`,
 `recipients`, `observed_at` and optional `confirmed_at` receipt timestamp.
 

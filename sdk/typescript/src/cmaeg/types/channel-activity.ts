@@ -63,6 +63,7 @@ export const ChannelActivitySchema = object({
   source: SourceKindSchema,
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
+  /** Normalized event time: source timestamp when supplied, otherwise gateway normalization time. */
   occurred_at: text,
   received_at: text,
   consumers: array(ActivityConsumerSchema),

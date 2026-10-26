@@ -1335,6 +1335,12 @@ capacity includes `Retry-After: 2`. Custom authentication failure is 401.
 ## 7. Activity and partitioning
 
 A full activity is `{schema_version:1,event_id,kind,actor,conversation,occurred_at,source,routing?}`.
+`occurred_at` is a normalized event timestamp. It uses the source timestamp when
+supplied; custom CloudEvents without `time` use the gateway time at normalization.
+The fallback leaves the original CloudEvent's `time` absent, so `occurred_at`
+alone does not establish that a timestamp came from the source. In channel
+Activity snapshots, `received_at` separately records gateway receipt.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native

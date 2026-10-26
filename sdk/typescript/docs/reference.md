@@ -482,7 +482,10 @@ other stale revisions return a conflict. The SDK never retries mutations itself.
 `getChannelActivity(id, {owner?})` returns a typed `cmaeg.ActivityPage` of recent
 events, consumer processing states and observed transport deliveries. The page
 advertises its retention window, item limit and `has_more`; it is a bounded view,
-not a complete audit log. `occurred_at` is source time and `received_at` is gateway
+not a complete audit log. `occurred_at` is normalized event time: the source
+timestamp when supplied, or gateway normalization time for custom CloudEvents
+without `time`. The original CloudEvent's `time` stays absent in that case;
+`occurred_at` alone does not establish a source timestamp. `received_at` is gateway
 receipt time. A consumer's completed processing state does not itself prove
 delivery: inspect each delivery's `outcome`, `recipients`, `observed_at` and
 optional confirmed receipt timestamp.

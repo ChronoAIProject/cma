@@ -1691,7 +1691,7 @@
             "type": "string"
           },
           "occurred_at": {
-            "description": "Timestamp supplied by the source, not gateway receipt time.",
+            "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
             "type": "string"
           },
           "received_at": {

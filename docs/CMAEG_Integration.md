@@ -91,7 +91,11 @@ No client polling is required.
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs
 are present only when recorded authority supplies them. `occurred_at` is the
-source's timestamp; `received_at` is the gateway's receipt timestamp.
+normalized event timestamp: the source timestamp when supplied, or the gateway
+time at normalization for custom CloudEvents without `time`. The fallback leaves
+the original CloudEvent's `time` absent; `occurred_at` alone does not establish
+that a timestamp came from the source. `received_at` is the gateway's receipt
+timestamp.
 `dispatched_at` starts an attempt, `accepted_at` records actual provider
 acceptance, `produced_at` records committed response output, and `completed_at`
 records terminal response observation or recovered processing completion.
