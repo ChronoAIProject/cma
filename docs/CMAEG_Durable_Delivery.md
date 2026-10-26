@@ -106,11 +106,50 @@ retains the existing conservative `Unknown` outcome.
 
 `validate_routed_delivery(channel, plan)` must run for new admissions before
 `Candidate::prepare`. It refuses a missing/unauthorized configured default and
-currently refuses Sync, whose process-local waiter cannot provide a durable
-platform receipt. That refusal prevents work from starting with an unavailable
-reply capability. Existing legacy delivery is unchanged. Activation additionally
-needs scheduler/projection composition, per-platform recovery evidence and a
-separate truthful local-stream finalization design for Sync.
+refuses Sync by default. An explicitly composed custom-stream lane may instead
+call `validate_routed_delivery_with_sync(channel, plan, true)` and construct its
+coordinator with `with_custom_stream(custom.clone())`, using the exact same
+`CustomDelivery` and process-local waiter registry as custom HTTP ingress. These
+are construction seams, not activation: existing constructors, ingress flags and
+legacy delivery remain unchanged. Sync with a default destination remains
+unsupported before admission in this bounded slice.
+
+The routed custom stream records local evidence separately from every frozen
+result-webhook leg. Local `Buffered` proves only that the bounded in-process
+queue accepted a frame; it does not prove that the HTTP client read it.
+`Unavailable` means that no waiter accepted the attempted frame, including
+disconnect and backpressure. An interrupted enqueue reservation becomes `Lost`:
+the original frame is never replayed, and any surviving local waiter is closed
+with a `sync_delivery_lost` failure control. A restarted process has no old waiter;
+there is no durable stream reconnect guarantee. The existing waiter count,
+eight-frame queue, one-MiB frame limit and aggregate byte budget remain in force.
+
+Only the primary consumer retains the local waiter. Its automatic text deltas
+and committed messages are projected while automatic answers are enabled and
+not suppressed by a confirmed tool reply. Terminal `cmaeg.completed` or
+`cmaeg.failed` control is independent of that text policy: it is emitted even
+with `auto_final=false`, tool suppression, or a terminal no-effect projection.
+Suppressed completion controls contain no automatic answer text. Secondary
+consumers cannot emit into or close the primary stream.
+
+Terminal result webhooks remain independent sinks, with one bounded record per
+frozen URL/signing-key-id pair (at most the channel's existing three-sink limit).
+Every new attempt rechecks current authority and uses current credentials.
+Local queue failure does not erase a confirmed webhook receipt. Each webhook's
+intent is persisted before sending and its actual outcome before advancing;
+an abandoned network intent becomes `Unknown` and is never automatically sent
+again. Recovery skips settled webhook legs and may continue only legs that were
+durably never started. Local stream outcomes never become platform `Confirmed`
+or an aggregate platform receipt, and the public platform receipt types are
+unchanged.
+
+Local-only routed tool replies remain `Unsupported` before any local enqueue.
+For explicitly enabled mixed Sync/webhook configurations, tool replies use only
+the existing webhook transport and retain its real receipt and stable operation
+key behavior. Their local tool frame is not supported in this slice; a webhook
+receipt says nothing about the local reader. Legacy mixed tool delivery is
+unchanged. This avoids returning `Unsupported` after emitting an unrecorded
+local side effect and encouraging a caller to repeat it.
 
 Tests exercise the real encrypted record HTTP/CAS protocol, delayed actual
 engine sends, queue refusal, missing receipts, abandoned intents, authority
@@ -121,3 +160,8 @@ Suppression tests additionally cover restart after actual tool delivery, lost
 receipt persistence and lost write confirmation, concurrent tool/automatic
 admission, stale writers, terminal no-effect closure, late tool refusal, sticky
 confirmation followed by an uncertain send, and routing/owner revocation.
+Sync tests additionally cover independent terminal completion, primary isolation,
+missing and slow readers, process/worker loss around enqueue, real webhook
+transport signing, separate mixed outcomes, settled webhook reuse and uncertain
+network-intent fencing. All transports remain local fixtures; no external
+message is sent.

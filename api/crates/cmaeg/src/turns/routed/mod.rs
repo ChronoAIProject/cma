@@ -6,6 +6,8 @@
 mod adapter;
 mod body;
 mod builder;
+mod custom_delivery;
+mod custom_state;
 mod delivery;
 mod delivery_gate;
 mod delivery_state;
@@ -26,9 +28,12 @@ mod tool_reply_store;
 
 pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, ReattachedResponse};
 pub use builder::ProductionFrozenTurnBuilder;
+pub use custom_state::{CustomCheckpoint, WebhookLeg, WebhookStatus};
 pub use delivery::{FrameDelivery, ReplayEffect, RoutedDelivery};
 pub use delivery_state::{DeliveryCheckpoint, DeliveryStatus};
-pub use destinations::{validate_routed_delivery, DefaultDestination};
+pub use destinations::{
+    validate_routed_delivery, validate_routed_delivery_with_sync, DefaultDestination,
+};
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
 pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
@@ -42,6 +47,8 @@ pub use tool_reply_store::ToolReplyStatus;
 mod adapter_test_server;
 #[cfg(test)]
 mod adapter_tests;
+#[cfg(test)]
+mod custom_delivery_tests;
 #[cfg(test)]
 mod delivery_crash_tests;
 #[cfg(test)]

@@ -15,6 +15,7 @@ mod event;
 pub mod gate;
 pub mod intents;
 mod interactive;
+pub mod local_stream;
 mod pacing;
 pub mod relay_client;
 pub mod render;

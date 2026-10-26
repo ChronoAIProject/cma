@@ -29,10 +29,21 @@ impl std::fmt::Debug for DurableReply {
 #[derive(Clone)]
 pub struct DeliveryCoordinator {
     sink: Arc<dyn DeliverySink>,
+    pub(crate) custom: Option<super::custom::CustomDelivery>,
 }
 impl DeliveryCoordinator {
     pub fn new(sink: Arc<dyn DeliverySink>) -> Self {
-        Self { sink }
+        Self { sink, custom: None }
+    }
+
+    /// Opt in only when routed custom ingress and its process-local waiters are wired.
+    pub fn with_custom_stream(mut self, custom: super::custom::CustomDelivery) -> Self {
+        self.custom = Some(custom);
+        self
+    }
+
+    pub fn supports_custom_stream(&self) -> bool {
+        self.custom.is_some()
     }
 
     /// The caller persists intent before calling, and the returned receipt

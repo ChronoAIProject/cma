@@ -152,9 +152,24 @@ impl RoutedToolReplies {
             Admission::Closed if delayed => return Ok(None),
             Admission::Closed => return Err(ExecutionError::Invalid),
         };
-        let result = if matches!(event.reply, ReplyAddress::Sync { .. }) {
+        let sync = matches!(event.reply, ReplyAddress::Sync { .. });
+        let network_only = sync
+            && self.coordinator.supports_custom_stream()
+            && current
+                .definition
+                .reply
+                .sinks
+                .iter()
+                .any(|sink| matches!(sink, cmaeg_core::channel::Sink::ResultWebhook { .. }));
+        let result = if sync && !network_only {
             receipt_for(DeliveryOutcome::Unsupported)
         } else {
+            // A routed tool receipt proves webhook delivery only. The local
+            // tool leg is refused in this slice; never enqueue then return Unsupported.
+            let mut addressed = event.clone();
+            if network_only {
+                addressed.reply = ReplyAddress::None;
+            }
             let gate = ReplyGate::tool(
                 store.clone(),
                 &claim,
@@ -169,13 +184,8 @@ impl RoutedToolReplies {
             let cancel = CancelReply(gate.clone());
             let result = tokio::time::timeout(
                 SEND_WINDOW,
-                self.coordinator.reply_from(
-                    current,
-                    event.clone(),
-                    message,
-                    gate,
-                    ReplySource::Tool,
-                ),
+                self.coordinator
+                    .reply_from(current, addressed, message, gate, ReplySource::Tool),
             )
             .await
             .unwrap_or_else(|_| {
