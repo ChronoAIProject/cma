@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
+pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
     let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
     ))

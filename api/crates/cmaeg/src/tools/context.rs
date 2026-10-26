@@ -310,7 +310,10 @@ pub(super) fn project(
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
-            SourceKind::Discord { .. } => Capabilities::native_discord(),
+            SourceKind::Discord { .. } => Capabilities {
+                edit: state.native_discord_edits_enabled,
+                ..Capabilities::native_discord()
+            },
             SourceKind::NyxidRelay { platform, .. } => {
                 Capabilities::relay_with_text_edits(platform, state.relay_text_edits_enabled)
             }

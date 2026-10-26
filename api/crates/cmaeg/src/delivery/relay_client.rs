@@ -109,6 +109,7 @@ pub struct RelayClient {
     complete_replies: bool,
     native_media: bool,
     text_edits: bool,
+    native_discord_edits: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
@@ -124,6 +125,15 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Issue native edit references only after every reader supports their authority.
+    /// Disabling issuance does not revoke already issued references.
+    pub fn with_native_discord_edits(mut self, enabled: bool) -> Self {
+        self.native_discord_edits = enabled;
+        self
+    }
+    pub(super) fn native_discord_edits_enabled(&self) -> bool {
+        self.native_discord_edits
+    }
     /// Gate named-consumer cards until all readers support retained owner bindings.
     pub fn with_consumer_interactions(mut self, enabled: bool) -> Self {
         self.consumer_interactions = enabled;
@@ -225,6 +235,7 @@ impl RelayClient {
             complete_replies: false,
             native_media: false,
             text_edits: false,
+            native_discord_edits: false,
             lark_cards: false,
             whatsapp_templates: false,
             whatsapp_interactions: false,

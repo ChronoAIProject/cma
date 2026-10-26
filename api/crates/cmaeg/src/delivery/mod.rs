@@ -6,6 +6,9 @@ pub mod custom;
 mod default_reply;
 pub mod destination;
 mod discord;
+mod discord_edit;
+#[cfg(test)]
+mod discord_edit_tests;
 #[cfg(test)]
 mod discord_tests;
 pub mod durable;
