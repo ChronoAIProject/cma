@@ -224,6 +224,13 @@ See [CMA Model](./docs/CMA_Model.md), [CMA Trigger](./docs/CMA_Trigger.md),
 For the separate event gateway, see [architecture and integration](./docs/CMAEG_Architecture.md),
 [protocol](./docs/CMAEG_Protocol.md), and [operations](./docs/CMAEG_Operations.md).
 
+The external [dining review reference application](https://github.com/ChronoAIProject/frigate-cma-events/tree/main/examples/dining)
+shows Home Assistant / Frigate metadata aggregated into bounded candidates,
+then routed through an Event Channel to an existing CMA Agent for visual review
+and a verified Google Sheets write. Its application repository owns the workflow
+and deployment templates; personal settings and credentials are supplied
+privately at deployment. It uses the existing `cma_codex` provider.
+
 ## Branches And Deployment
 
 `develop` is the protected default development branch. Complete implementation
