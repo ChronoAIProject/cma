@@ -6,7 +6,7 @@ use axum::{
     routing::get,
     Router,
 };
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 mod diagrams;
 mod render;
 const GUIDE: &str = include_str!("../../../../../docs/CMAEG_Integration.md");
@@ -22,47 +22,75 @@ static PAGE: LazyLock<String> = LazyLock::new(page);
 static DOWNLOAD: LazyLock<String> = LazyLock::new(download_markdown);
 
 pub(crate) fn router() -> Router {
+    router_with_base("", true)
+}
+
+/// Deployment URLs are configuration, not request Host or forwarding headers.
+pub(crate) fn router_with_base(base: &str, advertise_canonical: bool) -> Router {
+    let page = Arc::new(
+        advertised_document(&PAGE, base, advertise_canonical)
+            .replace("href=\"/docs", &format!("href=\"{base}/docs"))
+            .replace("src=\"/docs", &format!("src=\"{base}/docs"))
+            .replace(
+                "href=\"/openapi.json",
+                &format!("href=\"{base}/openapi.json"),
+            ),
+    );
+    let origin = reqwest::Url::parse(base)
+        .ok()
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_default();
+    let csp = header::HeaderValue::from_str(&format!("default-src 'none'; style-src 'self' {origin}; img-src 'self' {origin}; base-uri 'none'; frame-ancestors 'none'"))
+        .expect("validated public API origin");
+    let download = Arc::new(advertised_document(&DOWNLOAD, base, advertise_canonical));
     let mut router = Router::new()
         .route(
             "/docs",
-            get(|| async { document(&PAGE, "text/html; charset=utf-8") }),
+            get(move || {
+                let page = page.clone();
+                let csp = csp.clone();
+                async move {
+                    let mut response = document(page.as_str(), "text/html; charset=utf-8");
+                    response
+                        .headers_mut()
+                        .insert(header::CONTENT_SECURITY_POLICY, csp);
+                    response
+                }
+            }),
         )
-        .route(
-            "/docs/",
-            get(|| async { axum::response::Redirect::permanent("/docs") }),
-        )
+        .route("/docs/", redirect(format!("{base}/docs")))
         .route(
             "/docs/architecture",
-            get(|| async { axum::response::Redirect::permanent("/docs#architecture") }),
+            redirect(format!("{base}/docs#architecture")),
         )
-        .route(
-            "/docs/protocol",
-            get(|| async { axum::response::Redirect::permanent("/docs#protocol") }),
-        )
+        .route("/docs/protocol", redirect(format!("{base}/docs#protocol")))
         .route(
             "/docs/download",
-            get(|| async {
-                let mut response = document(&DOWNLOAD, "text/markdown; charset=utf-8");
-                response.headers_mut().insert(
-                    header::CONTENT_DISPOSITION,
-                    header::HeaderValue::from_static(
-                        "attachment; filename=\"agent-event-gateway.md\"",
-                    ),
-                );
-                response
+            get(move || {
+                let download = download.clone();
+                async move {
+                    let mut response = document(&download, "text/markdown; charset=utf-8");
+                    response.headers_mut().insert(
+                        header::CONTENT_DISPOSITION,
+                        header::HeaderValue::from_static(
+                            "attachment; filename=\"agent-event-gateway.md\"",
+                        ),
+                    );
+                    response
+                }
             }),
         )
         .route(
             "/docs/integration.md",
-            get(|| async { document(GUIDE, "text/markdown; charset=utf-8") }),
+            markdown(advertised_document(GUIDE, base, advertise_canonical)),
         )
         .route(
             "/docs/architecture.md",
-            get(|| async { document(ARCHITECTURE, "text/markdown; charset=utf-8") }),
+            markdown(advertised_document(ARCHITECTURE, base, advertise_canonical)),
         )
         .route(
             "/docs/protocol.md",
-            get(|| async { document(PROTOCOL, "text/markdown; charset=utf-8") }),
+            markdown(advertised_document(PROTOCOL, base, advertise_canonical)),
         )
         .route(
             "/docs/style.css",
@@ -85,7 +113,34 @@ pub(crate) fn router() -> Router {
     }
     router
 }
-fn document(body: &'static str, content_type: &'static str) -> Response {
+fn advertised_document(source: &str, base: &str, advertise_canonical: bool) -> String {
+    if base.is_empty() {
+        return source.to_owned();
+    }
+    let source = if advertise_canonical {
+        source.to_owned()
+    } else {
+        source.replace(
+            "https://bot.chrono-ai.fun/event-gateway/legacy-console",
+            &format!("{base}/console"),
+        )
+    };
+    source.replace("https://bot.chrono-ai.fun/event-gateway", base)
+}
+fn markdown(body: String) -> axum::routing::MethodRouter {
+    let body = Arc::new(body);
+    get(move || {
+        let body = body.clone();
+        async move { document(&body, "text/markdown; charset=utf-8") }
+    })
+}
+fn redirect(target: String) -> axum::routing::MethodRouter {
+    get(move || {
+        let target = target.clone();
+        async move { axum::response::Redirect::permanent(&target) }
+    })
+}
+fn document(body: &str, content_type: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, content_type),
@@ -97,7 +152,7 @@ fn document(body: &'static str, content_type: &'static str) -> Response {
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (header::REFERRER_POLICY, "no-referrer"),
         ],
-        body,
+        body.to_owned(),
     )
         .into_response()
 }
@@ -127,7 +182,7 @@ fn page() -> String {
 fn download_markdown() -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     use std::collections::HashMap;
-    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://bot-gateway.chrono-ai.fun/openapi.json\n\n");
+    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://bot.chrono-ai.fun/event-gateway/openapi.json\n\n");
     for (section, _, markdown) in SECTIONS {
         output.push_str(&format!("<a id=\"{section}\"></a>\n\n"));
         let events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES)

@@ -11,6 +11,7 @@ import {
   clampWidth,
   computeColumns,
 } from './columns';
+import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
 
 /**
@@ -53,10 +54,14 @@ interface AppFrameProps {
    * inside a track that was still 280px wide, and the control read as broken.
    */
   readonly sidebarCollapsed?: boolean;
+  /** Landing pages retain a collapsed rail without any expansion interaction. */
+  readonly sidebarLocked?: boolean;
   /** Records an explicit collapse or expansion; automatic collapse stays derived. */
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   /** Things that float over every column — a banner, a dialog's own layer. */
   readonly overlay?: ReactNode;
+  /** What the phone top bar names, beside its navigation button. */
+  readonly phoneTitle?: string;
 }
 
 export function AppFrame({
@@ -67,7 +72,9 @@ export function AppFrame({
   compactDetailsOverlay = false,
   overlay,
   sidebarCollapsed = false,
+  sidebarLocked = false,
   onSidebarCollapsedChange,
+  phoneTitle = 'CMA',
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
@@ -153,12 +160,23 @@ export function AppFrame({
    * a hand-opened sidebar open against the automatic rule, not against its
    * owner asking a second time for it to close.
    */
-  const effectiveSidebarCollapsed = sidebarCollapsed || (narrow && !expandedAnyway);
+  const effectiveSidebarCollapsed =
+    sidebarLocked || sidebarCollapsed || (narrow && !expandedAnyway);
   const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
-  const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
-  const sidebarOverlay = viewport > 0 && viewport < CENTER_MIN && !effectiveSidebarCollapsed;
+  /*
+   * A phone has no room for a permanent rail: 56px is a seventh of a 375px
+   * screen. Below the centre's floor the sidebar is therefore either gone or
+   * a sheet over the page, and a top bar holds the way back to it.
+   */
+  const phone = viewport > 0 && viewport < CENTER_MIN;
+  const solved = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const columns = phone
+    ? { sidebar: effectiveSidebarCollapsed ? 0 : solved.sidebar, center: viewport, details: 0 }
+    : solved;
+  const sidebarOverlay = phone && !effectiveSidebarCollapsed;
 
   const toggleSidebar = useCallback(() => {
+    if (sidebarLocked) return;
     if (effectiveSidebarCollapsed) {
       onSidebarCollapsedChange?.(false);
       if (narrow) {
@@ -169,7 +187,7 @@ export function AppFrame({
 
     onSidebarCollapsedChange?.(true);
     setExpandedAnyway(false);
-  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange]);
+  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange, sidebarLocked]);
 
   const sidebarOwnsToggle = typeof sidebar === 'function';
   const renderedSidebar = sidebarOwnsToggle
@@ -181,6 +199,16 @@ export function AppFrame({
         },
       })
     : sidebar;
+
+  /* Escape closes the sheet, as it closes any other layer over the page. */
+  useEffect(() => {
+    if (!sidebarOverlay) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) toggleSidebar();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [sidebarOverlay, toggleSidebar]);
 
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
@@ -199,17 +227,46 @@ export function AppFrame({
         detailsOpen && columns.details === 0 && compactDetailsOverlay ? '' : undefined
       }
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
+      data-phone={phone ? '' : undefined}
       style={{
-        gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
+        gridTemplateColumns: sidebarOverlay
+          ? `0px ${String(viewport)}px 0px`
+          : `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
       }}
     >
       <div
         className="frame__sidebar"
-        style={sidebarOverlay ? { width: Math.min(columns.sidebar, viewport) } : undefined}
+        hidden={phone && effectiveSidebarCollapsed}
+        style={
+          sidebarOverlay
+            ? { width: Math.min(columns.sidebar, Math.max(0, viewport - 48)) }
+            : undefined
+        }
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center">{center}</div>
+      <div className="frame__center" inert={sidebarOverlay || undefined}>
+        {phone && sidebarOwnsToggle ? (
+          <div className="frame__topbar">
+            {sidebarLocked ? null : (
+              <button
+                type="button"
+                className="frame__menu"
+                aria-label="Show navigation"
+                aria-expanded={!effectiveSidebarCollapsed}
+                onClick={toggleSidebar}
+              >
+                <IconPanelLeftOutline16 />
+              </button>
+            )}
+            <span className="frame__title">{phoneTitle}</span>
+          </div>
+        ) : null}
+        {center}
+      </div>
+      {sidebarOverlay ? (
+        <div className="frame__scrim" aria-hidden="true" onClick={toggleSidebar} />
+      ) : null}
       <div className="frame__details">{details}</div>
 
       {/*
@@ -217,25 +274,35 @@ export function AppFrame({
         move: a column clips its own overflow, so a strip straddling its border
         would be cut in half by the thing it is there to resize.
       */}
-      <DragHandle
-        side="sidebar"
-        at={columns.sidebar}
-        label="Resize navigation"
-        onDrag={(dx) => {
-          onSidebarDrag(sidebarDragStart.current + dx);
-        }}
-        onDraggingChange={(active) => {
-          if (active) {
-            sidebarDragStart.current = columns.sidebar;
-          }
-          setDragging(active);
-        }}
-      />
+      {sidebarLocked ? null : (
+        <DragHandle
+          side="sidebar"
+          at={columns.sidebar}
+          label="Resize navigation"
+          value={columns.sidebar}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          onResize={onSidebarDrag}
+          onDrag={(dx) => {
+            onSidebarDrag(sidebarDragStart.current + dx);
+          }}
+          onDraggingChange={(active) => {
+            if (active) {
+              sidebarDragStart.current = columns.sidebar;
+            }
+            setDragging(active);
+          }}
+        />
+      )}
       {columns.details === 0 ? null : (
         <DragHandle
           side="details"
           at={columns.sidebar + columns.center}
           label="Resize the details column"
+          value={columns.details}
+          min={DETAILS_MIN}
+          max={Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)}
+          onResize={onDetailsDrag}
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.
             onDetailsDrag(detailsDragStart.current - dx);
@@ -250,7 +317,7 @@ export function AppFrame({
       )}
 
       <div className="frame__overlay">{overlay}</div>
-      {narrow && !sidebarOwnsToggle ? (
+      {narrow && !sidebarOwnsToggle && !sidebarLocked ? (
         <button
           type="button"
           className="frame__narrowtoggle"
@@ -269,15 +336,36 @@ interface DragHandleProps {
   /** Where the border it straddles currently is. */
   readonly at: number;
   readonly label: string;
+  readonly value: number;
+  readonly min: number;
+  readonly max: number;
+  readonly onResize: (width: number) => void;
   readonly onDrag: (dx: number) => void;
   readonly onDraggingChange: (dragging: boolean) => void;
 }
 
-function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandleProps) {
+function DragHandle({
+  side,
+  at,
+  label,
+  value,
+  min,
+  max,
+  onResize,
+  onDrag,
+  onDraggingChange,
+}: DragHandleProps) {
   const [dragging, setDragging] = useState(false);
   const origin = useRef(0);
   const latest = useRef(0);
   const frame = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
 
   const report = useCallback(() => {
     frame.current = null;
@@ -293,6 +381,30 @@ function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandlePro
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
+      tabIndex={value >= min ? 0 : -1}
+      aria-valuenow={value}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuetext={`${Math.round(value)} pixels`}
+      onKeyDown={(event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const step = event.shiftKey ? 48 : 16;
+        const direction = (event.key === 'ArrowRight' ? 1 : -1) * (side === 'details' ? -1 : 1);
+        onResize(
+          event.key === 'Home'
+            ? min
+            : event.key === 'End'
+              ? max
+              : clampWidth(value + direction * step, min, max),
+        );
+      }}
+      onLostPointerCapture={() => {
+        if (frame.current !== null) cancelAnimationFrame(frame.current);
+        frame.current = null;
+        setDragging(false);
+        onDraggingChange(false);
+      }}
       onPointerDown={(event) => {
         event.preventDefault();
         /*

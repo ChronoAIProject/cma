@@ -1,8 +1,27 @@
-import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
-import type { CmaWebClient, ReadOptions } from './client';
-import type { ProfileReference } from './types';
-import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
+import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
+import { AgentLifecycleCreateError } from './client';
+import type {
+  AgentLifecycleConnectionRequired,
+  AgentLifecycleCreateInput,
+  AgentLifecycleOperationView,
+  CmaWebClient,
+  ReadOptions,
+} from './client';
+import type { ConnectionTarget } from '../connections/client';
+import type { CreateInlineWorkspaceInput, ProfileReference } from './types';
+import {
+  agentDetail,
+  runtimeUpdate,
+  sandboxDetail,
+  sandboxSummary,
+  workspaceDetail,
+} from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
+import { agentSettingsClient } from './rest/agentSettings';
+import { agentSkillsClient } from './rest/agentSkills';
+import { messageFeedbackClient } from './rest/messageFeedback';
+import { agentFilesClient } from './rest/agentFiles';
+import { documentsClient } from './rest/documents';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -48,8 +67,113 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    documents: documentsClient(),
+    files: agentFilesClient(),
+    updateSandboxRuntime: async (id, targetVersion, options) => {
+      const result = await sdk.sandboxes.updateRuntime(
+        id,
+        { target_version: targetVersion },
+        options,
+      );
+      return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
+    },
+    ...agentSettingsClient(),
+    ...messageFeedbackClient(),
+    ...agentSkillsClient(),
+    grantSandboxServiceAccess: async (id, services, options) => {
+      await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);
+    },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
+      const response = await fetch('/api/agent-manager/v1/agents', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: options.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': options.idempotencyKey,
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        let detail = `Agent Manager could not create this Agent (${String(response.status)}).`;
+        let code: string | undefined;
+        let connection: AgentLifecycleConnectionRequired | undefined;
+        try {
+          const value = (await response.json()) as {
+            detail?: unknown;
+            code?: unknown;
+            services?: unknown;
+            connection_target?: unknown;
+          };
+          if (typeof value.detail === 'string') detail = value.detail;
+          if (typeof value.code === 'string') {
+            code = value.code;
+            if (value.detail === undefined) detail = value.code;
+          }
+          if (
+            code === 'connection_required' &&
+            Array.isArray(value.services) &&
+            value.services.every((service): service is string => typeof service === 'string') &&
+            isConnectionTarget(value.connection_target)
+          ) {
+            connection = {
+              code,
+              services: value.services,
+              target: value.connection_target,
+            };
+          }
+        } catch {
+          /* Keep the status-based message. */
+        }
+        throw new AgentLifecycleCreateError(detail, response.status, code, connection);
+      }
+      const value = (await response.json()) as { id?: unknown; status?: unknown };
+      if (typeof value.id !== 'string' || value.id.length === 0)
+        throw new Error('Agent Manager returned an invalid Agent identity.');
+      return {
+        id: value.id,
+        status: typeof value.status === 'string' ? value.status : undefined,
+      };
+    },
+    readAgentLifecycle: async (
+      operationId: string,
+      options,
+    ): Promise<AgentLifecycleOperationView> => {
+      const response = await fetch(
+        `/api/agent-manager/v1/agent-lifecycle/${encodeURIComponent(operationId)}`,
+        {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: options?.signal,
+        },
+      );
+      if (!response.ok)
+        throw new ApiError(
+          response.status,
+          `Agent lifecycle status failed (${String(response.status)}).`,
+        );
+      const value = (await response.json()) as AgentLifecycleOperationView;
+      if (
+        value.id !== operationId ||
+        !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
+          value.status,
+        ) ||
+        typeof value.phase !== 'string' ||
+        !Array.isArray(value.events) ||
+        (value.connection !== undefined &&
+          (!Array.isArray(value.connection.services) ||
+            !value.connection.services.every((service) => typeof service === 'string') ||
+            !isConnectionTarget(value.connection.target))) ||
+        (value.status === 'waiting_for_connection' && value.connection === undefined) ||
+        (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
+      )
+        throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+      return value;
+    },
+    uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
@@ -113,11 +237,33 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         })),
       };
     },
+    exportAgentHistory: async (id, options) => {
+      const response = await sdk.config.fetch(
+        `${sdk.config.baseUrl}/api/v1/agents/${encodeURIComponent(id)}/history`,
+        {
+          credentials: sdk.config.cookies ? 'include' : 'omit',
+          cache: 'no-store',
+          signal: options?.signal,
+        },
+      );
+      if (!response.ok) {
+        throw new ProtocolError(`Agent history export failed (${String(response.status)}).`);
+      }
+      return response.blob();
+    },
     readAgentUsage: async (id, options) => {
       const value = await sdk.agents.usage(id, options);
       return {
         agentId: value.agent_id,
         throughSeq: value.through_seq,
+        currentTurn:
+          value.current_turn === undefined
+            ? undefined
+            : {
+                turnSequence: value.current_turn.turn_sequence,
+                inputTokens: value.current_turn.input_tokens,
+                outputTokens: value.current_turn.output_tokens,
+              },
         inputTokens: value.input_tokens,
         outputTokens: value.output_tokens,
         contextUsed: value.context_used,
@@ -169,6 +315,16 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         workspaceDetail(await sdk.workspaces.read(created.id, { signal: options.signal })),
       );
     },
+    createInlineWorkspace: async (
+      sandboxId: string,
+      input: CreateInlineWorkspaceInput,
+      options,
+    ) => {
+      const created = await sdk.workspaces.createInline(sandboxId, input, options);
+      return createdDetail('Workspace', created.id, async () =>
+        workspaceDetail(await sdk.workspaces.read(created.id, { signal: options.signal })),
+      );
+    },
     createAgent: async (workspaceId, input, options) =>
       agentDetail(
         await sdk.agents.create(
@@ -197,4 +353,33 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     stopAgent: (id, options) => sdk.agents.stop(id, {}, options),
     deleteAgent: (id, options) => sdk.agents.delete(id, options),
   };
+}
+
+function isConnectionTarget(value: unknown): value is ConnectionTarget {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { type?: unknown; id?: unknown; profile?: unknown };
+  if (
+    (candidate.type === 'sandbox' ||
+      candidate.type === 'workspace' ||
+      candidate.type === 'agent' ||
+      candidate.type === 'launch' ||
+      candidate.type === 'agent_access_request') &&
+    typeof candidate.id === 'string' &&
+    candidate.id.length > 0
+  )
+    return true;
+  if (
+    candidate.type !== 'sandbox_profile' ||
+    typeof candidate.profile !== 'object' ||
+    candidate.profile === null
+  )
+    return false;
+  const profile = candidate.profile as { id?: unknown; revision?: unknown };
+  return (
+    typeof profile.id === 'string' &&
+    profile.id.length > 0 &&
+    typeof profile.revision === 'number' &&
+    Number.isSafeInteger(profile.revision) &&
+    profile.revision > 0
+  );
 }

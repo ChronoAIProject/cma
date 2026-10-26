@@ -246,11 +246,11 @@ cat "$notes_file" >> "$assembled"
   printf '\n### Images\n\n'
   printf 'Published to GitHub Container Registry, private to the organisation.\n\n'
   printf '```\n'
-  for component in api web runtime; do
+  for component in api web runtime cmaeg image-manager; do
     printf 'ghcr.io/%s/cma-%s:%s\n' "$owner_lower" "$component" "$version"
   done
   printf '```\n\n'
-  for component in api web runtime; do
+  for component in api web runtime cmaeg image-manager; do
     printf -- '- [cma-%s](%s/orgs/%s/packages/container/package/cma-%s)\n' \
       "$component" "$server_url" "$owner" "$component"
   done

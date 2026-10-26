@@ -2,7 +2,8 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
-    Agent, AgentOperationError, AgentWorkAuthority, AgentWorkStep, FirstMessageDispatchOutcome,
+    Agent, AgentOperationError, AgentStatus, AgentWorkAuthority, AgentWorkStep,
+    FirstMessageDelivery, FirstMessageDispatchOutcome,
 };
 use layer2_core::seconds_from_rfc3339;
 
@@ -16,6 +17,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if let Err(failure) = self.ensure_dispatch_connection(&agent).await {
             return self.handle_failure(agent, failure, now).await;
         }
@@ -26,23 +28,26 @@ impl AgentWorker {
             .dependencies
             .operations
             .dispatch_queued_first_message(&agent.id, authority.clone())
-            .await
-            .map_err(dispatch_error)?;
+            .await;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(AgentOperationError::Conflict) => {
+                return self
+                    .retry_unadmitted_first_message(&agent, &authority, now + started.elapsed())
+                    .await;
+            }
+            Err(error) => return Err(dispatch_error(error)),
+        };
         match outcome {
             FirstMessageDispatchOutcome::CommonCommand(_)
             | FirstMessageDispatchOutcome::NotConfigured
             | FirstMessageDispatchOutcome::Accepted(_)
             | FirstMessageDispatchOutcome::RecoveryRequired(_) => {
-                let current = self.current_dispatch(&agent, &authority).await?;
-                let now = publication_time(now, &current)?;
-                self.progress(
-                    current,
-                    AgentWorkStep::None,
-                    now,
-                    None,
-                    Vec::new(),
-                    None,
-                    None,
+                self.retry_dispatch_publication(
+                    &agent,
+                    &outcome,
+                    now + started.elapsed(),
+                    |current, at| async move { self.finish_dispatch_publication(current, at).await },
                 )
                 .await
             }
@@ -61,6 +66,44 @@ impl AgentWorker {
             }
             FirstMessageDispatchOutcome::InProgress(_) => Ok(()),
         }
+    }
+
+    async fn retry_unadmitted_first_message(
+        &self,
+        original: &Agent,
+        authority: &AgentWorkAuthority,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        // A fresh exact-fence observation is required: a dispatch fence or any
+        // write evidence must never be reset into a second prompt attempt.
+        let current = self.current_dispatch(original, authority).await?;
+        let now = publication_time(now, &current)?;
+        if current.status != AgentStatus::Ready
+            || current.conversation.active_turn.is_some()
+            || current.conversation.first_message != original.conversation.first_message
+            || current
+                .work
+                .lease
+                .as_ref()
+                .is_none_or(|lease| lease.expires_at <= layer2_core::rfc3339_at(now))
+            || !current
+                .conversation
+                .first_message
+                .as_ref()
+                .is_some_and(|record| record.state == FirstMessageDelivery::Queued)
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        self.retry_at(
+            current,
+            WorkerFailure::retryable(
+                "agent_first_message_admission_conflict",
+                "first-message admission conflicted before dispatch; retrying fresh state",
+            ),
+            now,
+            now + Duration::from_secs(1),
+        )
+        .await
     }
 
     async fn ensure_dispatch_connection(&self, agent: &Agent) -> Result<(), WorkerFailure> {

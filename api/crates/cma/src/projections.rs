@@ -4,6 +4,10 @@ use std::sync::Arc;
 
 use axum::Router;
 use layer1_public::rest::{agent_router, AgentRoutesState};
+use layer1_public::rest::{
+    AgentHistoryExportError, AgentHistoryExporter, AgentLifecycleOperationReader,
+    AgentLifecycleProvisioner,
+};
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
 use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
 use layer2_core::sandbox::{
@@ -17,18 +21,57 @@ use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
+    message_feedback: Option<Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>>,
+    skill_support: Option<Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>>,
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     agents: Arc<AgentService>,
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
+    lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
+    lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
+    history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_message_feedback(
+        mut self,
+        store: Arc<dyn layer2_core::sandbox::message_feedback::MessageFeedbackStore>,
+    ) -> Self {
+        self.message_feedback = Some(store);
+        self
+    }
+
+    pub(crate) fn with_skill_support(
+        mut self,
+        support: Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>,
+    ) -> Self {
+        self.skill_support = Some(support);
+        self
+    }
+
     pub(crate) fn with_commands(
         mut self,
         commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
     ) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    pub(crate) fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
+    }
+
+    pub(crate) fn with_lifecycle_operations(
+        mut self,
+        reader: Arc<dyn AgentLifecycleOperationReader>,
+    ) -> Self {
+        self.lifecycle_operations = Some(reader);
+        self
+    }
+
+    pub(crate) fn with_history_exporter(mut self, exporter: Arc<dyn AgentHistoryExporter>) -> Self {
+        self.history_exporter = Some(exporter);
         self
     }
 
@@ -69,12 +112,19 @@ impl AgentProjectionServices {
             runtime_capabilities,
         );
         let reads = AgentReadService::new(store.clone(), resources);
-        let operations = AgentOperationService::new(store, runtimes);
+        let operations = AgentOperationService::new(store, runtimes).with_instruction_policy(
+            Arc::new(crate::agent_lifecycle::guidance::ManagedInstructionPolicy),
+        );
         Self {
+            message_feedback: None,
+            skill_support: None,
             commands: None,
             agents,
             operations,
             reads,
+            lifecycle: None,
+            lifecycle_operations: None,
+            history_exporter: None,
         }
     }
 
@@ -97,6 +147,26 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.message_feedback {
+            Some(store) => agent_routes.with_message_feedback(store.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.skill_support {
+            Some(support) => agent_routes.with_skill_support(support.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.lifecycle {
+            Some(lifecycle) => agent_routes.with_lifecycle(lifecycle.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.lifecycle_operations {
+            Some(reader) => agent_routes.with_lifecycle_operations(reader.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.history_exporter {
+            Some(exporter) => agent_routes.with_history_exporter(exporter.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.commands {
             Some(commands) => agent_routes.with_commands(commands.clone()),
             None => agent_routes,
@@ -148,6 +218,43 @@ impl SandboxResourceReader for UnavailableSandboxResources {
 
 pub(crate) struct AdapterSandboxResources {
     adapter: Arc<dyn SandboxAdapter>,
+}
+
+pub(crate) struct AdapterAgentHistoryExporter {
+    adapter: Arc<dyn SandboxAdapter>,
+}
+
+impl AdapterAgentHistoryExporter {
+    pub(crate) fn new(adapter: Arc<dyn SandboxAdapter>) -> Self {
+        Self { adapter }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentHistoryExporter for AdapterAgentHistoryExporter {
+    async fn export(
+        &self,
+        runtime_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<u8>, AgentHistoryExportError> {
+        let bytes = self
+            .adapter
+            .export_agent_history(
+                &RuntimeHandle::new(runtime_id),
+                &layer3_adapter::AgentSlot::new(agent_id),
+            )
+            .await
+            .map_err(|error| match error {
+                AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
+                AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
+                    AgentHistoryExportError::Unavailable
+                }
+                AdapterError::Rejected(_)
+                | AdapterError::OperationIdentityConflict(_)
+                | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+            })?;
+        Ok(bytes)
+    }
 }
 
 impl AdapterSandboxResources {
@@ -207,6 +314,56 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             SandboxResourceReadError::Unavailable(
                 "the runtime resource transport is unavailable".into(),
             )
+        }
+    }
+}
+
+pub(crate) struct AdapterAgentSkillSupport(pub Arc<dyn SandboxAdapter>);
+#[async_trait::async_trait]
+impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport {
+    async fn supported(&self, sandbox: &Sandbox) -> bool {
+        let Some(binding) = &sandbox.runtime else {
+            return false;
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.0
+                .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
+        )
+        .await;
+        match result {
+            Ok(Ok(status)) => {
+                status.agent_skill_install
+                    && status.installation_ready
+                    && status.credential_ready
+                    && sandbox.runtime_process_matches(&status).unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub(crate) struct AdapterAgentModelSupport(pub Arc<dyn SandboxAdapter>);
+#[async_trait::async_trait]
+impl layer1_public::rest::AgentModelRuntimeSupport for AdapterAgentModelSupport {
+    async fn supported(&self, sandbox: &Sandbox) -> bool {
+        let Some(binding) = &sandbox.runtime else {
+            return false;
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.0
+                .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
+        )
+        .await;
+        match result {
+            Ok(Ok(status)) => {
+                status.agent_model_catalog
+                    && status.installation_ready
+                    && status.credential_ready
+                    && sandbox.runtime_process_matches(&status).unwrap_or(false)
+            }
+            _ => false,
         }
     }
 }

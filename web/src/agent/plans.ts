@@ -1,0 +1,37 @@
+import type { ConversationState, PlanEntry } from './model';
+import { object, text } from './conversationValues';
+
+/** Entries that are not a titled step with a status are dropped rather than guessed at. */
+function planEntries(value: unknown): readonly PlanEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((entry) => {
+    const item = object(entry);
+    const title = text(item?.title);
+    const status = text(item?.status);
+    return title === undefined || status === undefined ? [] : [{ title, status }];
+  });
+}
+
+/**
+ * Replace a turn's plan with its latest report, keyed by turn so the durable
+ * history and a live stream restating the same plan update one card rather
+ * than adding a second. An empty report clears the card.
+ */
+export function setPlan(
+  state: ConversationState,
+  runId: string | undefined,
+  value: unknown,
+): ConversationState {
+  const entries = planEntries(value);
+  if (entries === undefined) return state;
+  const id = `plan:${runId ?? 'unattributed'}`;
+  const current = state.plans.find((plan) => plan.id === id);
+  const plan = { ...current, id, runId, entries };
+  return {
+    ...state,
+    plans:
+      current === undefined
+        ? [...state.plans, plan]
+        : state.plans.map((item) => (item.id === id ? plan : item)),
+  };
+}

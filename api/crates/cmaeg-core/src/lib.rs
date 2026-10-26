@@ -17,6 +17,12 @@ pub mod thread;
 /// Neutral messages emitted by an agent turn.
 pub mod message;
 
+/// Chat text conventions, such as bot addresses, shared by routing and rendering.
+pub mod chat;
+
+/// The pure routing decision: which consumers an admitted event reaches.
+pub mod routing;
+
 /// CloudEvents 1.0 envelope types.
 pub mod cloudevent;
 

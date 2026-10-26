@@ -1,18 +1,8 @@
-.agent-instruments {
-  grid-row: 5;
-  width: min(100%, var(--read-column));
-  margin: 0 auto;
-  padding: 0 24px 12px;
+.sandbox-instruments {
+  min-width: 0;
   color: var(--dsw-alias-label-caption);
   font-size: 12px;
-  line-height: 20px;
   font-variant-numeric: tabular-nums;
-}
-.agent-instruments__usage {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 8px;
 }
 .resources {
   display: grid;
@@ -48,11 +38,6 @@
   background: var(--dsw-alias-label-tertiary);
   border-radius: inherit;
   transition: width var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-@media (max-width: 30rem) {
-  .agent-instruments {
-    padding: 0 14px 10px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .resources__fill {

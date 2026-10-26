@@ -290,6 +290,10 @@ pub(super) fn ready_agent(sandbox: &Sandbox, now: SystemTime) -> Agent {
         capabilities: layer2_core::RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: Some("conversation-lifecycle-queue".into()),
             runtime_generation: Some(3),
             last_seq: 0,

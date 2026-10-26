@@ -171,7 +171,9 @@ impl ConnectionService {
                     data: Some(serde_json::json!({"connection_ref":record.id,"status":"ready"})),
                     extensions: Default::default(),
                 },
+                attachments: Vec::new(),
             },
+            routing: None,
         };
         activity.validate().map_err(|_| Error::Unavailable)?;
         if activity.partition_key(&channel.definition.partition)
@@ -205,6 +207,7 @@ impl ConnectionService {
             received_at: Instant::now(),
             trace: tracing::Span::current(),
             timing: None,
+            consumer: None,
         })
     }
     pub async fn notify_completion(

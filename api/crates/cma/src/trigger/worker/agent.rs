@@ -345,7 +345,9 @@ fn valid_agent(
                     launch_id == launch.id.as_str()
                 }
         }
-        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => reused,
+        AgentOrigin::Manual
+        | AgentOrigin::Lifecycle { .. }
+        | AgentOrigin::WorkspaceProfile { .. } => reused,
     };
     launch.resolution.agent.id() == Some(&agent.id)
         && launch.resolution.workspace.id() == Some(&agent.workspace_id)
@@ -387,6 +389,12 @@ fn valid_ready_agent(agent: &Agent, launch: &Launch) -> bool {
 pub(super) fn valid_creation_key(agent: &Agent) -> bool {
     let expected = match &agent.origin {
         AgentOrigin::Manual => Some(format!("manual:{}", agent.id)),
+        AgentOrigin::Lifecycle { operation_id } if valid_origin_id(operation_id) => {
+            content_digest(&agent.origin)
+                .ok()
+                .map(|digest| format!("lifecycle:{digest}"))
+        }
+        AgentOrigin::Lifecycle { .. } => None,
         AgentOrigin::WorkspaceProfile { index } => {
             Some(format!("workspace-profile:{}:{index}", agent.workspace_id))
         }

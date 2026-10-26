@@ -24,6 +24,7 @@ impl ResourceSelector {
 #[serde(rename_all = "snake_case")]
 pub enum ShareMode {
     View,
+    ViewWrite,
     OrgRoles,
 }
 
@@ -35,7 +36,10 @@ pub struct ResourceShare {
     pub id: String,
     pub owner: ResourceOwner,
     pub selector: ResourceSelector,
+    /// Legacy organization grant; empty for an Agent share link.
     pub target_org_id: SubjectId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<super::AgentShareLink>,
     pub mode: ShareMode,
     pub issuer_actor: ResourceActor,
     pub created_at: String,
@@ -54,7 +58,8 @@ impl ResourceShare {
         if !self.validate() || self.owner != scope.owner || !self.selector.covers(scope) {
             return Err(super::AccessError::NotFound);
         }
-        if self.mode == ShareMode::View
+        if self.link.is_some()
+            || self.mode == ShareMode::View
             || matches!(self.selector, ResourceSelector::Sandbox { .. })
             || scope.sharing_isolation == SharingIsolation::IndependentlyIsolated
             || current_shares.iter().any(|share| {
@@ -80,7 +85,18 @@ impl ResourceShare {
         !self.id.trim().is_empty()
             && !subject.as_str().trim().is_empty()
             && self.issuer_actor.ordinary_subject() == Some(subject)
-            && !self.target_org_id.as_str().trim().is_empty()
+            && match &self.link {
+                Some(link) => {
+                    self.target_org_id.as_str().is_empty()
+                        && matches!(self.selector, ResourceSelector::Agent { .. })
+                        && matches!(self.mode, ShareMode::View | ShareMode::ViewWrite)
+                        && link.validate()
+                }
+                None => {
+                    !self.target_org_id.as_str().trim().is_empty()
+                        && self.mode != ShareMode::ViewWrite
+                }
+            }
             && self.revision > 0
             && self.revision <= i64::MAX as u64
             && crate::seconds_from_rfc3339(&self.created_at).is_some()

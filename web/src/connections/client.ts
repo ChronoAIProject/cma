@@ -5,7 +5,13 @@ export type ConnectionTarget =
       readonly type: 'sandbox_profile';
       readonly profile: { readonly id: string; readonly revision: number };
     }
-  | { readonly type: 'sandbox' | 'workspace' | 'agent' | 'launch'; readonly id: string };
+  | { readonly type: 'sandbox' | 'workspace' | 'agent' | 'launch'; readonly id: string }
+  | { readonly type: 'agent_access_request'; readonly id: string }
+  | {
+      readonly type: 'agent_service_access';
+      readonly id: string;
+      readonly services: readonly string[];
+    };
 
 export interface ActiveConnection {
   readonly service_id: string;

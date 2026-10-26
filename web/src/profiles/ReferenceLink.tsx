@@ -20,7 +20,12 @@ type Resolved = {
 };
 type Resolve = (kind: ReferenceKind, id: string) => Promise<Resolved | undefined>;
 const References = createContext<
-  { resolve: Resolve; navigate: (route: AppRoute) => void } | undefined
+  | {
+      resolve: Resolve;
+      peek: (kind: ReferenceKind, id: string) => Resolved | undefined;
+      navigate: (route: AppRoute) => void;
+    }
+  | undefined
 >(undefined);
 
 export function ReferenceProvider({
@@ -35,6 +40,7 @@ export function ReferenceProvider({
     | {
         client: typeof profiles;
         cache: Map<string, Promise<Resolved | undefined>>;
+        names: Map<string, Resolved>;
         services?: Promise<readonly ServiceCatalogEntry[]>;
       }
     | undefined
@@ -42,7 +48,7 @@ export function ReferenceProvider({
   const resolve = useCallback<Resolve>(
     (kind, id) => {
       if (retained.current?.client !== profiles || retained.current === undefined)
-        retained.current = { client: profiles, cache: new Map() };
+        retained.current = { client: profiles, cache: new Map(), names: new Map() };
       const directory = retained.current;
       const cache = directory.cache;
       const key = `${kind}:${id}`;
@@ -70,17 +76,29 @@ export function ReferenceProvider({
             : undefined;
         }
       };
-      const pending = read().catch(() => {
-        cache.delete(key);
-        if (kind === 'service') directory.services = undefined;
-        return undefined;
-      });
+      const pending = read()
+        .then((value) => {
+          if (value !== undefined) directory.names.set(key, value);
+          return value;
+        })
+        .catch(() => {
+          cache.delete(key);
+          if (kind === 'service') directory.services = undefined;
+          return undefined;
+        });
       cache.set(key, pending);
       return pending;
     },
     [profiles],
   );
-  return <References value={{ resolve, navigate: onNavigate }}>{children}</References>;
+  const peek = useCallback(
+    (kind: ReferenceKind, id: string) => {
+      const directory = retained.current;
+      return directory?.client === profiles ? directory?.names.get(`${kind}:${id}`) : undefined;
+    },
+    [profiles],
+  );
+  return <References value={{ resolve, peek, navigate: onNavigate }}>{children}</References>;
 }
 
 export function ReferenceLink({
@@ -97,7 +115,7 @@ export function ReferenceLink({
   readonly catalogId?: string;
 }) {
   const context = useContext(References);
-  const [resolved, setResolved] = useState<{ key: string; value?: Resolved }>();
+  const [resolved, setResolved] = useState<{ key: string; resolver: Resolve; value?: Resolved }>();
   const resolver = context?.resolve;
   const key = `${kind}:${id}`;
   useEffect(() => {
@@ -108,13 +126,14 @@ export function ReferenceLink({
       return;
     let current = true;
     void resolver(kind, id).then((value) => {
-      if (current) setResolved({ key, value });
+      if (current) setResolved({ key, resolver, value });
     });
     return () => {
       current = false;
     };
   }, [resolver, kind, id, key, name, catalogId]);
-  const value = resolved?.key === key ? resolved.value : undefined;
+  const settled = resolved?.key === key && resolved.resolver === resolver;
+  const value = settled ? resolved.value : context?.peek(kind, id);
   const label = name ?? value?.name;
   const fallback =
     kind === 'service'
@@ -122,7 +141,7 @@ export function ReferenceLink({
       : kind === 'skill'
         ? 'Skill unavailable'
         : 'Profile unavailable';
-  const loading = name === undefined && context !== undefined && resolved?.key !== key;
+  const loading = name === undefined && context !== undefined && !settled && value === undefined;
   const route: AppRoute | undefined =
     kind === 'service' || kind === 'skill'
       ? undefined

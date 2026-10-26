@@ -53,6 +53,7 @@ pub(super) async fn seed_profiles(
     let sandbox_id = SandboxProfileId("sbp_sandbox".into());
 
     let agent = AgentProfile {
+        internal: false,
         id: agent_id.clone(),
         owner: owner.clone(),
         name: "Research Agent".into(),
@@ -87,6 +88,7 @@ pub(super) async fn seed_profiles(
         .expect("agent revision");
 
     let workspace = WorkspaceProfile {
+        internal: false,
         id: workspace_id.clone(),
         owner: owner.clone(),
         name: "Proof Workspace".into(),
@@ -117,6 +119,7 @@ pub(super) async fn seed_profiles(
         .expect("workspace revision");
 
     let sandbox = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
@@ -126,6 +129,7 @@ pub(super) async fn seed_profiles(
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 2_000,
             memory_mib: 4_096,
             nyxid_services: vec![ServiceId::new("github")],
@@ -174,6 +178,7 @@ pub(super) async fn seed_profiles(
             sandbox_profile: SandboxProfileRef::new(sandbox_id, 1),
             workspace_profile: WorkspaceProfileRef::new(workspace_id, 1),
             agent_profile: AgentProfileRef::new(agent_id, 1),
+            inline: None,
         },
         owner,
     }
@@ -452,50 +457,6 @@ async fn immutable_profile_reader_ignores_current_retirement_state() {
         seed.target.workspace_profile.id
     );
     assert_eq!(profiles.agent.profile_id, seed.target.agent_profile.id);
-}
-
-#[tokio::test]
-async fn deletion_is_owner_scoped_and_permitted_only_before_first_publication() {
-    let seed = seed_profiles(Visibilities::default(), true).await;
-    let store = trigger_store(&seed);
-    let draft = trigger(seed.owner.clone(), seed.target.clone());
-    let draft_id = draft.id.clone();
-    store.create_trigger(draft).await.unwrap();
-
-    assert_eq!(
-        store
-            .delete_unpublished_trigger(&draft_id, &SubjectId::new("somebody-else"))
-            .await,
-        Err(TriggerStoreError::NotFound)
-    );
-    store
-        .delete_unpublished_trigger(&draft_id, &seed.owner)
-        .await
-        .expect("owned unpublished Trigger can be deleted");
-    assert!(store
-        .trigger(&draft_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_none());
-
-    let published = trigger(seed.owner.clone(), seed.target);
-    let published_id = published.id.clone();
-    store.create_trigger(published).await.unwrap();
-    store
-        .publish_trigger(&published_id, &seed.owner, 1, PUBLISHED.into())
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .delete_unpublished_trigger(&published_id, &seed.owner)
-            .await,
-        Err(TriggerStoreError::AlreadyPublished)
-    );
-    assert!(store
-        .trigger(&published_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_some());
 }
 
 #[tokio::test]

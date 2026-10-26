@@ -101,6 +101,26 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "owner": 1, "origin_operation_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_owner_lifecycle_operation".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "origin_type": "lifecycle" })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
+            .keys(doc! { "record.owner": 1, "record.origin.operation_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_record_owner_lifecycle_operation".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "record.origin.type": "lifecycle" })
+                    .build(),
+            )
+            .build(),
     ]
 }
 
@@ -118,9 +138,9 @@ pub(super) fn sandbox_document(
     sandbox: &Sandbox,
     last_seq: u64,
 ) -> Result<Document, SandboxStoreError> {
-    if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
+    if sandbox.origin.replay_key().is_some() {
         return Err(SandboxStoreError::InvalidTransaction(
-            "trigger sandboxes require atomic admission",
+            "origin-bound sandboxes require atomic admission",
         ));
     }
     raw_sandbox_document(sandbox, last_seq, Bson::Null, Bson::Null)
@@ -139,7 +159,7 @@ pub(super) fn admitted_sandbox_document(
     }
     let (name, fingerprint) = match &sandbox.origin {
         SandboxOrigin::Manual => (Bson::Null, Bson::Null),
-        SandboxOrigin::Trigger { .. } => {
+        SandboxOrigin::Trigger { .. } | SandboxOrigin::Lifecycle { .. } => {
             SandboxAdmissionReplay::new(
                 sandbox.clone(),
                 admission_name.clone(),
@@ -163,7 +183,7 @@ fn raw_sandbox_document(
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("sandbox aggregate is invalid: {error}"))
     })?;
-    let (origin_type, origin_launch_id) = sandbox_origin_fields(sandbox)?;
+    let (origin_type, origin_launch_id, origin_operation_id) = sandbox_origin_fields(sandbox)?;
     let lease_expires_at = sandbox.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": sandbox.id.as_str(),
@@ -172,6 +192,7 @@ fn raw_sandbox_document(
         "name": &sandbox.name,
         "origin_type": origin_type,
         "origin_launch_id": origin_launch_id,
+        "origin_operation_id": origin_operation_id,
         "admission_name": admission_name,
         "admission_fingerprint": admission_fingerprint,
         "status": record_bson(&sandbox.status).map_err(SandboxStoreError::Corrupt)?,
@@ -206,12 +227,13 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
             .as_ref()
             .map(|runtime| &runtime.runtime_version),
     );
-    let (origin_type, origin_launch_id) = sandbox_origin_fields(&sandbox)?;
+    let (origin_type, origin_launch_id, origin_operation_id) = sandbox_origin_fields(&sandbox)?;
     if !string_field_matches(document, "_id", sandbox.id.as_str())
         || !string_field_matches(document, "owner", sandbox.owner.as_str())
         || !string_field_matches(document, "name", &sandbox.name)
         || !string_field_matches(document, "origin_type", origin_type)
         || document.get("origin_launch_id") != Some(&origin_launch_id)
+        || document.get("origin_operation_id").unwrap_or(&Bson::Null) != &origin_operation_id
         || document.get("status") != Some(&status)
         || document.get("runtime_version") != Some(&runtime_version)
         || !string_field_matches(document, "updated_at", &sandbox.updated_at)
@@ -247,19 +269,26 @@ pub(super) fn read_sandbox_admission_replay(
 
 pub(super) fn sandbox_origin_fields(
     sandbox: &Sandbox,
-) -> Result<(&'static str, Bson), SandboxStoreError> {
+) -> Result<(&'static str, Bson, Bson), SandboxStoreError> {
     match &sandbox.origin {
-        SandboxOrigin::Manual => Ok(("manual", Bson::Null)),
+        SandboxOrigin::Manual => Ok(("manual", Bson::Null, Bson::Null)),
         SandboxOrigin::Trigger { launch_id }
             if !launch_id.trim().is_empty()
                 && launch_id.len() <= 128
                 && !launch_id.chars().any(char::is_control) =>
         {
-            Ok(("trigger", Bson::String(launch_id.clone())))
+            Ok(("trigger", Bson::String(launch_id.clone()), Bson::Null))
         }
-        SandboxOrigin::Trigger { .. } => Err(SandboxStoreError::Corrupt(
-            "stored sandbox trigger origin is invalid".into(),
-        )),
+        SandboxOrigin::Lifecycle { operation_id }
+            if !operation_id.trim().is_empty()
+                && operation_id.len() <= 128
+                && !operation_id.chars().any(char::is_control) =>
+        {
+            Ok(("lifecycle", Bson::Null, Bson::String(operation_id.clone())))
+        }
+        SandboxOrigin::Trigger { .. } | SandboxOrigin::Lifecycle { .. } => Err(
+            SandboxStoreError::Corrupt("stored sandbox admission origin is invalid".into()),
+        ),
     }
 }
 
@@ -273,7 +302,11 @@ fn read_admission_replay_metadata(
         document.get("admission_fingerprint"),
     ) {
         (SandboxOrigin::Manual, Some(Bson::Null), Some(Bson::Null)) => Ok(None),
-        (SandboxOrigin::Trigger { .. }, Some(name), Some(Bson::String(fingerprint))) => {
+        (
+            SandboxOrigin::Trigger { .. } | SandboxOrigin::Lifecycle { .. },
+            Some(name),
+            Some(Bson::String(fingerprint)),
+        ) => {
             let decoded =
                 mongodb::bson::deserialize_from_bson::<SandboxAdmissionName>(name.clone());
             let name = decoded.map_err(|error| {
@@ -316,8 +349,14 @@ async fn classify_cas_miss(
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    fn managed_runtime_version(&self) -> Option<&str> {
+        self.managed_runtime_version.as_deref()
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
-        if !sandbox.credential.service_grants.is_empty() {
+        if !sandbox.credential.service_grants.is_empty()
+            || sandbox.credential.service_scope.is_some()
+        {
             return Err(SandboxStoreError::InvalidTransaction(
                 "service access requires an existing sandbox and an atomic grant",
             ));
@@ -383,7 +422,7 @@ impl SandboxStore for MongoSandboxStore {
             .map_err(|_| SandboxStoreError::Conflict)?;
         let expected = signed(expected_revision, "expected sandbox revision")
             .map_err(|_| SandboxStoreError::Conflict)?;
-        let (origin_type, origin_launch_id) = sandbox_origin_fields(&sandbox)?;
+        let (origin_type, origin_launch_id, origin_operation_id) = sandbox_origin_fields(&sandbox)?;
         let result = self
             .sandboxes
             .update_one(
@@ -395,6 +434,7 @@ impl SandboxStore for MongoSandboxStore {
                     "channel_retirement_finalization": { "$exists": false },
                     "origin_type": origin_type,
                     "origin_launch_id": origin_launch_id,
+                    "origin_operation_id": origin_operation_id,
                 },
                 doc! { "$set": sandbox_replacement_fields(&sandbox)? },
             )

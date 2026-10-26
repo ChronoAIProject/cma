@@ -1203,7 +1203,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "GET",
-        "path": "/api/v1/marketplace/agent-profiles/agp_default",
+        "path": "/api/v1/marketplace/agent-profiles/agp_default_v2",
         "headers": {}
       },
       "response": {
@@ -1228,7 +1228,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "POST",
-        "path": "/api/v1/marketplace/agent-profiles/agp_default/fork",
+        "path": "/api/v1/marketplace/agent-profiles/agp_default_v2/fork",
         "headers": {
           "content-type": "application/json",
           "idempotency-key": "state-marketplace-disabled-agent-fork"
@@ -1259,7 +1259,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "GET",
-        "path": "/api/v1/marketplace/workspace-profiles/wkp_default",
+        "path": "/api/v1/marketplace/workspace-profiles/wkp_default_v2",
         "headers": {}
       },
       "response": {
@@ -1284,7 +1284,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "POST",
-        "path": "/api/v1/marketplace/workspace-profiles/wkp_default/fork",
+        "path": "/api/v1/marketplace/workspace-profiles/wkp_default_v2/fork",
         "headers": {
           "content-type": "application/json",
           "idempotency-key": "state-marketplace-disabled-workspace-fork"
@@ -1315,7 +1315,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "GET",
-        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default",
+        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default_v2",
         "headers": {}
       },
       "response": {
@@ -1340,7 +1340,7 @@
       "scenario": "marketplace_disabled",
       "request": {
         "method": "POST",
-        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default/fork",
+        "path": "/api/v1/marketplace/sandbox-profiles/sbp_default_v2/fork",
         "headers": {
           "content-type": "application/json",
           "idempotency-key": "state-marketplace-disabled-sandbox-fork"

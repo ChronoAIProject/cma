@@ -62,6 +62,12 @@ pub(super) fn validate_operation(operation: &Operation, config: &RuntimeConfig) 
                     }
                     .has_valid_sha256()
             }
+            Subject::InstallAgentSkill { request } => {
+                crate::agent_skill_install::validate(request).is_ok()
+                    && request.operation_id == operation.operation_id
+                    && request.request_sha256 == operation.request_sha256
+                    && operation.payload_sha256 == operation.request_sha256
+            }
             Subject::CreateAgentHome { agent_id } => {
                 valid_agent_identity(operation, agent_id, "home:create")
             }
@@ -127,6 +133,10 @@ fn valid_receipt(record: &Record, value: &serde_json::Value, config: &RuntimeCon
                         && receipt.workspace == *workspace
                         && receipt.name == *name
                 })
+        }
+        Subject::InstallAgentSkill { request } => {
+            serde_json::from_value::<layer3_adapter::AgentSkillInstallReceipt>(value.clone())
+                .is_ok_and(|receipt| receipt.matches(request))
         }
         Subject::CreateAgentHome { agent_id } => {
             serde_json::from_value::<layer3_adapter::wire::AgentHomeReceipt>(value.clone())

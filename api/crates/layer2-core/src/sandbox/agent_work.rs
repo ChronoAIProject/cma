@@ -48,6 +48,9 @@ impl ResolvedAgentSkill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWorkStep {
+    InstallSkill,
+    /// The reserved Worktree has no base commit until its exact Workspace is ready.
+    WaitForWorkspace,
     AddWorktree,
     MaterializeHome,
     OpenConversation,
@@ -71,6 +74,8 @@ impl AgentWorkStep {
 
     pub const fn operation_name(self) -> &'static str {
         match self {
+            Self::InstallSkill => "install_skill",
+            Self::WaitForWorkspace => "wait_for_workspace",
             Self::AddWorktree => "add_worktree",
             Self::MaterializeHome => "materialize_home",
             Self::OpenConversation => "open_conversation",
@@ -117,6 +122,8 @@ pub struct AgentCleanupDebt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWorkState {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_skills: Vec<super::AgentSkillInstallation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warm_conversation_id: Option<String>,
     pub step: AgentWorkStep,
@@ -138,6 +145,7 @@ pub struct AgentWorkState {
 impl AgentWorkState {
     pub fn new(step: AgentWorkStep, ready_at: String) -> Self {
         Self {
+            live_skills: Vec::new(),
             warm_conversation_id: None,
             step,
             ready_at,
@@ -165,6 +173,7 @@ impl AgentWorkState {
                 "agent.work.warm_conversation_id",
             ));
         }
+        super::agent_live_skills::validate_installations(self, references)?;
         let Some(material) = &self.resolved_skills else {
             return Ok(());
         };

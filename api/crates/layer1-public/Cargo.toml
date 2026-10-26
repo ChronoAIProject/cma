@@ -23,6 +23,7 @@ layer2-core = { workspace = true }
 mime = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 # Serializes continuation links with the same form encoding axum accepts.
 serde_urlencoded = "0.7"
 sha2 = { workspace = true }
@@ -39,6 +40,8 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 layer2-core = { workspace = true, features = ["test-support"] }
+# Route contract tests compose an isolated adapter; production still depends only on core.
+layer3-adapter = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 # Applies the projection's patches with an independent RFC 6902 implementation,
 # so the canonical starting document is a proven wire contract rather than an

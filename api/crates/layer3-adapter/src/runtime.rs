@@ -71,6 +71,10 @@ impl Default for SandboxCapacity {
 pub struct SandboxSpec {
     pub sandbox_id: String,
     pub capacity: SandboxCapacity,
+    /// An optional immutable image selected by Image Manager for this
+    /// Sandbox.  `None` means the deployment-owned system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_image: Option<String>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
@@ -93,6 +97,7 @@ impl Default for SandboxSpec {
         Self {
             sandbox_id: String::new(),
             capacity: SandboxCapacity::default(),
+            runtime_image: None,
             environment: BTreeMap::new(),
             reaches: Vec::new(),
             own_credential: false,
@@ -161,6 +166,14 @@ pub struct RuntimeObservation {
     pub spec_fingerprint: String,
     pub runtime_contract: String,
     pub lifecycle: RuntimeLifecycle,
+}
+
+/// Provider and process observations collected within one adoption operation.
+/// This contains observations, never reusable dispatch authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInspection {
+    pub observation: RuntimeObservation,
+    pub status: Option<crate::RuntimeStatus>,
 }
 
 /// One bounded sandbox-wide installation.
@@ -348,4 +361,11 @@ impl std::fmt::Debug for CredentialFrame {
             .field("custody_generation", &self.custody_generation)
             .finish()
     }
+}
+
+/// Exact provider evidence from a terminated runtime incarnation, when available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeTermination {
+    pub out_of_memory: bool,
+    pub finished_at: String,
 }

@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use layer2_core::profiles::WorkspaceProfileRef;
-use layer2_core::sandbox::CreateWorkspace;
+use layer2_core::sandbox::{CreateInlineWorkspace, CreateWorkspace};
 use layer2_core::{Capability, SandboxId, WorkspaceId, WorkspaceProfileId};
 
 use super::hierarchy_shared_shapes::{AccessibleWorkspaceDetailView, AccessibleWorkspaceListView};
@@ -17,13 +17,19 @@ use layer2_core::sandbox::{SandboxHierarchyReading, WorkspaceHierarchyReading};
 
 use super::idempotency::{operation_scope, IdempotencyKey, RequestBody};
 use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
-use super::instances_openapi_shapes::{CreateWorkspaceRequest, WorkspaceView};
+use super::instances_openapi_shapes::{
+    CreateInlineWorkspaceRequest, CreateWorkspaceRequest, WorkspaceView,
+};
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
 
 pub(super) fn routes() -> Router<HierarchyState> {
     Router::new()
         .route("/api/v1/sandboxes/{id}/workspaces", post(create).get(list))
+        .route(
+            "/api/v1/sandboxes/{id}/workspaces/inline",
+            post(create_inline),
+        )
         .route("/api/v1/workspaces/{id}", get(read).delete(remove))
 }
 
@@ -68,6 +74,54 @@ pub(super) async fn create(
                             body.workspace_profile.revision,
                         ),
                         confirmed_digest,
+                    },
+                )
+                .await
+                .map_err(HierarchyProblem::workspace)?;
+            Ok((StatusCode::CREATED, Json(WorkspaceView::from(&workspace))).into_response())
+        },
+    )
+    .await
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/sandboxes/{id}/workspaces/inline",
+    tag = "workspaces",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = CreateInlineWorkspaceRequest,
+    responses(
+        (status = 201, body = WorkspaceView),
+        (status = 409, body = crate::rest::ProblemDocument),
+        (status = 422, body = crate::rest::ProblemDocument),
+        (status = 429, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(super) async fn create_inline(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: IdempotencyKey,
+    body: Result<RequestBody<CreateInlineWorkspaceRequest>, BodyProblem>,
+) -> Response {
+    let command_state = state.clone();
+    let command_caller = caller.clone();
+    execute_command(
+        &state,
+        &caller,
+        Capability::UseOwnSandboxes,
+        key,
+        operation_scope("sandbox:workspace:inline-create", &[&id]),
+        body,
+        move |body| async move {
+            let workspace = command_state
+                .workspaces
+                .create_inline(
+                    &command_caller,
+                    &SandboxId(id),
+                    CreateInlineWorkspace {
+                        source: body.source.into(),
+                        name: body.name,
                     },
                 )
                 .await

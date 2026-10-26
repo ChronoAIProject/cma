@@ -24,6 +24,7 @@ use crate::{
 
 use super::*;
 
+mod archive;
 mod credential_prerequisite;
 mod initiation;
 mod input_protocol;
@@ -1654,6 +1655,7 @@ async fn fixture_with_workspace_configuration(
         sandbox_profile: sandbox_reference,
         workspace_profile: workspace_reference,
         agent_profile: agent_reference,
+        inline: None,
     };
     let resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
     let definitions = Arc::new(InMemoryTriggerStore::new(resolver));
@@ -1727,6 +1729,7 @@ async fn fixture_with_workspace_configuration(
 
 async fn publish_agent(profiles: &InMemoryProfileStore) -> AgentProfileRef {
     let profile = AgentProfile {
+        internal: false,
         id: crate::AgentProfileId("agp_launch_agent".into()),
         owner: SubjectId::new(PUBLISHER),
         name: "Launch Agent".into(),
@@ -1779,6 +1782,7 @@ async fn publish_workspace(
         )
     };
     let profile = WorkspaceProfile {
+        internal: false,
         id: crate::WorkspaceProfileId("wkp_launch_workspace".into()),
         owner: SubjectId::new(PUBLISHER),
         name: "Launch Workspace".into(),
@@ -1818,6 +1822,7 @@ async fn publish_sandbox(
     workspace_nested: bool,
 ) -> SandboxProfileRef {
     let profile = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: crate::SandboxProfileId("sbp_launch_sandbox".into()),
         owner: SubjectId::new(owner),
@@ -1827,6 +1832,7 @@ async fn publish_sandbox(
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: services,
@@ -1885,6 +1891,7 @@ fn sandbox(profiles: &ResolvedTriggerProfiles, status: SandboxStatus) -> Sandbox
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: profiles.sandbox.content.nyxid_services.clone(),
             key_generation: 0,
             delivered: false,
@@ -1943,6 +1950,10 @@ fn agent(profiles: &ResolvedTriggerProfiles, trigger_id: &TriggerId, status: Age
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: Some("conversation".into()),
             runtime_generation: Some(1),
             last_seq: 1,

@@ -1,4 +1,7 @@
-use super::{text::chunks, RenderedPart, Renderer};
+use super::{
+    text::{chunks, escaped},
+    RenderedPart, Renderer,
+};
 use crate::tools::Capabilities;
 use cmaeg_core::message::{
     Block, BlockRendering, BlockRenderingOutcome, ChoiceOption, OutboundMessage, RenderingOutcome,
@@ -8,49 +11,34 @@ use cmaeg_core::message::{
 /// interactive path only when the capabilities advertise an inline keyboard;
 /// otherwise choices degrade to numbered text.
 pub struct RelayText;
+impl RelayText {
+    /// Ordinary NyxID replies preserve one logical message. NyxID owns the
+    /// final platform split; native sends and interactive edits use `render`.
+    pub fn whole(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+    ) -> (RenderedPart, RenderingReport) {
+        let (text, report) = sections(message, capabilities);
+        (
+            RenderedPart {
+                text: escaped(&text),
+            },
+            report,
+        )
+    }
+}
 impl Renderer for RelayText {
     fn render(
         &self,
         message: &OutboundMessage,
         capabilities: &Capabilities,
     ) -> (Vec<RenderedPart>, RenderingReport) {
-        let mut sections = Vec::new();
-        if let Some(text) = &message.text {
-            sections.push(text.clone());
-        }
-        let mut report = RenderingReport {
-            outcome: RenderingOutcome::Rendered,
-            blocks: vec![],
-        };
-        for (index, block) in message.blocks.iter().enumerate() {
-            let (text, degradation) =
-                render_block(block, capabilities.buttons == "inline_keyboard");
-            if !text.is_empty() {
-                sections.push(text);
-            }
-            let outcome = match degradation {
-                Some(how) => {
-                    report.outcome = RenderingOutcome::Degraded;
-                    BlockRenderingOutcome::Degraded { how: how.into() }
-                }
-                None => BlockRenderingOutcome::Exact,
-            };
-            report.blocks.push(BlockRendering {
-                index: index as u16,
-                outcome,
-            });
-        }
-        let parts: Vec<_> = chunks(
-            &if sections.is_empty() {
-                "Choose an option".into()
-            } else {
-                sections.join("\n\n")
-            },
-            (capabilities.max_text_chars as usize).clamp(2, 4000),
-        )
-        .into_iter()
-        .map(|text| RenderedPart { text })
-        .collect();
+        let (text, mut report) = sections(message, capabilities);
+        let parts: Vec<_> = chunks(&text, (capabilities.max_text_chars as usize).clamp(2, 4000))
+            .into_iter()
+            .map(|text| RenderedPart { text })
+            .collect();
         if parts.len() > 1 {
             report.outcome = RenderingOutcome::Degraded;
             // The sentinel names a whole-message transformation, outside block indices 0..15.
@@ -63,6 +51,41 @@ impl Renderer for RelayText {
         }
         (parts, report)
     }
+}
+fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, RenderingReport) {
+    let mut sections = Vec::new();
+    if let Some(text) = &message.text {
+        sections.push(text.clone());
+    }
+    let mut report = RenderingReport {
+        outcome: RenderingOutcome::Rendered,
+        blocks: vec![],
+    };
+    for (index, block) in message.blocks.iter().enumerate() {
+        let (text, degradation) = render_block(block, capabilities.buttons == "inline_keyboard");
+        if !text.is_empty() {
+            sections.push(text);
+        }
+        let outcome = match degradation {
+            Some(how) => {
+                report.outcome = RenderingOutcome::Degraded;
+                BlockRenderingOutcome::Degraded { how: how.into() }
+            }
+            None => BlockRenderingOutcome::Exact,
+        };
+        report.blocks.push(BlockRendering {
+            index: index as u16,
+            outcome,
+        });
+    }
+    (
+        if sections.is_empty() {
+            "Choose an option".into()
+        } else {
+            sections.join("\n\n")
+        },
+        report,
+    )
 }
 fn render_block(block: &Block, native: bool) -> (String, Option<&'static str>) {
     match block {

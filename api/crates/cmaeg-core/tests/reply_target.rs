@@ -48,6 +48,8 @@ fn payload(keys: &MasterKeyRing) -> ReplyTargetPayload {
                 reply_token: cmaeg_core::channel::Secret::new(""),
                 reply_token_expires_at: 1,
             },
+            consumer: None,
+            lineage: None,
         },
     }
 }

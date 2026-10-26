@@ -45,6 +45,10 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
+#[path = "sandbox_provider_view_tests.rs"]
+mod provider_view_tests;
+#[path = "sandbox_runtime_update_tests.rs"]
+pub(super) mod runtime_update_tests;
 #[path = "sandbox_service_access_tests.rs"]
 mod service_access_tests;
 type OperationKey = (String, String, String);
@@ -214,6 +218,7 @@ pub(super) async fn publish_sandbox_profile(
     let id = SandboxProfileId(id.into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new(owner),
@@ -252,6 +257,7 @@ pub(super) async fn publish_workspace_profile(
     let id = WorkspaceProfileId(id.into());
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: id.clone(),
             owner: SubjectId::new(owner),
             name: format!("Workspace {id}"),
@@ -281,6 +287,7 @@ pub(super) async fn publish_workspace_profile(
 
 fn sandbox_content(max_workspaces: u8) -> SandboxProfileContent {
     SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],
@@ -312,6 +319,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -412,6 +420,10 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

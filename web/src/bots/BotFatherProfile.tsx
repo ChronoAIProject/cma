@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { PageHeader } from '../ui/PageHeader';
 import type { AgentProfileContent, ProfileEditorClient } from '../profiles/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -112,9 +113,13 @@ export function BotFatherProfile({
   const locked = busy || receipt !== undefined;
   return (
     <section aria-labelledby="father-setup-title">
-      <header className="bots__header">
-        <h1 id="father-setup-title">Create your Bot with CMA Bot Father</h1>
-      </header>
+      <div className="bots__header">
+        <PageHeader
+          breadcrumb={[{ label: 'Event Gateway' }, { label: 'Consumers' }, { label: 'New Bot' }]}
+          title="Create your Bot with CMA Bot Father"
+          headingId="father-setup-title"
+        />
+      </div>
       <div className="bots__body">
         <div className="bots__form">
           <p>

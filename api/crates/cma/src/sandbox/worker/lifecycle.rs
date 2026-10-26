@@ -47,7 +47,9 @@ impl SandboxWorker {
                     .await;
             }
         }
-        if sandbox.runtime.is_some() {
+        if sandbox.runtime.is_some()
+            && !crate::sandbox::runtime_attachment::native_pause_teardown(&sandbox)
+        {
             if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
                 &sandbox,

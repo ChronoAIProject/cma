@@ -188,8 +188,9 @@ pub(super) async fn reuse_profile_agent(
         advance_workspace(store, workspace, &next_workspace, session).await?;
         let mut next_sandbox = sandbox.clone();
         let revival = next_sandbox
-            .record_creation_admission(
+            .record_creation_admission_with_managed_runtime(
                 SandboxReviveCause::TriggerLaunch,
+                store.managed_runtime_version.as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

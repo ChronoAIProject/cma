@@ -8,10 +8,12 @@ use layer2_core::sandbox::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::profiles_openapi_shapes::{AgentProviderValue, ModelAccessValue};
+
 #[path = "sandbox_lifecycle_view.rs"]
 mod lifecycle;
 pub use lifecycle::{
-    SandboxBackgroundSaveView, SandboxCheckpointView, SandboxCompletedSnapshotView,
+    SandboxBackgroundSaveView, SandboxCheckpointView, SandboxInterruptionView,
     SandboxLifecycleEligibilityView, SandboxLifecycleOperationView, SandboxLifecycleView,
 };
 
@@ -49,6 +51,38 @@ pub struct CreateWorkspaceRequest {
     pub trust_confirmed: bool,
     #[serde(default)]
     pub commands_digest: Option<String>,
+}
+
+/// Direct Agent Manager workspace admission. This request carries the source
+/// selected by the caller and does not reference a Workspace Profile.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInlineWorkspaceRequest {
+    pub source: InlineWorkspaceSourceRequest,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InlineWorkspaceSourceRequest {
+    GitRepository {
+        url: String,
+        #[serde(default)]
+        reference: Option<String>,
+    },
+    Empty,
+}
+
+impl From<InlineWorkspaceSourceRequest> for layer2_core::sandbox::InlineWorkspaceSource {
+    fn from(value: InlineWorkspaceSourceRequest) -> Self {
+        match value {
+            InlineWorkspaceSourceRequest::GitRepository { url, reference } => {
+                Self::GitRepository { url, reference }
+            }
+            InlineWorkspaceSourceRequest::Empty => Self::Empty,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -90,6 +124,8 @@ pub struct SandboxView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_update: Option<super::sandbox_runtime_update::SandboxRuntimeUpdateView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<FailureView>,
     pub last_activity_at: String,
     pub created_at: String,
@@ -126,6 +162,7 @@ impl From<&Sandbox> for SandboxView {
                 .runtime
                 .as_ref()
                 .map(|runtime| runtime.runtime_version.clone()),
+            runtime_update: None,
             failure: value.failure.as_ref().map(Into::into),
             last_activity_at: value.last_activity_at.clone(),
             created_at: value.created_at.clone(),
@@ -196,6 +233,10 @@ impl From<WorkspaceHierarchySummary> for OwnerWorkspaceSummaryView {
 pub struct OwnerSandboxDetailView {
     #[serde(flatten)]
     pub sandbox: SandboxView,
+    /// Agent provider pinned when this Sandbox was created.
+    pub agent_provider: AgentProviderValue,
+    /// Model access pinned when this Sandbox was created.
+    pub model_access: ModelAccessValue,
     pub workspaces: Vec<OwnerWorkspaceSummaryView>,
     pub workspace_count: u64,
     pub worktree_count: u64,
@@ -206,6 +247,17 @@ impl From<SandboxHierarchyView> for OwnerSandboxDetailView {
     fn from(value: SandboxHierarchyView) -> Self {
         Self {
             sandbox: SandboxView::from(&value.sandbox),
+            agent_provider: match value.sandbox.profile.content.agent_provider {
+                layer2_core::profiles::AgentProvider::Codex => AgentProviderValue::Codex,
+            },
+            model_access: match value.sandbox.profile.content.model_access {
+                layer2_core::profiles::ModelAccess::ChronoaiManaged => {
+                    ModelAccessValue::ChronoaiManaged
+                }
+                layer2_core::profiles::ModelAccess::OwnCredentials => {
+                    ModelAccessValue::OwnCredentials
+                }
+            },
             workspaces: value.workspaces.into_iter().map(Into::into).collect(),
             workspace_count: value.counts.workspaces,
             worktree_count: value.counts.worktrees,
@@ -315,6 +367,10 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_metadata: Option<super::agent_observation_shapes::AgentRuntimeMetadataView>,
     pub id: String,
     pub worktree_id: String,
     pub workspace_id: String,
@@ -330,6 +386,8 @@ pub struct OwnerAgentSummaryView {
 impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
+            runtime_metadata: value.runtime_metadata.map(Into::into),
+            owner_title: value.owner_title,
             id: value.id.to_string(),
             worktree_id: value.worktree_id.to_string(),
             workspace_id: value.workspace_id.to_string(),

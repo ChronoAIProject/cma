@@ -2,7 +2,12 @@ import { vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
-import { commandStatus, controlReceipt, observation } from './controls.fixture';
+import {
+  commandStatus,
+  controlReceipt,
+  interruptionReceipt,
+  observation,
+} from './controls.fixture';
 import { queuedObservation, queuedReceipt } from './queued.fixture';
 
 export const incarnation = 'a'.repeat(64);
@@ -37,14 +42,47 @@ export function accepted() {
     },
   });
 }
-export function harness() {
+export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
+  return {
+    object: 'cma.agent.queued_inputs',
+    agent_id: 'agt_1',
+    next_after: null,
+    data: [
+      {
+        response: queuedObservation('resp_1', revision).response,
+        command_revision: revision,
+        text,
+        editable: true,
+      },
+    ],
+  };
+}
+export function harness(storage: Storage = sessionStorage) {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const post = vi.fn<(init?: RequestInit) => Promise<Response>>().mockResolvedValue(accepted());
   const snapshot = vi
     .fn<(url: string) => Promise<Response>>()
     .mockImplementation(async () => json(page([], 0)));
+  // Existing fixtures model servers without a live-head observation. Tests of
+  // loading overlap explicitly provide the authoritative head they exercise.
+  const head = vi.fn(async () =>
+    json(
+      {
+        error: {
+          type: 'server_error',
+          code: 'agent_read_unavailable',
+          message: 'Head temporarily unavailable',
+          param: null,
+        },
+      },
+      503,
+    ),
+  );
   const cancel = vi.fn();
   const currentUser = vi.fn(async () => 'alice' as string | undefined);
+  const listQueued = vi.fn(async () =>
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
+  );
   const observeQueued = vi.fn(async (responseId: string) =>
     json(queuedObservation(responseId, 7, false)),
   );
@@ -55,11 +93,17 @@ export function harness() {
   const control = vi.fn(async (responseId: string, init?: RequestInit) =>
     json(controlReceipt(responseId, JSON.parse(String(init?.body))), 202),
   );
+  const interrupt = vi.fn(async (responseId: string, init?: RequestInit) =>
+    json(interruptionReceipt(responseId, JSON.parse(String(init?.body))), 202),
+  );
   const command = vi.fn(async () =>
     json(
       commandStatus(
         null,
-        Number(JSON.parse(String(control.mock.lastCall?.[1]?.body)).turn_sequence),
+        Number(
+          JSON.parse(String(control.mock.lastCall?.[1]?.body ?? interrupt.mock.lastCall?.[1]?.body))
+            .turn_sequence,
+        ),
         true,
       ),
     ),
@@ -84,13 +128,17 @@ export function harness() {
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
     const url = String(input);
     if (url === '/api/v2/ui/transport') return eligibility();
+    if (url === '/api/v2/agents/agt_1/queued-inputs') return listQueued();
     if (url === '/api/v2/commands/cmd_control') return command();
+    const interruption = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/interrupt$/.exec(url);
+    if (interruption) return interrupt(interruption[1]!, init);
     const queued = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/queued-cancellation$/.exec(url);
     if (queued)
       return init?.method === 'POST' ? cancelQueued(queued[1]!, init) : observeQueued(queued[1]!);
     const target = /^\/api\/v2\/agents\/agt_1\/responses\/([^/]+)\/controls$/.exec(url);
     if (target) return init?.method === 'POST' ? control(target[1]!, init) : observe(target[1]!);
     if (url.startsWith('/api/v2/agents/agt_1/events/snapshot')) return snapshot(url);
+    if (url === '/api/v2/agents/agt_1/events/head') return head();
     if (url.startsWith('/api/v2/agents/agt_1/events?'))
       return new Response(
         new ReadableStream({
@@ -106,11 +154,11 @@ export function harness() {
   });
   const sdk = createClient({ fetch });
   const client = agentClient({
-    agentTransport: createAgentTransport(sdk, { storage: sessionStorage, currentUser }),
+    agentTransport: createAgentTransport(sdk, { storage, currentUser }),
     runAgent: vi.fn(),
     interruptAgent: vi.fn(),
     replayAgent: vi.fn(),
-    readAgentTranscript: vi.fn(),
+    readAgentTranscript: vi.fn(async () => ({ agentId: 'agt_1', throughSeq: 0, turns: [] })),
     readAgentEvents: vi.fn(),
   });
   const emit = (type: string, data: unknown, id?: string) => {
@@ -127,12 +175,15 @@ export function harness() {
     fetch,
     post,
     snapshot,
+    head,
     cancel,
     currentUser,
+    listQueued,
     observeQueued,
     cancelQueued,
     observe,
     control,
+    interrupt,
     command,
     eligibility,
     end() {
@@ -142,22 +193,32 @@ export function harness() {
     fail(code = 'agent_read_unavailable') {
       emit('cma.agent.error', { code, message: 'Temporarily unavailable.' });
     },
-    gap() {
+    gap(reason: 'lagged' | 'reconnected' = 'lagged', turnSequence: number | null = 1) {
       emit('cma.agent.live_gap', {
         agent_id: 'agt_1',
         incarnation,
-        turn_sequence: 1,
-        frames: 1,
-        reason: 'lagged',
+        turn_sequence: turnSequence,
+        frames: reason === 'reconnected' ? null : 1,
+        reason,
       });
     },
     get streaming() {
       return stream !== undefined;
     },
-    durable(sequence: number, kind: unknown, response_binding: unknown = null) {
+    durable(
+      sequence: number,
+      kind: unknown,
+      response_binding: unknown = null,
+      messageCommandId?: string,
+    ) {
       emit(
         'cma.agent.event',
-        { ...item(sequence, kind, response_binding), agent_id: 'agt_1', incarnation },
+        {
+          ...item(sequence, kind, response_binding),
+          agent_id: 'agt_1',
+          incarnation,
+          ...(messageCommandId ? { message_command_id: messageCommandId } : {}),
+        },
         cursor(sequence),
       );
     },

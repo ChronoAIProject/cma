@@ -45,6 +45,15 @@ impl AuthEncryptionKey {
         self.0.as_ref()
     }
 
+    /// Derive a separate signing key without exposing the encryption key bytes.
+    pub(super) fn agent_access_signing_key(&self, namespace: &str) -> ring::hmac::Key {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.agent.access.signing-key.v1\0");
+        context.update(namespace.as_bytes());
+        ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
+    }
+
     #[cfg(test)]
     fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
         Self(Zeroizing::new(bytes))

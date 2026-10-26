@@ -32,6 +32,25 @@ impl ConnectionTargets for Targets {
 struct Broker {
     rows: Mutex<Vec<ServiceRequirement>>,
     starts: AtomicUsize,
+    read_gate: Mutex<Option<Arc<ReadGate>>>,
+}
+
+struct ReadGate {
+    requirements_started: AtomicUsize,
+    metadata_started: AtomicUsize,
+    release: tokio::sync::Semaphore,
+}
+
+impl ReadGate {
+    async fn observe(&self, requirements: bool) {
+        if requirements {
+            &self.requirements_started
+        } else {
+            &self.metadata_started
+        }
+        .fetch_add(1, Ordering::SeqCst);
+        self.release.acquire().await.unwrap().forget();
+    }
 }
 #[async_trait::async_trait]
 impl ServiceConnectionBroker for Broker {
@@ -40,6 +59,10 @@ impl ServiceConnectionBroker for Broker {
         _: &SubjectId,
         _: &[ServiceId],
     ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
+        let gate = self.read_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.observe(true).await;
+        }
         Ok(self.rows.lock().unwrap().clone())
     }
     async fn describe_services(
@@ -47,6 +70,10 @@ impl ServiceConnectionBroker for Broker {
         _: &SubjectId,
         services: &[ServiceId],
     ) -> Result<Vec<ServiceConnectionMetadata>, ServiceConnectionError> {
+        let gate = self.read_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.observe(false).await;
+        }
         Ok(services
             .iter()
             .map(|service| ServiceConnectionMetadata {
@@ -117,6 +144,7 @@ fn fixture() -> (BrowserConnections, Arc<Broker>, Arc<Store>, Caller) {
                 .to_vec(),
         ),
         starts: AtomicUsize::new(0),
+        read_gate: Mutex::new(None),
     });
     (
         BrowserConnections {
@@ -261,4 +289,72 @@ async fn connection_start_requires_owned_target_and_exact_required_service() {
     assert_eq!(started.owner, "owner");
     assert_eq!(started.service_id.as_str(), "api-github");
     assert_eq!(broker.starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn connection_check_overlaps_both_reads_only_after_target_authorization() {
+    let (browser, broker, _, caller) = fixture();
+    let gate = Arc::new(ReadGate {
+        requirements_started: AtomicUsize::new(0),
+        metadata_started: AtomicUsize::new(0),
+        release: tokio::sync::Semaphore::new(0),
+    });
+    *broker.read_gate.lock().unwrap() = Some(gate.clone());
+    let foreign = Caller::new(SubjectId::new("foreign"), Authorization::none());
+    assert!(matches!(
+        browser
+            .check(
+                &foreign,
+                CheckRequest {
+                    target: target(),
+                    active: None
+                }
+            )
+            .await,
+        Err(ConnectionError::NotFound)
+    ));
+    assert_eq!(gate.requirements_started.load(Ordering::SeqCst), 0);
+    assert_eq!(gate.metadata_started.load(Ordering::SeqCst), 0);
+
+    let check = browser.check(
+        &caller,
+        CheckRequest {
+            target: target(),
+            active: None,
+        },
+    );
+    tokio::pin!(check);
+    tokio::select! {
+        outcome = &mut check => panic!("gated connection reads completed early: {}", outcome.is_ok()),
+        reached = tokio::time::timeout(Duration::from_secs(1), async {
+            while gate.requirements_started.load(Ordering::SeqCst) != 1 || gate.metadata_started.load(Ordering::SeqCst) != 1 {
+                tokio::task::yield_now().await;
+            }
+        }) => reached.expect("both reads start before either is released"),
+    }
+    gate.release.add_permits(2);
+    let report = check.await.unwrap();
+    assert!(report.ready);
+    assert_eq!(report.services.len(), 2);
+    assert_eq!(broker.starts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn malformed_connection_requirements_win_before_active_intent_validation() {
+    let (browser, broker, _, caller) = fixture();
+    broker.rows.lock().unwrap().clear();
+    let result = browser
+        .check(
+            &caller,
+            CheckRequest {
+                target: target(),
+                active: Some(ActiveConnection {
+                    service_id: ServiceId::new(CODEX_SUBSCRIPTION_CONNECTION),
+                    intent_id: "unknown-intent".into(),
+                }),
+            },
+        )
+        .await;
+    assert!(matches!(result, Err(ConnectionError::Unavailable)));
+    assert_eq!(broker.starts.load(Ordering::SeqCst), 0);
 }

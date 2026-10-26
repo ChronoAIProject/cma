@@ -63,6 +63,7 @@ impl SandboxAdmission {
         })?;
         if self.sandbox.revision != 1
             || !self.sandbox.credential.service_grants.is_empty()
+            || self.sandbox.credential.service_scope.is_some()
             || self.sandbox.status != SandboxStatus::Provisioning
             || self.sandbox.name != self.name.value()
             || !valid_requested_name(self.name.value())
@@ -71,16 +72,9 @@ impl SandboxAdmission {
                 "sandbox admission requires a fresh aggregate and matching requested name",
             ));
         }
-        if let SandboxOrigin::Trigger { launch_id } = &self.sandbox.origin {
-            if launch_id.trim().is_empty()
-                || launch_id.len() > 128
-                || launch_id.chars().any(char::is_control)
-            {
-                return Err(SandboxStoreError::InvalidTransaction(
-                    "sandbox trigger origin is invalid",
-                ));
-            }
-        }
+        self.sandbox.origin.validate().map_err(|_| {
+            SandboxStoreError::InvalidTransaction("sandbox admission origin is invalid")
+        })?;
         if !valid_admission_fingerprint(&self.admission_fingerprint)
             || self.admission_fingerprint != fingerprint(&self.sandbox, &self.name)?
         {
@@ -91,11 +85,8 @@ impl SandboxAdmission {
         Ok(())
     }
 
-    pub fn trigger_launch_id(&self) -> Option<&str> {
-        match &self.sandbox.origin {
-            SandboxOrigin::Manual => None,
-            SandboxOrigin::Trigger { launch_id } => Some(launch_id),
-        }
+    pub fn origin_key(&self) -> Option<(&'static str, &str)> {
+        self.sandbox.origin.replay_key()
     }
 }
 
@@ -125,12 +116,12 @@ impl SandboxAdmissionReplay {
         self.sandbox.validate().map_err(|error| {
             SandboxStoreError::Corrupt(format!("replayed sandbox aggregate is invalid: {error}"))
         })?;
-        let SandboxOrigin::Trigger { launch_id } = &self.sandbox.origin else {
-            return Err(corrupt_replay("origin is not a trigger"));
+        let Some((_, id)) = self.sandbox.origin.replay_key() else {
+            return Err(corrupt_replay("origin has no replay identity"));
         };
-        if launch_id.trim().is_empty()
-            || launch_id.len() > 128
-            || launch_id.chars().any(char::is_control)
+        if id.trim().is_empty()
+            || id.len() > 128
+            || id.chars().any(char::is_control)
             || !valid_requested_name(self.name.value())
             || !stored_name_matches(&self.name, &self.sandbox.name)
         {
@@ -255,7 +246,7 @@ pub trait SandboxAdmissionStore: Send + Sync {
     async fn sandbox_admission_replay(
         &self,
         owner: &SubjectId,
-        launch_id: &str,
+        origin: &SandboxOrigin,
     ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError>;
 
     async fn admit_sandbox(

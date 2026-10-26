@@ -98,28 +98,45 @@ async fn session_provider_failure_remains_unavailable_and_next_request_reverifie
             fixture.control.requests.store(0, Ordering::SeqCst);
             let app = application(&fixture);
             let headers = credential(&fixture, cookie).await;
-            let (reply, failed_calls) = if stage == "userinfo" {
-                (&fixture.control.userinfo, 1)
+            let reply = if stage == "userinfo" {
+                &fixture.control.userinfo
             } else {
-                (&fixture.control.introspection, 2)
+                &fixture.control.introspection
             };
             reply.write().await.status = StatusCode::TOO_MANY_REQUESTS;
-            let (status, body) = session(&app, &headers).await;
+            let userinfo = Arc::new(Gate::default());
+            let introspection = Arc::new(Gate::default());
+            fixture.control.userinfo.write().await.gate = Some(userinfo.clone());
+            fixture.control.introspection.write().await.gate = Some(introspection.clone());
+            let pending = {
+                let app = app.clone();
+                let headers = headers.clone();
+                tokio::spawn(async move { session(&app, &headers).await })
+            };
+            // Both provider requests now start together. Reach both before
+            // releasing the failure so cancellation cannot race request counts.
+            tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(
+                    userinfo.reached.notified(),
+                    introspection.reached.notified()
+                );
+            })
+            .await
+            .unwrap();
+            fixture.control.userinfo.write().await.gate = None;
+            fixture.control.introspection.write().await.gate = None;
+            userinfo.release.notify_one();
+            introspection.release.notify_one();
+            let (status, body) = pending.await.unwrap();
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
             assert_eq!(body["code"], "store_failed");
-            assert_eq!(
-                fixture.control.requests.load(Ordering::SeqCst),
-                failed_calls
-            );
+            assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 2);
 
             reply.write().await.status = StatusCode::OK;
             let (status, body) = session(&app, &headers).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(body["capabilities"], json!(["use_own_sandboxes"]));
-            assert_eq!(
-                fixture.control.requests.load(Ordering::SeqCst),
-                failed_calls + 2
-            );
+            assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 4);
             fixture.assert_unchanged(&retained).await;
         }
     }

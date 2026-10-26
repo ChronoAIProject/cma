@@ -35,7 +35,7 @@ export function ShareRow({
         disabled={busy || revoke}
         onChange={setMode}
       />
-      {mode === share.mode ? null : <p>{shareExposure(target.kind, mode)}</p>}
+      {mode === share.mode ? null : <p>{shareExposure(mode)}</p>}
       {revoke ? (
         <InlineConfirm
           question={`Revoke this direct grant for ${name}? Other grants may still provide access.`}

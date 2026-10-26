@@ -1,0 +1,253 @@
+//! Gateway-owned sealed record persistence. No Agent Manager collections.
+use super::{RecordError, RecordHead, RecordKind, RecordValue};
+use futures_util::TryStreamExt;
+use mongodb::{
+    bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
+    options::{Acknowledgment, ReadConcern, ReturnDocument, WriteConcern},
+    Collection, Database,
+};
+use serde::{Deserialize, Serialize};
+
+pub const RECORDS: &str = "eg_channel_records";
+pub const CONNECTIONS: &str = "eg_connection_records";
+pub const INTERACTIONS: &str = "eg_interaction_records";
+pub const MIGRATIONS: &str = "eg_schema_migrations";
+pub const SESSIONS: &str = "eg_auth_sessions";
+pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
+#[derive(Clone, Debug)]
+pub struct MongoRecords {
+    db: Database,
+    records: Collection<Record>,
+    kind: RecordKind,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Record {
+    #[serde(rename = "_id")]
+    id: String,
+    owner: String,
+    blob: Binary,
+    version: i64,
+    schema_version: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<DateTime>,
+}
+
+impl MongoRecords {
+    pub async fn open(db: Database) -> Result<Self, RecordError> {
+        Self::open_with_authority(
+            db,
+            cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+        )
+        .await
+    }
+    pub async fn open_with_authority(
+        db: Database,
+        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    ) -> Result<Self, RecordError> {
+        verify_with_authority(&db, authority).await?;
+        let options = mongodb::options::CollectionOptions::builder()
+            .read_concern(ReadConcern::majority())
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .build();
+        Ok(Self {
+            records: db.collection_with_options(RECORDS, options),
+            kind: RecordKind::Channel,
+            db,
+        })
+    }
+    pub async fn reachable(&self) -> bool {
+        self.db.run_command(doc! {"ping":1}).await.is_ok()
+    }
+    pub fn for_kind(&self, kind: RecordKind) -> Self {
+        Self {
+            db: self.db.clone(),
+            records: self.db.collection_with_options(
+                kind.collection(),
+                mongodb::options::CollectionOptions::builder()
+                    .read_concern(ReadConcern::majority())
+                    .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+                    .build(),
+            ),
+            kind,
+        }
+    }
+    fn live(&self, mut filter: Document) -> Document {
+        if self.kind == RecordKind::Interaction {
+            filter.insert("expires_at", doc! {"$gt":DateTime::now()});
+        }
+        filter
+    }
+    pub async fn put(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expected: Option<u64>,
+    ) -> Result<u64, RecordError> {
+        self.put_expiring(id, owner, blob, expected, None).await
+    }
+    pub async fn put_expiring(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expected: Option<u64>,
+        expires_at: Option<i64>,
+    ) -> Result<u64, RecordError> {
+        if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
+            return Err(RecordError::Rejected("invalid record".into()));
+        }
+        let expiry = match (self.kind, expires_at) {
+            (RecordKind::Interaction, Some(seconds))
+                if seconds > DateTime::now().timestamp_millis() / 1000
+                    && seconds <= DateTime::now().timestamp_millis() / 1000 + 7 * 24 * 60 * 60 =>
+            {
+                Some(DateTime::from_millis(seconds.checked_mul(1000).ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?))
+            }
+            (RecordKind::Channel | RecordKind::Connection, None) => None,
+            _ => return Err(RecordError::Rejected("interaction expiry must be in the next seven days and only interactions may expire".into())),
+        };
+        let binary = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: blob.to_vec(),
+        };
+        if let Some(version) = expected {
+            let version = i64::try_from(version)
+                .map_err(|_| RecordError::Rejected("invalid record revision".into()))?;
+            if version < 1 || version == i64::MAX {
+                return Err(RecordError::Rejected("invalid record revision".into()));
+            }
+            let mut filter = doc! {"_id":id,"owner":owner,"version":version};
+            if let Some(expiry) = expiry {
+                filter.insert("expires_at", doc! {"$gt":DateTime::now(),"$eq":expiry});
+            }
+            let row = self
+                .records
+                .find_one_and_update(
+                    filter,
+                    doc! {"$set":{"blob":binary},"$inc":{"version":1_i64}},
+                )
+                .return_document(ReturnDocument::After)
+                .await
+                .map_err(failure)?;
+            return match row {
+                Some(r) => Ok(r.version as u64),
+                None => Err(self.conflict(id, expected.unwrap_or(0)).await?),
+            };
+        }
+        let row = Record {
+            id: id.into(),
+            owner: owner.into(),
+            blob: binary,
+            version: 1,
+            schema_version: 1,
+            expires_at: expiry,
+        };
+        match self.records.insert_one(&row).await {
+            Ok(_) => Ok(1),
+            Err(error) => {
+                if self
+                    .records
+                    .find_one(doc! {"_id":id})
+                    .await
+                    .map_err(failure)?
+                    .is_some()
+                {
+                    Err(self.conflict(id, 0).await?)
+                } else {
+                    Err(failure(error))
+                }
+            }
+        }
+    }
+    pub async fn get(&self, id: &str) -> Result<RecordValue, RecordError> {
+        let row = self
+            .records
+            .find_one(self.live(doc! {"_id":id}))
+            .await
+            .map_err(failure)?
+            .ok_or(RecordError::NotFound)?;
+        Ok(RecordValue {
+            blob: row.blob.bytes,
+            version: row.version as u64,
+        })
+    }
+    pub async fn delete(&self, id: &str, expected: u64) -> Result<bool, RecordError> {
+        let version =
+            i64::try_from(expected).map_err(|_| RecordError::Rejected("invalid version".into()))?;
+        if self
+            .records
+            .delete_one(self.live(doc! {"_id":id,"version":version}))
+            .await
+            .map_err(failure)?
+            .deleted_count
+            == 1
+        {
+            return Ok(true);
+        }
+        if self
+            .records
+            .find_one(self.live(doc! {"_id":id}))
+            .await
+            .map_err(failure)?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        Err(self.conflict(id, expected).await?)
+    }
+    pub async fn list(
+        &self,
+        owner: Option<&str>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<RecordHead>, RecordError> {
+        if !(1..=1000).contains(&limit) {
+            return Err(RecordError::Rejected("invalid page size".into()));
+        }
+        let mut filter = self.live(doc! {});
+        if let Some(owner) = owner {
+            filter.insert("owner", owner);
+        }
+        if let Some(after) = after {
+            filter.insert("_id", doc! {"$gt":after});
+        }
+        let rows: Vec<Record> = self
+            .records
+            .find(filter)
+            .sort(doc! {"_id":1})
+            .limit(limit as i64)
+            .await
+            .map_err(failure)?
+            .try_collect()
+            .await
+            .map_err(failure)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| RecordHead {
+                record_id: r.id,
+                owner: r.owner,
+                version: r.version as u64,
+            })
+            .collect())
+    }
+    async fn conflict(&self, id: &str, expected: u64) -> Result<RecordError, RecordError> {
+        let current = self
+            .records
+            .find_one(doc! {"_id":id})
+            .await
+            .map_err(failure)?;
+        Ok(RecordError::Conflict {
+            expected,
+            actual: current.map(|r| r.version as u64),
+        })
+    }
+}
+fn failure(_: mongodb::error::Error) -> RecordError {
+    RecordError::Unavailable("gateway database operation failed".into())
+}
+
+#[path = "mongo_schema.rs"]
+mod schema;
+pub use schema::{migrate, role, verify, verify_with_authority};

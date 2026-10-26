@@ -33,6 +33,16 @@ pub(super) fn validate_lifecycle_agent_phase(
     mutation: &SandboxLifecycleMutation,
     touched: &BTreeSet<crate::AgentId>,
 ) -> Result<(), SandboxStoreError> {
+    for change in &mutation.agents {
+        if agents.iter().any(|(agent, _)| {
+            agent.id == change.agent.id
+                && agent.conversation.settings != change.agent.conversation.settings
+        }) {
+            return Err(invalid(
+                "lifecycle cannot change owner conversation settings",
+            ));
+        }
+    }
     let phase = agent_phase(current, &mutation.sandbox, mutation.agents.is_empty());
     match phase {
         AgentPhase::Pause => {
@@ -98,6 +108,9 @@ pub(super) fn validate_lifecycle_agent_phase(
 fn agent_phase(current: &Sandbox, next: &Sandbox, no_agents: bool) -> AgentPhase {
     if no_agents
         && (next.status == SandboxStatus::Failed
+            || next
+                .runtime_update_request()
+                .is_some_and(|request| request.failure.is_some())
             || next.work.attempts == current.work.attempts.saturating_add(1))
     {
         return AgentPhase::SandboxOnly;
@@ -275,6 +288,7 @@ fn validate_queue_progress(
             state: AgentOperationDelivery::DispatchFenced,
         },
         AgentLogKind::TurnStarted {
+            model: Some(current.settings().model),
             turn_sequence,
             origin_key: Some(queued_message_origin(queued_sequence)),
         },

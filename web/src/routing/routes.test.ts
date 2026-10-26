@@ -4,12 +4,17 @@ import { parseRoute, routePath, useAppRouter, type AppRoute } from './routes';
 
 const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
+  { kind: 'agent_manager' },
+  { kind: 'event_gateway' },
+  { kind: 'docs' },
+  { kind: 'docs', view: 'event_gateway_protocol' },
   { kind: 'bots' },
   { kind: 'bot_new' },
   { kind: 'bot', botId: 'bot_123' },
   { kind: 'sandbox', sandboxId: 'sbx_123' },
   { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
+  { kind: 'agent_share', shareId: 'shr_123' },
   { kind: 'inventory' },
   { kind: 'inventory', shared: true },
   { kind: 'inventory', organization: 'org_123' },
@@ -26,7 +31,6 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'public_trigger', publicId: 'pub_123', placementId: 'plc_123' },
   { kind: 'launch', launchId: 'lch_123' },
   { kind: 'operations' },
-  { kind: 'developer' },
 ];
 
 describe('application routes', () => {
@@ -86,9 +90,34 @@ describe('application routes', () => {
     expect(result.current.route).toEqual({ kind: 'sandbox', sandboxId: 'sbx_1' });
 
     act(() => {
-      result.current.navigate({ kind: 'developer' }, { replace: true });
+      result.current.navigate({ kind: 'operations' }, { replace: true });
     });
-    expect(window.location.pathname).toBe('/developer');
-    expect(result.current.route).toEqual({ kind: 'developer' });
+    expect(window.location.pathname).toBe('/operations');
+    expect(result.current.route).toEqual({ kind: 'operations' });
+  });
+
+  it('rewrites the retired Developer address to Docs without a history entry', () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    window.history.pushState(null, '', '/developer');
+    const entries = window.history.length;
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'docs' });
+    expect(window.location.pathname).toBe('/docs');
+    expect(window.history.length).toBe(entries);
+  });
+
+  it('leaves an unknown address as written', () => {
+    window.history.replaceState(null, '', '/developers');
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/developers' });
+    expect(window.location.pathname).toBe('/developers');
+  });
+});
+
+it('refuses direct Image Manager URLs while the portal is unavailable', () => {
+  expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+  expect(parseRoute('/image-manager/images')).toEqual({
+    kind: 'not_found',
+    pathname: '/image-manager/images',
   });
 });

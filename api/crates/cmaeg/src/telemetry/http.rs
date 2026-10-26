@@ -6,7 +6,10 @@ use axum::{
     response::Response,
     Router,
 };
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::{
+    catch_panic::CatchPanicLayer,
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+};
 use tracing::Instrument;
 
 #[derive(Clone)]
@@ -18,6 +21,11 @@ pub(crate) struct RefusalReason(pub String);
 
 pub fn instrument(router: Router) -> Router {
     router
+        // Innermost, so a handler panic is answered and logged inside its
+        // request span and `request finished` records the 500.
+        .layer(CatchPanicLayer::custom(
+            crate::http::problems::panic_response,
+        ))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(from_fn(observe))
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
@@ -55,6 +63,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
                 | "/v1/messages/{message_ref}/update"
                 | "/v1/events/{event_ref}/typing"
                 | "/v1/events/{event_ref}/context"
+                | "/v1/events/{event_ref}/attachments/{index}"
         );
     async move {
         let started = std::time::Instant::now();

@@ -7,6 +7,7 @@ async fn storage_activation_excludes_old_ready_environments_before_reconciliatio
     reconcile(&store, &profile).await;
     let old = make_ready(&store).await;
     store.warm_home_policy = Some(layer3_adapter::HomeVolumePolicy {
+        mode: Default::default(),
         storage_class: "cma-home-v1".into(),
         capacity_gib: 64,
         template_name: "seed".into(),

@@ -148,6 +148,17 @@ pub(super) fn recover_agent(
             to: next.status,
         });
     }
+    if !covered {
+        if let Some(skill) = next
+            .work
+            .live_skills
+            .last_mut()
+            .filter(|s| s.status == super::AgentSkillInstallStatus::Pending)
+        {
+            skill.status = super::AgentSkillInstallStatus::Failed;
+            skill.error = Some("runtime_lost_before_skill_confirmation".into());
+        }
+    }
     next.work.schedule(AgentWorkStep::None, at.into());
     if retained_home {
         next.work.receipts.retain(|receipt| {

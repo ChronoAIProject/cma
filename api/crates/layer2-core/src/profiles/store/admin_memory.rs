@@ -25,32 +25,38 @@ impl ProfileAdminStore for InMemoryProfileStore {
         let state = self.lock();
         let mut values = Vec::new();
         for profile in state.agents.values() {
-            if matches(
-                query,
-                ProfileKind::Agent,
-                &profile.owner,
-                profile.visibility,
-            ) {
+            if !profile.internal
+                && matches(
+                    query,
+                    ProfileKind::Agent,
+                    &profile.owner,
+                    profile.visibility,
+                )
+            {
                 values.push((profile.id.to_string(), ProfileAdminSummary::from(profile)));
             }
         }
         for profile in state.workspaces.values() {
-            if matches(
-                query,
-                ProfileKind::Workspace,
-                &profile.owner,
-                profile.visibility,
-            ) {
+            if !profile.internal
+                && matches(
+                    query,
+                    ProfileKind::Workspace,
+                    &profile.owner,
+                    profile.visibility,
+                )
+            {
                 values.push((profile.id.to_string(), ProfileAdminSummary::from(profile)));
             }
         }
         for profile in state.sandboxes.values() {
-            if matches(
-                query,
-                ProfileKind::Sandbox,
-                &profile.owner,
-                profile.visibility,
-            ) {
+            if !profile.internal
+                && matches(
+                    query,
+                    ProfileKind::Sandbox,
+                    &profile.owner,
+                    profile.visibility,
+                )
+            {
                 values.push((profile.id.to_string(), ProfileAdminSummary::from(profile)));
             }
         }
@@ -76,6 +82,7 @@ impl ProfileAdminStore for InMemoryProfileStore {
                 let profile = state
                     .agents
                     .get_mut(id)
+                    .filter(|profile| !profile.internal)
                     .ok_or(ProfileStoreError::NotFound)?;
                 if profile.retired_at.is_none() {
                     profile.updated_at = retired_at.clone();
@@ -87,6 +94,7 @@ impl ProfileAdminStore for InMemoryProfileStore {
                 let profile = state
                     .workspaces
                     .get_mut(id)
+                    .filter(|profile| !profile.internal)
                     .ok_or(ProfileStoreError::NotFound)?;
                 if profile.retired_at.is_none() {
                     profile.updated_at = retired_at.clone();
@@ -98,6 +106,7 @@ impl ProfileAdminStore for InMemoryProfileStore {
                 let profile = state
                     .sandboxes
                     .get_mut(id)
+                    .filter(|profile| !profile.internal)
                     .ok_or(ProfileStoreError::NotFound)?;
                 if profile.retired_at.is_none() {
                     profile.updated_at = retired_at.clone();

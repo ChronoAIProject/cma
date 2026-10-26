@@ -7,6 +7,16 @@ impl AgentOperationService {
         &self,
         caller: &Caller,
     ) -> Result<(), AgentOperationError> {
+        if let Some(authority) = &self.settings_authority {
+            if authority.caller() != caller {
+                return Err(AgentOperationError::Forbidden);
+            }
+            authority
+                .fence()
+                .require_current()
+                .map_err(super::super::agent_settings_authority::operation_error)?;
+            return Ok(());
+        }
         if let Some(authority) = &self.execution_authority {
             if authority.caller() != caller {
                 return Err(AgentOperationError::Forbidden);
@@ -24,12 +34,22 @@ impl AgentOperationService {
             .ok_or(AgentOperationError::Forbidden)
     }
 
-    pub(super) async fn owned_agent(
+    pub(in crate::sandbox) async fn owned_agent(
         &self,
         caller: &Caller,
         id: &AgentId,
     ) -> Result<Agent, AgentOperationError> {
-        let agent = if let Some(authority) = &self.execution_authority {
+        let agent = if let Some(authority) = &self.settings_authority {
+            self.require_owner_authority(caller)?;
+            authority
+                .current_snapshot()
+                .await
+                .map_err(super::super::agent_settings_authority::operation_error)?
+                .lineage
+                .agent
+                .filter(|agent| agent.id == *id)
+                .ok_or(AgentOperationError::NotFound)?
+        } else if let Some(authority) = &self.execution_authority {
             self.require_owner_authority(caller)?;
             authority
                 .current_snapshot()

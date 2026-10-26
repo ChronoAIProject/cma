@@ -62,6 +62,7 @@ async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
     assert!(write.contains("metric-request"));
     assert!(write.contains("/v1/channels/{channel_id}/events"));
     assert!(write.contains("cold=false"));
+    assert!(write.contains("media=\"none\""), "{write}");
     let logged_ms: f64 = write
         .split("ingress_to_provider_ms=")
         .nth(1)
@@ -92,6 +93,7 @@ async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
         scrape.lines().any(
             |line| line.starts_with("cmaeg_ingress_to_provider_seconds_count{")
                 && line.contains("source=\"custom\"")
+                && line.contains("media=\"none\"")
                 && line.ends_with(" 1")
         ),
         "{scrape}"

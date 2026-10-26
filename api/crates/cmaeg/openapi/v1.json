@@ -32,6 +32,17 @@
           "occurred_at": {
             "type": "string"
           },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityRouting",
+                "description": "The consumers a routed event reaches; absent on every unrouted event,\nso an activity without routing keeps its exact bytes and digest."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -88,6 +99,13 @@
         "oneOf": [
           {
             "properties": {
+              "album_id": {
+                "description": "Shared by every message of one platform media group (a Telegram\nalbum). Each item of the group is still its own activity.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "attachments": {
                 "items": {
                   "$ref": "#/components/schemas/Attachment"
@@ -169,6 +187,13 @@
           },
           {
             "properties": {
+              "attachments": {
+                "description": "Media the custom source extracted from the event; omitted when empty\nso events stored without attachments keep their exact bytes.",
+                "items": {
+                  "$ref": "#/components/schemas/Attachment"
+                },
+                "type": "array"
+              },
               "ce": {
                 "$ref": "#/components/schemas/CloudEvent"
               },
@@ -186,6 +211,70 @@
             "type": "object"
           }
         ]
+      },
+      "ActivityKindName": {
+        "description": "An activity's kind, by name.",
+        "enum": [
+          "message",
+          "command",
+          "interaction",
+          "event"
+        ],
+        "type": "string"
+      },
+      "ActivityRouting": {
+        "additionalProperties": false,
+        "description": "Which consumers an event reaches and why. Present only on routed events;\nan activity without it is exactly the activity a channel without routing\nhas always produced.",
+        "properties": {
+          "addressing_bytes": {
+            "description": "Byte offset into the raw message text (into `args` for a `to` command)\nwhere the unaddressed remainder begins: leading bot addresses, mention\nkeys and consumer addressing come before it. Omitted when 0.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "causation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Causation",
+                "description": "Present exactly on hand-off events."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/RouteResolution"
+          },
+          "rule_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleId",
+                "description": "The rule that selected the targets, when a rule did."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId",
+            "description": "The source slot the event arrived on; `agent` for a hand-off."
+          },
+          "targets": {
+            "description": "1..=8 consumers with unique ids. `targets[0]` is the primary consumer.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerTarget"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_id",
+          "resolution",
+          "targets"
+        ],
+        "type": "object"
       },
       "Actor": {
         "additionalProperties": false,
@@ -217,6 +306,29 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "Addressing": {
+        "additionalProperties": false,
+        "description": "Gateway routing directives; each can be switched off per channel. None of\nthem is a reserved product command.",
+        "properties": {
+          "command": {
+            "description": "`/to name[,name]`.",
+            "type": "boolean"
+          },
+          "event_field": {
+            "description": "The `cmaegtargets` CloudEvent extension.",
+            "type": "boolean"
+          },
+          "mentions": {
+            "description": "A leading `@name`.",
+            "type": "boolean"
+          },
+          "unknown_target_notice": {
+            "description": "Answer an unknown target with a notice.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
       },
       "AdmissionPolicy": {
         "oneOf": [
@@ -257,6 +369,10 @@
           },
           {
             "properties": {
+              "bot_messages": {
+                "$ref": "#/components/schemas/BotMessageAdmission",
+                "description": "Native exact bot mentions only. The caller must bound downstream\nautomated execution; the gateway grants no human execution identity."
+              },
               "chats": {
                 "$ref": "#/components/schemas/IdentityAdmission"
               },
@@ -282,6 +398,31 @@
             "type": "object"
           }
         ]
+      },
+      "AgentEventPolicy": {
+        "additionalProperties": false,
+        "description": "Limits on events agents publish to other consumers of the channel.",
+        "properties": {
+          "max_hops": {
+            "description": "1..=4.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_channel_per_minute": {
+            "description": "1..=60.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_consumer_per_minute": {
+            "description": "1..=30, at most `per_channel_per_minute`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
       },
       "AgentProfileSnapshot": {
         "additionalProperties": false,
@@ -323,10 +464,33 @@
       },
       "Attachment": {
         "additionalProperties": false,
+        "description": "One attachment of an activity.\n\nEvery fact is what the source declared. Content derived from the bytes\n(transcripts, pixels, extracted text) never enters the Activity: the sealed\nactivity digest covers only what the source reported, and derived content is\nproduced on demand from the locator.",
         "properties": {
+          "duration_seconds": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "emoji": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "filename": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -340,10 +504,51 @@
             ]
           },
           "reference": {
+            "description": "Stable, non-secret identifier such as `telegram:<file_unique_id>`,\n`lark:<key>`, `<platform>:item-<i>` or an owner-supplied value.",
             "type": "string"
           },
           "size_bytes": {
             "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentSource",
+                "description": "Where the bytes can be fetched; absent means the attachment is not\nretrievable and only its facts are known."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thumbnail": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentSource",
+                "description": "A preview image; only a Telegram locator on a native Telegram activity."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaVariant"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "format": "int32",
             "minimum": 0,
             "type": [
               "integer",
@@ -357,6 +562,59 @@
         ],
         "type": "object"
       },
+      "AttachmentImage": {
+        "additionalProperties": false,
+        "description": "Metadata of one image delivered with the view; never its bytes.",
+        "properties": {
+          "at_ms": {
+            "description": "The frame's position in the video, for keyframes only.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "bytes": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/AttachmentImageOrigin"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "origin",
+          "mime_type",
+          "width",
+          "height",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "AttachmentImageOrigin": {
+        "description": "How an image was produced. It is decided per image, because one set of\nframes can mix extracted keyframes with a platform thumbnail fallback.",
+        "enum": [
+          "normalized",
+          "platform_thumbnail",
+          "keyframe"
+        ],
+        "type": "string"
+      },
       "AttachmentKind": {
         "enum": [
           "image",
@@ -364,6 +622,313 @@
           "audio",
           "video",
           "other"
+        ],
+        "type": "string"
+      },
+      "AttachmentSource": {
+        "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
+        "oneOf": [
+          {
+            "description": "Position of the attachment in the NyxID relay callback.",
+            "properties": {
+              "index": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_relay"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "index",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Telegram Bot API file identifiers of a natively received message.",
+            "properties": {
+              "file_id": {
+                "type": "string"
+              },
+              "file_unique_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "file_id",
+              "file_unique_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An absolute HTTPS URL supplied by a custom event source.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "url"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An RFC 6901 JSON pointer to bytes carried inside the custom event itself.",
+            "properties": {
+              "pointer": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "inline"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "pointer",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AttachmentStatus": {
+        "enum": [
+          "ready",
+          "pending",
+          "unavailable"
+        ],
+        "type": "string"
+      },
+      "AttachmentText": {
+        "additionalProperties": false,
+        "description": "One page of a transcript or of a document's text.",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "page": {
+            "description": "1-based page number of `content`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pages": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AttachmentTextSource"
+          },
+          "truncated": {
+            "description": "The transcript or document text was itself cut at its cap.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "content",
+          "page",
+          "pages",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "AttachmentTextSource": {
+        "description": "Where a page of text came from.",
+        "enum": [
+          "transcript",
+          "document"
+        ],
+        "type": "string"
+      },
+      "AttachmentUnavailableReason": {
+        "description": "Why a view is unavailable, pending on the response budget, or ready with\nsome images left out. Every value is a fixed code, so it is safe in logs.",
+        "enum": [
+          "not_retrievable",
+          "not_found",
+          "too_large",
+          "too_large_pixels",
+          "unsupported_format",
+          "decode_failed",
+          "timed_out",
+          "source_unavailable",
+          "transcriber_disabled",
+          "transcriber_failed",
+          "too_long",
+          "rate_limited",
+          "transform_failed",
+          "download_not_permitted",
+          "link_unavailable",
+          "images_truncated",
+          "response_budget"
+        ],
+        "type": "string"
+      },
+      "AttachmentView": {
+        "additionalProperties": false,
+        "description": "One attachment's facts and the requested view of its content.",
+        "properties": {
+          "detected_type": {
+            "description": "The MIME type sniffed from the bytes, when it was determined.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "download": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaDownload",
+                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a single-use link."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "duration_seconds": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentImage"
+            },
+            "type": "array"
+          },
+          "index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttachmentKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentUnavailableReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retry_after_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AttachmentStatus"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentText"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaVariant"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AttachmentViewKind": {
+        "description": "What the caller asks to read from an attachment.",
+        "enum": [
+          "auto",
+          "image",
+          "text",
+          "frames",
+          "download"
         ],
         "type": "string"
       },
@@ -635,9 +1200,17 @@
           }
         ]
       },
+      "BotMessageAdmission": {
+        "enum": [
+          "deny",
+          "native_mentions"
+        ],
+        "type": "string"
+      },
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
+          "activity": {},
           "agent": {
             "$ref": "#/components/schemas/RelayAgent"
           },
@@ -763,6 +1336,17 @@
           "edit": {
             "type": "boolean"
           },
+          "inbound_media": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InboundMediaCapabilities",
+                "description": "What this binding can do with inbound attachments; absent while\ninbound media is disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "max_text_chars": {
             "format": "int32",
             "minimum": 0,
@@ -789,10 +1373,59 @@
               "$ref": "#/components/schemas/PlatformCapability"
             },
             "type": "array"
+          },
+          "source_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "platforms"
+        ],
+        "type": "object"
+      },
+      "Causation": {
+        "additionalProperties": false,
+        "description": "What caused a hand-off: the event it continues and the chain it belongs to.",
+        "properties": {
+          "hop": {
+            "description": "The hand-off's position in its chain, 1..=4.",
+            "format": "int32",
+            "maximum": 4,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "origin_source_id": {
+            "$ref": "#/components/schemas/SourceId",
+            "description": "The source slot the chain's first event arrived on."
+          },
+          "parent_event_id": {
+            "$ref": "#/components/schemas/EventId",
+            "description": "The event whose turn published this one."
+          },
+          "published_by": {
+            "$ref": "#/components/schemas/ConsumerId",
+            "description": "The consumer that published this event."
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ReplyChoice",
+            "description": "Where the targets' automatic replies go."
+          },
+          "root": {
+            "description": "The chain's record-scoped root id: 32 lowercase hex digits.",
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_event_id",
+          "root",
+          "published_by",
+          "hop",
+          "reply",
+          "origin_source_id"
         ],
         "type": "object"
       },
@@ -893,6 +1526,68 @@
       "ChannelId": {
         "description": "An encrypted pointer to a CMA channel record.",
         "type": "string"
+      },
+      "ChannelListItem": {
+        "description": "An owner-visible record whose original channel ID may predate recoverable creation.",
+        "properties": {
+          "channel_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "definition": {
+            "$ref": "#/components/schemas/PublicChannelDefinition"
+          },
+          "endpoints": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EndpointResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderResponse"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record_id",
+          "version",
+          "provider",
+          "definition"
+        ],
+        "type": "object"
+      },
+      "ChannelPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelListItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
       },
       "ChannelResponse": {
         "properties": {
@@ -1144,6 +1839,139 @@
         ],
         "type": "object"
       },
+      "Consumer": {
+        "additionalProperties": false,
+        "description": "An additional consumer of a channel, beside the implicit `default`. It\ncarries its own binding, profile and agent key, so it is stored whole;\na channel holds at most seven.\n\nEvery optional field is omitted when absent or at its default, so a\nstored consumer keeps its bytes when read and written back.",
+        "properties": {
+          "agent_key_hash": {
+            "description": "The public hash of the consumer's agent key, `sha256:<64 hex>`.",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "RFC 3339.",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "description": "1..=64 printable characters for reply labels; absent means `name`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "description": "Whether a leading `@name` or `/to name` may address it.",
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "description": "Whether this consumer answers non-human actors (custom events and\nhand-offs). Absent means its provider slug is configured as non-human.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pending": {
+            "description": "Stored before its provider binding exists; never routed.",
+            "type": "boolean"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/EventWorkerProfile"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderBinding"
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "profile",
+          "profile_digest",
+          "provider",
+          "agent_key_hash",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ConsumerId": {
+        "description": "A channel consumer's stable identifier: \"default\" or \"csm_\" + 12 lowercase hex.\nAssigned by the gateway and never reused within a channel.\n\nThe grammar admits no `\\x1f`, the separator of the gateway's identity\nderivations, so an identifier can be joined into one unambiguously.",
+        "pattern": "^(default|csm_[0-9a-f]{12})$",
+        "type": "string"
+      },
+      "ConsumerName": {
+        "description": "A consumer's chat name, `^[a-z][a-z0-9_-]{1,31}$`, unique per channel.\nNames are lowercase, so comparing two of them is exact.\n\nReserved: `all`, `everyone`, `here`, `to`, any `csm_` prefix, and\n`default`, which only the default consumer may use. The grammar is a\nproperty of the type; the reserved words are refused by the channel\nreaders, which know whether a name belongs to the default consumer and\ncan point at the offending field.",
+        "pattern": "^[a-z][a-z0-9_-]{1,31}$",
+        "type": "string"
+      },
+      "ConsumerReply": {
+        "additionalProperties": false,
+        "description": "A consumer's own reply policy, overriding the channel's.",
+        "properties": {
+          "auto_final": {
+            "description": "Absent means the channel's `reply.auto_final`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ReplyChoice",
+            "description": "Where automatic outputs go."
+          }
+        },
+        "type": "object"
+      },
+      "ConsumerSummary": {
+        "description": "Which of a routed channel's consumers a context response was read for.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "description": "The consumer's reply label, else its name.",
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ConsumerTarget": {
+        "additionalProperties": false,
+        "description": "One consumer an event reaches.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
       "ContextConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1178,6 +2006,17 @@
           },
           "channel_id": {
             "$ref": "#/components/schemas/ChannelId"
+          },
+          "consumer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConsumerSummary",
+                "description": "The consumer the calling agent key belongs to; present only on a\nchannel with routing, so an unrouted response keeps its bytes."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "conversation_id": {
             "$ref": "#/components/schemas/ConversationId"
@@ -1347,6 +2186,24 @@
         ],
         "type": "object"
       },
+      "CustomAttachments": {
+        "additionalProperties": false,
+        "description": "Where a custom event lists its attachments and which origins they may name.",
+        "properties": {
+          "origins": {
+            "description": "Exact HTTPS origins (`https://host[:port]`) an item URL may name. Empty\nadmits only inline `data:` items.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pointer": {
+            "description": "RFC 6901 pointer, relative to the event's `data`, at an array of items.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CustomAuth": {
         "oneOf": [
           {
@@ -1384,6 +2241,115 @@
             },
             "required": [
               "key_hashes",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DefaultConsumer": {
+        "additionalProperties": false,
+        "description": "The presentation and policy of the `default` consumer. Its binding,\nprofile and agent key stay in the definition's top-level fields, so its\nstorage, conversation ids and tokens never change when routing is added.",
+        "properties": {
+          "label": {
+            "description": "1..=64 printable characters for reply labels; absent means `name`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "description": "Whether a leading `@name` or `/to name` may address it.",
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "description": "Whether it answers non-human actors; absent means by provider slug.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "DefaultReply": {
+        "description": "The channel's default reply destination. Never sealed: replies resolve it\nfrom the current definition when a message is sent.",
+        "oneOf": [
+          {
+            "description": "A chat of the native Telegram source.",
+            "properties": {
+              "chat_id": {
+                "type": "string"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/SourceId"
+              },
+              "thread_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram_chat"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "chat_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A route of a NyxID relay source.",
+            "properties": {
+              "route_id": {
+                "type": "string"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/SourceId"
+              },
+              "type": {
+                "enum": [
+                  "relay_conversation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "route_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The channel's result webhook sinks.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "sinks"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "type"
             ],
             "type": "object"
@@ -1792,6 +2758,34 @@
           }
         ]
       },
+      "InboundMediaCapabilities": {
+        "additionalProperties": false,
+        "description": "What the calling binding can do with an event's inbound attachments.",
+        "properties": {
+          "downloads": {
+            "description": "The binding may save originals into its workspace.",
+            "type": "boolean"
+          },
+          "read_tool": {
+            "description": "The binding has `readEventAttachment`.",
+            "type": "boolean"
+          },
+          "transcripts": {
+            "description": "Audio and video can be transcribed.",
+            "type": "boolean"
+          },
+          "visuals": {
+            "$ref": "#/components/schemas/VisualSupport"
+          }
+        },
+        "required": [
+          "read_tool",
+          "transcripts",
+          "visuals",
+          "downloads"
+        ],
+        "type": "object"
+      },
       "IntentReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -1892,6 +2886,54 @@
           "auth"
         ],
         "type": "object"
+      },
+      "MediaDownload": {
+        "additionalProperties": false,
+        "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
+        "properties": {
+          "curl": {
+            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the link.",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Unix seconds after which the link is refused.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "method": {
+            "description": "Always `GET`.",
+            "type": "string"
+          },
+          "url": {
+            "description": "`<CMAEG_PUBLIC_API_URL>/v1/media/content`, without the link.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "url",
+          "expires_at",
+          "curl"
+        ],
+        "type": "object"
+      },
+      "MediaVariant": {
+        "description": "The platform's own name for the media, finer than `AttachmentKind`.",
+        "enum": [
+          "photo",
+          "document",
+          "audio",
+          "voice",
+          "video",
+          "video_note",
+          "animation",
+          "sticker",
+          "image",
+          "file",
+          "media",
+          "embedded"
+        ],
+        "type": "string"
       },
       "MessageRef": {
         "type": "string"
@@ -2010,6 +3052,17 @@
       "PartitionRule": {
         "additionalProperties": false,
         "properties": {
+          "custom_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PartitionKey",
+                "description": "The key for custom events on a chat-keyed channel; absent means `key`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "key": {
             "$ref": "#/components/schemas/PartitionKey"
           },
@@ -2024,6 +3077,13 @@
           "key"
         ],
         "type": "object"
+      },
+      "Pattern": {
+        "description": "A match pattern of 1..=512 bytes: exact, or a prefix when it ends in\n`*`. At most one `*`, and only as the final character.",
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^*]*\\*?$",
+        "type": "string"
       },
       "PermissionConfig": {
         "additionalProperties": false,
@@ -2140,7 +3200,9 @@
           "conflict",
           "payload_too_large",
           "unsupported_media_type",
-          "internal"
+          "internal",
+          "attachment_not_found",
+          "media_unavailable"
         ],
         "type": "string"
       },
@@ -2291,6 +3353,17 @@
           },
           "occurred_at": {
             "type": "string"
+          },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityRouting",
+                "description": "The activity's routing decision; absent on every unrouted event."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2346,6 +3419,17 @@
           "reply": {
             "$ref": "#/components/schemas/ReplyPolicy"
           },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RoutingPolicy",
+                "description": "Multi-consumer routing, read-only here; absent on every channel\nwithout it. It carries consumers' public key hashes, never a key."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -2390,6 +3474,26 @@
         },
         "required": [
           "agent_key_hash"
+        ],
+        "type": "object"
+      },
+      "PublishPolicy": {
+        "additionalProperties": false,
+        "description": "Whether a consumer may publish hand-off events to other consumers.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "targets": {
+            "description": "The consumers it may target; empty means any routable consumer.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
         ],
         "type": "object"
       },
@@ -2451,6 +3555,13 @@
         "properties": {
           "content_type": {
             "type": "string"
+          },
+          "download_url": {
+            "description": "NyxID's own download endpoint for this attachment. Accepted for envelope\ncompatibility and never dereferenced: media fetches build their URL from\nCMAEG_NYXID_BASE_URL and the sealed message ID.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "file_key": {
             "type": [
@@ -2588,6 +3699,23 @@
         ],
         "type": "object"
       },
+      "ReplyChoice": {
+        "description": "Where a reply goes: back to the event's origin, or to the channel's\ndefault reply destination.",
+        "enum": [
+          "origin",
+          "default"
+        ],
+        "type": "string"
+      },
+      "ReplyLabel": {
+        "description": "When chat replies carry the `[<label>] ` prefix.",
+        "enum": [
+          "auto",
+          "always",
+          "never"
+        ],
+        "type": "string"
+      },
       "ReplyPolicy": {
         "additionalProperties": false,
         "properties": {
@@ -2639,6 +3767,163 @@
           "reply_target_ref",
           "expires_at"
         ],
+        "type": "object"
+      },
+      "RouteResolution": {
+        "description": "How an event's targets were resolved.",
+        "enum": [
+          "default",
+          "rule",
+          "mention",
+          "command",
+          "event_field",
+          "interaction",
+          "agent_event"
+        ],
+        "type": "string"
+      },
+      "RoutingPolicy": {
+        "additionalProperties": false,
+        "description": "Multi-consumer routing. Each admitted event resolves to one target set:\nexplicit addressing when the channel allows it, else the first matching\nrule, else `default_targets`.",
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "consumers": {
+            "description": "Additional consumers, 0..=7.",
+            "items": {
+              "$ref": "#/components/schemas/Consumer"
+            },
+            "type": "array"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "description": "The targets of an event no directive or rule selects: 1..=max_targets.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "max_targets": {
+            "description": "The most consumers one event may target, 1..=8.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "description": "0..=32 rules; the first match wins.",
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          },
+          "version": {
+            "description": "Always 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
+      "RoutingRule": {
+        "additionalProperties": false,
+        "description": "A rule: events matching `when` target `targets`.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/RuleId"
+          },
+          "targets": {
+            "description": "1..=max_targets consumers.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "when": {
+            "$ref": "#/components/schemas/RuleMatch"
+          }
+        },
+        "required": [
+          "id",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "RuleId": {
+        "description": "A routing rule's identifier, `^[a-z0-9_-]{1,32}$`, unique per channel.",
+        "pattern": "^[a-z0-9_-]{1,32}$",
+        "type": "string"
+      },
+      "RuleMatch": {
+        "additionalProperties": false,
+        "description": "What a rule matches: AND across non-empty fields, OR within a list. An\nempty match admits every event. Each list holds at most 64 entries of at\nmost 512 bytes.",
+        "properties": {
+          "chats": {
+            "description": "`activity.conversation.id`, exact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "event_sources": {
+            "description": "CloudEvent `source`: exact, or a prefix ending in one `*`.",
+            "items": {
+              "$ref": "#/components/schemas/Pattern"
+            },
+            "type": "array"
+          },
+          "event_types": {
+            "description": "CloudEvent `type`: exact, or a prefix ending in one `*`.",
+            "items": {
+              "$ref": "#/components/schemas/Pattern"
+            },
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityKindName"
+            },
+            "type": "array"
+          },
+          "senders": {
+            "description": "`activity.actor.id`, exact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sources": {
+            "description": "Source slots. A rule naming only sources that are not attached is\nvalid and inert.",
+            "items": {
+              "$ref": "#/components/schemas/SourceId"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "Secret": {
@@ -2815,6 +4100,16 @@
           },
           {
             "properties": {
+              "attachments": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CustomAttachments"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "auth": {
                 "$ref": "#/components/schemas/CustomAuth"
               },
@@ -2839,6 +4134,10 @@
             "type": "object"
           }
         ]
+      },
+      "SourceId": {
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "type": "string"
       },
       "SourceKind": {
         "oneOf": [
@@ -2986,6 +4285,16 @@
           },
           {
             "properties": {
+              "attachments": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CustomAttachments"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "auth": {
                 "$ref": "#/components/schemas/CustomAuth"
               },
@@ -3161,6 +4470,15 @@
           "outcome"
         ],
         "type": "object"
+      },
+      "VisualSupport": {
+        "description": "The still images a gateway can show for a video.",
+        "enum": [
+          "none",
+          "platform_thumbnail",
+          "keyframes"
+        ],
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -3171,6 +4489,11 @@
       },
       "creatorBearer": {
         "description": "NyxID creator bearer token",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "mediaBearer": {
+        "description": "Single-use media link capability minted by readEventAttachment view download; Authorization header only",
         "scheme": "bearer",
         "type": "http"
       },
@@ -3594,6 +4917,49 @@
       }
     },
     "/channels": {
+      "get": {
+        "operationId": "listChannels",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
       "post": {
         "operationId": "createChannel",
         "parameters": [
@@ -4167,6 +5533,81 @@
         ]
       }
     },
+    "/events/{event_ref}/attachments/{index}": {
+      "get": {
+        "operationId": "readEventAttachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "format": "int32",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AttachmentViewKind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 64,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
     "/events/{event_ref}/context": {
       "get": {
         "operationId": "readEventContext",
@@ -4418,6 +5859,37 @@
         ]
       }
     },
+    "/media/content": {
+      "get": {
+        "operationId": "downloadMedia",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "the attachment bytes"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "mediaBearer": []
+          }
+        ],
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/messages/{message_ref}/update": {
       "post": {
         "operationId": "updateMessage",
@@ -4470,6 +5942,39 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/permissions": {
+      "get": {
+        "operationId": "getPermissions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "identity"
         ]
       }
     },

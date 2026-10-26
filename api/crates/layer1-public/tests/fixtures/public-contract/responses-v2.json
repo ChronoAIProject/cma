@@ -35,7 +35,7 @@
             "previous_response_id": false,
             "store": true,
             "input": "user_text",
-            "model": "pinned_agent_profile",
+            "model": "current_agent_settings",
             "idempotency_header": "Idempotency-Key"
           },
           "output": {
@@ -788,7 +788,7 @@
           "error": {
             "type": "invalid_request_error",
             "code": "model_mismatch",
-            "message": "model must match the pinned Agent Profile model.",
+            "message": "model must match the current Agent conversation settings.",
             "param": "model"
           }
         },

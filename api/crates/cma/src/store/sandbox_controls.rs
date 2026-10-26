@@ -124,8 +124,13 @@ impl SandboxControlStore for MongoSandboxStore {
         record: &SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
     ) -> Result<SandboxControlRecord, SandboxControlError> {
-        self.change_sandbox_control(Change::Apply(record, &authorization))
-            .await
+        let result = self
+            .change_sandbox_control(Change::Apply(record, &authorization))
+            .await?;
+        if matches!(result.status, SandboxControlStatus::Applied { .. }) {
+            self.sandbox_admitted.notify_one();
+        }
+        Ok(result)
     }
     async fn reject_sandbox_control(
         &self,

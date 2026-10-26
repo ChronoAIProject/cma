@@ -1,7 +1,10 @@
 use super::*;
-use cmaeg::channels::definition::{
-    build_definition, build_update, validate_create_request, validate_update_request,
-    ChannelCreateRequest, ChannelUpdateRequest,
+use cmaeg::channels::{
+    definition::{
+        build_definition, build_update, validate_create_request, validate_update_request,
+        ChannelCreateRequest, ChannelUpdateRequest,
+    },
+    write_gate::WriteFlags,
 };
 use cmaeg_core::{
     channel::{ConformanceLevel, Platform, Source},
@@ -16,6 +19,7 @@ fn build(body: serde_json::Value) -> Result<Source, cmaeg_core::ValidationError>
         RecordId::new("record").unwrap(),
         BindingId::new("binding").unwrap(),
         ConformanceLevel::L1,
+        WriteFlags::default(),
     )
     .map(|definition| definition.sources[0].clone())
 }
@@ -90,6 +94,7 @@ fn unverified_platforms_are_refused_on_create_and_update_without_the_opt_in() {
             RecordId::new("record").unwrap(),
             BindingId::new("binding").unwrap(),
             ConformanceLevel::L1,
+            WriteFlags::default(),
         )
         .unwrap()
     };
@@ -105,7 +110,7 @@ fn unverified_platforms_are_refused_on_create_and_update_without_the_opt_in() {
                 validate_create_request(&create).unwrap_err(),
                 build(relay_body(platform, trust)).unwrap_err(),
                 validate_update_request(&update).unwrap_err(),
-                build_update(&update, &current).unwrap_err(),
+                build_update(&update, &current, WriteFlags::default()).unwrap_err(),
             ] {
                 assert_eq!(error.pointer, "/sources/0/trust_normalized", "{platform}");
                 assert!(error.message.contains("no raw-event verifier"), "{error}");
@@ -245,7 +250,9 @@ async fn thread_contract_is_advertised_then_echoed_only_for_supported_sources() 
     let provider = FakeProvider::start(FakeProviderConfig::default()).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
-    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+    state.thread_contract_writes_enabled = true;
+    let (base, stop, task) = serve_app(state).await;
     let client = Client::new();
     let mut body = relay_body("lark", None);
     body["sources"][0]["bot_id"] = json!("ou_bot");
@@ -281,6 +288,58 @@ async fn thread_contract_is_advertised_then_echoed_only_for_supported_sources() 
         updated["definition"]["reply"]["thread_contract"],
         body["reply"]["thread_contract"]
     );
+    stop.send(()).ok();
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn thread_contract_writes_and_advertisement_are_disabled_until_readers_are_ready() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let mut body = relay_body("lark", None);
+    body["sources"][0]["bot_id"] = json!("ou_bot");
+    let url = format!("{base}/v1/channels");
+    let response = client
+        .post(&url)
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let created: serde_json::Value = response.json().await.unwrap();
+    assert!(created.get("thread_contract_versions").is_none());
+    body["reply"]["thread_contract"] = json!({"version":1,"follow_chat_ids":["oc_chat"]});
+    let calls = provider.requests().len();
+    let records = cma.records().len();
+    let response = client
+        .post(&url)
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        problem["detail"],
+        "/reply/thread_contract: thread_contract_writes_disabled"
+    );
+    body.as_object_mut().unwrap().remove("credentials");
+    body["expected_version"] = created["version"].clone();
+    let response = client
+        .put(format!("{url}/{}", created["channel_id"].as_str().unwrap()))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    assert_eq!(provider.requests().len(), calls);
+    assert_eq!(cma.records().len(), records);
     stop.send(()).ok();
     task.await.unwrap();
 }

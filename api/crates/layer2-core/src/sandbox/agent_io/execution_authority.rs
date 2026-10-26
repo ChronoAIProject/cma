@@ -282,7 +282,7 @@ pub(in crate::sandbox) fn operation_error(
     }
 }
 
-fn same_ancestry(
+pub(in crate::sandbox) fn same_ancestry(
     original: &crate::resource_access::ResourceLineage,
     current: &crate::resource_access::ResourceLineage,
 ) -> bool {

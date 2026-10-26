@@ -126,6 +126,7 @@ fn content() -> TriggerContent {
                 1,
             ),
             agent_profile: AgentProfileRef::new(AgentProfileId("agp_example".into()), 1),
+            inline: None,
         },
         reuse: ReusePolicy {
             sandbox: SandboxReusePolicy::ReuseExisting,
@@ -186,10 +187,11 @@ impl TriggerStore for ReadOnlyTriggerStore {
         Ok((&self.trigger.id == id && &self.trigger.owner == owner).then(|| self.trigger.clone()))
     }
 
-    async fn delete_unpublished_trigger(
+    async fn delete_trigger(
         &self,
         _id: &TriggerId,
         _owner: &SubjectId,
+        _archived_at: String,
     ) -> Result<(), TriggerStoreError> {
         Err(TriggerStoreError::NotFound)
     }

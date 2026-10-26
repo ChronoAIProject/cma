@@ -22,6 +22,8 @@ pub(crate) enum ConnectionTarget {
     Sandbox { id: SandboxId },
     Workspace { id: WorkspaceId },
     Agent { id: AgentId },
+    AgentAccessRequest { id: String },
+    AgentServiceAccess { id: AgentId, services: Vec<String> },
     Launch { id: LaunchId },
 }
 
@@ -94,6 +96,37 @@ impl ConnectionTargets for StoredConnectionTargets {
             return Err(ConnectionError::Forbidden);
         }
         match target {
+            ConnectionTarget::AgentServiceAccess { id, services } => {
+                scope::services(
+                    &self.stores.sandbox_model,
+                    self.policy.as_ref(),
+                    caller,
+                    id,
+                    services,
+                )
+                .await
+            }
+            ConnectionTarget::AgentAccessRequest { id } => {
+                if !caller.authorization.allows(Capability::UseOwnSandboxes) {
+                    return Err(ConnectionError::Forbidden);
+                }
+                self.stores
+                    .sandbox_model
+                    .access_request_connection_services(&caller.subject, id)
+                    .await
+                    .map_err(|error| match error {
+                        layer2_core::sandbox::agent_access::AgentAccessError::NotFound => {
+                            ConnectionError::NotFound
+                        }
+                        layer2_core::sandbox::agent_access::AgentAccessError::Conflict => {
+                            ConnectionError::Changed
+                        }
+                        layer2_core::sandbox::agent_access::AgentAccessError::Forbidden => {
+                            ConnectionError::Forbidden
+                        }
+                        _ => ConnectionError::Unavailable,
+                    })
+            }
             ConnectionTarget::SandboxProfile { profile } => {
                 if !caller.authorization.allows(Capability::CreateSandbox) {
                     return Err(ConnectionError::Forbidden);
@@ -176,3 +209,6 @@ impl ConnectionTargets for StoredConnectionTargets {
         }
     }
 }
+
+#[path = "targets_scope.rs"]
+mod scope;

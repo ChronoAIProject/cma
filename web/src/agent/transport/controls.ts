@@ -1,4 +1,4 @@
-import { ApiError, type V2ResponseControlCommand } from '@chronoai/cma-sdk';
+import { ApiError, type V2ResponseControlCommand, type V2ResponseControl } from '@chronoai/cma-sdk';
 import type { ConversationState } from '../model';
 import type { AgentV2Session } from './client';
 import type { ControlRecord } from './controlRecord';
@@ -9,7 +9,7 @@ export async function submitV2Control(
   command: V2ResponseControlCommand,
   key: string,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<V2ResponseControl> {
   await session.authorize(signal);
   if (target === undefined) throw new Error('This turn does not support response controls.');
   const retained = session.journal.readControl();
@@ -43,7 +43,7 @@ export async function submitV2Control(
       },
     });
   }
-  await send(session, intent, signal);
+  return send(session, intent, signal);
 }
 
 export async function recoverV2Control(
@@ -80,4 +80,5 @@ async function send(session: AgentV2Session, intent: ControlRecord, signal: Abor
   await session.authorize(signal);
   session.journal.acceptedControl(intent.key, accepted.control.receipt.command_id);
   // Admission or delivery does not end the displayed turn. Only durable replay does.
+  return accepted;
 }

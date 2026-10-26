@@ -6,162 +6,357 @@
   padding: 10px 12px;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-specific-sidebar-fill);
-  border-right: 1px solid var(--dsw-alias-border-l1);
-
   --cma-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --cma-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
-
 .sidebar--collapsed {
-  padding-inline: 10px;
+  padding-inline: 6px;
 }
-
 .sidebar__head {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
-  justify-content: space-between;
   min-height: 44px;
   flex: none;
 }
-
-.sidebar__head--scoped {
-  gap: 4px;
-}
-
-.sidebar__head--scoped .sidebar__build {
-  max-width: 8ch;
-  flex: 0 1 auto;
-}
-
-.sidebar__head--scoped .sidebar__toggle {
-  width: 32px;
-}
-
-.sidebar__scope-picker {
-  flex: 1;
-  min-width: 60px;
-}
-
-.sidebar__scope-picker > button {
-  width: 100%;
-  min-width: 0;
-  padding-inline: 4px;
-  font-size: 12px;
-}
-
-.sidebar--collapsed .sidebar__head {
-  flex-direction: column;
-}
-
-.sidebar__brand,
-.sidebar__new,
-.sidebar__toggle {
-  display: inline-flex;
-  align-items: center;
-  color: inherit;
-  background: transparent;
-  border: 0;
-}
-
 .sidebar__brand {
-  gap: 8px;
+  display: flex;
   flex: none;
-  min-width: 0;
-  padding: 3px 4px;
-  text-align: left;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  color: inherit;
   text-decoration: none;
-  border-radius: 7px;
-  cursor: pointer;
 }
-
 .sidebar__brand:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
-
 .sidebar__mark {
-  width: 30px;
-  height: 30px;
+  flex: none;
+  width: 40px;
+  height: 40px;
   color: var(--dsw-alias-brand-primary);
 }
-
 .sidebar__mark svg {
-  display: block;
   width: 100%;
   height: 100%;
+  display: block;
 }
-
-.sidebar__name {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0;
+.sidebar__toggle,
+.sidebar__new,
+.sidebar__search,
+.sidebar__link,
+.sidebar__sign-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-
-.sidebar__new {
+.sidebar__toggle {
   justify-content: center;
   flex: none;
   width: 32px;
-  height: 36px;
+  height: 32px;
   padding: 0;
-  border-radius: 7px;
-  cursor: pointer;
-  color: var(--dsw-alias-label-tertiary);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary);
 }
-
-.sidebar__toggle {
+/*
+ * Plain rows, never filled at rest: the list of Agents below is what the
+ * sidebar is for, so the actions above it must not out-shout it (§10).
+ */
+.sidebar__new,
+.sidebar__search,
+.sidebar__link {
+  box-sizing: border-box;
+  min-height: 32px;
+  width: 100%;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.sidebar__new span,
+.sidebar__search span {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar__new[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sidebar__reason {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.sidebar__reason[hidden] {
+  display: none;
+}
+.sidebar__kbd {
   flex: none;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: 50%;
-  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
 }
-
+.sidebar__link {
+  text-decoration: none;
+}
+/*
+ * Signing in is the only thing a signed-out sidebar offers, so unlike the
+ * signed-in action rows it keeps the shared primary fill.
+ */
+.sidebar__sign-in {
+  box-sizing: border-box;
+  justify-content: center;
+  min-height: 36px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-primary-fill);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+.sidebar__sign-in:hover {
+  background: var(--dsw-alias-button-primary-hover);
+}
+.sidebar__link[aria-current='page'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  font-weight: 500;
+}
+.sidebar__link svg,
+.sidebar__new svg,
+.sidebar__search svg {
+  flex: none;
+}
+.sidebar__actions {
+  display: grid;
+  gap: 2px;
+  flex: none;
+  margin-bottom: 12px;
+}
 .sidebar__toggle:hover,
-.sidebar__new:hover {
+.sidebar__new:hover:not([aria-disabled='true']),
+.sidebar__search:hover,
+.sidebar__link:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
-
 .sidebar__toggle:focus-visible,
 .sidebar__new:focus-visible,
+.sidebar__search:focus-visible,
+.sidebar__link:focus-visible,
+.sidebar__sign-in:focus-visible,
 .sidebar__brand:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-
-.sidebar__build {
-  min-width: 0;
-  max-width: 11ch;
-  padding: 2px 4px;
-  overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 4px;
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .sidebar__navigation {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
-
+.sidebar__navigation[hidden] {
+  display: none;
+}
 .sidebar__account {
   min-width: 0;
   flex: none;
+  margin-top: auto;
+  padding-top: 8px;
 }
-
-@media (max-width: 30rem) {
-  .sidebar__brand,
-  .sidebar__new,
+.sidebar--collapsed .sidebar__head {
+  flex-direction: column;
+  gap: 8px;
+}
+.sidebar--collapsed .sidebar__new span,
+.sidebar--collapsed .sidebar__search span,
+.sidebar--collapsed .sidebar__search .sidebar__kbd,
+.sidebar--collapsed .sidebar__link span {
+  display: none;
+}
+.sidebar--collapsed .sidebar__new,
+.sidebar--collapsed .sidebar__search,
+.sidebar--collapsed .sidebar__link,
+.sidebar--collapsed .sidebar__sign-in {
+  justify-content: center;
+  padding-inline: 0;
+}
+@media (prefers-reduced-motion: reduce) {
   .sidebar__toggle,
-  .sidebar__scope-picker > button {
+  .sidebar__new,
+  .sidebar__search,
+  .sidebar__link,
+  .sidebar__sign-in {
+    transition: none;
+  }
+}
+.navigation-filters {
+  flex: none;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.navigation-filters__bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+/* Words, not a track: the switch changes the list, it is not an action. */
+.navigation-filters__views {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  min-width: 0;
+  padding-left: 8px;
+}
+.navigation-filters__views button {
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.navigation-filters__views button:hover,
+.navigation-filters__views button[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+}
+.navigation-filters__views button[aria-pressed='true'] {
+  font-weight: 500;
+}
+.navigation-filters__toggle {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+/* The only mark a narrowed list leaves on the row; the summary line says what. */
+.navigation-filters__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 50%;
+}
+.navigation-filters__summary {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  padding-left: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.navigation-filters__clear {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.navigation-filters__toggle:hover,
+.navigation-filters__toggle[aria-expanded='true'],
+.navigation-filters__clear:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.navigation-filters__views button:focus-visible,
+.navigation-filters__toggle:focus-visible,
+.navigation-filters__clear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.navigation-filters__panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.navigation-filters__panel[hidden] {
+  display: none;
+}
+.navigation-filters__field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.navigation-filters__label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+.navigation-filters__picker {
+  min-width: 0;
+}
+.navigation-filters__picker > button {
+  width: 100%;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+/* Touch targets, after every rule they override. */
+@media (max-width: 30rem) {
+  .sidebar__new,
+  .sidebar__search,
+  .sidebar__link,
+  .sidebar__sign-in,
+  .sidebar__toggle,
+  .navigation-filters__views button,
+  .navigation-filters__toggle,
+  .navigation-filters__clear,
+  .navigation-filters__picker > button {
     min-height: 44px;
+  }
+  .navigation-filters__toggle {
+    width: 44px;
+  }
+  .navigation-filters__dot {
+    top: 12px;
+    right: 12px;
   }
 }

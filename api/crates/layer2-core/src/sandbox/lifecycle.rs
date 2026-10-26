@@ -1,6 +1,8 @@
 //! Durable, restart-resumable sandbox pause and recovery state.
 
 use serde::{Deserialize, Serialize};
+
+mod validation;
 use sha2::{Digest, Sha256};
 
 use crate::seconds_from_rfc3339;
@@ -167,6 +169,8 @@ impl SandboxLifecycleOperation {
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<super::SandboxInterruption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<Box<super::SandboxHome>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_recovery: Option<Box<super::SandboxHomeRecovery>>,
@@ -174,6 +178,8 @@ pub struct SandboxLifecycleState {
     pub runtime_generation_high_water: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_runtime: Option<Box<super::RuntimeBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +196,8 @@ pub struct SandboxLifecycleState {
     pub paused_notice: Option<String>,
     #[serde(default)]
     pub rotation: SandboxRotationAccounting,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
 }
 
 fn checkpoint_epoch_is_unreserved(epoch: &u64) -> bool {
@@ -200,10 +208,12 @@ impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            interruption: None,
             home: None,
             home_recovery: None,
             runtime_generation_high_water: 0,
             runtime_provision: None,
+            suspended_runtime: None,
             checkpoint_capture: None,
             background_checkpoint: None,
             checkpoint_epoch_high_water: 0,
@@ -212,31 +222,45 @@ impl Default for SandboxLifecycleState {
             checkpoints: SandboxCheckpointHistory::default(),
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
+            runtime_update: None,
         }
     }
 }
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        sandbox.validate_suspended_runtime()?;
+        if let Some(update) = &self.runtime_update {
+            update.validate()?;
+        }
+        if let Some(interruption) = &self.interruption {
+            interruption.validate()?;
+        }
         if let Some(capture) = &self.background_checkpoint {
             capture.validate(sandbox)?;
         }
         if let Some(recovery) = &self.home_recovery {
             recovery.validate_for(sandbox)?;
-            if !matches!(
+            let operation_allows_home = matches!(
                 self.operation,
                 Some(
-                    SandboxLifecycleOperation::Revive { .. }
+                    SandboxLifecycleOperation::Pause { .. }
+                        | SandboxLifecycleOperation::Revive { .. }
                         | SandboxLifecycleOperation::ImageRotation { .. }
                 )
-            ) || (recovery.resume_pause.is_some()
-                && !matches!(
-                    self.operation,
-                    Some(SandboxLifecycleOperation::Revive {
-                        cause: SandboxReviveCause::RuntimeLost,
-                        ..
-                    })
-                ))
+            ) || (sandbox.status == SandboxStatus::Paused
+                && self.operation.is_none());
+            if !operation_allows_home
+                || (recovery.resume_pause.is_some()
+                    && !matches!(
+                        self.operation,
+                        Some(
+                            SandboxLifecycleOperation::Revive {
+                                cause: SandboxReviveCause::RuntimeLost,
+                                ..
+                            } | SandboxLifecycleOperation::ImageRotation { .. }
+                        )
+                    ))
             {
                 return Err(invalid_lifecycle());
             }
@@ -289,7 +313,10 @@ impl SandboxLifecycleState {
             }
             None => {}
         }
-        if sandbox.status == SandboxStatus::Paused && self.checkpoints.latest.is_none() {
+        if sandbox.status == SandboxStatus::Paused
+            && self.checkpoints.latest.is_none()
+            && self.home_recovery.is_none()
+        {
             return Err(invalid_lifecycle());
         }
         Ok(())
@@ -305,7 +332,9 @@ impl SandboxLifecycleState {
             return Err(invalid_lifecycle());
         }
         let authority = self.allocate_authority(sandbox_id, requested_at, true)?;
-        self.home_recovery = None;
+        // A durable home is the pause/revive source. Native suspension retains
+        // its CRD and PVC; legacy replacement retains the same home authority.
+        self.home_recovery = self.select_home_recovery()?;
         self.operation = Some(SandboxLifecycleOperation::Pause {
             authority,
             phase: SandboxPausePhase::first(),
@@ -390,72 +419,6 @@ impl SandboxLifecycleState {
             writer_resume_token,
             writer_resume_generation: 0,
         })
-    }
-
-    fn validate_operation(
-        &self,
-        sandbox: &Sandbox,
-        operation: &SandboxLifecycleOperation,
-    ) -> Result<(), SandboxModelError> {
-        let authority = operation.authority();
-        let expected_id = format!(
-            "sandbox-lifecycle-v1:{}:{}",
-            sandbox.id.as_str(),
-            authority.generation
-        );
-        if operation.expected_status() != sandbox.status
-            || authority.generation == 0
-            || authority.generation >= self.next_authority
-            || authority.operation_id != expected_id
-            || authority.operation_id.len() > MAX_LIFECYCLE_OPERATION_ID_BYTES
-            || seconds_from_rfc3339(&authority.requested_at).is_none()
-        {
-            return Err(invalid_lifecycle());
-        }
-        if operation.checkpoint_epoch().is_some_and(|epoch| {
-            self.checkpoints
-                .latest
-                .as_ref()
-                .is_none_or(|checkpoint| checkpoint.epoch != epoch)
-        }) {
-            return Err(invalid_lifecycle());
-        }
-        match operation {
-            SandboxLifecycleOperation::Pause { .. } => {
-                validate_writer_token(authority)?;
-            }
-            SandboxLifecycleOperation::Revive {
-                checkpoint_epoch, ..
-            } => {
-                if checkpoint_epoch.is_none() && self.home_recovery.is_none() {
-                    return Err(invalid_lifecycle());
-                }
-                if authority.writer_resume_token.is_some()
-                    || authority.writer_resume_generation != 0
-                {
-                    return Err(invalid_lifecycle());
-                }
-            }
-            SandboxLifecycleOperation::ImageRotation {
-                target_runtime_version,
-                identity,
-                ..
-            } => {
-                validate_writer_token(authority)?;
-                if target_runtime_version.trim().is_empty()
-                    || target_runtime_version.len() > MAX_RUNTIME_VERSION_BYTES
-                    || identity.sandbox_id != sandbox.id
-                    || identity.owner != sandbox.owner
-                    || identity.profile_id != sandbox.profile.id
-                    || identity.profile_revision != sandbox.profile.revision
-                    || identity.profile_digest != sandbox.profile.digest
-                    || identity.validate().is_err()
-                {
-                    return Err(invalid_lifecycle());
-                }
-            }
-        }
-        Ok(())
     }
 }
 

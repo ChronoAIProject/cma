@@ -10,6 +10,7 @@ use super::*;
 enum Behavior {
     Complete,
     Blocked,
+    Deferred(Duration),
     Wait(Arc<Notify>),
     Fail,
     Panic,
@@ -84,23 +85,24 @@ impl CommandScheduleWork for Probe {
         Ok(Page { items: ids, next })
     }
 
-    async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
+    async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
         self.calls.lock().unwrap().push(id.clone());
         let Some(behavior) = self.jobs.lock().unwrap().get(id).cloned() else {
-            return Ok(());
+            return Ok(Duration::ZERO);
         };
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(active, Ordering::SeqCst);
         let _active = ActiveCall(self);
         match behavior {
             Behavior::Complete => {}
-            Behavior::Blocked => return Ok(()),
+            Behavior::Blocked => return Ok(Duration::ZERO),
+            Behavior::Deferred(delay) => return Ok(delay),
             Behavior::Wait(release) => release.notified().await,
             Behavior::Fail => return Err(CommandLedgerError::Unavailable),
             Behavior::Panic => panic!("simulated worker panic"),
         }
         self.jobs.lock().unwrap().remove(id);
-        Ok(())
+        Ok(Duration::ZERO)
     }
 }
 
@@ -224,6 +226,50 @@ async fn blocked_first_page_cannot_starve_later_commands() {
     }
     assert_eq!(probe.count(&later), 1);
     assert_eq!(probe.peak.load(Ordering::SeqCst), 1);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn deferred_messages_release_slots_for_a_later_page_interrupt() {
+    let probe = Arc::new(Probe::default());
+    let mut waiting = Vec::new();
+    for index in 0..60 {
+        waiting.push(probe.put(
+            &format!("cmd_{index:03}"),
+            Behavior::Deferred(Duration::from_secs(15)),
+        ));
+    }
+    let stop = probe.put("cmd_stop", Behavior::Complete);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(8).spawn(signal);
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(probe.count(&stop), 0);
+    assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+    tokio::time::advance(POLL_INTERVAL).await;
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        probe.count(&stop),
+        1,
+        "Stop must not wait behind fifteen-second retries"
+    );
+    assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+    // Discovery may traverse cooling rows, but does not execute them early.
+    for _ in 0..4 {
+        tokio::time::advance(POLL_INTERVAL).await;
+        settle().await;
+    }
+    assert!(waiting.iter().all(|id| probe.count(id) == 1));
+    assert!(probe.peak.load(Ordering::SeqCst) <= 8);
+    tokio::time::advance(Duration::from_secs(15)).await;
+    for _ in 0..200 {
+        tokio::task::yield_now().await;
+    }
+    assert!(waiting.iter().any(|id| probe.count(id) > 1));
     shutdown.send(true).unwrap();
     scheduler.await.unwrap();
 }

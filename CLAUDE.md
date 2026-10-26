@@ -23,15 +23,16 @@ traffic. A Sandbox is not an Agent: multiple Agents may work concurrently in
 distinct Worktrees inside one Sandbox.
 
 **Consumers.** CMA is a backend service for product frontends and backends.
-Its own `web/` frontend is the operational dashboard, profile marketplace,
-Trigger publisher, public visitor journey, and reference client for the public
-interfaces. The main working surface is one Agent conversation in its Worktree,
-Workspace, and Sandbox. There is no terminal plane, separate Chat model, billing,
+Its own `web/` frontend contains the Agent Manager, Image Manager and Event
+Gateway portals, operational dashboard, Trigger publisher, public visitor
+journey, and reference client for the public interfaces. The main working
+surface is one Agent conversation in its Worktree, Workspace, and Sandbox.
+There is no terminal plane, separate Chat model, billing,
 sponsorship, or contribution-specific workflow.
 
 **The conversation surface may call no route a third-party client could not
-call.** Instance and profile management use public REST; live Agent conversations
-use public AG-UI, and the public Responses interface projects the same Agent
+call.** Instance and inline configuration management use public REST; live Agent
+conversations use public AG-UI, and the public Responses interface projects the same Agent
 conversation for compatible clients. A missing first-party capability must be
 added to the appropriate public interface, never a private route.
 
@@ -84,16 +85,30 @@ required by an external protocol.
 - 1.3 **CMA Worktree** — a git worktree opened in a CMA Workspace; one workspace can have multiple worktrees.
 - 1.4 **CMA Agent** — the agent (e.g. a codex process) opened in one worktree; one worktree has one and only one agent.
 
-**2. CMA Environment Config**
+**2. CMA Environment Config (internal persistence)**
+Users select an image and inline Agent settings. Profiles are private immutable
+configuration records, not a user creation or marketplace concept. Historical
+profile APIs and records remain compatibility/recovery surfaces; they must not
+be reintroduced into the normal portal journey.
+
 - 2.1 **CMA Agent Profile**: model name; thinking effort; permission level; agent skills (Ornn skills, installed at the worktree/agent level in the provider's own convention, never sandbox-global); agent system prompt.
 - 2.2 **CMA Workspace Profile**: workspace path — a public GitHub repository URL (default branch cloned to `/home/cma/<repo>`) or a custom directory name (`/home/cma/<name>`, git-initialised); the agent profiles for this workspace (several, one per agent/worktree).
 - 2.3 **CMA Sandbox Profile**: cpu (millicores); memory (MiB); NyxID service scope list (the scoped agent key, available to the whole sandbox); **agent provider** (codex; claude code and dsh disabled) and **model access type** (ChronoAI-managed LLM or the user's own credentials) — placed here because both are properties of the pod's home; maximum workspaces; maximum agents per workspace; the workspace profiles for this sandbox; software installation commands (global to the sandbox); environment variables (global).
 
-**3. Mutability.** A Sandbox Profile is immutable once its sandbox is provisioned. Workspaces and agents inside a sandbox are mutable: the user may add a workspace from any workspace profile and an agent from any agent profile within the limits. Profiles are versioned; instances pin snapshots. A profile marketplace lets users publish sandbox, workspace and agent profiles publicly.
+**3. Mutability.** A Sandbox pins its immutable environment at provisioning.
+Owners add Workspaces from inline empty-directory or GitHub configuration and
+Agents from inline settings within its recorded limits. Existing-workspace
+Agent creation retains the parent image and service scope. Image Manager owns
+image builds, immutable versions and private/shared/public visibility.
 
 **4. Interaction.** A user always interacts with one agent, in one worktree, in one workspace, in one sandbox. The research use case is exactly: an agent in a worktree of `/home/cma/trureturing` (cloned from `https://github.com/the-omega-institute/trureturing`) inside a sandbox with the required software installed.
 
-**5. CMA Trigger.** An external button that brings the clicking user to an agent **of their own** (never the trigger owner's). Its configuration names the sandbox, workspace and agent profiles and, per level, whether the visitor's existing instance is reused: (a) create a new sandbox; (b) create a new workspace in the visitor's existing sandbox; (c) create a new agent in the visitor's existing workspace. The backend stores that behaviour under a trigger id and gives the owner integration snippets for web pages and Markdown. The owner lists the source URLs the button may be embedded on.
+**5. CMA Trigger.** An external button that brings the clicking user to an agent
+**of their own** (never the trigger owner's). New authoring selects an image,
+inline Agent settings and optional GitHub workspace. The backend stores the
+immutable target under a trigger id and gives the owner integration snippets
+for web pages and Markdown. The owner lists permitted embedding origins.
+Historical profile-based targets retain their recorded reuse policy for replay.
 
 ### `infra/` — fixed contents
 
@@ -125,6 +140,14 @@ infra/cmaeg/serviceaccount.yaml
 infra/cmaeg/httproute.yaml
 infra/cmaeg/healthcheckpolicy.yaml
 infra/cmaeg/gcpbackendpolicy.yaml
+infra/image-manager/Dockerfile
+infra/image-manager/configmap.yaml
+infra/image-manager/deployment.yaml
+infra/image-manager/gcpbackendpolicy.yaml
+infra/image-manager/healthcheckpolicy.yaml
+infra/image-manager/secret.yaml
+infra/image-manager/service.yaml
+infra/image-manager/serviceaccount.yaml
 infra/runtime/Dockerfile
 infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
@@ -132,11 +155,13 @@ infra/storage/home-template.yaml
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-The two `infra/storage/` manifests initialize the persistent-home StorageClass,
-snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot. Operators
-apply them explicitly before enabling persistent homes; CI validates them but
-merging or publishing never runs them. They are initialization resources, not
-another continuously running application deployment.
+The two `infra/storage/` manifests initialize the legacy persistent-home
+StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
+Operators apply them explicitly for that retained storage mode; CI validates
+them but merging or publishing never runs them. New native agent-sandbox homes
+use controller-owned volume claims and the runtime image's empty-volume
+initializer, so they do not require these legacy seed resources. These manifests
+are initialization resources, not another continuously running application deployment.
 
 `infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
 measured rather than predicted. The browser still uses one origin, but the
@@ -164,8 +189,10 @@ infrastructure this repository consumes rather than owns.
 
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
-`infra/cmaeg/` is the CMA Event Gateway, a separate stateless service in the
-same namespace. CMA and CMAEG each run one replica. Kubernetes Secrets inject
+`infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
+database and Kubernetes namespace. The explicit `shared-schema` deployment mode
+uses the existing database credential; service collection ownership, validators
+and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG each run one replica. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.
 
 ### `docs/`
@@ -188,6 +215,8 @@ api/crates/
   cma/               binary: composition, persistence and production adapters
   cmaeg-core/        pure CMA Event Gateway protocol library
   cmaeg/             CMA Event Gateway service binary
+  cma-image-manager/ independent image build, catalog and sharing service
+  cma-service-auth/  technical NyxID transport with per-service sessions
 ```
 
 ### Layer 1: public interfaces
@@ -200,7 +229,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 2 | **Responses** | compatible conversation clients; `conversation` is the Agent id | `layer1-public/src/responses/` |
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
-| 5 | **MCP** | explicit unsupported-operation response; no invented Agent tools | `layer1-public/src/mcp/` |
+| 5 | **MCP** | Limited runtime capabilities propose owner service consent and publish/update their own document artifacts; broader resource operations remain unsupported | `layer1-public/src/mcp/` |
 | 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
@@ -214,13 +243,16 @@ It owns:
 
 - Sandbox -> Workspace -> Worktree -> Agent aggregates, lifecycle states,
   ownership, limits, durable orchestration and recovery.
-- Agent, Workspace and Sandbox Profiles: editable drafts, immutable published
-  revisions, pinned instance snapshots, marketplace visibility and trust.
+- Agent, Workspace and Sandbox configuration snapshots, plus retained Profile
+  revisions and trust needed by historical operations.
 - Trigger revisions, placements, Launch consent, reuse decisions, connection
   requirements and durable progress.
 - Append-only Sandbox and Agent event logs, per-object monotonic sequences,
   approval state, usage, idempotency and optimistic concurrency.
 - Platform defaults, count-based quotas, operator settings and audit events.
+- User-owned document artifacts, immutable source revisions, explicit sharing,
+  comments and bounded runtime-authorized publication. Document ownership is
+  independent of the originating Agent's lifecycle.
 
 Layer 2 is protocol-agnostic and provider-agnostic. **No protocol name or
 provider implementation name belongs in Layer 2 identifiers, types, or
@@ -231,32 +263,46 @@ intersection conveniently exposed by today's interfaces.
 
 A Sandbox pins its complete Sandbox Profile at provisioning. Its service scope,
 provider, model access, resources, software and environment do not change
-implicitly. The owner may add Workspaces and Agents from independently selected
-published profiles within the recorded limits. Published profile changes never
-mutate existing instances.
+implicitly. The owner may add Workspaces and Agents with inline configuration
+within the recorded limits. Published profile changes never mutate existing instances.
 
-An explicit owner service-access command may append additional NyxID grants
-while the Sandbox is fully Paused. It preserves the original profile and creation
-scope, records the owner and time, and renews scoped credentials before revival.
-Profile publication never grants this additional instance access implicitly.
+An explicit owner service-access command may replace the exact NyxID scope on
+an Active Sandbox without restarting its runtime. The latest owner-authorized
+scope revision controls new credential issuance while the original profile and
+creation scope remain immutable. Credential delivery and old-key revocation
+complete before confirmed callback delivery to the original Agent; an active turn
+receives durable steering without waiting for that turn to finish. Owners may add or remove optional
+services; the platform baseline remains required. Already admitted paused access
+workflows remain recoverable. Profile publication never changes instance access.
 
-Sandbox Profile availability is a mutable scheduling policy, separate from its
-immutable environment revisions. Always keep alive applies to existing and future
-Sandboxes of that Profile and prevents inactivity pause; explicit manual pause
-remains available. Warmup is restricted to published public Profiles, with a target
-of one through five unowned runtimes. Private forks have their own default policy
-and provision fresh. Changing this policy never rewrites pinned environments,
-ownership or conversations.
+Retained Sandbox Profile availability remains a mutable inactivity policy,
+separate from immutable environments. Always keep alive prevents inactivity
+pause; explicit manual pause remains available. Normal portal authoring does
+not expose legacy Profile policies.
 
-Warm runtime authority lives in `warm_sandboxes`, separately from owned Sandbox
-records. Reservations pin the public revision, service floor, execution policy
-and runtime image. A ready reservation and its owned Sandbox are transferred in
-one admission transaction under the existing owner quota/name/Trigger fences.
-The reserved Sandbox ID and installation receipt survive the transfer; user
-credentials are minted only afterward. Reconciliation reads unowned authority
-before owned authority, and never reclaims a preparing or ready reservation as
-an orphan. Failed/stale runtimes must finish teardown before their capacity is
-reallocated. Claimed runtimes are controlled exclusively by their owned Sandbox.
+New warm capacity uses native agent-sandbox pools. Durable targets live in
+`native_warm_pool_targets`, pin the deployment runtime image and original Pod
+policy, and use leases and revisions. Each owned Sandbox persists its selected
+pool, original claim/member identities and adopted home before subsequent
+effects. Cleanup proves claim, member and Pod finality before releasing a disk.
+Legacy `warm_sandboxes` records remain for already-claimed runtime recovery and
+cleanup only; production no longer admits or prepares new Profile warmups.
+
+New spare native capacity uses only the configured runtime image and current
+home/Pod policy. Operators cannot re-enable an obsolete target, but may configure
+multiple resource sizes for the current image. Release cleanup drains obsolete
+spares only after release authority, a durable admission barrier and fresh complete
+allocation/Claim checks exclude pending adoption. A settled retained home,
+including a failed home, does not require spare capacity; its exact original
+attachment must still be proved, or its original Claim/Sandbox/PVC graph proved
+fully absent. Its history remains intact. Definitions remain until the separate
+full retirement check proves no retained home depends on them. Pool cleanup never
+rotates or deletes a claimed Sandbox; startup alone is not allocation finality.
+Upgraded homes may outlive their original definitions only after exact retained
+Claim/Sandbox/PVC and policy verification proves they can recover independently.
+Retired target records preserve immutable release order and cannot be activated
+again by an older process. API/Web rollback retains the latest released runtime
+default; it does not downgrade `CHRONO_SANDBOX_IMAGE`.
 
 #### Capabilities must be proved
 
@@ -328,11 +374,40 @@ layer4-runtime (independent; shares only wire-protocol types)
 
 A dependency edge not in this list is a CI failure, not a review comment.
 
+### Service extraction in progress
+
+The revised authorized split is Event Gateway, Agent Manager and Image Manager,
+specified in `docs/CMA_Service_Split.md`. There is no CMA Sandbox Manager.
+Agent Manager integrates directly with infra-owned agent-sandbox CRDs/controllers,
+including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
+It never adopts, pauses or reclaims another application's workloads.
+
+Image Manager owns builds, catalog versions, sharing and image lifecycle in
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod`, using its own
+Google identity. The service names are `cma-agent-manager`,
+`cma-event-gateway` and `cma-image-manager`. Each has independent NyxID
+permissions, schema and migrations. The current authorized deployment shares the
+existing `chrono-bot` database credential through explicit `shared-schema` mode;
+service stores still access only their named collections. Default `isolated` mode
+requires separate collection-scoped credentials. No cross-service collection
+access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
+foundation is superseded and must not become a fourth deployment.
+
+Agent Manager retains Agent homes, models, prompts, ACP and runtime/conversation
+recovery. New Agent creation uses the deployment runtime and an empty workspace;
+an optional GitHub repository is passed in its first prompt for the Agent to set
+up. New defaults are gpt-6, high reasoning and autonomous permissions, with
+chrono-llm-public and ornn-api always included in the key scope. Historical
+admitted lifecycle operations retain their recorded setup behavior and defaults.
+Existing OpenSandbox resources retain their old
+provider authority until verified migration. New crates alone do not declare the
+split or deployment complete; live continuity remains mandatory.
+
 ### CMAEG crates
 
 CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
 depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
-binary, depends only on `cmaeg-core` and third-party crates). It is a separate
+binary, depends only on `cmaeg-core`, the technical `cma-service-auth` library and third-party crates). It is a separate
 deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
@@ -400,34 +475,45 @@ the mutable Profile policy in the same transaction as its Sandbox/Agent evidence
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 
-### Runtime rotation and checkpoints
+### Runtime identity and persistent homes
 
-Changing the configured runtime image never rotates existing live Sandboxes.
-Reconciliation adopts each retained runtime using its recorded image; new
-allocations use the configured image. API/web upgrade and rollback must preserve
+Changing the configured runtime image does not immediately replace existing live
+Sandboxes. Reconciliation adopts each retained runtime using its recorded image;
+new allocations use the configured image. API/web upgrade and rollback preserve
 the existing runtime, native conversation, admitted turns, approvals and dirty
-work without user repair. An incompatible feature stays disabled until retained
-runtime coexistence and uninterrupted interaction are proved. Previously admitted
-rotation operations remain readable and recoverable; image drift cannot admit
-new ones. For an independently admitted pause or recovery, a writer fence holds
-the whole Sandbox home for a consistent checkpoint, and restore preserves that
-snapshot and the retained conversation identity.
-Only the latest completed checkpoint is retained. A replacement must commit before
-older completed objects are pruned; legacy two-generation records are accepted until
-their next successful publication. Periodic capture defaults to thirty minutes and
-uses the live global admin checkpoint interval; manual and automatic pause still
-require a fresh consistent checkpoint before teardown.
-Deleting a Sandbox removes its snapshot archives after runtime teardown and before
-reporting Deleted. Conversation and lifecycle history retain their separate grace
-period; archive cleanup failures remain durable, retryable deletion work.
-The archive cleanup sweep also reconciles snapshots retained by earlier releases
-against validated Deleted Sandbox records without deleting their history.
-Periodic capture waits that same interval from the later of the latest snapshot
-and current runtime binding. Initial provisioning and revival must not immediately
-capture just because the previous snapshot is missing or overdue.
+work. An incompatible feature stays disabled until retained runtime coexistence
+and uninterrupted interaction are proved.
 
-Rotation and restore are never silent. The record names the runtime version,
-checkpoint timestamp and progress. The UI preserves history and explains why
+Managed native homes support two explicit update policies: the owner's Sandbox
+Details update command, and a daily check at 02:00 Asia/Singapore. The first
+observation of a default runtime waits until the next daily boundary; deployment
+or restart does not authorize immediate replacement. A requested update pins
+its exact target and waits for all admitted Agent and Workspace work to settle.
+It suspends the native Sandbox, changes its image and generation, and reopens
+the original conversations on the same PVC/home. IDs and original pool/claim/home
+authority remain unchanged. An initially paused Sandbox returns to paused unless
+new owner work supersedes that intent. Failures retain their exact phase and
+pinned target for retry. Custom-image Sandboxes are excluded.
+
+An owner/control/message/creation revival from Paused uses the latest managed
+runtime on that same retained native Sandbox and home. Already admitted updates
+retain their pinned target; RuntimeLost alone never upgrades an otherwise
+unchanged runtime. Native pause/resume changes operating mode and binds the
+replacement Pod with a new boot identity. A pooled runtime retains its original
+claim and member authority across that transition.
+Deletion waits for the claim, Sandbox and every owned Pod to disappear before
+releasing its PVC and completing database cleanup.
+
+Production CMA no longer manages S3 checkpoint storage or runs scheduled or
+manual archive capture. Historical checkpoint schemas and provider bindings
+remain readable for recovery; archive-only paused resources require an explicit
+external migration. The initialized VolumeSnapshot remains a prerequisite only
+for retained legacy snapshot-seeded homes; new native homes use controller-owned
+empty volumes and the pinned runtime initializer. See
+`docs/CMA_Deployment_Readiness.md` for activation, acceptance and rollback.
+
+Lifecycle transitions are never silent. The record names the runtime version
+and progress. The UI preserves history and explains why
 input is temporarily unavailable. It must not accept input that could be lost
 with an outgoing runtime, invent progress from elapsed time, or require the
 owner to manually restart an Agent after deployment.
@@ -459,7 +545,7 @@ owner to manually restart an Agent after deployment.
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for all three images — `api`, `web`, `runtime`
+- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
 - Image vulnerability scan
 - Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
 - Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
@@ -497,8 +583,8 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all three current GHCR digests pass the writer/history verification, each exact root digest is exported as
+- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg,image-manager}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
   an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
   These unencrypted archives are an additional, ephemeral distribution
   surface: anyone who can download this internal repository's Actions
@@ -512,9 +598,14 @@ The tag is the version of record. `api/Cargo.toml` and `web/package.json` are no
 
 Publishing is not deploying. `infra/` is untouched by a release, and a new image
 becomes live only when someone changes a manifest to name it.
-`CHRONO_SANDBOX_IMAGE` selects the image for new allocations. Under §5, existing
-live Sandboxes retain their recorded runtime images across control-plane
-upgrades and rollbacks; changing this default never admits image-drift rotation.
+`CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
+managed-runtime updates and owner-requested revival under §5. It is pinned to a
+verified CI artifact by explicit release promotion; publishing a CI tag alone
+never changes that authority, and no registry tag scan chooses a newer image. Existing live
+Sandboxes retain their image until an admitted update reaches idle. Deployment
+alone never starts immediate image-drift rotation. Persisted update requests
+require a compatible reader during rollback; older binaries that reject the new
+lifecycle metadata cannot safely be restored after admission.
 
 Full procedure in `docs/Release.md`.
 

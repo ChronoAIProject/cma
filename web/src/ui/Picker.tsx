@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from './Button';
+import { Button, type ButtonSize } from './Button';
 import { Menu, type MenuEntry } from './Menu';
 import { IconChevronDownOutline14 } from './icons';
 import './Picker.css';
@@ -35,6 +35,7 @@ interface PickerProps<Value extends string> {
   /** Associates the control with a label rendered outside it. */
   readonly id?: string;
   readonly describedBy?: string;
+  readonly invalid?: boolean;
   /**
    * A class for placing this picker in its row.
    *
@@ -43,6 +44,7 @@ interface PickerProps<Value extends string> {
    * hand every picker in the product an `overflow-y` it never asked for.
    */
   readonly placement?: string;
+  readonly size?: ButtonSize;
 }
 
 export function Picker<Value extends string>({
@@ -54,7 +56,9 @@ export function Picker<Value extends string>({
   filter = false,
   id,
   describedBy,
+  invalid,
   placement,
+  size,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
   const chosen = options.find((option) => option.value === value);
@@ -71,8 +75,7 @@ export function Picker<Value extends string>({
         option.label
       ) : (
         <span className="picker__unavailable">
-          {option.label}
-          <span className="picker__reason">{option.unavailable}</span>
+          {option.label} <span className="picker__reason">{option.unavailable}</span>
         </span>
       ),
     disabled: option.unavailable !== undefined,
@@ -94,6 +97,8 @@ export function Picker<Value extends string>({
       }}
       anchor={
         <Button
+          size={size}
+          title={`${label}: ${chosen?.label ?? value}`}
           id={id}
           variant="outline"
           placement="picker__anchor"
@@ -101,6 +106,7 @@ export function Picker<Value extends string>({
           aria-expanded={open}
           aria-label={label}
           aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
           disabled={disabled}
           onClick={() => {
             setOpen((was) => !was);

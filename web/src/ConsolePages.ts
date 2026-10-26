@@ -12,3 +12,5 @@ export const TriggerPublisherPage = lazy(() =>
     default: module.TriggerPublisherPage,
   })),
 );
+
+export const Documents = lazy(() => import('./documents/Documents'));

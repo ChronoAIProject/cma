@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type Launch, type LaunchStreamOptions } from '@chronoai/cma-sdk';
@@ -172,7 +172,7 @@ describe('minimal review', () => {
     await screen.findByRole('heading', { name: 'NyxID services' });
     const headings = screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent);
     expect(headings).toContain('Install software');
-    expect(headings).toContain('Codex provider');
+    expect(headings).toContain('Model subscription');
     expect(headings).toContain('Review before continuing');
     await actor.click(screen.getByRole('checkbox'));
     await actor.click(screen.getByRole('button', { name: 'Continue' }));
@@ -207,9 +207,7 @@ describe('durable progress', () => {
     render(<Progress client={client} id={waiting.id} onNavigate={vi.fn()} />);
     await screen.findByText('Connect required accounts to continue');
     await waitFor(() => expect(stream).toBeDefined());
-    const row = screen
-      .getByRole('heading', { name: 'NyxID Service Connection Verification' })
-      .closest('li');
+    const row = screen.getByRole('region', { name: 'NyxID Service Connection Verification' });
     expect(row).toHaveTextContent('Needs you');
     expect(row).not.toHaveTextContent('Done');
     const checked: Launch = {
@@ -236,9 +234,12 @@ describe('durable progress', () => {
         kind: { type: 'step_changed', step: checked.steps[1]! },
       });
     });
-    expect(row).toHaveTextContent('Done');
-    expect(row).toHaveTextContent('Required accounts are connected');
-    expect(row).not.toHaveTextContent('Needs you');
+    expect(
+      screen.queryByRole('region', { name: 'NyxID Service Connection Verification' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Agent key scope configuration ready' }).closest('li'),
+    ).toHaveTextContent('Waiting');
     expect(client.requests.start).not.toHaveBeenCalled();
   });
 
@@ -313,6 +314,49 @@ describe('durable progress', () => {
     expect(screen.getByText('Preparing software')).toBeInTheDocument();
     expect(screen.getByText(/Updates are unavailable. Last checked/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Check again' })).toBeInTheDocument();
+  });
+
+  it('keeps the actual Agent available after first-message delivery fails', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.read).mockResolvedValue({
+      ...PUBLIC_RECORD,
+      state: 'failed_terminal',
+      first_message: 'failed',
+      resolution: { ...PUBLIC_RECORD.resolution, agent: { state: 'created', id: 'agt_prepared' } },
+      steps: [
+        ...(['sandbox', 'workspace', 'agent', 'checking_requirements'] as const).map((key) => ({
+          key,
+          status: 'completed' as const,
+          safe_detail: '',
+        })),
+        {
+          key: 'first_message',
+          status: 'failed',
+          safe_detail: 'The first message could not be delivered',
+        },
+      ],
+      failure: {
+        code: 'first_message_failed',
+        safe_detail: 'The first message could not be delivered',
+        retryable: false,
+        occurred_at: PUBLIC_RECORD.updated_at,
+      },
+    });
+    const navigate = vi.fn();
+    render(<Progress client={client} id={PUBLIC_RECORD.id} onNavigate={navigate} />);
+    await screen.findByRole('button', { name: 'Continue' });
+    const phases = within(
+      screen.getByRole('list', { name: 'Agent provisioning progress' }),
+    ).getAllByRole('listitem');
+    expect(phases).toHaveLength(3);
+    phases.forEach((phase) => expect(phase).toHaveTextContent('Done'));
+    expect(screen.getByRole('region', { name: 'Sending your first message' })).toHaveTextContent(
+      "Didn't work",
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(navigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_prepared' });
+    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.start).not.toHaveBeenCalled();
   });
 
   it('shows remediation without unsupported retry mutations and starts over as a new intent', async () => {

@@ -51,7 +51,7 @@ let settings = {
     agent_profile: { id: 'agp_default', revision: 3 },
   },
   inactivity: { pause_after_seconds: 900 },
-  retention: { checkpoint_grace_days: 7, agent_log_days: 30 },
+  retention: { agent_log_days: 30 },
   limits: { max_sandboxes_per_user: 10, visitor_max_sandboxes: 1, visitor_max_launches_per_day: 5 },
   triggers: { enabled: true, orchestration_paused: false },
   marketplace: { enabled: true },
@@ -262,12 +262,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     const result = await page.evaluate(() => ({
       width: innerWidth,
       scroll: document.documentElement.scrollWidth,
-      clipped: [...document.querySelectorAll('.frame__center, .console__surface, .operator')]
+      clipped: [
+        ...document.querySelectorAll(
+          '.frame__center, .console__surface, .operator, .operator-table',
+        ),
+      ]
         .filter((element) => element.getBoundingClientRect().right > innerWidth + 1)
         .map((element) => element.className),
-      overflow: [
-        ...document.querySelectorAll('.operator-record, .operator-field, .operator-settings'),
-      ]
+      overflow: [...document.querySelectorAll('.operator-field, .operator-settings')]
         .filter((element) => element.scrollWidth > element.clientWidth + 1)
         .map((element) => element.className),
     }));
@@ -277,7 +279,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   };
   await page.setViewport({ width: 1440, height: 1000 });
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.operator-record');
+  await page.waitForSelector('.operator-table tbody tr');
   await assertLayout();
   await page.screenshot({ path: join(output, 'desktop-sandboxes.png'), fullPage: true });
   await page.focus('.operator-tabs [role="tab"][aria-selected="true"]');
@@ -320,8 +322,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   await clickText('[role="tab"]', 'Platform settings');
   await page.waitForSelector('[aria-label="Pause after (seconds)"]');
   await page.locator('[aria-label="Pause after (seconds)"]').fill('600');
-  await page.waitForSelector('option[value="agent-public:7"]');
-  await page.select('[aria-label="Default agent profile"]', 'agent-public:7');
+  assert.equal(await page.$('[aria-label="Default agent profile"]'), null);
   await clickText('label', 'Orchestration paused');
   assert.deepEqual(
     await page.$$eval('form input:invalid', (inputs) =>
@@ -346,11 +347,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   assert.equal(writes.length, 2);
   assert.equal(writes[1].body.settings.inactivity.pause_after_seconds, 600);
   assert.deepEqual(writes[1].body.settings.defaults.agent_profile, {
-    id: 'agent-public',
-    revision: 7,
+    id: 'agp_default',
+    revision: 3,
   });
   assert.equal(writes[1].body.settings.triggers.orchestration_paused, true);
-  for (const view of ['Sandboxes', 'Profiles', 'Platform settings', 'Activity']) {
+  for (const view of ['Sandboxes', 'Platform settings', 'Activity']) {
     await page.setViewport({ width: 390, height: 844 });
     await clickText('[role="tab"]', view);
     await page.waitForFunction(
@@ -389,9 +390,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   assert.equal(await page.$eval('.risk__confirm', (button) => button.disabled), false);
   await page.screenshot({ path: join(output, 'mobile-confirmation.png'), fullPage: true });
   await clickText('button', 'Retire Sandbox');
-  await page.waitForFunction(() =>
-    document.body.textContent.includes('Retirement already requested.'),
-  );
+  await page.waitForFunction(() => document.body.textContent.includes('Deleting'));
   assert.equal(writes.length, 3);
   assert.equal(writes[2].method, 'POST');
   assert.equal(writes[2].body, null);
@@ -405,7 +404,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   const beforeRevocation = requests.length;
   capabilities = ['read_activity_log'];
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.operator-record');
+  await page.waitForSelector('.operator-table tbody tr');
   assert.deepEqual(
     await page.$$eval('.operator-tabs [role="tab"]', (tabs) => tabs.map((tab) => tab.textContent)),
     ['Activity'],
@@ -432,7 +431,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
           'drawer focus trap and restore',
           'tab keyboard navigation',
           'confirmation acknowledgement',
-          'defaults exact revision',
+          'hidden compatibility defaults retain exact revision',
           'trigger pause',
           'settings conflict without automatic retry',
           'sandbox retirement',

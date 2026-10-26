@@ -73,7 +73,11 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
                 _ => SandboxReviveCause::WorkspaceCreation,
             };
             let event = next_sandbox
-                .record_creation_admission(cause, admission.event_at.clone())
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    self.managed_runtime_version(),
+                    admission.event_at.clone(),
+                )
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             candidate
                 .sandboxes
@@ -123,7 +127,8 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if parent.lifecycle.checkpoint_capture.is_some() {
+        if parent.lifecycle.checkpoint_capture.is_some() || parent.status == SandboxStatus::Rotating
+        {
             return Err(SandboxStoreError::Conflict);
         }
         if state.agents.values().any(|agent| {
@@ -180,7 +185,11 @@ impl WorkspaceWorkerStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
+        if !current.work.is_due(&now)
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || parent.defers_lifecycle_workspace(current)
+            || parent.status == SandboxStatus::Rotating
+        {
             return Ok(None);
         }
         let mut claimed = current.clone();
@@ -204,6 +213,10 @@ fn validate_fresh(
     let origin_matches = matches!(
         (&workspace.origin, kind),
         (WorkspaceOrigin::Manual, WorkspaceAdmissionKind::Manual)
+            | (
+                WorkspaceOrigin::Lifecycle { .. },
+                WorkspaceAdmissionKind::Lifecycle
+            )
             | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile

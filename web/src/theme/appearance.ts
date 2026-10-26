@@ -49,7 +49,10 @@ function writeAppearance(appearance: Appearance): void {
  * theme preference is never worth failing to render the page over.
  */
 export function storedAppearance(): Appearance {
-  return readAppearance() ?? 'system';
+  // CMA is a dense operations surface; keep the first visit aligned with the
+  // production console's dark chrome while still allowing an explicit light or
+  // system preference from the account menu.
+  return readAppearance() ?? 'dark';
 }
 
 /**

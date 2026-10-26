@@ -13,8 +13,22 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod attachment;
+pub use attachment::{
+    forbidden_text_char, https_locator, mime_restricted_name, telegram_ids_valid,
+    validate_attachments, Attachment, AttachmentKind, AttachmentSource, MediaVariant,
+    MAX_ALBUM_ID_BYTES, MAX_ATTACHMENTS, MAX_ATTACHMENT_URL_BYTES, MAX_DIMENSION,
+    MAX_DURATION_SECONDS, MAX_EMOJI_BYTES, MAX_FILENAME_BYTES, MAX_FILE_ID_BYTES,
+    MAX_FILE_UNIQUE_ID_BYTES, MAX_INLINE_POINTER_BYTES, MAX_MIME_PART_BYTES, MAX_NYXID_INDEX,
+    MAX_REFERENCE_BYTES,
+};
+mod attachment_facts;
+pub use attachment_facts::FactRepairs;
+mod routing;
+pub(crate) use routing::is_root_id;
+pub use routing::{ActivityRouting, Causation, ConsumerTarget, RouteResolution, MAX_HOPS};
+
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
-pub const MAX_ATTACHMENTS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +42,10 @@ pub struct Activity {
     pub conversation: ActivityConversation,
     pub occurred_at: String,
     pub source: SourceKind,
+    /// The consumers a routed event reaches; absent on every unrouted event,
+    /// so an activity without routing keeps its exact bytes and digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -40,6 +58,10 @@ pub enum ActivityKind {
         mentions_bot: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<MessageRef>,
+        /// Shared by every message of one platform media group (a Telegram
+        /// album). Each item of the group is still its own activity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        album_id: Option<String>,
     },
     Interaction(InteractionResult),
     Command {
@@ -48,30 +70,11 @@ pub enum ActivityKind {
     },
     Event {
         ce: CloudEvent,
+        /// Media the custom source extracted from the event; omitted when empty
+        /// so events stored without attachments keep their exact bytes.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<Attachment>,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Attachment {
-    pub reference: String,
-    pub kind: AttachmentKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AttachmentKind {
-    Image,
-    File,
-    Audio,
-    Video,
-    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -178,22 +181,15 @@ impl Activity {
         }
         match &self.kind {
             ActivityKind::Message {
-                text, attachments, ..
+                text,
+                attachments,
+                album_id,
+                ..
             } => {
                 require_string(text, "/kind/text", 0, 32 * 1_024)?;
-                if attachments.len() > MAX_ATTACHMENTS {
-                    return Err(ValidationError::new(
-                        "/kind/attachments",
-                        "too many attachments",
-                    ));
-                }
-                for (index, attachment) in attachments.iter().enumerate() {
-                    require_string(
-                        &attachment.reference,
-                        &format!("/kind/attachments/{index}/reference"),
-                        1,
-                        4_096,
-                    )?;
+                validate_attachments(attachments, &self.source, "/kind/attachments")?;
+                if let Some(album_id) = album_id {
+                    attachment::require_text(album_id, "/kind/album_id", MAX_ALBUM_ID_BYTES)?;
                 }
             }
             ActivityKind::Interaction(result) => {
@@ -204,16 +200,24 @@ impl Activity {
                 require_string(name, "/kind/name", 1, 512)?;
                 require_string(args, "/kind/args", 0, 32 * 1_024)?;
             }
-            ActivityKind::Event { ce } => ce.validate().map_err(|error| {
-                ValidationError::new(format!("/kind/ce{}", error.pointer), error.message)
-            })?,
+            ActivityKind::Event { ce, attachments } => {
+                ce.validate().map_err(|error| {
+                    ValidationError::new(format!("/kind/ce{}", error.pointer), error.message)
+                })?;
+                validate_attachments(attachments, &self.source, "/kind/attachments")?;
+            }
+        }
+        if let Some(routing) = &self.routing {
+            routing.validate(&self.kind)?;
         }
         Ok(())
     }
 
-    /// Compute the stable serialized partition key selected by a channel.
+    /// Compute the stable serialized partition key selected by a channel for
+    /// this activity's source: `custom_key` for a custom event when the rule
+    /// carries one, and `key` otherwise.
     pub fn partition_key(&self, rule: &PartitionRule) -> String {
-        match rule.key {
+        match rule.key_for(&self.source) {
             PartitionKey::ConversationAndSender => {
                 format!("{}\u{1f}{}", self.conversation.id, self.actor.id)
             }
@@ -225,7 +229,7 @@ impl Activity {
             ),
             PartitionKey::Fixed => "fixed".to_owned(),
             PartitionKey::EventSubject => match &self.kind {
-                ActivityKind::Event { ce } => {
+                ActivityKind::Event { ce, .. } => {
                     ce.subject.clone().unwrap_or_else(|| ce.source.clone())
                 }
                 _ => self.conversation.id.clone(),

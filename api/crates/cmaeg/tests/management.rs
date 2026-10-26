@@ -1,7 +1,9 @@
+#[path = "support/database.rs"]
+mod database;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_nyxid.rs"]
-mod fake_nyxid;
+pub mod fake_nyxid;
 #[path = "fake_provider.rs"]
 mod fake_provider;
 
@@ -79,6 +81,8 @@ fn management_state(
         cmaeg::ManagementConfig {
             master_keys: Arc::new(ring),
             public_url: "http://127.0.0.1:8090".into(),
+            public_api_url: "http://127.0.0.1:8090".into(),
+            advertise_public_api_url: true,
             cma_base_url: cma.base_url.clone(),
             tools_nyxid_slug: "cmaeg".into(),
             cma_service_token: cmaeg_core::channel::Secret::new("cma-service"),
@@ -154,17 +158,32 @@ async fn created(client: &Client, base: &str) -> serde_json::Value {
 
 #[path = "management/binary.rs"]
 mod binary;
+#[path = "management/binary_independent.rs"]
+mod binary_independent;
+#[path = "management/binary_media.rs"]
+mod binary_media;
+#[path = "management/binary_routing.rs"]
+mod binary_routing;
+#[path = "management/binary_support.rs"]
+mod binary_support;
 #[path = "management/boundaries.rs"]
 mod boundaries;
 #[path = "management/lifecycle.rs"]
 mod lifecycle;
+#[path = "management/list.rs"]
+mod list;
 #[path = "management/operations.rs"]
 mod operations;
 #[path = "management/platforms.rs"]
 mod platforms;
+#[path = "management/test_turn.rs"]
+mod test_turn;
 
 #[path = "management/invalidation.rs"]
 mod invalidation;
+
+#[path = "management/index_hooks.rs"]
+mod index_hooks;
 
 #[path = "management/creation.rs"]
 mod creation;
@@ -174,3 +193,43 @@ mod reconciliation;
 
 #[path = "management/targets.rs"]
 mod targets;
+
+#[path = "management/custom_attachments.rs"]
+mod custom_attachments;
+
+#[path = "management/audit.rs"]
+mod audit;
+
+#[path = "management/write_gate.rs"]
+mod write_gate;
+
+#[path = "management/routing.rs"]
+mod routing;
+
+#[tokio::test]
+async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {
+    for (advertise, expected) in [
+        (false, "http://127.0.0.1:8090"),
+        (true, "https://bot.example/event-gateway"),
+    ] {
+        let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+        let cma = FakeCma::start(false).await;
+        let nyxid = FakeNyxid::start().await;
+        let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+        state.public_api_url = "https://bot.example/event-gateway".into();
+        state.advertise_public_api_url = advertise;
+        let (base, stop, task) = serve_app(state).await;
+        let channel = created(&Client::new(), &base).await;
+        let id = channel["channel_id"].as_str().unwrap();
+        assert_eq!(
+            channel["endpoints"]["nyxid_callback_url"],
+            format!("{expected}/v1/callbacks/{id}")
+        );
+        assert_eq!(
+            channel["endpoints"]["custom_event_url"],
+            format!("{expected}/v1/channels/{id}/events")
+        );
+        stop.send(()).unwrap();
+        task.await.unwrap();
+    }
+}

@@ -49,6 +49,7 @@ impl DefaultProfileSpec {
     ) -> Result<DefaultProfileRecords, StoreError> {
         let owner = SubjectId::new(SYSTEM_OWNER);
         let agent = AgentProfile {
+            internal: false,
             id: AgentProfileId(DEFAULT_AGENT_PROFILE_ID.into()),
             owner: owner.clone(),
             name: "Default agent".into(),
@@ -60,7 +61,7 @@ impl DefaultProfileSpec {
                 isolated_agent: false,
                 model: Some(self.agent_model.clone()),
                 thinking_effort: self.agent_effort,
-                permission_level: PermissionLevel::Guarded,
+                permission_level: PermissionLevel::Autonomous,
                 skills: Vec::new(),
                 system_prompt: String::new(),
             },
@@ -73,6 +74,7 @@ impl DefaultProfileSpec {
             .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into())
             .map_err(profile_invalid)?;
         let workspace = WorkspaceProfile {
+            internal: false,
             id: WorkspaceProfileId(DEFAULT_WORKSPACE_PROFILE_ID.into()),
             owner: owner.clone(),
             name: "Default workspace".into(),
@@ -100,6 +102,7 @@ impl DefaultProfileSpec {
             .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into())
             .map_err(profile_invalid)?;
         let sandbox = SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: SandboxProfileId(DEFAULT_SANDBOX_PROFILE_ID.into()),
             owner,
@@ -109,9 +112,13 @@ impl DefaultProfileSpec {
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: self.cpu_millis,
                 memory_mib: self.memory_mib,
-                nyxid_services: Vec::new(),
+                nyxid_services: crate::config::REQUIRED_BASELINE_SERVICES
+                    .iter()
+                    .map(|id| layer2_core::ServiceId::new(*id))
+                    .collect(),
                 agent_provider: AgentProvider::Codex,
                 model_access: ModelAccess::ChronoaiManaged,
                 max_workspaces: DEFAULT_MAX_WORKSPACES,
@@ -386,6 +393,21 @@ mod tests {
         assert_eq!(first.sandbox_revision, second.sandbox_revision);
         assert_eq!(first.agent.owner.as_str(), SYSTEM_OWNER);
         assert_eq!(first.agent.visibility, ProfileVisibility::Public);
+        assert_eq!(
+            first.agent.draft.permission_level,
+            PermissionLevel::Autonomous
+        );
+        assert_eq!(first.agent.draft.thinking_effort, ThinkingEffort::High);
+        assert_eq!(
+            first
+                .sandbox
+                .draft
+                .nyxid_services
+                .iter()
+                .map(layer2_core::ServiceId::as_str)
+                .collect::<Vec<_>>(),
+            ["chrono-llm-public", "ornn-api"]
+        );
         assert_eq!(
             first.workspace.draft.agent_profiles,
             vec![AgentProfileRef::new(

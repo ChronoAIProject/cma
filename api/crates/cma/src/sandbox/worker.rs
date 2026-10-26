@@ -17,9 +17,13 @@ use layer2_core::sandbox::SandboxPolicy;
 
 mod execute;
 mod home;
+mod initial_runtime;
 mod lifecycle;
+mod provision_timing;
 mod provisioning;
+mod retained_retirement;
 mod retirement;
+mod scheduling;
 mod support;
 
 pub(crate) const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
@@ -42,6 +46,12 @@ pub(crate) enum SandboxDependencyError {
 
 #[async_trait::async_trait]
 pub(crate) trait ProfileWorkspaceProvisioner: Send + Sync {
+    /// The durable workspace worker validates current parent and runtime
+    /// authority itself. Other provisioners retain the caller's adoption check.
+    fn requires_runtime_adoption(&self) -> bool {
+        true
+    }
+
     async fn create_profile_workspace(
         &self,
         sandbox: &Sandbox,
@@ -62,22 +72,12 @@ pub(crate) trait LiveAgentStopper: Send + Sync {
     ) -> Result<(), SandboxDependencyError>;
 }
 
-#[async_trait::async_trait]
-pub(crate) trait CheckpointObjectPurger: Send + Sync {
-    async fn purge_checkpoint_objects(
-        &self,
-        sandbox: &Sandbox,
-        operation_id: &str,
-    ) -> Result<(), SandboxDependencyError>;
-}
-
 pub(crate) struct SandboxWorkerDependencies {
     pub store: Arc<dyn SandboxLifecycleStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub workspaces: Arc<dyn ProfileWorkspaceProvisioner>,
     pub agents: Arc<dyn LiveAgentStopper>,
-    pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub updates: Arc<dyn AgentUpdateRecorder>,
     pub operations: Arc<AgentOperationService>,
@@ -180,6 +180,7 @@ impl SandboxWorker {
         id: &SandboxId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let claiming = tokio::time::Instant::now();
         let now_stamp = rfc3339_at(now);
         let lease_expires = rfc3339_at(now + self.config.lease_duration);
         let Some(sandbox) = self
@@ -190,8 +191,28 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
+        let claim_ms = claiming.elapsed().as_millis() as u64;
+        self.run_claimed(sandbox, now, claim_ms).await
+    }
+
+    async fn run_claimed(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+        claim_ms: u64,
+    ) -> Result<bool, SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if let Err(error) = Box::pin(self.execute(sandbox.clone(), now)).await {
+        let result = Box::pin(self.execute(sandbox.clone(), now)).await;
+        tracing::info!(
+            sandbox_id = %sandbox.id,
+            step = ?sandbox.work.step,
+            lifecycle_phase = ?scheduling::phase(&sandbox),
+            claim_ms,
+            execution_ms = started.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Sandbox work attempt completed"
+        );
+        if let Err(error) = result {
             if error != SandboxStoreError::Conflict
                 || !self
                     .retry_conflicted_lifecycle(&sandbox, now + started.elapsed())
@@ -214,27 +235,41 @@ impl SandboxWorker {
         if claimed.work.step != SandboxWorkStep::RunLifecycleOperation {
             return Ok(false);
         }
-        let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
-            return Ok(false);
-        };
-        if current.work.lease != claimed.work.lease
-            || current.work.step != claimed.work.step
-            || current.lifecycle.operation != claimed.lifecycle.operation
-            || current.runtime != claimed.runtime
-            || current.credential != claimed.credential
-            || current.status != claimed.status
-        {
-            return Ok(false);
+        let started = tokio::time::Instant::now();
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(50 << (attempt - 1))).await;
+            }
+            let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
+                return Ok(false);
+            };
+            if current.work.lease != claimed.work.lease
+                || current.work.step != claimed.work.step
+                || current.lifecycle.operation != claimed.lifecycle.operation
+                || current.runtime != claimed.runtime
+                || current.credential != claimed.credential
+                || current.status != claimed.status
+            {
+                return Ok(false);
+            }
+            match self
+                .handle_lifecycle_failure(
+                    current,
+                    support::WorkerFailure::retryable(
+                        "lifecycle publication conflicted with concurrent metadata changes",
+                    ),
+                    now + started.elapsed(),
+                )
+                .await
+            {
+                Ok(()) => return Ok(true),
+                // Retry publication can contend too. Re-read all guards before
+                // releasing the same lease; an unknown commit never loops here.
+                Err(SandboxStoreError::Conflict) => {}
+                Err(error) => return Err(error),
+            }
         }
-        self.handle_lifecycle_failure(
-            current,
-            support::WorkerFailure::retryable(
-                "lifecycle publication conflicted with concurrent metadata changes",
-            ),
-            now,
-        )
-        .await?;
-        Ok(true)
+        Err(SandboxStoreError::Conflict)
     }
 
     async fn run_scheduled(
@@ -247,17 +282,14 @@ impl SandboxWorker {
         if !progressed {
             return Ok(false);
         }
-        // Installation and credential binding need no polling delay between
-        // committed steps. Each step still acquires its own current lease.
+        // Follow committed local progress without waiting for another sweep.
+        // Every effect still requires a fresh store-issued lease and fence.
         for _ in 0..16 {
             let Some(sandbox) = self.dependencies.store.get_sandbox(id).await? else {
                 break;
             };
-            if !matches!(
-                sandbox.status,
-                layer2_core::sandbox::SandboxStatus::Provisioning
-                    | layer2_core::sandbox::SandboxStatus::Installing
-            ) || sandbox.runtime.is_none()
+            if !scheduling::can_follow(&sandbox)
+                || sandbox.work.attempts != 0
                 || !sandbox.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;
@@ -267,6 +299,15 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn run_claimed_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        self.run_claimed(sandbox, now, 0).await
     }
 
     #[cfg(test)]

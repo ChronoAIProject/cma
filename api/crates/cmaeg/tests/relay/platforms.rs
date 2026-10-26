@@ -1,4 +1,4 @@
-use super::support::*;
+use super::{nyxid_shapes::attachment, support::*};
 use cmaeg_core::{
     activity::{ActivityKind, ActorKind, ConversationKind, SourceKind},
     channel::Platform,
@@ -8,8 +8,10 @@ use serde_json::{json, Value};
 
 async fn status(fixture: &Fixture, envelope: &Envelope) -> Value {
     let response = fixture.send(envelope).await;
-    assert_eq!(response.status(), 202);
-    response.json().await.unwrap()
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, 202, "{body}");
+    body
 }
 async fn accepted(fixture: &Fixture, envelope: &Envelope) {
     let value = status(fixture, envelope).await;
@@ -230,9 +232,14 @@ async fn every_unsupported_lark_event_is_an_explicit_refusal() {
         *envelope.payload.pointer_mut(pointer).unwrap() = value;
         refused(&fixture, &envelope, reason).await;
     }
+    // NyxID attaches a Lark resource handle; the raw text event alone cannot admit it.
     let mut envelope = Envelope::on("lark");
-    envelope.payload["content"]["attachments"] =
-        json!([{"content_type":"image","url":"https://files.example/image.png"}]);
+    envelope.payload["content"]["attachments"] = json!([attachment(
+        0,
+        "image",
+        "https://open.larksuite.com/open-apis/im/v1/messages/om_message/resources/img_v3_photo?type=image",
+        json!({"platform_message_id": "om_message", "image_key": "img_v3_photo"}),
+    )]);
     refused(&fixture, &envelope, "attachment_unsupported").await;
     assert!(fixture.recorder.requests.lock().unwrap().is_empty());
 }
@@ -351,7 +358,12 @@ async fn platforms_without_a_verifier_require_an_explicit_trust_opt_in() {
             ("/content/text", Value::Null, "content_unsupported"),
             (
                 "/content/attachments",
-                json!([{"content_type":"image","url":"https://files.example/image.png"}]),
+                json!([attachment(
+                    0,
+                    "image",
+                    "https://files.example/image.png",
+                    json!({"filename": "image.png", "mime_type": "image/png", "size_bytes": 1024}),
+                )]),
                 "attachment_unsupported",
             ),
         ] {

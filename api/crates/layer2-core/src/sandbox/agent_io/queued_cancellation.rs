@@ -3,7 +3,7 @@
 
 mod model;
 mod observation;
-mod reservation;
+pub(super) mod reservation;
 mod service;
 
 pub use model::{

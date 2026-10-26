@@ -159,13 +159,13 @@ it.each(
       await waitFor(() =>
         expect(requests.slice(before)).toContainEqual(
           path === '/'
-            ? { method: 'GET', path: '/api/v1/sandboxes' }
+            ? { method: 'GET', path: '/auth/session' }
             : { method: 'POST', path: '/api/v1/triggers/public/public-example/entry-intent' },
         ),
       );
       await act(async () => undefined);
       expect(requests.slice(before)).toContainEqual({ method: 'GET', path: '/auth/session' });
-      expect(window.location.pathname).toBe(path);
+      expect(window.location.pathname).toBe(path === '/' ? '/agent-manager' : path);
       expect(sessionStorage.length).toBe(0);
       expect(rejectedRequests).toEqual([]);
       expect(resourceWrites).toEqual({

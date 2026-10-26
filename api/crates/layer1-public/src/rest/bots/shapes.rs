@@ -1,10 +1,85 @@
 use layer2_core::{
     bots::*,
-    profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef},
-    AgentProfileId, SandboxProfileId, WorkspaceProfileId,
+    profiles::{SandboxProfileRef, WorkspaceProfileRef},
+    SandboxProfileId, WorkspaceProfileId,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BotImageReference {
+    pub id: String,
+    pub version: Option<String>,
+}
+impl From<BotImageReference> for layer2_core::bots::BotImageReference {
+    fn from(value: BotImageReference) -> Self {
+        Self {
+            id: value.id,
+            version: value.version,
+        }
+    }
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BotRepository {
+    pub url: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+}
+impl From<BotRepository> for layer2_core::bots::BotRepository {
+    fn from(value: BotRepository) -> Self {
+        Self {
+            url: value.url,
+            reference: value.reference,
+        }
+    }
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlineSkill {
+    pub id: String,
+    pub version: Option<String>,
+}
+#[derive(Deserialize, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlinePermissions {
+    #[serde(default)]
+    pub services: Vec<String>,
+}
+#[derive(Deserialize, ToSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlineAgentProfile {
+    pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
+    pub permission_mode: Option<String>,
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<BotInlineSkill>,
+    #[serde(default)]
+    pub permissions: BotInlinePermissions,
+}
+impl From<BotInlineAgentProfile> for layer2_core::bots::BotInlineAgentProfile {
+    fn from(value: BotInlineAgentProfile) -> Self {
+        Self {
+            model: value.model,
+            reasoning_effort: value.reasoning_effort,
+            permission_mode: value.permission_mode,
+            system_prompt: value.system_prompt,
+            skills: value
+                .skills
+                .into_iter()
+                .map(|skill| layer2_core::bots::BotInlineSkill {
+                    id: skill.id,
+                    version: skill.version,
+                })
+                .collect(),
+            permissions: layer2_core::bots::BotInlinePermissions {
+                services: value.permissions.services,
+            },
+        }
+    }
+}
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -15,7 +90,14 @@ pub struct CreateBotBody {
     pub nyxid_bot_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
-    pub profile: ProfileRef,
+    #[serde(default)]
+    pub image: Option<BotImageReference>,
+    #[serde(default)]
+    pub repository: Option<BotRepository>,
+    #[serde(default)]
+    pub agent: Option<BotInlineAgentProfile>,
+    #[serde(default)]
+    pub profile: Option<ProfileRef>,
     pub sandbox_profile: Option<ProfileRef>,
     pub workspace_profile: Option<ProfileRef>,
     pub admission: Admission,
@@ -64,6 +146,26 @@ pub struct Reply {
 }
 impl CreateBotBody {
     pub fn into_core(self) -> Result<CreateBot, BotError> {
+        let profile = match (self.profile, self.agent.as_ref()) {
+            (Some(profile), None) => layer2_core::profiles::AgentProfileRef {
+                id: layer2_core::AgentProfileId(profile.id),
+                revision: profile.revision,
+            },
+            (None, Some(_)) => layer2_core::profiles::AgentProfileRef {
+                id: layer2_core::AgentProfileId("__inline__".into()),
+                revision: 1,
+            },
+            (Some(_), Some(_)) => {
+                return Err(BotError::Invalid(
+                    "choose either a published profile or inline agent configuration".into(),
+                ))
+            }
+            (None, None) => {
+                return Err(BotError::Invalid(
+                    "an agent profile or inline agent configuration is required".into(),
+                ))
+            }
+        };
         Ok(CreateBot {
             event_worker_profile: self.event_worker_profile.map(|p| {
                 layer2_core::event_workers::EventWorkerProfileRef {
@@ -74,10 +176,10 @@ impl CreateBotBody {
             name: self.name,
             external_bot_id: self.nyxid_bot_id,
             connection_ref: self.connection_ref,
-            profile: AgentProfileRef {
-                id: AgentProfileId(self.profile.id),
-                revision: self.profile.revision,
-            },
+            image: self.image.map(Into::into),
+            repository: self.repository.map(Into::into),
+            inline_agent: self.agent.map(Into::into),
+            profile,
             sandbox_profile: self
                 .sandbox_profile
                 .map(|p| SandboxProfileRef::new(SandboxProfileId(p.id), p.revision)),
@@ -155,6 +257,11 @@ pub struct ExternalBotView {
     pub id: String,
     pub name: String,
     pub platform: String,
+}
+#[derive(Serialize, ToSchema)]
+pub struct BotConnectionView {
+    pub connection_ref: String,
+    pub label: String,
 }
 impl From<BotTestResult> for TestView {
     fn from(r: BotTestResult) -> Self {

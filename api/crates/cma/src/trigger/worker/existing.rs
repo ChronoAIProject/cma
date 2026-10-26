@@ -94,6 +94,7 @@ impl LaunchWorker {
                 id: sandbox.profile.id,
                 revision: sandbox.profile.revision,
             },
+            inline: None,
             workspace_profile: WorkspaceProfileRef {
                 id: workspace.profile.id,
                 revision: workspace.profile.revision,

@@ -122,14 +122,15 @@ impl InMemorySandboxStore {
             .get(&workspace.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::SandboxNotReady)?;
+        let bootstrap = admission.admits_bootstrap(&workspace, &sandbox);
         if workspace.owner != admission.owner
             || workspace.owner != sandbox.owner
             || workspace.sandbox_id != sandbox.id
-            || workspace.status != WorkspaceStatus::Ready
+            || (!bootstrap && workspace.status != WorkspaceStatus::Ready)
         {
             return Err(SandboxStoreError::WorkspaceNotReady);
         }
-        if !sandbox.accepts_creation_admission() {
+        if !bootstrap && !sandbox.accepts_creation_admission() {
             return Err(SandboxStoreError::SandboxNotReady);
         }
         if let Some(mut agent) = state
@@ -184,8 +185,9 @@ impl InMemorySandboxStore {
                 );
                 let mut next_sandbox = sandbox.clone();
                 let revival = next_sandbox
-                    .record_creation_admission(
+                    .record_creation_admission_with_managed_runtime(
                         SandboxReviveCause::TriggerLaunch,
+                        self.managed_runtime_version(),
                         admission.event_at.clone(),
                     )
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -238,7 +240,7 @@ impl InMemorySandboxStore {
             });
         }
 
-        let creation = admission.materialize(&workspace)?;
+        let creation = admission.materialize_for_parent(&workspace, &sandbox)?;
         let provenance = super::provenance::creation_record(
             &state,
             &admission,
@@ -262,7 +264,7 @@ impl InMemorySandboxStore {
         candidate
             .agent_creation_provenance
             .insert(creation.agent.id.clone(), provenance);
-        let mut next_workspace = workspace;
+        let mut next_workspace = workspace.clone();
         next_workspace.next_worktree_number = next_workspace
             .next_worktree_number
             .checked_add(1)
@@ -281,14 +283,17 @@ impl InMemorySandboxStore {
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
         let cause = match admission.origin {
-            AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-                SandboxReviveCause::AgentCreation
-            }
+            AgentOrigin::Manual
+            | AgentOrigin::Lifecycle { .. }
+            | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
             AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
         };
-        let revival = next_sandbox
-            .record_creation_admission(cause, admission.event_at.clone())
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        let revival = admission.record_parent_admission(
+            &mut next_sandbox,
+            &workspace,
+            cause,
+            self.managed_runtime_version(),
+        )?;
         candidate
             .sandboxes
             .insert(next_sandbox.id.clone(), next_sandbox);

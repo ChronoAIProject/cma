@@ -1,19 +1,104 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
 use super::intents::DeliveryOutcome;
+use crate::net::exchange::{BodyError, HttpReply, TransportError};
 use cmaeg_core::{channel::Secret, seal::ReplyAddress};
-use reqwest::{Client, StatusCode, Url};
+use futures_util::future::BoxFuture;
+use reqwest::{
+    header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE},
+    Client, StatusCode, Url,
+};
 use serde::Deserialize;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+
+/// The largest relay receipt the client reads.
+const RECEIPT_MAX_BYTES: usize = 4096;
+/// Complete ordinary delivery's serialized request limit, including identifiers,
+/// metadata and JSON escaping. Automatic output is bounded at 256 KiB and sanitization plus JSON
+/// expands at most fourfold; tool requests arrive within 128 KiB. Two MiB
+/// accommodates both with envelope headroom, independently of platform limits.
+/// Low-level `send` and `send_rich` do not impose this limit.
+pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// Serialized before a sender commits or claims a single-use credential.
+pub(super) struct PreparedReply {
+    body: Vec<u8>,
+    message_id: String,
+    thread_reply: bool,
+}
 
 pub enum Credential<'a> {
     ReplyToken(&'a Secret),
     ChannelKey(&'a Secret),
 }
+/// Replaceable IO boundary of the relay client, mirroring `WebhookTransport`:
+/// URL building, status mapping, `Retry-After` and receipt parsing stay in the
+/// client. An implementation honours `timeout` for the whole exchange.
+pub trait RelayTransport: Send + Sync {
+    fn post(
+        &self,
+        url: Url,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<HttpReply, TransportError>>;
+}
+/// The production relay transport: one reqwest request per call.
+pub struct HttpTransport {
+    http: Client,
+}
+impl HttpTransport {
+    fn new(timeout: Duration) -> Result<Self, crate::ConfigError> {
+        let http = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(timeout)
+            .build()
+            .map_err(|_| crate::ConfigError::InvalidManagement {
+                detail: "cannot build relay client".into(),
+            })?;
+        Ok(Self { http })
+    }
+}
+impl RelayTransport for HttpTransport {
+    fn post(
+        &self,
+        url: Url,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
+        Box::pin(async move {
+            let response = self
+                .http
+                .post(url)
+                .headers(headers)
+                .body(body)
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|_| TransportError::Unavailable)?;
+            let status = response.status();
+            let headers = response.headers().clone();
+            // Only a 200 answer carries a receipt. Every other answer is mapped
+            // from its status alone, so its body is never read.
+            let body = if status == StatusCode::OK {
+                crate::net::exchange::read_bounded(response, RECEIPT_MAX_BYTES).await
+            } else {
+                Ok(Vec::new())
+            };
+            Ok(HttpReply {
+                status,
+                headers,
+                body,
+            })
+        })
+    }
+}
 #[derive(Clone)]
 pub struct RelayClient {
-    http: Client,
+    transport: Arc<dyn RelayTransport>,
     endpoint: Url,
     timeout: Duration,
+    complete_replies: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -23,6 +108,17 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Select complete ordinary replies in the delivery engine. Enabling this
+    /// attests that NyxID splits ordinary/thread replies without truncation and
+    /// acknowledges only all-parts acceptance. Low-level sends keep their
+    /// existing payload behavior regardless of this setting.
+    pub fn with_complete_replies(mut self, enabled: bool) -> Self {
+        self.complete_replies = enabled;
+        self
+    }
+    pub(super) fn complete_replies(&self) -> bool {
+        self.complete_replies
+    }
     pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
         self.telegram = client;
         self
@@ -34,6 +130,11 @@ impl RelayClient {
         self.interactions = Some(store);
         self
     }
+    /// Send through `transport` instead of HTTP, as tests answering in process do.
+    pub fn with_transport(mut self, transport: Arc<dyn RelayTransport>) -> Self {
+        self.transport = transport;
+        self
+    }
     pub fn new(base_url: &str, timeout: Duration) -> Result<Self, crate::ConfigError> {
         let origin = crate::config::validate_origin(crate::CMAEG_NYXID_BASE_URL, base_url)?;
         let endpoint =
@@ -42,17 +143,11 @@ impl RelayClient {
                     detail: "invalid relay origin".into(),
                 }
             })?;
-        let http = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(timeout)
-            .build()
-            .map_err(|_| crate::ConfigError::InvalidManagement {
-                detail: "cannot build relay client".into(),
-            })?;
         Ok(Self {
-            http,
+            transport: Arc::new(HttpTransport::new(timeout)?),
             endpoint,
             timeout,
+            complete_replies: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })
@@ -80,21 +175,58 @@ impl RelayClient {
         else {
             return (DeliveryOutcome::Unsupported, None);
         };
-        let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
-        if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
-            return (
-                DeliveryOutcome::Rejected {
-                    reason: "no_credential".into(),
-                },
-                None,
-            );
-        }
+        let secret = match credential_secret(credential) {
+            Ok(secret) => secret,
+            Err(outcome) => return (outcome, None),
+        };
         tokio::time::timeout(
             self.timeout,
             self.post(message_id, secret, text, markup, *thread_reply),
         )
         .await
         .unwrap_or_else(|_| (unknown("response_lost"), None))
+    }
+    pub(super) fn prepare(
+        address: &ReplyAddress,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
+            return Err(DeliveryOutcome::Unsupported);
+        };
+        let body = serialize_reply(message_id, text, markup, *thread_reply).map_err(|_| {
+            DeliveryOutcome::Rejected {
+                reason: "relay_request_invalid".into(),
+            }
+        })?;
+        if body.len() > REQUEST_MAX_BYTES {
+            return Err(DeliveryOutcome::Rejected {
+                reason: "relay_request_too_large".into(),
+            });
+        }
+        Ok(PreparedReply {
+            body,
+            message_id: message_id.clone(),
+            thread_reply: *thread_reply,
+        })
+    }
+    pub(super) async fn send_prepared(
+        &self,
+        credential: Credential<'_>,
+        prepared: &PreparedReply,
+    ) -> (DeliveryOutcome, Option<String>) {
+        let secret = match credential_secret(credential) {
+            Ok(secret) => secret,
+            Err(outcome) => return (outcome, None),
+        };
+        tokio::time::timeout(self.timeout, self.post_prepared(secret, prepared))
+            .await
+            .unwrap_or_else(|_| (unknown("response_lost"), None))
     }
     pub async fn edit(
         &self,
@@ -106,14 +238,25 @@ impl RelayClient {
         let Ok(endpoint) = self.endpoint.join("reply/update") else {
             return DeliveryOutcome::Unsupported;
         };
-        let result=self.http.post(endpoint).bearer_auth(secret.as_str()).timeout(self.timeout).json(&serde_json::json!({"message_id":destination.platform_id,"outbound_message_id":destination.outbound_id,"reply":{"text":text,"metadata":{"reply_markup":markup}}})).send().await;
-        match result {
-            Ok(response) if response.status().is_success() => DeliveryOutcome::Confirmed {
+        let Some(headers) = headers(secret) else {
+            return unknown("edit_unconfirmed");
+        };
+        let Ok(body) = serde_json::to_vec(
+            &serde_json::json!({"message_id":destination.platform_id,"outbound_message_id":destination.outbound_id,"reply":{"text":text,"metadata":{"reply_markup":markup}}}),
+        ) else {
+            return unknown("edit_unconfirmed");
+        };
+        match self
+            .transport
+            .post(endpoint, headers, body, self.timeout)
+            .await
+        {
+            Ok(reply) if reply.status.is_success() => DeliveryOutcome::Confirmed {
                 platform_message_id: Some(destination.platform_id.clone()),
             },
-            Ok(response) if response.status() == StatusCode::TOO_MANY_REQUESTS => {
+            Ok(reply) if reply.status == StatusCode::TOO_MANY_REQUESTS => {
                 DeliveryOutcome::RateLimited {
-                    retry_after: retry_after(response.headers()),
+                    retry_after: retry_after(&reply.headers),
                 }
             }
             _ => unknown("edit_unconfirmed"),
@@ -127,55 +270,67 @@ impl RelayClient {
         markup: Option<&serde_json::Value>,
         thread_reply: bool,
     ) -> (DeliveryOutcome, Option<String>) {
-        let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
-        if thread_reply {
-            body["thread_reply"] = true.into();
-        }
+        let Some(headers) = headers(secret) else {
+            return (unknown("response_lost"), None);
+        };
+        let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
+            return (unknown("response_lost"), None);
+        };
+        self.post_serialized(message_id, headers, body, thread_reply)
+            .await
+    }
+    async fn post_prepared(
+        &self,
+        secret: &Secret,
+        prepared: &PreparedReply,
+    ) -> (DeliveryOutcome, Option<String>) {
+        let Some(headers) = headers(secret) else {
+            return (unknown("response_lost"), None);
+        };
+        self.post_serialized(
+            &prepared.message_id,
+            headers,
+            prepared.body.clone(),
+            prepared.thread_reply,
+        )
+        .await
+    }
+    async fn post_serialized(
+        &self,
+        message_id: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        thread_reply: bool,
+    ) -> (DeliveryOutcome, Option<String>) {
         let mut endpoint = self.endpoint.clone();
         if thread_reply {
-            // A legacy NyxID replica must return 404 before any send, not
-            // silently ignore the additive flag on its legacy reply endpoint.
+            // Old NyxID replicas must fail before sending, never ignore the flag.
             endpoint.set_path("/api/v1/channel-relay/thread-reply");
         }
-        let mut response = match self
-            .http
-            .post(endpoint)
-            .bearer_auth(secret.as_str())
-            .json(&body)
-            .send()
+        let reply = match self
+            .transport
+            .post(endpoint, headers, body, self.timeout)
             .await
         {
-            Ok(response) => response,
+            Ok(reply) => reply,
             Err(_) => return (unknown("response_lost"), None),
         };
-        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        if reply.status == StatusCode::TOO_MANY_REQUESTS {
             return (
                 DeliveryOutcome::RateLimited {
-                    retry_after: retry_after(response.headers()),
+                    retry_after: retry_after(&reply.headers),
                 },
                 None,
             );
         }
-        if response.status() != StatusCode::OK {
+        if reply.status != StatusCode::OK {
             return (unknown("provider_failure"), None);
         }
-        if response
-            .content_length()
-            .is_some_and(|length| length > 4096)
-        {
-            return (unknown("receipt_invalid"), None);
-        }
-        let mut bytes = Vec::new();
-        loop {
-            match response.chunk().await {
-                Ok(Some(chunk)) if bytes.len() + chunk.len() <= 4096 => {
-                    bytes.extend_from_slice(&chunk)
-                }
-                Ok(None) => break,
-                Ok(Some(_)) => return (unknown("receipt_invalid"), None),
-                Err(_) => return (unknown("response_lost"), None),
-            }
-        }
+        let bytes = match reply.body {
+            Ok(bytes) => bytes,
+            Err(BodyError::Oversized) => return (unknown("receipt_invalid"), None),
+            Err(BodyError::Lost) => return (unknown("response_lost"), None),
+        };
         let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
             return (unknown("receipt_invalid"), None);
         };
@@ -196,10 +351,41 @@ impl RelayClient {
         )
     }
 }
+fn credential_secret(credential: Credential<'_>) -> Result<&Secret, DeliveryOutcome> {
+    let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
+    if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
+        return Err(DeliveryOutcome::Rejected {
+            reason: "no_credential".into(),
+        });
+    }
+    Ok(secret)
+}
+fn serialize_reply(
+    message_id: &str,
+    text: &str,
+    markup: Option<&serde_json::Value>,
+    thread_reply: bool,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
+    if thread_reply {
+        body["thread_reply"] = true.into();
+    }
+    serde_json::to_vec(&body)
+}
+/// The bearer and JSON headers reqwest's `bearer_auth` and `json` set, with the
+/// credential marked sensitive. `None` when the credential is not a header value.
+fn headers(secret: &Secret) -> Option<HeaderMap> {
+    let mut authorization = HeaderValue::try_from(format!("Bearer {}", secret.as_str())).ok()?;
+    authorization.set_sensitive(true);
+    let mut headers = HeaderMap::new();
+    headers.insert(AUTHORIZATION, authorization);
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    Some(headers)
+}
 fn valid_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
 }
-fn retry_after(headers: &reqwest::header::HeaderMap) -> u64 {
+fn retry_after(headers: &HeaderMap) -> u64 {
     let Some(raw) = headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())

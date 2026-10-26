@@ -3,9 +3,22 @@
 mod admin;
 mod agent;
 pub mod agent_artifacts;
+pub mod agent_attachments;
 mod agent_context;
+pub mod agent_filesystem;
 pub mod agent_io;
+pub mod agent_live_skills;
+mod agent_managed_context;
 mod agent_operation;
+mod agent_preferences;
+mod agent_settings;
+pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
+mod agent_settings_authority;
+pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
+pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFence};
+mod agent_settings_recovery;
+mod agent_settings_validation;
+pub use agent_settings::AgentSettings;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
@@ -13,6 +26,7 @@ mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
 mod agent_reads_fold;
+mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -25,9 +39,17 @@ mod checkpoint_writer_recovery;
 pub mod control;
 mod conversation;
 mod conversation_fold;
+mod conversation_observation;
+mod conversation_observation_fold;
+pub mod message_feedback;
+pub use conversation_observation::{
+    AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
+    AgentUsageCheckpoint,
+};
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;
@@ -49,8 +71,11 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod home;
+mod home_native;
+pub use home_native::SandboxNativePool;
 mod home_recovery;
 mod inactivity;
+mod interruption;
 mod launch_recovery;
 mod launch_service;
 mod lifecycle;
@@ -62,11 +87,19 @@ mod limits;
 mod pending_approvals;
 mod provision;
 mod queued_message;
+mod restored_connection;
 mod revive;
 mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+mod runtime_update;
+mod runtime_update_resume;
+pub use runtime_update::{
+    runtime_update_agents_are_idle, SandboxRuntimeUpdateRequest, SandboxRuntimeUpdateState,
+};
+mod runtime_update_service;
+pub use runtime_update_service::{SandboxRuntimeUpdateError, SandboxRuntimeUpdateService};
 mod runtime_recovery_agents;
 #[allow(clippy::module_inception)]
 mod sandbox;
@@ -77,6 +110,9 @@ mod service_access_service;
 mod service_access_tests;
 mod service_admission;
 mod service_creation;
+mod service_scope;
+#[cfg(test)]
+mod service_scope_tests;
 mod service_trust;
 mod status;
 pub mod store;
@@ -118,14 +154,14 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentDetailReading, AgentEventStreamAuthorization, AgentEventStreamHeader,
-    AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry, AgentReplayWindow,
-    AgentResponseBinding, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
-    SharedAgentDetail, SharedAgentOrigin,
+    AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry,
+    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
+    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
-    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInputError, AgentRuntimeInputSender,
-    AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
+    AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
+    AgentRuntimeInputSender, AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,
     AgentRuntimeTurnStopReason, AgentRuntimeUpdate,
 };
 pub use agent_service::{AgentService, AgentServiceError, CreateAgent};
@@ -153,7 +189,7 @@ pub use conversation_recorder::{
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxSignInState,
+    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -166,7 +202,8 @@ pub use event::{
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
-    FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, MAX_FIRST_MESSAGE_BYTES,
+    FirstMessageDelivery, FirstMessageFailure, FirstMessagePurpose, FirstMessageRecord,
+    MAX_FIRST_MESSAGE_BYTES,
 };
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
@@ -183,6 +220,7 @@ pub use inactivity::{
     inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
     SandboxAgentLogActivity,
 };
+pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
     SandboxImageRotationPhase, SandboxLifecycleAuthority, SandboxLifecycleOperation,
     SandboxLifecycleState, SandboxPausePhase,
@@ -229,7 +267,10 @@ pub use title_store::{
     AgentTitleStoreError, InMemoryAgentTitleStore, SetAgentTitleOutcome, StoredAgentTitle,
 };
 pub use workspace::{Workspace, WorkspaceOrigin, WorkspaceSource};
-pub use workspace_service::{CreateWorkspace, WorkspaceService, WorkspaceServiceError};
+pub use workspace_service::{
+    CreateInlineWorkspace, CreateWorkspace, InlineWorkspaceSource, WorkspaceService,
+    WorkspaceServiceError,
+};
 pub use workspace_work::{WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep};
 pub use worktree::Worktree;
 
@@ -279,3 +320,17 @@ mod title_store_tests;
 mod title_value_tests;
 #[cfg(test)]
 mod workspace_service_tests;
+
+pub mod agent_access;
+pub mod agent_access_tool;
+mod suspended_runtime;
+
+#[cfg(test)]
+mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_test_support;
+#[cfg(test)]
+mod runtime_update_tests;
+
+#[cfg(test)]
+mod runtime_update_resume_tests;

@@ -18,6 +18,7 @@ fn base_time() -> SystemTime {
 fn make_eligible(store: &InMemoryAgentTitleStore, id: &AgentId) {
     for kind in [
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },

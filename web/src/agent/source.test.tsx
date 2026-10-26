@@ -1,10 +1,11 @@
-import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { AgentSource } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
-import { AgentSourceLabel, useAgentSource } from './source';
+import type { MenuEntry } from '../ui/Menu';
+import { agentOriginEntries, useAgentSource } from './source';
 
 const value: AgentSource = {
   agent_id: 'agt_one',
@@ -12,50 +13,71 @@ const value: AgentSource = {
   trigger: { title: 'Project introduction', public_id: 'pub_one', revision: 2, quick_messages: [] },
 };
 
+/** Each row as the person reads it: the heading text, or a link's label and target. */
+function rows(entries: readonly MenuEntry[]): string[] {
+  return entries.map((entry) =>
+    'type' in entry
+      ? entry.type === 'label'
+        ? entry.text
+        : entry.type
+      : `${String(entry.label)} -> ${entry.href ?? 'no link'}`,
+  );
+}
+
 it.each([
   ['manual', 'Created manually'],
   ['trigger', 'Created by Trigger'],
   ['channel_bridge', 'Created by channel bridge'],
   ['legacy_unknown', 'Creation origin unknown'],
 ] as const)('keeps %s creation separate from a later published Trigger', (origin, label) => {
-  render(
-    <AgentSourceLabel
-      source={{
-        status: 'ready',
-        agentId: 'agt_one',
-        value: { ...value, origin: { type: 'workspace_profile' } },
-      }}
-      provenance={{
-        status: 'ready',
-        agentId: 'agt_one',
-        value: {
-          agent_id: 'agt_one',
-          created_at: '2026-09-06T00:00:00Z',
-          creation_origin: origin,
-        },
-      }}
-    />,
+  const entries = agentOriginEntries(
+    {
+      status: 'ready',
+      agentId: 'agt_one',
+      value: { ...value, origin: { type: 'workspace_profile' } },
+    },
+    {
+      status: 'ready',
+      agentId: 'agt_one',
+      value: {
+        agent_id: 'agt_one',
+        created_at: '2026-09-06T00:00:00Z',
+        creation_origin: origin,
+      },
+    },
   );
-  expect(screen.getByText(label, { exact: false })).toBeVisible();
-  expect(screen.getByText('Published Trigger:', { exact: false })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Project introduction' })).toHaveAttribute(
-    'href',
-    '/t/pub_one',
-  );
-  expect(screen.queryByText('From Trigger', { exact: false })).not.toBeInTheDocument();
-  expect(screen.queryByText('trg_one')).not.toBeInTheDocument();
+  expect(rows(entries)).toEqual([label, 'Published Trigger: Project introduction -> /t/pub_one']);
+  expect(rows(entries).join(' ')).not.toContain('trg_one');
 });
 
 it('does not infer creation when provenance is unavailable, even with a Trigger shortcut', () => {
-  render(
-    <AgentSourceLabel
-      source={{ status: 'ready', agentId: 'agt_one', value }}
-      provenance={{ status: 'unavailable', agentId: 'agt_one' }}
-    />,
-  );
-  expect(screen.getByText('Creation origin unavailable', { exact: false })).toBeVisible();
-  expect(screen.getByRole('link', { name: 'Project introduction' })).toBeVisible();
-  expect(screen.queryByText('Created by Trigger', { exact: false })).not.toBeInTheDocument();
+  expect(
+    rows(
+      agentOriginEntries(
+        { status: 'ready', agentId: 'agt_one', value },
+        { status: 'unavailable', agentId: 'agt_one' },
+      ),
+    ),
+  ).toEqual([
+    'Creation origin unavailable',
+    'Published Trigger: Project introduction -> /t/pub_one',
+  ]);
+});
+
+it('prefers the retained owner label and encodes the Trigger link', () => {
+  expect(
+    rows(
+      agentOriginEntries(
+        {
+          status: 'ready',
+          agentId: 'agt_one',
+          value: { ...value, trigger: { ...value.trigger!, public_id: 'pub one/two' } },
+        },
+        { status: 'loading', agentId: 'agt_one' },
+        'Created manually',
+      ),
+    ),
+  ).toEqual(['Created manually', 'Published Trigger: Project introduction -> /t/pub%20one%2Ftwo']);
 });
 
 it('keeps creation visible without privileged shortcuts and hides mismatched Agent links', () => {
@@ -68,36 +90,33 @@ it('keeps creation visible without privileged shortcuts and hides mismatched Age
       creation_origin: 'trigger' as const,
     },
   };
-  const { rerender } = render(
-    <AgentSourceLabel
-      source={{
-        status: 'ready',
-        agentId: 'agt_one',
-        value: {
-          access: 'shared',
-          agent_id: 'agt_one',
-          origin: { type: 'trigger' },
+  expect(
+    rows(
+      agentOriginEntries(
+        {
+          status: 'ready',
+          agentId: 'agt_one',
+          value: {
+            access: 'shared',
+            agent_id: 'agt_one',
+            origin: { type: 'trigger' },
+          },
         },
-      }}
-      provenance={provenance}
-    />,
-  );
-  expect(screen.getByText('Created by Trigger')).toBeVisible();
-  expect(screen.queryByRole('link')).not.toBeInTheDocument();
-  rerender(
-    <AgentSourceLabel
-      source={{ status: 'unavailable', agentId: 'agt_one' }}
-      provenance={provenance}
-    />,
-  );
-  expect(screen.getByText('Created by Trigger')).toBeVisible();
-  rerender(
-    <AgentSourceLabel
-      source={{ status: 'ready', agentId: 'agt_two', value: { ...value, agent_id: 'agt_two' } }}
-      provenance={provenance}
-    />,
-  );
-  expect(screen.queryByRole('link')).not.toBeInTheDocument();
+        provenance,
+      ),
+    ),
+  ).toEqual(['Created by Trigger']);
+  expect(
+    rows(agentOriginEntries({ status: 'unavailable', agentId: 'agt_one' }, provenance)),
+  ).toEqual(['Created by Trigger']);
+  expect(
+    rows(
+      agentOriginEntries(
+        { status: 'ready', agentId: 'agt_two', value: { ...value, agent_id: 'agt_two' } },
+        provenance,
+      ),
+    ),
+  ).toEqual(['Created by Trigger']);
 });
 
 it('does not leak an earlier Agent source while the selected Agent is changing', async () => {

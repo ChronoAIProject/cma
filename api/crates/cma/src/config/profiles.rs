@@ -4,7 +4,7 @@ use super::value_or;
 
 const DEFAULT_SANDBOX_CPU: &str = "1";
 const DEFAULT_SANDBOX_MEMORY: &str = "1Gi";
-const DEFAULT_AGENT_MODEL: &str = "gpt-5.6-sol";
+const DEFAULT_AGENT_MODEL: &str = "gpt-6";
 const DEFAULT_AGENT_EFFORT: &str = "high";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,12 +27,24 @@ impl DefaultProfileConfig {
         }
         let effort = value_or(lookup, "CHRONO_DEFAULT_AGENT_EFFORT", DEFAULT_AGENT_EFFORT)?;
         Ok(Self {
-            cpu_millis: cpu_millis(&cpu)?,
-            memory_mib: memory_mib(&memory)?,
+            cpu_millis: cpu_millis(&cpu, "CHRONO_SANDBOX_CPU")?,
+            memory_mib: memory_mib(&memory, "CHRONO_SANDBOX_MEMORY")?,
             agent_model,
             agent_effort: thinking_effort(&effort)?,
         })
     }
+}
+
+/// New inline environments are independent of retained deployment-owned Profiles.
+pub(super) fn agent_manager_capacity(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<layer3_adapter::SandboxCapacity, String> {
+    const CPU: &str = "CHRONO_AGENT_MANAGER_SANDBOX_CPU";
+    const MEMORY: &str = "CHRONO_AGENT_MANAGER_SANDBOX_MEMORY";
+    Ok(layer3_adapter::SandboxCapacity {
+        cpu_millis: cpu_millis(&value_or(lookup, CPU, "2")?, CPU)?,
+        memory_mib: memory_mib(&value_or(lookup, MEMORY, "8Gi")?, MEMORY)?,
+    })
 }
 
 fn positive(raw: &str, key: &str) -> Result<u32, String> {
@@ -42,25 +54,25 @@ fn positive(raw: &str, key: &str) -> Result<u32, String> {
         .ok_or_else(|| format!("{key} must be a positive Kubernetes quantity"))
 }
 
-fn cpu_millis(raw: &str) -> Result<u32, String> {
+fn cpu_millis(raw: &str, key: &str) -> Result<u32, String> {
     if let Some(millis) = raw.strip_suffix('m') {
-        positive(millis, "CHRONO_SANDBOX_CPU")
+        positive(millis, key)
     } else {
-        positive(raw, "CHRONO_SANDBOX_CPU")?
+        positive(raw, key)?
             .checked_mul(1_000)
-            .ok_or_else(|| "CHRONO_SANDBOX_CPU exceeds the supported CPU range".into())
+            .ok_or_else(|| format!("{key} exceeds the supported CPU range"))
     }
 }
 
-fn memory_mib(raw: &str) -> Result<u32, String> {
+fn memory_mib(raw: &str, key: &str) -> Result<u32, String> {
     if let Some(mib) = raw.strip_suffix("Mi") {
-        positive(mib, "CHRONO_SANDBOX_MEMORY")
+        positive(mib, key)
     } else if let Some(gib) = raw.strip_suffix("Gi") {
-        positive(gib, "CHRONO_SANDBOX_MEMORY")?
+        positive(gib, key)?
             .checked_mul(1_024)
-            .ok_or_else(|| "CHRONO_SANDBOX_MEMORY exceeds the supported memory range".into())
+            .ok_or_else(|| format!("{key} exceeds the supported memory range"))
     } else {
-        Err("CHRONO_SANDBOX_MEMORY must be a positive whole Mi or Gi quantity".into())
+        Err(format!("{key} must be a positive whole Mi or Gi quantity"))
     }
 }
 
@@ -97,7 +109,7 @@ mod tests {
             DefaultProfileConfig {
                 cpu_millis: 1_000,
                 memory_mib: 1_024,
-                agent_model: DEFAULT_AGENT_MODEL.into(),
+                agent_model: "gpt-6".into(),
                 agent_effort: ThinkingEffort::High,
             }
         );
@@ -127,6 +139,36 @@ mod tests {
                 configured(&[(key, value)]).is_err(),
                 "accepted {key}={value}"
             );
+        }
+    }
+
+    #[test]
+    fn inline_capacity_is_independent_of_retained_system_profile_configuration() {
+        let capacity = |values: &[(&str, &str)]| {
+            let values: HashMap<_, _> = values.iter().copied().collect();
+            agent_manager_capacity(&mut |key| Ok(values.get(key).map(ToString::to_string)))
+        };
+        let defaults = capacity(&[
+            ("CHRONO_SANDBOX_CPU", "750m"),
+            ("CHRONO_SANDBOX_MEMORY", "512Mi"),
+        ])
+        .unwrap();
+        assert_eq!(defaults.cpu_millis, 2_000);
+        assert_eq!(defaults.memory_mib, 8_192);
+        let custom = capacity(&[
+            ("CHRONO_AGENT_MANAGER_SANDBOX_CPU", "3000m"),
+            ("CHRONO_AGENT_MANAGER_SANDBOX_MEMORY", "8192Mi"),
+        ])
+        .unwrap();
+        assert_eq!(custom.cpu_millis, 3_000);
+        assert_eq!(custom.memory_mib, 8_192);
+        for (key, value) in [
+            ("CHRONO_AGENT_MANAGER_SANDBOX_CPU", "0"),
+            ("CHRONO_AGENT_MANAGER_SANDBOX_CPU", "0.5"),
+            ("CHRONO_AGENT_MANAGER_SANDBOX_MEMORY", "1.5Gi"),
+            ("CHRONO_AGENT_MANAGER_SANDBOX_MEMORY", "1024"),
+        ] {
+            assert!(capacity(&[(key, value)]).unwrap_err().contains(key));
         }
     }
 }

@@ -105,7 +105,8 @@ pub fn bind_command_dispatch(
         return Err(CommandLedgerError::Conflict);
     }
     let mut expected_metadata = Vec::new();
-    let (intent, text) = match &command.receipt.envelope.command {
+    let effective = command.effective_command()?;
+    let (intent, text) = match &effective {
         AgentCommand::Message {
             input,
             order,
@@ -136,6 +137,7 @@ pub fn bind_command_dispatch(
                 || matches!(order, AgentInputOrder::AfterTurn { turn_sequence } if *turn_sequence != latest_turn)
                 || mutation.agent_logs.get(1)
                     != Some(&AgentLogKind::TurnStarted {
+                        model: Some(current.settings().model),
                         turn_sequence: operation.turn_sequence,
                         origin_key: Some(format!("command:{}", claim.command_id.as_str())),
                     })

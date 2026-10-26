@@ -57,7 +57,7 @@ impl Open {
         agent.conversation.last_seq = snapshot.head;
         agent.conversation.active_turn = snapshot.active_turn;
         agent.conversation.runtime_generation = snapshot.runtime_generation;
-        agent.profile.content.model = snapshot.model;
+        agent.profile.content.model = snapshot.initial_model;
         let history = snapshot
             .history
             .into_iter()

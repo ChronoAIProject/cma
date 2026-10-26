@@ -100,6 +100,13 @@ pub(super) fn validate_agent_change(
             .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
         {
             expected_work.schedule(AgentWorkStep::DispatchFirstMessage, appended_at.into());
+        } else if current
+            .work
+            .live_skills
+            .last()
+            .is_some_and(|skill| skill.status == crate::sandbox::AgentSkillInstallStatus::Pending)
+        {
+            expected_work.schedule(AgentWorkStep::InstallSkill, appended_at.into());
         }
     }
     if change.logs.len() > MAX_AGENT_LOG_BATCH_SIZE

@@ -43,6 +43,8 @@ jobs:
         run: ruby .github/scripts/ci-contract-tests.rb provider
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+      - name: Gateway sealed-record migration regressions
+        run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
         working-directory: web
         run: npm ci
@@ -62,6 +64,9 @@ jobs:
         with:
           # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
           node-version: 24.15.0
+      - name: Select official Ubuntu archive for browser dependencies
+        # The hosted Azure mirror repeatedly stalled package downloads before tests.
+        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install pinned local browser
         timeout-minutes: 10
         working-directory: web
@@ -157,6 +162,14 @@ jobs:
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
             infra/cmaeg/gcpbackendpolicy.yaml \
+            infra/image-manager/Dockerfile \
+            infra/image-manager/configmap.yaml \
+            infra/image-manager/deployment.yaml \
+            infra/image-manager/gcpbackendpolicy.yaml \
+            infra/image-manager/healthcheckpolicy.yaml \
+            infra/image-manager/secret.yaml \
+            infra/image-manager/service.yaml \
+            infra/image-manager/serviceaccount.yaml \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -170,6 +183,10 @@ jobs:
           fi
       - name: Gateway diagrams match reviewed Markdown
         run: python3 .github/scripts/render-cmaeg-diagrams.py --check
+      - name: Native Sandbox deployment preflight regressions
+        run: |
+          node --test .github/scripts/agent-sandbox-preflight.test.mjs
+          ruby .github/scripts/agent-sandbox-manifest-contract.rb
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)
@@ -216,6 +233,12 @@ jobs:
           hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
+          fi
+      - name: Image Manager has no Agent or Gateway dependencies
+        run: |
+          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
+            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
+            exit 1
           fi
 
   secrets:
@@ -268,6 +291,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install pinned dependency auditor
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+          fallback: none
+      - name: Dependency audit
+        # Use the runner's toolchain before the full build/test corpus. The
+        # Docker action installs another toolchain after those resource-heavy
+        # steps and repeatedly lost its runner before reporting an audit result.
+        run: cargo deny --locked --all-features check advisories licenses bans sources
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: api
@@ -278,8 +311,14 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
       - uses: taiki-e/install-action@nextest
+      - name: Image normalization budgets
+        # Measure the existing wall-time and memory limits without competing
+        # test processes. Both commands retain the same workspace build.
+        run: >-
+          cargo nextest run --workspace --locked -E 'binary(=media_image_peak)'
+          --test-threads 1 --success-output final
       - name: Tests
-        run: cargo nextest run --workspace --locked
+        run: cargo nextest run --workspace --locked -E 'not binary(=media_image_peak)'
       - name: Isolated Linux Workspace removal writer boundary
         run: >-
           cargo test --locked -p layer4-runtime
@@ -290,12 +329,27 @@ jobs:
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - name: Prepare compiled gateway browser contract
+        working-directory: .
+        run: |
+          npm ci --prefix web
+          npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
+          npm run build --prefix web
+      - name: Select official Ubuntu archive for browser dependencies
+        working-directory: .
+        run: sudo python3 .github/scripts/select-ubuntu-archive.py
+      - name: Install gateway contract browser
+        timeout-minutes: 10
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Image Manager authenticated Mongo isolation
+        timeout-minutes: 10
+        run: bash ../.github/scripts/image-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          manifest-path: api/Cargo.toml
-          command: check advisories licenses bans sources
 
   cmaeg-latency:
     name: CMAEG latency budget
@@ -506,7 +560,7 @@ jobs:
           ./kubeconform -strict -summary -output text \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/cmaeg/*.yaml infra/web/*.yaml infra/storage/*.yaml
+            infra/api/*.yaml infra/cmaeg/*.yaml infra/image-manager/*.yaml infra/web/*.yaml infra/storage/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
@@ -524,7 +578,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, cmaeg]
+        component: [api, web, runtime, cmaeg, image-manager]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.
@@ -579,6 +633,17 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
+      - name: Release build cache before image checks
+        # Native Docker image bytes are independent of BuildKit's build cache.
+        # The cache is already exported above; free its toolchain/build layers
+        # before Trivy's Docker export and the tested-image transfer archive.
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: |
+          native_image_id=$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')
+          docker buildx prune --all --force
+          test "$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')" = "$native_image_id"
+          df -h .
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

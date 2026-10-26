@@ -43,21 +43,71 @@ impl HomeVolumeScope {
     }
 }
 
+/// Legacy serialized policies omit the mode, preserving their hashes and routing.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeVolumeMode {
+    #[default]
+    LegacySnapshot,
+    NativeVctEmptyV1,
+    NativeVctFullHomeV2,
+}
+impl HomeVolumeMode {
+    fn is_legacy(&self) -> bool {
+        *self == Self::LegacySnapshot
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HomeVolumePolicy {
+    #[serde(default, skip_serializing_if = "HomeVolumeMode::is_legacy")]
+    pub mode: HomeVolumeMode,
     pub storage_class: String,
     pub capacity_gib: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub template_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub template_generation: String,
 }
 
 impl HomeVolumePolicy {
+    pub fn is_native_vct(&self) -> bool {
+        self.mode != HomeVolumeMode::LegacySnapshot
+    }
+
+    /// Persisted layout decides the mount, including after a default changes.
+    pub fn mounts_full_home(&self) -> bool {
+        self.mode == HomeVolumeMode::NativeVctFullHomeV2
+    }
+
+    pub(crate) fn mount_path<'a>(&self, user_home: &'a str) -> &'a str {
+        if self.mounts_full_home() {
+            "/home"
+        } else {
+            user_home
+        }
+    }
+
+    pub(crate) fn native_layout(&self) -> Option<&'static str> {
+        match self.mode {
+            HomeVolumeMode::LegacySnapshot => None,
+            HomeVolumeMode::NativeVctEmptyV1 => Some("native-vct-empty-v1"),
+            HomeVolumeMode::NativeVctFullHomeV2 => Some("native-vct-full-home-v2"),
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         if !(1..=1_024).contains(&self.capacity_gib)
             || !identifier(&self.storage_class)
-            || !identifier(&self.template_name)
-            || !identifier(&self.template_generation)
+            || match self.mode {
+                HomeVolumeMode::LegacySnapshot => {
+                    !identifier(&self.template_name) || !identifier(&self.template_generation)
+                }
+                HomeVolumeMode::NativeVctEmptyV1 | HomeVolumeMode::NativeVctFullHomeV2 => {
+                    !self.template_name.is_empty() || !self.template_generation.is_empty()
+                }
+            }
         {
             return Err(invalid("home storage policy is invalid"));
         }
@@ -72,11 +122,18 @@ pub struct HomeVolumeRequest {
     pub volume_id: String,
     pub sandbox_id: String,
     pub policy: HomeVolumePolicy,
+    /// Recorded before allocation; absent historical requests belong to the
+    /// original local store, never whichever provider is the current default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<HomeVolumeScope>,
 }
 
 impl HomeVolumeRequest {
     pub fn validate(&self) -> Result<()> {
         self.policy.validate()?;
+        if let Some(scope) = &self.scope {
+            scope.validate()?;
+        }
         if !identifier(&self.volume_id) || !identifier(&self.sandbox_id) {
             return Err(invalid("home allocation lineage is invalid"));
         }
@@ -97,6 +154,16 @@ impl HomeVolumeRequest {
             digest.update(value.as_bytes());
         }
         digest.update(self.policy.capacity_gib.to_be_bytes());
+        // Preserve every historical request digest exactly when scope is absent.
+        if let Some(scope) = &self.scope {
+            digest.update(b"cma-home-request-scope-v1\0");
+            digest.update(scope.0.as_bytes());
+        }
+        match self.policy.mode {
+            HomeVolumeMode::LegacySnapshot => {}
+            HomeVolumeMode::NativeVctEmptyV1 => digest.update(b"cma-native-vct-empty-v1\0"),
+            HomeVolumeMode::NativeVctFullHomeV2 => digest.update(b"cma-native-vct-full-home-v2\0"),
+        }
         format!("{:x}", digest.finalize())
     }
 }
@@ -105,6 +172,8 @@ impl HomeVolumeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HomeVolumeReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_authority: Option<Box<crate::agent_sandbox::NativePoolHomeOrigin>>,
     pub volume_id: String,
     pub request_sha256: String,
     pub storage_reference: String,
@@ -121,6 +190,24 @@ impl HomeVolumeReceipt {
         {
             return Err(invalid(
                 "home storage receipt does not match its allocation",
+            ));
+        }
+        if request.policy.is_native_vct() {
+            let origin = self
+                .native_authority
+                .as_deref()
+                .ok_or_else(|| invalid("native home authority is missing"))?;
+            if origin.claim.request.home != *request
+                || origin.pvc_uid != self.storage_generation
+                || origin.storage_reference()? != self.storage_reference
+            {
+                return Err(invalid(
+                    "native home authority does not match its allocation",
+                ));
+            }
+        } else if self.native_authority.is_some() {
+            return Err(invalid(
+                "legacy home cannot change controller ownership mode",
             ));
         }
         Ok(())
@@ -184,6 +271,10 @@ pub trait HomeVolumeStore: Send + Sync {
     /// Optional evidence capability. Absence never grants deletion provenance.
     fn allocation_scope(&self) -> Option<HomeVolumeScope> {
         None
+    }
+    /// Historical authorities accepted by an explicit migration router.
+    fn accepts_scope(&self, scope: &HomeVolumeScope) -> bool {
+        self.allocation_scope().as_ref() == Some(scope)
     }
     /// Complete, validated inventory in this controller's storage scope.
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>>;

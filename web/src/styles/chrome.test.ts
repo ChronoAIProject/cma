@@ -22,8 +22,9 @@ describe('the migrated chrome sheets', () => {
   it('keeps the unreachable screen composed and free of alarm colours', () => {
     const css = readFileSync(join(SRC, 'AppError.css'), 'utf8');
     expect(css).toMatch(/\.app-error\s*\{[^}]*background: var\(--dsw-alias-bg-base\)/);
-    expect(css).toMatch(/\.app-error__what\s*\{[^}]*color: var\(--dsw-alias-label-primary\)/);
-    expect(css).toMatch(/\.app-error__next\s*\{[^}]*color: var\(--dsw-alias-label-tertiary\)/);
+    expect(css).toMatch(/\.app-error__title\s*\{[^}]*color: var\(--dsw-alias-label-primary\)/);
+    expect(css).toMatch(/\.app-error__next\s*\{[^}]*color: var\(--dsw-alias-label-secondary\)/);
+    expect(css).toMatch(/\.app-error__what\s*\{[^}]*color: var\(--dsw-alias-label-tertiary\)/);
     expect(css).not.toMatch(/var\(--dsw-alias-(?:state-error|interactive-bg-hover-danger)/);
   });
 });

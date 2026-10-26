@@ -1,6 +1,20 @@
 use super::*;
 
 impl HostedAdapter {
+    pub(super) async fn resume_checkpoint_writers_exact(
+        &self,
+        handle: &RuntimeHandle,
+        request: &CheckpointWriterResumeRequest,
+    ) -> crate::Result<CheckpointWriterResumeReceipt> {
+        self.known_state(handle).await?;
+        if !request.has_valid_writer_resume_token() {
+            return Err(AdapterError::Rejected(
+                "checkpoint writer resume token must be 64 lowercase hexadecimal characters".into(),
+            ));
+        }
+        self.resume_checkpoint_writer_hold(handle, request).await
+    }
+
     pub(super) async fn resume_checkpoint_writer_hold(
         &self,
         handle: &RuntimeHandle,

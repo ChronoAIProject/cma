@@ -78,6 +78,7 @@ fn rejects_duplicate_source_and_partition_mismatch() {
         auth: CustomAuth::Hmac { key_id: "k".into() },
         prompt_template: None,
         schema: None,
+        attachments: None,
     };
     let mut value =
         serde_json::from_str::<ChannelDefinition>(include_str!("fixtures/channel.json"))
@@ -99,7 +100,11 @@ fn activity_partition_keys_cover_each_rule() {
         (PartitionKey::PerEvent, "msg-1"),
     ] {
         assert_eq!(
-            activity.partition_key(&PartitionRule { version: 1, key }),
+            activity.partition_key(&PartitionRule {
+                version: 1,
+                key,
+                custom_key: None
+            }),
             expected
         );
     }

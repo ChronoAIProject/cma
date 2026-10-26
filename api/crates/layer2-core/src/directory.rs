@@ -101,6 +101,31 @@ impl UserDirectory {
         Ok(names)
     }
 
+    /// Called only after the resource policy has authorized sharing management.
+    /// Exposes only public identity fields, with a non-empty search and hard cap.
+    pub(crate) async fn share_recipients(
+        &self,
+        text: &str,
+    ) -> Result<Vec<PublicIdentity>, StoreError> {
+        if text.trim().len() < 2 || text.len() > 128 {
+            return Ok(Vec::new());
+        }
+        let query = DirectoryQuery {
+            page: PageRequest {
+                limit: 20,
+                cursor: None,
+            },
+            text: Some(text.trim().to_owned()),
+        };
+        let result = self.store.list(&query).await?;
+        Ok(result
+            .items
+            .into_iter()
+            .take(20)
+            .map(|u| u.identity)
+            .collect())
+    }
+
     pub async fn list(
         &self,
         caller: &Caller,

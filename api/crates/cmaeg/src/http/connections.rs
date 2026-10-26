@@ -31,6 +31,8 @@ pub fn router(service: ConnectionService) -> Router {
 }
 #[derive(Serialize, ToSchema)]
 pub struct CapabilityView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_features: Vec<String>,
     pub platforms: Vec<PlatformCapability>,
 }
 #[derive(Serialize, ToSchema)]
@@ -41,9 +43,14 @@ pub struct PlatformCapability {
     pub optional_capabilities: Vec<String>,
 }
 #[utoipa::path(get,path="/v1/channel-capabilities",operation_id="getChannelCapabilities",tag="connections",security(("creatorBearer"=[])),responses((status=200,body=CapabilityView)))]
-pub async fn capabilities(_creator: Creator) -> Response {
+pub async fn capabilities(State(service): State<ConnectionService>, _creator: Creator) -> Response {
     no_store(
         Json(CapabilityView {
+            source_features: if service.management.native_bot_mentions_writes_enabled {
+                vec!["native_bot_mentions_v1".into()]
+            } else {
+                Vec::new()
+            },
             platforms: vec![PlatformCapability {
                 id: "telegram".into(),
                 label: "Telegram".into(),
