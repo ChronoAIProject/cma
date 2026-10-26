@@ -208,7 +208,7 @@ impl DiscordRest {
     fn url(&self, path: &str) -> Result<Url, RestError> {
         self.origin.join(path).map_err(|_| RestError::Rejected)
     }
-    fn ready(&self, token: &Secret) -> Result<(), RestError> {
+    pub(super) fn ready(&self, token: &Secret) -> Result<(), RestError> {
         let mut cooldowns = self.cooldowns.lock().unwrap();
         cooldowns.retain(|_, until| *until > Instant::now());
         if let Some(until) =
@@ -226,7 +226,7 @@ impl DiscordRest {
         }
         Ok(())
     }
-    fn cooldown(&self, token: &Secret, seconds: f64) {
+    pub(super) fn cooldown(&self, token: &Secret, seconds: f64) {
         let seconds = if seconds.is_finite() && seconds > 0.0 {
             seconds.ceil().clamp(1.0, 3600.0) as u64
         } else {

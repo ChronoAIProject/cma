@@ -237,6 +237,7 @@ fn config(media: MediaConfig) -> Config {
         dynamic_sources_writes_enabled: false,
         relay_raw_verification_writes_enabled: false,
         native_discord_writes_enabled: false,
+        native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
