@@ -22,6 +22,12 @@ impl ChannelDefinition {
                     ..
                 },
             ) => platform == configured,
+            (
+                SourceKind::Discord { bot_id },
+                Source::Discord {
+                    bot_id: configured, ..
+                },
+            ) => bot_id == configured,
             (SourceKind::Custom, Source::Custom { .. }) => true,
             _ => false,
         })
@@ -41,7 +47,7 @@ impl ChannelDefinition {
             Source::Telegram { bot_username, .. } | Source::NyxidRelay { bot_username, .. } => {
                 bot_username.as_deref()
             }
-            Source::Custom { .. } => None,
+            Source::Custom { .. } | Source::Discord { .. } => None,
         }
     }
 

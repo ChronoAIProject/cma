@@ -89,10 +89,12 @@ pub fn default_receives_all(
         return true;
     };
     let includes_default = |targets: &[ConsumerId]| targets.iter().any(ConsumerId::is_default);
-    let chat = def
-        .sources
-        .iter()
-        .any(|source| matches!(source, Source::Telegram { .. } | Source::NyxidRelay { .. }));
+    let chat = def.sources.iter().any(|source| {
+        matches!(
+            source,
+            Source::Telegram { .. } | Source::Discord { .. } | Source::NyxidRelay { .. }
+        )
+    });
     let custom = def
         .sources
         .iter()

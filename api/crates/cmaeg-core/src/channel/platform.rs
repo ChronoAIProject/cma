@@ -61,6 +61,7 @@ impl ChannelDefinition {
         self.sources.iter().find_map(|source| match source {
             Source::NyxidRelay { platform, .. } => Some(*platform),
             Source::Telegram { .. } => Some(Platform::Telegram),
+            Source::Discord { .. } => Some(Platform::Discord),
             Source::Custom { .. } => None,
         })
     }

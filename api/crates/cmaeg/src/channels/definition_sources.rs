@@ -71,6 +71,15 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_username: bot_username.clone(),
                 admission: admission.clone(),
             },
+            SourceRequest::Discord {
+                bot_id,
+                intents,
+                admission,
+            } => Source::Discord {
+                bot_id: bot_id.clone(),
+                intents: *intents,
+                admission: admission.clone(),
+            },
             SourceRequest::NyxidRelay {
                 issuer,
                 key_id,
@@ -123,6 +132,7 @@ pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets 
             .collect(),
         provider_credential: Some(credentials.agent_key.clone()),
         telegram_bot_token: credentials.telegram_bot_token.clone(),
+        discord_bot_token: credentials.discord_bot_token.clone(),
         telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
         consumer_keys: Vec::new(),
     }
@@ -149,6 +159,16 @@ pub(super) fn validate_credentials(
                 ));
             }
         }
+    }
+    if credentials.discord_bot_token.as_ref().is_some_and(|token| {
+        token.as_str().is_empty()
+            || token.as_str().len() > 2048
+            || !token.as_str().bytes().all(|b| (33..=126).contains(&b))
+    }) {
+        return Err(ValidationError::new(
+            "/credentials/discord_bot_token",
+            "requires 1..=2048 printable bearer bytes",
+        ));
     }
     let mut keys = BTreeSet::new();
     for (index, secret) in credentials.hmac_secrets.iter().enumerate() {

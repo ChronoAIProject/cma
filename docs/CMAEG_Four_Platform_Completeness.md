@@ -109,3 +109,26 @@ that persistent source management is already implemented.
 Ordinary Discord messaging is therefore an achievable CMA implementation path,
 not a permanently blocked dependency on a NyxID change. This transport slice
 alone does not yet expose that capability to users.
+
+
+## Native source and journal follow-up
+
+The next slice adds native `discord` source and Activity reader variants, a
+sealed optional `discord_bot_token`, and the independent default-off
+`CMAEG_NATIVE_DISCORD_WRITES_ENABLED` management gate. `DurableJournal::acquire`
+reads the actual channel record, verifies the bot and Gateway discovery using
+read-only Discord API calls, and acquires a globally bot-bound encrypted CAS
+lease. `run_connection` executes the real transport with lease renewal and
+shutdown fencing. Identify quota/bucket reservations and resume checkpoints are
+persistent. MESSAGE_CREATE payloads plus public channel/routing snapshots are
+chunked into an immutable encrypted inbox before checkpoint advancement, with
+stable native message deduplication and seven-day retention. No NyxID envelope
+or relay authority is involved.
+
+The application still does not start native source supervision, dispatch the
+native inbox into routed admission/execution, or provide native REST text/media
+replies. Those are the remaining activation prerequisites; the source write gate
+stays disabled in the deployment manifest. Bot transfer between channels also
+requires explicit source lifecycle management. The initial transport-only
+boundary above describes its original commit; this follow-up replaces its
+credential/ownership/quota/journal gaps without claiming full messaging delivery.

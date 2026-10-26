@@ -69,6 +69,15 @@ pub async fn check(
             ));
             platform.as_str().to_owned()
         }
+        Source::Discord { .. } => {
+            checks.push(item(
+                "credential",
+                "Discord credential",
+                secrets.discord_bot_token.is_some(),
+                "Credential presence only; live Gateway intake and replies are not yet activated.",
+            ));
+            "discord".into()
+        }
         Source::Telegram { .. } => {
             checks.push(item(
                 "credential",

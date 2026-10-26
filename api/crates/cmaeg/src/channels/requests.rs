@@ -69,6 +69,12 @@ pub enum SourceRequest {
         bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
+    /// Native Discord Gateway. New writes require the native Discord write gate.
+    Discord {
+        bot_id: String,
+        intents: u64,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         key_id: String,
@@ -107,6 +113,8 @@ pub struct CredentialsRequest {
     #[serde(default)]
     pub telegram_bot_token: Option<Secret>,
     #[serde(default)]
+    pub discord_bot_token: Option<Secret>,
+    #[serde(default)]
     pub telegram_webhook_secret: Option<Secret>,
     #[serde(default)]
     pub hmac_secrets: Vec<HmacSecretRequest>,
@@ -121,6 +129,8 @@ pub struct CredentialPatch {
     pub channel_key: Option<Secret>,
     #[serde(default)]
     pub telegram_bot_token: Option<Secret>,
+    #[serde(default)]
+    pub discord_bot_token: Option<Secret>,
     #[serde(default)]
     pub telegram_webhook_secret: Option<Secret>,
     #[serde(default)]

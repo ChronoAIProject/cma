@@ -3186,3 +3186,69 @@ non-deleted member. CMA's current direct sends are text/card messages.
 
 Official contracts: https://core.telegram.org/bots/api#deletemessage and
 https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).
+
+
+## Native Discord source reader and durable intake
+
+The additive source `{"type":"discord","bot_id":"<snowflake>","intents":37377,
+"admission":{"type":"all"}}` names a CMAEG-owned Discord Gateway connection.
+It is distinct from `nyxid_relay` with `platform=discord`; native socket events
+must never be wrapped in a NyxID callback or a custom-producer authority. Its
+stable source slot is `discord`, and its Activity source is
+`{"type":"discord","bot_id":"<snowflake>"}`. Existing source serializations
+are unchanged. At most one native Discord source is allowed per channel, within
+the existing eight-source reader limit. Native automated-bot mention admission
+is not supported by this slice and is refused.
+
+`credentials.discord_bot_token` is accepted by create and credential-patch
+requests, retained only in the encrypted channel blob, and omitted from public
+channel responses and diagnostics. An absent token field is omitted from old
+blobs and creation fingerprints. The source requires MESSAGE_CONTENT plus guild
+or direct-message intents; unsupported intent bits and malformed bot IDs or
+credentials are refused. `CMAEG_NATIVE_DISCORD_WRITES_ENABLED`, default `false`,
+is independent of dynamic source writes. It gates introduction and changes to
+native source metadata or its credential; unchanged retained settings and removal
+remain possible while the flag is off. All serving and rollback readers must
+support the shape before enabling new writes.
+
+Read-only connection acquisition calls Discord `GET /users/@me` and
+`GET /gateway/bot` using the sealed credential at the fixed Discord API origin.
+The bot must match the configured ID and `bot=true`; responses, redirects and
+Gateway origins are bounded and validated. Only single-shard bots are supported.
+These reads do not publish a message, register a webhook or create a resource.
+
+The concrete native journal uses encrypted CAS records, with a global per-bot
+source binding, owner, monotonically increasing worker fence and thirty-second
+lease. A connection renews its lease every ten seconds without blocking socket
+heartbeats; authority loss stops it. Every admission rereads the sealed channel
+without the process cache. Credential/source revision changes fence the old
+worker. Bot transfer to another channel is not implicit, even after lease expiry.
+
+A fresh connection reserves an Identify against Discord's observed remaining
+session-start quota before opening its socket. Reservations survive process
+restarts and uncertain outcomes, and bucket zero has a five-second minimum
+spacing. Resume requires the exact stored checkpoint and spends no Identify.
+A journal authorizes exactly one connection attempt. Quota exhaustion is an
+explicit refusal; a fresh observation cannot restore already reserved quota
+within its reset window.
+
+MESSAGE_CREATE is persisted in an immutable, encrypted native inbox before the
+resume checkpoint advances. Native source record + bot ID + Discord message ID
+is its deduplication identity, independent of Gateway session and sequence.
+Bounded chunks preserve the raw native event and the public channel/routing
+snapshot; no bot or provider credential is copied into that snapshot. A replay
+restores the original inbox record, including after a policy edit. Lost write
+responses are resolved by reading the exact immutable record. Partial chunks
+cannot advance the checkpoint. Retention is seven days from the message's native
+snowflake time; expired native IDs are refused after retention instead of being
+re-executed as new messages.
+
+This release slice supplies source readers, gated source writes, discovery,
+owned connection execution, and durable raw intake. It does **not** enable
+application startup, native REST replies/media, or dispatch these inbox records
+to the routed turn executor. Consequently ordinary native Discord messaging is
+not advertised as available and its write flag stays off. The remaining
+integration must validate native actor/conversation/media facts, turn the retained
+snapshot into one admitted routing plan, and recover that exact plan without
+rerouting. It must also supervise source discovery/reconnection/revocation and
+wire native reply custody before activation. Relay Discord behavior is unchanged.

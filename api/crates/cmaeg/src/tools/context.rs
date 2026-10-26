@@ -300,6 +300,13 @@ pub(super) fn project(
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
+            SourceKind::Discord { .. } => Capabilities {
+                buttons: "unavailable".into(),
+                cards: "unavailable".into(),
+                attachments: "unavailable".into(),
+                max_text_chars: 2000,
+                ..Capabilities::custom()
+            },
             SourceKind::NyxidRelay { platform, .. } => {
                 Capabilities::relay_with_text_edits(platform, state.relay_text_edits_enabled)
             }

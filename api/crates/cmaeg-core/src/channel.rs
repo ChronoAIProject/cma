@@ -14,6 +14,7 @@ use crate::{
 
 mod consumer;
 mod custom_attachments;
+pub(crate) mod discord;
 mod extensions;
 mod lookup;
 mod partition;
@@ -118,6 +119,12 @@ pub enum Source {
         bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
+    /// Native Discord Gateway, independently owned by CMAEG.
+    Discord {
+        bot_id: String,
+        intents: u64,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         jwks_url: String,
@@ -200,9 +207,9 @@ impl AdmissionPolicy {
 impl Source {
     pub fn native_bot_mentions(&self) -> bool {
         match self {
-            Self::Telegram { admission, .. } | Self::NyxidRelay { admission, .. } => {
-                admission.native_bot_mentions()
-            }
+            Self::Telegram { admission, .. }
+            | Self::Discord { admission, .. }
+            | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
             Self::Custom { .. } => false,
         }
     }
@@ -427,6 +434,9 @@ impl ChannelDefinition {
         });
         // Emitted only when present, so a legacy blob keeps its exact bytes and
         // an older image, which refuses the unknown key, can still read it.
+        if let Some(token) = &self.secrets.discord_bot_token {
+            secrets["discord_bot_token"] = json!(token.as_str());
+        }
         if !self.secrets.consumer_keys.is_empty() {
             secrets["consumer_keys"] = self
                 .secrets

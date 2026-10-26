@@ -4,8 +4,9 @@ use cmaeg_core::{
 };
 use serde_json::json;
 
-const VALID: [&str; 9] = [
+const VALID: [&str; 10] = [
     "telegram",
+    "discord",
     "relay_telegram",
     "relay_lark",
     "relay_feishu",
@@ -33,7 +34,7 @@ fn relay(platform: Platform, route_ids: &[&str]) -> Source {
 }
 
 #[test]
-fn the_grammar_accepts_exactly_the_nine_slot_ids() {
+fn the_grammar_accepts_exactly_the_ten_slot_ids() {
     for value in VALID {
         let id = SourceId::parse(value).unwrap();
         assert_eq!(id.as_str(), value);
@@ -84,6 +85,17 @@ fn configured_sources_and_activity_sources_derive_the_same_slot() {
     };
     assert_eq!(native.source_id().as_str(), "telegram");
     assert_eq!(SourceKind::Custom.source_id().as_str(), "custom");
+    let discord: Source = serde_json::from_value(
+        json!({"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"}}),
+    )
+    .unwrap();
+    assert_eq!(
+        discord.source_id(),
+        SourceKind::Discord {
+            bot_id: "77".into()
+        }
+        .source_id()
+    );
     for (platform, expected) in PLATFORMS {
         assert_eq!(relay(platform, &["route-1"]).source_id().as_str(), expected);
         let activity = SourceKind::NyxidRelay {
