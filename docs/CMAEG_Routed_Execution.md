@@ -3,10 +3,10 @@
 This is a disabled execution foundation, following
 `docs/CMAEG_Routed_Admission.md`. It does not connect ordinary ingress to routing,
 install a scheduler, configure a provider capability, or activate production
-fan-out. The concrete HTTP execution adapter and production preparation
-builder are implemented; a scheduler and a durable platform delivery journal
-remain required before activation. Existing ingress and default launch behavior are
-unchanged.
+fan-out. The concrete HTTP execution adapter, production preparation builder,
+bounded scheduler and durable delivery receipts are implemented. The
+replay/projection executor and production composition remain required before
+activation. Existing ingress and default launch behavior are unchanged.
 
 `Dispatcher::dispatch` accepts an original event identity and one target ID. It
 loads the committed admission and finds that ID in its immutable target list.
