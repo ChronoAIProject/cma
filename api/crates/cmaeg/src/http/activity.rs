@@ -147,12 +147,22 @@ pub async fn stream(
                     ),
                 ));
             }
+            let mut refresh_at = tokio::time::Instant::now() + Duration::from_secs(1);
             loop {
-                let reset = match tokio::time::timeout_at(deadline, updates.recv()).await {
-                    Ok(Ok(updated)) if updated == record => false,
-                    Ok(Ok(_)) => continue,
-                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => true,
-                    _ => return None,
+                // A draining Gateway and its replacement can both commit to
+                // shared records. Local notifications give immediate delivery;
+                // a bounded server-side refresh also observes the other process.
+                // Browsers keep one SSE connection and never poll snapshots.
+                let reset = tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => return None,
+                    _ = tokio::time::sleep_until(refresh_at) => false,
+                    update = updates.recv() => match update {
+                        Ok(updated) if updated == record => false,
+                        Ok(_) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
+                        Err(_) => return None,
+                    },
                 };
                 // Reuse the same credential validation/cache policy as public
                 // reads. Token expiry, revoked read permission, owner change or
@@ -167,6 +177,7 @@ pub async fn stream(
                 };
                 let bound = deadline.min(tokio::time::Instant::now() + Duration::from_secs(5));
                 let page = tokio::time::timeout_at(bound, read).await.ok()??;
+                refresh_at = tokio::time::Instant::now() + Duration::from_secs(1);
                 if !reset && page.cursor == cursor {
                     continue;
                 }
