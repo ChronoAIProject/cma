@@ -80,6 +80,8 @@ mod builder_test_media;
 mod builder_tests;
 
 #[cfg(test)]
+mod executor_activity_tests;
+#[cfg(test)]
 mod executor_tests;
 #[cfg(test)]
 mod projection_store_tests;

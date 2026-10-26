@@ -98,6 +98,15 @@ impl RoutedTargetExecutor {
         };
         if projection.terminal_acknowledged(lease) {
             journal.complete(lease, &response_id).await?;
+            journal
+                .observe(
+                    &work.identity,
+                    crate::activity::Change::settled(
+                        body.delivery.consumer.as_str(),
+                        response_id.clone(),
+                    ),
+                )
+                .await;
             return Ok(Disposition::Settled);
         }
         if lease
@@ -134,6 +143,13 @@ impl RoutedTargetExecutor {
             if projection.native_agent_id.is_none() {
                 projection.native_agent_id = Some(attached.snapshot.native_agent_id);
                 journal.save_projection(lease, &projection).await?;
+                let mut change = crate::activity::Change::state(
+                    body.delivery.consumer.as_str(),
+                    crate::activity::ConsumerState::Accepted,
+                    Some(response_id.clone()),
+                );
+                change.agent_id = projection.native_agent_id.clone();
+                journal.observe(&work.identity, change).await;
             }
             loop {
                 if started.elapsed() >= self.invocation_bound || observed >= self.frame_limit {
@@ -189,6 +205,15 @@ impl RoutedTargetExecutor {
                 }
                 if projection.terminal_acknowledged(lease) {
                     journal.complete(lease, &response_id).await?;
+                    journal
+                        .observe(
+                            &work.identity,
+                            crate::activity::Change::settled(
+                                body.delivery.consumer.as_str(),
+                                response_id.clone(),
+                            ),
+                        )
+                        .await;
                     return Ok(Disposition::Settled);
                 }
             }

@@ -48,15 +48,22 @@ pub(super) struct Sender {
 }
 impl Sender {
     /// Report the consumer bound to this event reference, at its origin.
-    pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
-        self.observe_at(event, step, outcome, Destination::Origin);
+    pub async fn observe(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+    ) {
+        self.observe_at(event, step, outcome, Destination::Origin, None)
+            .await;
     }
-    pub fn observe_at(
+    pub async fn observe_at(
         &self,
         event: &EventRefPayload,
         step: DeliveryStep,
         outcome: &DeliveryOutcome,
         destination: Destination,
+        default: Option<&super::destination::DefaultDestination>,
     ) {
         self.observer.delivered(
             &event.record_id,
@@ -69,6 +76,34 @@ impl Sender {
             outcome,
             destination,
         );
+        if default.is_none()
+            && matches!(
+                event.reply,
+                ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
+            )
+        {
+            // Custom delivery reports its actual local queue and each webhook
+            // leg separately; the compatibility aggregate is not another send.
+            return;
+        }
+        self.observer
+            .checkpoint(
+                &event.record_id,
+                &event.event_id,
+                crate::activity::facts::delivery(
+                    event
+                        .consumer
+                        .as_ref()
+                        .unwrap_or_else(|| default_consumer())
+                        .as_str(),
+                    step,
+                    outcome,
+                    destination,
+                    &event.reply,
+                    default,
+                ),
+            )
+            .await;
     }
 
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(

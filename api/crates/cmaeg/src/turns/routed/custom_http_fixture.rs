@@ -43,8 +43,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-struct NoLegacy;
 pub(super) const AGENT_KEY: &str = "nyx_cmaeg_custom_http_default_fixture";
+
+struct NoLegacy;
 impl TurnLauncher for NoLegacy {
     fn launch(&self, _: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
         panic!("selected routed HTTP ingress must never launch the legacy runner")
@@ -57,6 +58,7 @@ pub(super) struct App {
     pub waiters: Arc<SyncRegistry>,
     pub url: String,
     pub journal: Journal,
+    pub activity: Arc<crate::activity::ActivityStore>,
     store: PlanStore,
     stop: watch::Sender<bool>,
     worker: Option<JoinHandle<ScheduleReport>>,
@@ -130,7 +132,16 @@ impl App {
             Default::default(),
         );
         let store = PlanStore::new(records.records.clone(), keys.clone());
-        let journal = Journal::new(records.records.clone(), keys.clone());
+        let activity = Arc::new(crate::activity::ActivityStore::new(
+            records.records.clone(),
+            keys.clone(),
+        ));
+        let observer = Arc::new(crate::activity::ObservedActivity::new(
+            activity.clone(),
+            Arc::new(crate::turns::observer::NoopObserver),
+        ));
+        let journal =
+            Journal::new(records.records.clone(), keys.clone()).with_activity(activity.clone());
         let provider = HttpServer::start().await;
         {
             let mut memory = provider.memory.lock().unwrap();
@@ -154,7 +165,8 @@ impl App {
             authority.clone(),
         ));
         let waiters = Arc::new(SyncRegistry::default());
-        let mut custom = CustomDelivery::new("https://gateway.example".into(), waiters.clone());
+        let mut custom = CustomDelivery::new("https://gateway.example".into(), waiters.clone())
+            .with_activity(observer.clone());
         if let Some(webhook) = webhook {
             custom.webhooks = WebhookClient::with_transport(webhook);
         }
@@ -215,6 +227,7 @@ impl App {
         .with_sync_delivery(true);
         let ingress = IngressState::new(resolver, keys, Default::default(), Arc::new(NoLegacy))
             .unwrap()
+            .with_activity_observer(observer)
             .with_media_enabled(media.is_some())
             .with_routed(Some(Arc::new(routed)));
         let router = crate::http::events::router(CustomIngressState {
@@ -238,6 +251,7 @@ impl App {
             waiters,
             url,
             journal,
+            activity,
             store,
             stop,
             worker,

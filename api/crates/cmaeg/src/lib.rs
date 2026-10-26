@@ -1,5 +1,6 @@
 //! CMA Event Gateway HTTP service.
 
+pub mod activity;
 mod audit;
 pub mod auth;
 pub mod channels;

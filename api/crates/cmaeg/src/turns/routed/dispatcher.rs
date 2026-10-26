@@ -217,6 +217,19 @@ impl Dispatcher {
             .consumer(Some(&target.launch.consumer))
             .and_then(|consumer| consumer.credential)
             .ok_or(ExecutionError::AuthorityChanged)?;
+        let mut change = crate::activity::Change::state(
+            target.launch.consumer.as_str(),
+            crate::activity::ConsumerState::Dispatching,
+            None,
+        );
+        change.provider = Some(target.launch.provider.slug.to_string());
+        change.conversation_id = Some(target.launch.event.conversation_id.to_string());
+        change.display_name = current
+            .definition
+            .consumer(Some(&target.launch.consumer))
+            .map(|c| c.label.to_owned());
+        self.journal.observe(&plan.identity, change).await;
+        self.journal.guard(lease).await?;
         match self
             .port
             .start(&body, &target.launch.provider, credential)
@@ -232,6 +245,16 @@ impl Dispatcher {
                         },
                     )
                     .await?;
+                self.journal
+                    .observe(
+                        &plan.identity,
+                        crate::activity::Change::state(
+                            target.launch.consumer.as_str(),
+                            crate::activity::ConsumerState::Accepted,
+                            Some(response_id.clone()),
+                        ),
+                    )
+                    .await;
                 if support.response_replay {
                     Ok(RunResult::Replay {
                         body: Box::new(body),
@@ -249,10 +272,30 @@ impl Dispatcher {
             StartResult::Rejected { code } if !code.is_empty() && code.len() <= 128 => {
                 let phase = Phase::Refused { code };
                 self.journal.transition(lease, phase.clone()).await?;
+                self.journal
+                    .observe(
+                        &plan.identity,
+                        crate::activity::Change::state(
+                            target.launch.consumer.as_str(),
+                            crate::activity::ConsumerState::Refused,
+                            None,
+                        ),
+                    )
+                    .await;
                 Ok(RunResult::Done(DispatchOutcome::Terminal(phase)))
             }
             _ => {
                 self.journal.transition(lease, Phase::Unknown).await?;
+                self.journal
+                    .observe(
+                        &plan.identity,
+                        crate::activity::Change::state(
+                            target.launch.consumer.as_str(),
+                            crate::activity::ConsumerState::Unknown,
+                            None,
+                        ),
+                    )
+                    .await;
                 Ok(RunResult::Done(DispatchOutcome::Unknown))
             }
         }

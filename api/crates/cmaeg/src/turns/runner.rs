@@ -48,6 +48,7 @@ pub struct TurnRunner {
     /// attachment descriptors only.
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
+    activity: Arc<dyn super::observer::ActivityObserver>,
 }
 impl TurnRunner {
     pub fn new(
@@ -65,7 +66,13 @@ impl TurnRunner {
             sequencer: Arc::default(),
             media: None,
             prepare: PrepareConfig::default(),
+            activity: Arc::new(super::observer::NoopObserver),
         }
+    }
+    /// Observe durable dispatch facts through the composition's shared observer.
+    pub fn with_activity(mut self, activity: Arc<dyn super::observer::ActivityObserver>) -> Self {
+        self.activity = activity;
+        self
     }
     /// Prepare media turns with `media` under `prepare`'s bounds.
     pub fn with_media(mut self, media: Option<Arc<MediaService>>, prepare: PrepareConfig) -> Self {
@@ -226,6 +233,21 @@ impl TurnRunner {
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;
+        let mut change = crate::activity::Change::state(
+            consumer.id.as_str(),
+            crate::activity::ConsumerState::Dispatching,
+            None,
+        );
+        change.provider = Some(consumer.provider.slug.to_string());
+        change.display_name = Some(consumer.label.to_owned());
+        change.conversation_id = Some(turn.conversation_id.to_string());
+        self.activity
+            .checkpoint(
+                &turn.channel.definition.record_id,
+                &turn.activity.event_id,
+                change,
+            )
+            .await;
         loop {
             match self
                 .providers

@@ -148,6 +148,6 @@ pub(super) async fn reply(
     };
     let (result, effects) = sender.reply(&context, &state.event, message).await;
     state.first_send_done |= effects.first_send_done;
-    sender.observe(&state.event, step, &result.delivery);
+    sender.observe(&state.event, step, &result.delivery).await;
     result
 }

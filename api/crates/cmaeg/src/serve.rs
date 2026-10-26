@@ -43,6 +43,10 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    observers.activity = std::sync::Arc::new(crate::activity::ObservedActivity::new(
+        state.activity.clone(),
+        observers.activity.clone(),
+    ));
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -72,7 +76,8 @@ pub(crate) async fn serve(
     let custom_delivery = delivery::custom::CustomDelivery::new(
         config.management.public_url.clone(),
         waiters.clone(),
-    );
+    )
+    .with_activity(observers.activity.clone());
     let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),
         state.master_keys.clone(),
@@ -140,6 +145,7 @@ pub(crate) async fn serve(
             delivery.clone(),
             config.turns.clone(),
         )
+        .with_activity(observers.activity.clone())
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
@@ -153,7 +159,10 @@ pub(crate) async fn serve(
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        observers.launcher(runner.clone()),
+        std::sync::Arc::new(turns::observer::ObservedLauncher::new(
+            runner.clone(),
+            observers.activity.clone(),
+        )),
     )?
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects)

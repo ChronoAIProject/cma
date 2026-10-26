@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub activity: Arc<crate::activity::ActivityStore>,
     pub resolver: super::resolver::ChannelResolver,
     pub readiness: crate::http::readiness::Readiness,
     pub providers: Arc<ProviderClient>,
@@ -108,6 +109,10 @@ impl ManagementState {
             index.clone(),
         );
         Self {
+            activity: Arc::new(crate::activity::ActivityStore::new(
+                (*records).clone(),
+                config.master_keys.clone(),
+            )),
             resolver,
             readiness: crate::http::readiness::Readiness::initialized(),
             providers,

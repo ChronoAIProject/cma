@@ -50,6 +50,32 @@ async fn public_custom_http_stream_runs_real_routed_provider_and_closes_on_compl
         "custom"
     );
     assert!(post["input"].to_string().contains("passed"));
+    let activity = app
+        .activity
+        .latest(
+            &plans[0].identity.owner,
+            plans[0].identity.record_id.as_str(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activity.items.len(), 1);
+    assert_eq!(
+        activity.items[0].event_id,
+        plans[0].identity.event_id.as_str()
+    );
+    let consumer = &activity.items[0].consumers[0];
+    assert_eq!(consumer.state, crate::activity::ConsumerState::Completed);
+    assert!(
+        consumer.dispatched_at.is_some()
+            && consumer.accepted_at.is_some()
+            && consumer.produced_at.is_some()
+            && consumer.completed_at.is_some()
+    );
+    assert!(consumer.agent_id.is_some() && consumer.response_id.is_some());
+    assert!(consumer
+        .deliveries
+        .iter()
+        .any(|d| d.outcome == "buffered" && d.confirmed_at.is_none()));
 }
 
 #[tokio::test]
