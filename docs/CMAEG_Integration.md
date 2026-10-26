@@ -81,7 +81,12 @@ cursor. Every connection sends the current snapshot first. Reconnect with
 `Last-Event-ID` or the `cursor` query parameter. A cursor older than retention
 receives an SSE `reset` event containing the current full snapshot. Apply each
 snapshot atomically. The service subscribes before reading, and commits changes
-before publishing update notifications. No client polling is required.
+before publishing update notifications. Local commits notify the stream
+immediately. While connected, a one-second server-side consistency refresh also
+observes commits from another Gateway process during rolling deployment; unchanged
+cursors do not emit duplicate activity frames. The refresh interval excludes
+record/authentication latency and does not replace normal immediate notifications.
+No client polling is required.
 
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs

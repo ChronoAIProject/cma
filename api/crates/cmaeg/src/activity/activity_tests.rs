@@ -257,7 +257,7 @@ async fn previous_day_duplicate_keeps_first_receipt_and_one_row() {
 }
 
 #[tokio::test]
-async fn public_read_and_stream_enforce_owner_and_push_committed_progress_without_polling() {
+async fn public_read_and_stream_enforce_owner_and_push_progress_without_client_polling() {
     let (_server, mut state, request, mut creator) = fixture_app().await;
     let _auth = live_auth(&mut state, &mut creator).await;
     let raw = request.channel.id.to_string();
@@ -320,6 +320,60 @@ async fn public_read_and_stream_enforce_owner_and_push_committed_progress_withou
     assert!(std::str::from_utf8(&next)
         .unwrap()
         .contains("response-live"));
+}
+
+#[tokio::test]
+async fn open_stream_observes_another_gateway_without_a_local_notification() {
+    let (server, mut state, request, mut creator) = fixture_app().await;
+    let _auth = live_auth(&mut state, &mut creator).await;
+    let record = request.channel.definition.record_id.as_str();
+    let other_gateway = ActivityStore::new(server.records.clone(), Arc::new(fixture::keys()));
+    let response = crate::http::activity::stream(
+        State(state.clone()),
+        creator,
+        Path(request.channel.id.to_string()),
+        Query(Default::default()),
+        auth_headers(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    stream.next().await.unwrap().unwrap();
+    // The independent store models a replacement pod. Its notification channel
+    // has no connection to the retained stream's original Gateway process.
+    other_gateway.received(&request).await.unwrap();
+    let received = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(std::str::from_utf8(&received).unwrap().contains("event-1"));
+    other_gateway
+        .change(
+            record,
+            request.activity.event_id.as_str(),
+            &Change::state(
+                "default",
+                ConsumerState::Produced,
+                Some("remote-response".into()),
+            ),
+        )
+        .await
+        .unwrap();
+    let produced = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(std::str::from_utf8(&produced)
+        .unwrap()
+        .contains("remote-response"));
+    // Consistency checks do not emit duplicate Activity frames when unchanged.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1100), stream.next())
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
