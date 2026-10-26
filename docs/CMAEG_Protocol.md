@@ -3001,6 +3001,9 @@ an automatic resend. Plain text retains its configured reply timeout.
    ASCII byte `Idempotency-Key`, accepts `{source_id, route_id, message}`. `message`
    is the existing `OutboundMessage`. It returns 201 `OutboundReceipt`, initially
    `status: prepared`. Preparation has no external delivery effect.
+   Repeating the exact saved owner/channel/key/body recovers the existing receipt
+   even after writer/media gates close or its old source configuration changes;
+   this recovery grants no new send authority and preserves cancellation.
 2. `POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send` accepts the
    **same OutboundMessage** and commits at most one upstream attempt. The message
    must match the canonical hash admitted at preparation. No automatic retry occurs.

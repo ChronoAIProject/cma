@@ -156,6 +156,55 @@ async fn outbound_gate_preserves_reads_and_cancel_and_refuses_new_preparations()
 }
 
 #[tokio::test]
+async fn uncertain_prepare_recovers_exact_receipt_after_media_gate_and_route_removal() {
+    let f = Fixture::new(Platform::Telegram).await;
+    let mut request = request();
+    request.message = serde_json::from_value(json!({
+        "native_attachments": [{"kind":"image","source":{"type":"url","url":"https://files.example/image.png"}}]
+    })).unwrap();
+    let first = outbound::prepare(&f.state, &owner(), &f.channel, "recover", request.clone())
+        .await
+        .unwrap();
+    f.change_record(&f.record, |value| {
+        value["sources"][0]["route_ids"] = json!(["91000000-0000-4000-8000-000000000002"]);
+    });
+    let mut off = f.restart();
+    off.outbound_messages_writes_enabled = false;
+    off.outbound_relay = None;
+    let recovered = outbound::prepare(&off, &owner(), &f.channel, "recover", request.clone())
+        .await
+        .unwrap();
+    assert_eq!(recovered.delivery_id, first.delivery_id);
+    assert_eq!(recovered.status, OutboundStatus::Prepared);
+    assert_eq!(
+        outbound::prepare(&off, &owner(), &f.channel, "new", request.clone())
+            .await
+            .err()
+            .unwrap()
+            .status,
+        403
+    );
+    request.message.text = Some("changed body".into());
+    assert_eq!(
+        outbound::prepare(&off, &owner(), &f.channel, "recover", request)
+            .await
+            .err()
+            .unwrap()
+            .status,
+        409
+    );
+    assert_eq!(
+        outbound::cancel(&off, &owner(), &f.channel, &recovered.delivery_id)
+            .await
+            .unwrap()
+            .status,
+        OutboundStatus::Cancelled
+    );
+    assert_eq!(f.probe.calls.load(Ordering::SeqCst), 0);
+    f.close().await;
+}
+
+#[tokio::test]
 async fn initiated_template_headers_and_body_are_preserved_and_private_links_refused() {
     let f = Fixture::new(Platform::Whatsapp).await;
     let value = json!({"whatsapp_template":{"name":"invoice","language":{"code":"en_US"},"components":[
@@ -188,6 +237,10 @@ async fn initiated_template_headers_and_body_are_preserved_and_private_links_ref
     assert_eq!(
         f.probe.bodies.lock().unwrap()[0]["message"]["metadata"]["template"],
         value["whatsapp_template"]
+    );
+    assert_eq!(
+        *f.probe.timeouts.lock().unwrap(),
+        vec![Duration::from_secs(60)]
     );
     for (index, link) in [
         "https://127.0.0.1/a",

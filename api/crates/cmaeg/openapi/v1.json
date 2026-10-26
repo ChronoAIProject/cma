@@ -3903,6 +3903,13 @@
           "native_bot_mentions_writes_enabled": {
             "type": "boolean"
           },
+          "native_media_writes_enabled": {
+            "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "outbound_messages_writes_enabled": {
             "type": [
               "boolean",
