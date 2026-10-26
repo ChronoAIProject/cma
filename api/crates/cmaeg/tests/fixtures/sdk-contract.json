@@ -4153,7 +4153,8 @@
           }
         ],
         "relay_raw_verification_writes_enabled": false,
-        "outbound_messages_writes_enabled": false
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       }
     },
     {
@@ -4183,7 +4184,8 @@
           }
         ],
         "relay_raw_verification_writes_enabled": false,
-        "outbound_messages_writes_enabled": false
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       }
     },
     {
@@ -4222,7 +4224,8 @@
           }
         ],
         "relay_raw_verification_writes_enabled": false,
-        "outbound_messages_writes_enabled": false
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5449,7 +5452,8 @@
         }
       ],
       "relay_raw_verification_writes_enabled": false,
-      "outbound_messages_writes_enabled": false
+      "outbound_messages_writes_enabled": false,
+      "native_media_writes_enabled": false
     }
   ],
   "PrepareOutboundMessage": [

@@ -25,9 +25,11 @@ const ROUTE: &str = "91000000-0000-4000-8000-000000000001";
 struct Probe {
     calls: AtomicUsize,
     lost: AtomicBool,
+    omit_platform_receipt: AtomicBool,
     blocked: AtomicBool,
     entered: tokio::sync::Notify,
     bodies: Mutex<Vec<serde_json::Value>>,
+    timeouts: Mutex<Vec<Duration>>,
 }
 impl RelayTransport for Probe {
     fn post(
@@ -35,12 +37,13 @@ impl RelayTransport for Probe {
         url: Url,
         headers: HeaderMap,
         body: Vec<u8>,
-        _: Duration,
+        timeout: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         Box::pin(async move {
             assert_eq!(url.path(), "/api/v1/channel-relay/send");
             assert_eq!(headers["authorization"], "Bearer nyx_route_secret");
             self.calls.fetch_add(1, Ordering::SeqCst);
+            self.timeouts.lock().unwrap().push(timeout);
             self.bodies
                 .lock()
                 .unwrap()
@@ -51,6 +54,12 @@ impl RelayTransport for Probe {
             }
             if self.lost.load(Ordering::SeqCst) {
                 return Err(TransportError::Unavailable);
+            }
+            if self.omit_platform_receipt.load(Ordering::SeqCst) {
+                return Ok(HttpReply::new(
+                    StatusCode::OK,
+                    br#"{"message_id":"receipt"}"#.to_vec(),
+                ));
             }
             Ok(HttpReply::new(
                 StatusCode::OK,
