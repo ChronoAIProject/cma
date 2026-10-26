@@ -314,6 +314,47 @@ async fn unsupported_delivery_never_commits_or_launches_but_retries_keep_origina
 }
 
 #[tokio::test]
+async fn custom_sync_admission_requires_the_explicit_shared_stream_composition() {
+    let request = || {
+        let mut request = fixture::request(
+            |value| {
+                fixture::targets(value);
+                value["reply"]["sinks"] = serde_json::json!([{"type":"sync"}]);
+            },
+            fixture::custom(None),
+        );
+        fixture::rewrite_ref(&mut request, |event| {
+            event.reply = cmaeg_core::seal::ReplyAddress::Sync {
+                waiter: "shared-custom-waiter".into(),
+            };
+        });
+        request
+    };
+    let mut setup = Setup::new(&request(), true).await;
+    assert!(matches!(
+        setup.launch(request(), b"custom-event", true).await,
+        LaunchOutcome::Refused(Problem { status: 422, .. })
+    ));
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+    Arc::get_mut(setup.state.routed.as_mut().unwrap())
+        .unwrap()
+        .sync_delivery_enabled = true;
+    admitted(setup.launch(request(), b"custom-event", true).await);
+    assert_eq!(
+        setup
+            .server
+            .store()
+            .recover_all_page(None, 32)
+            .await
+            .unwrap()
+            .plans
+            .len(),
+        1
+    );
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn pausing_admission_keeps_committed_retries_and_refuses_new_work_before_writes() {
     let mut setup = Setup::new(&request(), true).await;
     let first = admitted(setup.launch(request(), b"wire", true).await);

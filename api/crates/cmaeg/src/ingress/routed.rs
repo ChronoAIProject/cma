@@ -8,7 +8,7 @@ use super::{
 };
 use crate::turns::{
     observer::{ActivityObserver, LaunchClass},
-    routed::{scheduler::ScheduleHandle, validate_routed_delivery},
+    routed::{scheduler::ScheduleHandle, validate_routed_delivery_with_sync},
 };
 use cmaeg_core::{
     activity::ActivityKind,
@@ -35,6 +35,7 @@ pub struct RoutedIngress {
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
     admission_enabled: bool,
+    sync_delivery_enabled: bool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -55,6 +56,7 @@ impl RoutedIngress {
             non_human_providers,
             replay_providers,
             admission_enabled: true,
+            sync_delivery_enabled: false,
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
     }
@@ -65,6 +67,12 @@ impl RoutedIngress {
 
     pub fn with_admissions_enabled(mut self, enabled: bool) -> Self {
         self.admission_enabled = enabled;
+        self
+    }
+    /// Enable only when execution shares the ingress SyncRegistry through
+    /// DeliveryCoordinator::with_custom_stream.
+    pub fn with_sync_delivery(mut self, enabled: bool) -> Self {
+        self.sync_delivery_enabled = enabled;
         self
     }
 
@@ -119,7 +127,12 @@ impl RoutedIngress {
                         "routed_provider_replay_unavailable",
                     ));
                 }
-                validate_routed_delivery(&request.channel, &plan).map_err(|_| {
+                validate_routed_delivery_with_sync(
+                    &request.channel,
+                    &plan,
+                    self.sync_delivery_enabled,
+                )
+                .map_err(|_| {
                     Problem::new(
                         ProblemCode::AdmissionRefused,
                         422,
