@@ -1,7 +1,7 @@
 //! Durable, encrypted transport interaction state. Business workflow state belongs to providers.
 use crate::{
     channels::resolver::ResolvedChannel,
-    providers::ProviderClient,
+    providers::{EventContextSnapshot, ProviderClient},
     records::{RecordClient, RecordError},
 };
 use cmaeg_core::{
@@ -131,6 +131,17 @@ impl InteractionStore {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> Result<PreparedCard, Error> {
+        let context = self.event_context(channel, event).await?;
+        self.prepare_with_context(channel, event, message, context)
+            .await
+    }
+    /// Read once before selecting a native representation. Invalid authority is
+    /// an error, never a reason to fall back to another delivery path.
+    pub(crate) async fn event_context(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+    ) -> Result<EventContextSnapshot, Error> {
         let consumer = channel
             .consumer(event.consumer.as_ref())
             .ok_or(Error::Unavailable)?;
@@ -146,6 +157,20 @@ impl InteractionStore {
             )
             .await
             .map_err(|_| Error::Unavailable)?;
+        if context.channel_id != channel.id || !event.verifies_activity(&context.activity) {
+            return Err(Error::Denied);
+        }
+        Ok(context)
+    }
+    /// Reuse the verified preflight snapshot without a second provider request.
+    /// The final binding check also applies to the existing public prepare path.
+    pub(crate) async fn prepare_with_context(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+    ) -> Result<PreparedCard, Error> {
         if context.channel_id != channel.id || !event.verifies_activity(&context.activity) {
             return Err(Error::Denied);
         }
@@ -238,6 +263,7 @@ impl InteractionStore {
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
         MessageRef::seal(
             &MessageRefPayload {
+                telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),
                 platform_message_id: destination.platform_id.clone(),

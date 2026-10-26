@@ -48,6 +48,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// New exact-message effects; absent until compatible readers are deployed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effects: Option<super::MessageEffectsCapabilities>,
     /// Approved WhatsApp template replies only; no callbacks or initiated sends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,
@@ -102,6 +105,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            message_effects: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -121,6 +125,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            message_effects: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -136,6 +141,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            message_effects: None,
         }
     }
     /// Legacy capabilities before ordinary relay text-edit issuance is enabled.
@@ -267,6 +273,16 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        message_effects: state.telegram_effects_issuance_enabled.then(|| {
+            super::MessageEffectsCapabilities::new(
+                activity_verified
+                    && state.telegram_effects.is_some()
+                    && super::message_effects::authority::event_supported(
+                        channel, event, &activity,
+                    ),
+                None,
+            )
+        }),
         whatsapp_templates: (state.whatsapp_templates_enabled
             && matches!(
                 event.reply,

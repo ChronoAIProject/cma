@@ -242,6 +242,7 @@ async fn admit_update(
         &state.master_keys,
         timing.received(),
         now,
+        state.telegram_effects_issuance_enabled,
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, so Telegram does not redeliver the update.

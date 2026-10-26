@@ -128,6 +128,7 @@ mod tests {
             version: 1,
         };
         let event = EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: None,
             channel_id: channel.id.clone(),

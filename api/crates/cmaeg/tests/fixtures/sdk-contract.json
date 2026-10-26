@@ -622,7 +622,14 @@
           "base64"
         ]
       },
-      "whatsapp_templates": true
+      "whatsapp_templates": true,
+      "message_effects": {
+        "delete": true,
+        "expires_at": 1800000000,
+        "max_reactions": 1,
+        "reaction": true,
+        "scope": "confirmed_native_bot_message"
+      }
     }
   ],
   "ChannelCreateRequest": [
@@ -2712,7 +2719,14 @@
             "base64"
           ]
         },
-        "whatsapp_templates": true
+        "whatsapp_templates": true,
+        "message_effects": {
+          "delete": true,
+          "expires_at": 1800000000,
+          "max_reactions": 1,
+          "reaction": true,
+          "scope": "confirmed_native_bot_message"
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -2825,7 +2839,14 @@
             "base64"
           ]
         },
-        "whatsapp_templates": true
+        "whatsapp_templates": true,
+        "message_effects": {
+          "delete": true,
+          "expires_at": 1800000000,
+          "max_reactions": 1,
+          "reaction": true,
+          "scope": "confirmed_native_bot_message"
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -5591,6 +5612,57 @@
   "WhatsappTemplateDateTime": [
     {
       "fallback_value": "26 October 2026"
+    }
+  ],
+  "EmptyEffectRequest": [
+    {}
+  ],
+  "MessageEffectReceipt": [
+    {
+      "delivery": {
+        "outcome": "confirmed",
+        "platform_message_id": "10"
+      }
+    },
+    {
+      "delivery": {
+        "outcome": "unknown",
+        "reason": "telegram_response_unconfirmed"
+      }
+    }
+  ],
+  "MessageEffectsCapabilities": [
+    {
+      "delete": true,
+      "expires_at": 1800000000,
+      "max_reactions": 1,
+      "reaction": true,
+      "scope": "confirmed_native_bot_message"
+    }
+  ],
+  "MessageReactionRequest": [
+    {
+      "is_big": false,
+      "reaction": [
+        {
+          "emoji": "👍",
+          "type": "emoji"
+        }
+      ]
+    },
+    {
+      "is_big": false,
+      "reaction": []
+    }
+  ],
+  "TelegramReaction": [
+    {
+      "emoji": "👍",
+      "type": "emoji"
+    },
+    {
+      "custom_emoji_id": "123456",
+      "type": "custom_emoji"
     }
   ]
 }
