@@ -74,10 +74,25 @@ fn allowed(method: &Method, path: &str) -> bool {
             method == Method::GET
         }
         ["", "v1", "channels"] => matches!(*method, Method::GET | Method::POST),
+        ["", "v1", "channel-capabilities"] | ["", "v1", "channel-connections"] => {
+            method == Method::GET
+        }
         ["", "v1", "channels", value] if id(value) => {
             matches!(*method, Method::GET | Method::PUT | Method::DELETE)
         }
         ["", "v1", "channels", value, "test"] if id(value) => method == Method::POST,
+        ["", "v1", "channels", value, "routing"] if id(value) => method == Method::PUT,
+        ["", "v1", "channels", value, "outbound-messages"] if id(value) => method == Method::POST,
+        ["", "v1", "channels", value, "outbound-messages", delivery]
+            if id(value) && id(delivery) =>
+        {
+            matches!(*method, Method::GET | Method::DELETE)
+        }
+        ["", "v1", "channels", value, "outbound-messages", delivery, "send"]
+            if id(value) && id(delivery) =>
+        {
+            method == Method::POST
+        }
         ["", "v1", "channels", value, "activity"]
         | ["", "v1", "channels", value, "activity", "stream"]
             if id(value) =>
