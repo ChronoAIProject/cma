@@ -1,10 +1,14 @@
-//! Bounded approved-template payloads. Destination authority remains in the event.
+//! Bounded approved-template payloads; destination authority is admitted separately.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{require_string, ValidationError};
+use crate::ValidationError;
+
+#[path = "whatsapp_template_parameters.rs"]
+mod parameters;
+pub use parameters::*;
 
 pub const MAX_TEMPLATE_COMPONENTS: usize = 5;
 pub const MAX_TEMPLATE_PARAMETERS: usize = 20;
@@ -28,7 +32,7 @@ pub struct WhatsappTemplateLanguage {
     pub code: String,
 }
 
-/// This initial contract deliberately supports only positional text parameters.
+/// Bounded positional parameters for approved Cloud API templates.
 /// URL buttons substitute a suffix in an already-approved URL, not a new route.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -52,13 +56,39 @@ pub enum WhatsappTemplateButtonType {
     Url,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum WhatsappTemplateParameter {
-    Text { text: String },
-}
-
 impl WhatsappTemplate {
+    /// Media headers require the platform's media delivery budget and receipt.
+    pub fn has_media(&self) -> bool {
+        self.components.iter().any(|component| {
+            let WhatsappTemplateComponent::Header { parameters } = component else {
+                return false;
+            };
+            parameters.iter().any(|parameter| {
+                matches!(
+                    parameter,
+                    WhatsappTemplateParameter::Image { .. }
+                        | WhatsappTemplateParameter::Video { .. }
+                        | WhatsappTemplateParameter::Document { .. }
+                )
+            })
+        })
+    }
+
+    /// Links referenced by template headers; the transport applies its public URL policy.
+    pub fn media_links(&self) -> impl Iterator<Item = &str> {
+        self.components
+            .iter()
+            .flat_map(|component| match component {
+                WhatsappTemplateComponent::Header { parameters } => parameters.as_slice(),
+                _ => &[],
+            })
+            .filter_map(|parameter| match parameter {
+                WhatsappTemplateParameter::Image { image } => image.link.as_deref(),
+                WhatsappTemplateParameter::Video { video } => video.link.as_deref(),
+                WhatsappTemplateParameter::Document { document } => document.link.as_deref(),
+                _ => None,
+            })
+    }
     pub fn validate(&self) -> Result<(), ValidationError> {
         let invalid = |path, detail| ValidationError::new(path, detail);
         if self.name.is_empty()
@@ -128,15 +158,33 @@ impl WhatsappTemplate {
                     "at most twenty parameters are supported in total",
                 ));
             }
-            for (j, WhatsappTemplateParameter::Text { text }) in parameters.iter().enumerate() {
-                let parameter_path = format!("{path}/parameters/{j}/text");
-                require_string(text, &parameter_path, 1, MAX_TEMPLATE_PARAMETER_BYTES)?;
-                if text.chars().any(char::is_control) {
+            for (j, parameter) in parameters.iter().enumerate() {
+                let allowed = match component {
+                    WhatsappTemplateComponent::Header { .. } => matches!(
+                        parameter,
+                        WhatsappTemplateParameter::Text { .. }
+                            | WhatsappTemplateParameter::Image { .. }
+                            | WhatsappTemplateParameter::Video { .. }
+                            | WhatsappTemplateParameter::Document { .. }
+                    ),
+                    WhatsappTemplateComponent::Body { .. } => matches!(
+                        parameter,
+                        WhatsappTemplateParameter::Text { .. }
+                            | WhatsappTemplateParameter::Currency { .. }
+                            | WhatsappTemplateParameter::DateTime { .. }
+                    ),
+                    WhatsappTemplateComponent::Button { .. } => {
+                        matches!(parameter, WhatsappTemplateParameter::Text { .. })
+                    }
+                };
+                let parameter_path = format!("{path}/parameters/{j}");
+                if !allowed {
                     return Err(ValidationError::new(
-                        parameter_path,
-                        "template parameters cannot contain control characters",
+                        &parameter_path,
+                        "parameter kind is not supported in this component",
                     ));
                 }
+                parameter.validate(&parameter_path)?;
             }
         }
         Ok(())

@@ -16,6 +16,10 @@ use utoipa::OpenApi;
         crate::tools::AttachmentViewKind,
     )),
     paths(
+        http::outbound::prepare,
+        http::outbound::read,
+        http::outbound::commit,
+        http::outbound::cancel,
         http::connections::capabilities,
         http::connections::create,
         http::connections::list,

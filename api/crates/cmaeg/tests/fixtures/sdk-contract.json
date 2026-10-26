@@ -4152,7 +4152,9 @@
             ]
           }
         ],
-        "relay_raw_verification_writes_enabled": false
+        "relay_raw_verification_writes_enabled": false,
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       }
     },
     {
@@ -4181,7 +4183,9 @@
             ]
           }
         ],
-        "relay_raw_verification_writes_enabled": false
+        "relay_raw_verification_writes_enabled": false,
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       }
     },
     {
@@ -4219,7 +4223,9 @@
             ]
           }
         ],
-        "relay_raw_verification_writes_enabled": false
+        "relay_raw_verification_writes_enabled": false,
+        "outbound_messages_writes_enabled": false,
+        "native_media_writes_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5361,6 +5367,42 @@
     {
       "type": "text",
       "text": "Order 42"
+    },
+    {
+      "type": "image",
+      "image": {
+        "id": null,
+        "link": "https://media.example/approved-header.png"
+      }
+    },
+    {
+      "type": "video",
+      "video": {
+        "id": null,
+        "link": "https://media.example/approved-header.png"
+      }
+    },
+    {
+      "type": "document",
+      "document": {
+        "id": "123456789",
+        "link": null,
+        "filename": "invoice.pdf"
+      }
+    },
+    {
+      "type": "currency",
+      "currency": {
+        "fallback_value": "USD 100.99",
+        "code": "USD",
+        "amount_1000": 100990
+      }
+    },
+    {
+      "type": "date_time",
+      "date_time": {
+        "fallback_value": "26 October 2026"
+      }
     }
   ],
   "WhatsappTemplateButtonType": [
@@ -5445,7 +5487,110 @@
           ]
         }
       ],
-      "relay_raw_verification_writes_enabled": false
+      "relay_raw_verification_writes_enabled": false,
+      "outbound_messages_writes_enabled": false,
+      "native_media_writes_enabled": false
+    }
+  ],
+  "PrepareOutboundMessage": [
+    {
+      "source_id": "relay_telegram",
+      "route_id": "91000000-0000-4000-8000-000000000001",
+      "message": {
+        "blocks": [
+          {
+            "text": "fixture",
+            "type": "text"
+          }
+        ],
+        "reply_to": "fixture",
+        "text": "fixture",
+        "thread_reply": true,
+        "native_attachments": [],
+        "whatsapp_template": {
+          "name": "order_update",
+          "language": {
+            "code": "en_US"
+          },
+          "components": [
+            {
+              "type": "body",
+              "parameters": [
+                {
+                  "type": "text",
+                  "text": "Order 42"
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "sub_type": "url",
+              "index": "0",
+              "parameters": [
+                {
+                  "type": "text",
+                  "text": "42"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "OutboundStatus": [
+    "prepared",
+    "committed",
+    "cancelled"
+  ],
+  "OutboundReceipt": [
+    {
+      "delivery_id": "91000000-0000-4000-8000-000000000002",
+      "source_id": "relay_telegram",
+      "route_id": "91000000-0000-4000-8000-000000000001",
+      "status": "committed",
+      "expires_at": 1900000000,
+      "retained_until": 1900500000,
+      "rendering": {
+        "blocks": [
+          {
+            "index": 1,
+            "outcome": {
+              "type": "exact"
+            }
+          }
+        ],
+        "outcome": "rendered"
+      },
+      "delivery": {
+        "outcome": "confirmed",
+        "platform_message_id": "fixture"
+      }
+    }
+  ],
+  "WhatsappTemplateMedia": [
+    {
+      "id": null,
+      "link": "https://media.example/approved-header.png"
+    }
+  ],
+  "WhatsappTemplateDocument": [
+    {
+      "id": "123456789",
+      "link": null,
+      "filename": "invoice.pdf"
+    }
+  ],
+  "WhatsappTemplateCurrency": [
+    {
+      "fallback_value": "USD 100.99",
+      "code": "USD",
+      "amount_1000": 100990
+    }
+  ],
+  "WhatsappTemplateDateTime": [
+    {
+      "fallback_value": "26 October 2026"
     }
   ]
 }

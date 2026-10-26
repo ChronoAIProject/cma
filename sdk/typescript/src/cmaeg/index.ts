@@ -1,3 +1,5 @@
+import { CmaegOutbound, type PrepareOutboundOptions } from './outbound.js';
+import type { PrepareOutboundMessage } from './types.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { CmaegChannels, type CreateChannelOptions, type ListChannelOptions } from './channels.js';
@@ -26,6 +28,7 @@ export interface CmaegConfig extends ClientConfig {
 /** CMAEG management, custom event and tool operations. No mutation is retried automatically. */
 export class Cmaeg {
   readonly #channels: CmaegChannels;
+  readonly #outbound: CmaegOutbound;
   readonly #connections: CmaegConnections;
   readonly #events: CmaegEvents;
   readonly #tools: CmaegTools;
@@ -36,9 +39,38 @@ export class Cmaeg {
       fetch: (input, init) => resolved.fetch(input, { ...init, redirect: 'manual' }),
     };
     this.#channels = new CmaegChannels(transport);
+    this.#outbound = new CmaegOutbound(transport);
     this.#connections = new CmaegConnections(transport);
     this.#events = new CmaegEvents(transport);
     this.#tools = new CmaegTools(transport);
+  }
+  prepareOutboundMessage(
+    channel: string,
+    body: PrepareOutboundMessage,
+    options: PrepareOutboundOptions,
+  ) {
+    return this.#outbound.prepareOutboundMessage(channel, body, options);
+  }
+  getOutboundMessage(channel: string, delivery: string, options?: OperationOptions) {
+    return this.#outbound.getOutboundMessage(channel, delivery, options);
+  }
+  cancelOutboundMessage(channel: string, delivery: string, options?: OperationOptions) {
+    return this.#outbound.cancelOutboundMessage(channel, delivery, options);
+  }
+  commitOutboundMessage(
+    channel: string,
+    delivery: string,
+    body: OutboundMessage,
+    options?: OperationOptions,
+  ) {
+    return this.#outbound.commitOutboundMessage(channel, delivery, body, options);
+  }
+  sendOutboundMessage(
+    channel: string,
+    body: PrepareOutboundMessage,
+    options: PrepareOutboundOptions,
+  ) {
+    return this.#outbound.sendOutboundMessage(channel, body, options);
   }
   getChannelCapabilities(options?: OperationOptions) {
     return this.#connections.getChannelCapabilities(options);
@@ -129,3 +161,5 @@ export type {
   CreateConnectionOptions,
   ListConnectionsOptions,
 } from './connections.js';
+
+export { OutboundCommitUncertainError, type PrepareOutboundOptions } from './outbound.js';

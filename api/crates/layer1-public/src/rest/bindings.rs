@@ -236,7 +236,7 @@ async fn put_binding(
 }
 
 #[utoipa::path(get, path = "/api/v1/cmaeg/bindings/{binding_id}", tag = "provider bindings",
-    params(("binding_id" = String, Path)), responses((status = 200, body = BindingView), (status = 401), (status = 403), (status = 404), (status = 503)))]
+    params(("binding_id" = String, Path)), responses((status = 200, body = BindingView), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
 async fn get_binding(
     State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -318,7 +318,7 @@ async fn delete_conversation(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
 ) -> Response {
-    match state.service.read(&caller, &id).await {
+    match state.service.read_for_retirement(&caller, &id).await {
         Ok(binding)
             if binding.existing_agent.is_none()
                 && binding.profile.session_affinity
@@ -415,6 +415,9 @@ fn error(error: BindingError) -> Response {
         BindingError::NotFound => (StatusCode::NOT_FOUND, "binding_not_found"),
         BindingError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "invalid_binding"),
         BindingError::Conflict => (StatusCode::CONFLICT, "binding_not_ready"),
+        BindingError::ResourcesUnavailable => {
+            (StatusCode::CONFLICT, "binding_resources_unavailable")
+        }
         BindingError::Unavailable(_) | BindingError::Corrupt(_) => {
             (StatusCode::SERVICE_UNAVAILABLE, "binding_unavailable")
         }
@@ -425,4 +428,21 @@ fn error(error: BindingError) -> Response {
         error.to_string()
     };
     super::problem_response(status, super::problem_document(status, code, &detail, code))
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn storage_outage_remains_service_unavailable_with_sanitized_detail() {
+        let response = error(BindingError::Unavailable("private storage details".into()));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "binding_unavailable");
+        assert_eq!(body["detail"], "Binding service is unavailable.");
+    }
 }

@@ -38,6 +38,8 @@ pub struct ManagementState {
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
+    pub outbound_messages_writes_enabled: bool,
+    pub outbound_relay: Option<crate::delivery::relay_client::RelayClient>,
     /// Receives every record head management writes or deletes; a no-op
     /// unless the console is on.
     pub index: Arc<dyn super::observer::ChannelIndexObserver>,
@@ -123,6 +125,8 @@ impl ManagementState {
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
+            outbound_messages_writes_enabled: false,
+            outbound_relay: None,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),

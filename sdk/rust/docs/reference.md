@@ -314,8 +314,9 @@ enables native Lark cards, eligible contexts return `buttons: "native_card"` and
 `cards: "native_card"`; the SDK uses the existing button/choice/card/link message
 shapes. Button callbacks return the stored option IDs and selected set, never
 arbitrary client callback data. Retain the returned message reference for a
-replacement after the click. Disabled, threaded and non-default-consumer contexts
-retain their advertised fallback capabilities. Native forms and media mixed with
+replacement after the click. Named consumers require the operator's separate
+consumer-interaction gate and preserve their original binding and conversation.
+Disabled or threaded contexts retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
@@ -324,11 +325,15 @@ or edit may have reached the platform and must not be blindly retried.
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
 before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
-`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the bounded
-name/language and positional text parameters. Templates are exclusive of ordinary
-text, blocks, native attachments and thread/reply targets. They reuse the event's
-authorized recipient, cannot be edited, and do not enable interactive callbacks
-or initiated sends. Templates must already be approved in the WhatsApp account;
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
+name/language and bounded positional parameters. Header parameters can be text
+or typed image/video/document references; body parameters can be text, currency
+or a date/time fallback label. URL buttons accept a text suffix only. Templates
+are exclusive of ordinary text, blocks, native attachments and thread/reply targets.
+Event replies retain the event's authorized recipient; owner-initiated sends use
+their separately admitted saved route. Templates cannot be edited and grant no
+interactive callback authority. The template capability alone does not enable
+initiated sends. Templates must already be approved in the WhatsApp account;
 see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
 ordinary message behavior. An unknown receipt must not be retried automatically.
 
@@ -343,3 +348,65 @@ verification. Retain saved settings without silently switching to normalized
 trust. These capabilities do not attest upstream transport health or provide
 NyxID bot provisioning. Cache per authenticated owner context, not globally;
 the server still validates every write.
+
+
+### WhatsApp reply buttons and lists
+
+Eligible raw-verified private contexts advertise `buttons: "native_interactive"`
+after the gateway operator enables WhatsApp interactions. Use existing
+`OutboundMessage.blocks`: one `buttons` block (1–3 options, labels at most 20
+characters) or one `choice` with `multi: false` (1–10 options, labels at most 24
+characters). Optional text is limited to 1,024 characters including the choice
+prompt. Multiple controls, multi-select, cards/forms/links, native media and
+threaded replies are refused. Check the returned rendering report for plain
+style/preselection degradation. There are no new SDK types or request fields.
+
+Only the exact original sender can consume a confirmed message's controls.
+Callbacks return the existing interaction activity with stored action IDs and
+selected values. They do not trust selection titles. Repeated delivery keeps
+one event/idempotency identity; a new choice requires a new message because
+WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
+to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+### Owner-initiated messages
+
+`prepare_outbound_message(channel_id, &PrepareOutboundMessage, key)` durably
+prepares without delivery. `commit_outbound_message(channel_id, delivery_id,
+&OutboundMessage)` repeats the exact message and commits at most once.
+`get_outbound_message` reads its receipt and `cancel_outbound_message` cancels only
+before commit. The owner needs channel update permission and an enabled deployment
+writer gate. Destinations must already exist in the owned channel configuration.
+The shared typed message supports native media and approved WhatsApp templates;
+thread/reply-to authority is never inferred from a caller's metadata.
+
+`send_outbound_message` prepares and commits once. It returns `OutboundSendError`
+on failure: a present `delivery_id` means commit was attempted and the caller
+must inspect that durable receipt before acting again. Neither this helper nor
+any other mutation retries automatically. A committed unknown result never causes
+another send. Keep the original message with the original key for recovery;
+preparations expire in 24 hours and idempotency is retained for seven days.
+
+
+### Named-consumer interactive callbacks
+
+Named Telegram, Lark/Feishu and WhatsApp controls use the same SDK message shapes.
+Discover capabilities: issuance needs the platform gate and the separate named
+consumer gate. A callback returns to exactly the consumer conversation that
+issued the card, including across gateway restart or consumer rename. Current
+ACLs and consumer readiness still apply. Credential rotation is supported;
+consumer removal or provider rebinding invalidates the old card's authority.
+Disabling issuance preserves already-issued callbacks. There is no callback
+fan-out or default fallback. Hand-off controls remain unavailable because CMA
+has not yet persisted the original human callback audience through hand-offs.
+
+### Typed WhatsApp template parameters
+
+Template header media uses exactly one non-null `id` (1–32 Meta digits) or
+`link` (public HTTPS, up to 8192 bytes). Only `document` accepts `filename`.
+`currency` carries `fallback_value`, a three-letter uppercase `code` and
+`amount_1000` (nonnegative integer, at most 9,007,199,254,740,991).
+`date_time` carries `fallback_value` only. The gateway validates placement,
+lengths and destination authority; Meta validates approval and media ownership.
+The SDK exposes these exact typed fields; it does not infer callback recipients.

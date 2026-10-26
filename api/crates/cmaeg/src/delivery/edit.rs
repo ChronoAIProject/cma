@@ -60,6 +60,12 @@ impl Sender {
         {
             return (unsupported(), effects);
         }
+        if reference.consumer.is_some()
+            && crate::interactions::has_controls(message)
+            && !self.relay.consumer_interactions_enabled()
+        {
+            return (unsupported(), effects);
+        }
         let channel = ctx.channel;
         if reference.relay_message.is_some() {
             return (
