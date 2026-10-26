@@ -126,9 +126,12 @@ async fn a_hand_off_projects_no_buttons_or_cards() {
         )
     };
     let ordinary = read(&app, &plain, &reviewer_key()).await;
+    // This fixture keeps named-control issuance disabled. Plain events still
+    // render choices as text; hand-offs must remove even that capability.
+    assert!(!app.state.consumer_interactions_enabled);
     assert_eq!(
         capabilities(&ordinary),
-        (json!("inline_keyboard"), json!("text"))
+        (json!("numbered_text"), json!("text"))
     );
     for context in [
         read(&app, &handed, &reviewer_key()).await,

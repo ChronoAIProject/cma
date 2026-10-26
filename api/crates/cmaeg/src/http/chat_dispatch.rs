@@ -55,16 +55,13 @@ pub(crate) async fn dispatch(
             );
         };
         let interaction = match store
-            .consume(
+            .consume_for_dispatch(
                 &request.channel,
                 &request.activity,
                 &route,
                 &callback.id,
                 &callback.data,
                 &callback.message_id,
-                // Only default cards can exist until ingress routes clicks to
-                // the consumer that owns the card.
-                &|consumer| consumer.is_none(),
             )
             .await
         {
@@ -90,6 +87,18 @@ pub(crate) async fn dispatch(
         let Ok(mut opened) = request.event_ref.open(&state.master_keys, now) else {
             return invalid(timing.source(), VerificationError("event_ref_invalid"));
         };
+        if let Some(owner) = interaction.2 {
+            request.consumer = Some(owner.consumer.clone());
+            request.conversation_id = owner.conversation_id.clone();
+            request.idempotency_key = cmaeg_core::ids::IdempotencyKey::for_consumer(
+                &request.activity.event_id,
+                &owner.consumer,
+            );
+            request.activity.routing = Some(owner.routing);
+            opened.payload.consumer = Some(owner.consumer);
+            opened.payload.conversation_id = owner.conversation_id;
+            opened.payload.partition_key = owner.partition_key;
+        }
         opened.payload.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(
             &request.activity,
         ));

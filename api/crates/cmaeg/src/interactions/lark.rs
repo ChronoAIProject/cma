@@ -42,7 +42,7 @@ pub(crate) fn project(
 ) {
     use cmaeg_core::activity::{ActivityKind, ActorKind, SourceKind};
     if !verified
-        || event.consumer.is_some()
+        || event.lineage.is_some()
         || activity.actor.kind != ActorKind::Human
         || activity.conversation.thread_id.is_some()
         || activity.thread.is_some()

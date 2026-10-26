@@ -150,6 +150,12 @@ pub(super) fn management_error(error: ManagementError) -> Response {
         | ManagementError::Provider(crate::providers::ProviderError::InvalidRequest(detail)) => {
             (StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)
         }
+        ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
+            if code == "binding_resources_unavailable" => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            "The channel's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.".into(),
+        ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { .. }) => (
             StatusCode::BAD_GATEWAY,
             ProblemCode::ProviderRejected,
@@ -198,4 +204,39 @@ pub(super) fn management_error(error: ManagementError) -> Response {
         ),
     };
     no_store(problem(status, code, detail))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn known_removed_binding_has_actionable_conflict_instead_of_generic_bad_gateway() {
+        let response = management_error(ManagementError::Provider(
+            crate::providers::ProviderError::Rejected {
+                status: 409,
+                code: "binding_resources_unavailable".into(),
+            },
+        ));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Reconnect the channel"));
+    }
+
+    #[test]
+    fn unrelated_provider_conflicts_keep_the_existing_error_mapping() {
+        let response = management_error(ManagementError::Provider(
+            crate::providers::ProviderError::Rejected {
+                status: 409,
+                code: "another_provider_failure".into(),
+            },
+        ));
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
 }

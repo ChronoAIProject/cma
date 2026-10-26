@@ -3469,3 +3469,59 @@ NyxID relay routes are never labelled as CMA-managed connection references,
 and platform verification support is never presented as native bot creation.
 
 | 2026-10-26 | Add capability-aware relay verification and platform setup guidance, preserving drafts and exact retries; distinguish owned Telegram connection setup from NyxID relay onboarding with explicit admission and no background polling. |
+
+
+### Owner-initiated channel messages (2026-10-26)
+
+The existing producer inspector may include a structured message composer only
+when the owner has update permission and the gateway advertises initiated sends.
+Use the existing Choice, TextField, Button, Alert and Presence primitives and
+inspector section styling. Show saved route choices only; never ask for arbitrary
+recipient metadata or credentials. Preparing retains the exact destination and
+message for review before the separate Send action. Keep that snapshot and its
+idempotency key while changing inspected nodes or recovering an uncertain request.
+No polling or automatic resend is permitted. Confirmed, cancelled and unknown
+outcomes use plain language; unknown offers an explicit status check and retains
+its delivery reference. The existing Presence transition respects reduced motion.
+
+| 2026-10-26 | Add explicit prepare, review, send, cancel and status recovery in the existing producer inspector for owner-initiated messages, retaining uncertain operations and their exact destination. |
+
+
+Owner-initiated message recovery retains the exact request, key and receipt in
+per-tab session storage scoped to the current owner and stable channel record.
+Save before network effects. A reload offers an explicit status check, never an
+automatic send, and account changes reset the visible composer. Storage failure
+blocks sending with an inline explanation. Use “Review message”, “Send message”
+and “Cancel” for the explicit actions; avoid internal preparation terminology.
+
+| 2026-10-26 | Retain owner/channel message recovery across reloads with original keys, explicit status checks and plain review/send labels. |
+
+### Initiated-message native media (2026-10-26)
+
+The producer inspector's existing message composer may show Media attachments
+when the gateway explicitly advertises native-media writes for a supported relay
+platform. An absent capability keeps new media controls hidden. Reuse Section,
+Choice, TextField and Button, the existing channel form grid, row and hint styles;
+introduce no new colors, spacing or motion. Each of at most four entries has a
+stable identity, an Image/File/Audio/Video picker and a required HTTPS URL, with
+optional filename, MIME type and caption. Remove affects only that entry. Show
+an inline validation reason and prevent review while any attachment is invalid.
+Message text is optional with valid media. Do not expose raw JSON or arbitrary
+recipient fields, and do not fetch previews when the inspector opens.
+
+Review shows every media kind, exact URL, optional metadata and saved destination
+as readable wrapping text. The separate Send action submits the exact reviewed
+body. Opening, returning or reloading never sends automatically. Preserve version
+1 text journals without reshaping requests; new media journals use version 2 and
+retain their exact body, idempotency key and uncertain receipt. Gate changes keep
+saved review, Cancel and Check delivery status available while blocking new
+media sends. Unsaved media fields are retained when temporarily hidden. Media
+send requests allow the gateway's longer upload budget before showing uncertainty;
+review, cancellation and status requests retain the normal short budget. Reuse
+the existing Presence notice transition and reduced-motion behavior.
+
+| 2026-10-26 | Add typed URL-based native media to initiated channel messages with up to four image/file/audio/video entries, explicit review/send, media-only support, validation and exact versioned recovery. Preserve saved media and status access when write capabilities change. |
+
+| 2026-10-26 | Keep Check saved request available after an uncertain initiated-message preparation when either write capability disappears. Recover only the retained exact request; new review and Send remain gated, while recovered status and cancellation stay available. |
+
+| 2026-10-26 | Return an initiated-message draft to editing after a definite first HTTP 413 preparation rejection. Preserve any earlier uncertain request and its key when a recovery attempt receives the same rejection. |

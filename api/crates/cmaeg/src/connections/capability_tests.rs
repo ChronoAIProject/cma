@@ -12,6 +12,15 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         service.management.multi_consumer_writes_enabled = !enabled;
         service.management.native_bot_mentions_writes_enabled = enabled;
         service.management.thread_contract_writes_enabled = !enabled;
+        service.management.outbound_messages_writes_enabled = !enabled;
+        service.management.outbound_relay = Some(
+            crate::delivery::relay_client::RelayClient::new(
+                "https://relay.example",
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap()
+            .with_native_media(enabled),
+        );
         let response =
             crate::http::connections::capabilities(State(service), owner("alice", false)).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -28,6 +37,8 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         assert_eq!(relay["multi_consumer_writes_enabled"], !enabled);
         assert_eq!(relay["native_bot_mentions_writes_enabled"], enabled);
         assert_eq!(relay["thread_contract_writes_enabled"], !enabled);
+        assert_eq!(relay["outbound_messages_writes_enabled"], !enabled);
+        assert_eq!(relay["native_media_writes_enabled"], enabled);
         let platforms = relay["platforms"].as_array().unwrap();
         assert_eq!(platforms.len(), 6);
         for platform in platforms {
@@ -42,6 +53,23 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
             assert_eq!(platform["verification_modes"], expected);
         }
     }
+}
+
+#[tokio::test]
+async fn missing_relay_does_not_advertise_native_media() {
+    let fixture = Fixture::new().await;
+    let mut service = fixture.service();
+    service.management.outbound_messages_writes_enabled = true;
+    let response =
+        crate::http::connections::capabilities(State(service), owner("alice", false)).await;
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["relay_authoring"]["native_media_writes_enabled"],
+        false
+    );
 }
 
 #[tokio::test]

@@ -396,6 +396,17 @@ Once reserved, a conversation still provisioning its Agent returns
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
 
+A profile binding whose owned Sandbox or Workspace is missing or being removed
+returns `409 binding_resources_unavailable` on binding GET/PUT and conversation
+PUT, even if its retained record still says `ready`. Reconnect the channel to an
+available Agent. These checks do not recreate resources, rotate credentials or
+change conversation history. Paused and recovering resources retain their
+existing lifecycle behavior, and borrowed Agent bindings keep their ownership
+rules. Authorized DELETE remains available for stale bindings. Storage failures
+remain `503 binding_unavailable`; they are not classified as deleted resources.
+The gateway presents this specific refusal as an actionable 409 instead of a
+generic provider 502.
+
 CMA's optional profile extension `environment.session_affinity:"source_user"`
 changes provider selection without changing gateway partitioning. CMA verifies
 the original human Activity with the gateway, then maps binding generation,
@@ -1223,7 +1234,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
-| `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |

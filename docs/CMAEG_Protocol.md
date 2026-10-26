@@ -910,7 +910,7 @@ supports a platform before any source for it is enabled.
 | Output | Escaped text; rich blocks degrade as §8 specifies | Plain text by default; gated native JSON 2.0 cards for eligible contexts | Plain text; buttons and choices degrade to numbered text |
 | Edit | Confirmed gateway interactive cards; gated ordinary relay text edits with an enriched reference | Gated ordinary single-part relay text edits | Gated ordinary single-part Discord relay text edits; Slack/WhatsApp unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
-| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Unsupported |
+| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Raw-verified WhatsApp: gated reply buttons / single-choice lists with durable authority; Discord/Slack unsupported |
 | Attachments | Inbound media with relay or Bot API locators while enabled; native outbound media through the NyxID relay when enabled, otherwise links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
 
 Ordinary replies go through NyxID's generic `/api/v1/channel-relay/reply`;
@@ -989,8 +989,8 @@ trusted platforms still refuse attachments.
 `buttons`, single/multi `choice`, `card` and `link` blocks. Eligible verified human
 contexts advertise `buttons:"native_card"`, `cards:"native_card"`, `edit:true`.
 The default is off, preserving numbered-text delivery. This does not enable
-threaded or named-consumer contexts, native forms, or cards mixed with native
-attachments. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
+threaded contexts, native forms, or cards mixed with native attachments.
+Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
 `behaviors` callback/open_url
 objects; display text uses `plain_text` and cannot inject mentions or card JSON.
 Multi-choice clicks return the selected set computed from the stored message;
@@ -1963,8 +1963,17 @@ references name that consumer, so only its agent key can update the card. A
 replacement keeps the card's consumer. Before a click is recorded, the gateway
 also checks that the click may reach the card's consumer; a click it refuses is
 answered as `interaction_expired_or_invalid` and leaves the card clickable.
-Until clicks are routed per consumer, only the default consumer's cards admit
-clicks.
+With `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`, new named cards also retain
+an encrypted `callback_owner` snapshot: consumer, exact provider binding,
+conversation, partition, source and single-consumer routing decision. A callback
+restores that original consumer conversation and consumer-scoped idempotency key;
+it cannot fan out or fall back to default. The current consumer must still exist,
+not be pending, and retain that same binding; credential rotation is allowed.
+Retries keep the first timestamp, values and routing snapshot across restart or
+rename. Disabling issuance does not disable retained callbacks. Default records
+omit the field; legacy named records without this authority remain refused.
+Hand-off controls remain blocked by CMA's missing persisted original human
+callback audience, independently of NyxID transport support.
 
 ```mermaid
 sequenceDiagram
@@ -2439,6 +2448,10 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `PUT /v1/channels/{channel_id}` | `updateChannel` |
+| `POST /v1/channels/{channel_id}/outbound-messages` | `prepareOutboundMessage` |
+| `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `getOutboundMessage` |
+| `DELETE /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `cancelOutboundMessage` |
+| `POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send` | `commitOutboundMessage` |
 | `POST /v1/channels/{channel_id}/events` | `receiveCustomEvent` |
 | `POST /v1/channels/{channel_id}/rekey` | `rekeyChannel` |
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
@@ -2839,12 +2852,12 @@ Names contain 1–512 lowercase ASCII letters, digits or underscores. Language
 codes contain two or three lowercase ASCII letters and an optional underscore
 plus two uppercase region letters, such as `en`, `en_US` or `zh_CN`.
 `components` defaults to an empty array for parameterless templates. At most
-five components and twenty text parameters in total are accepted: one `header`
+five components and twenty parameters in total are accepted: one `header`
 with exactly one parameter, one `body` with one to twenty parameters, and unique
-URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Every
-parameter is `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without control
-characters. Image, currency, date/time, quick-reply and arbitrary parameter types
-are refused. URL button parameters substitute approved URL suffixes; they do not
+URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Text parameters are `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without
+control characters. Headers also accept a single typed `image`, `video` or
+`document` reference. Bodies also accept typed `currency` and `date_time` values.
+Quick-reply callback payloads and arbitrary parameter types are refused. URL button parameters substitute approved URL suffixes; they do not
 introduce gateway callbacks or change the delivery destination.
 
 Templates cannot be combined with `text`, nonempty `blocks`,
@@ -2912,3 +2925,184 @@ managed create sends empty sources and omits manual platform credentials.
 New admission starts with an empty sender allowlist, never a silent all-senders
 grant. Creating a new connection still requires an admitted originating event
 and its agent authorization through the existing public workflow.
+
+
+## WhatsApp native choices
+
+For a raw-verified WhatsApp private event, `readEventContext` reports
+`buttons:"native_interactive"` when `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=true`.
+It continues to report `edit:false`; callbacks remain usable after issuance is
+disabled. The existing `/v1` tool and REST request shapes are unchanged. No
+arbitrary metadata, phone-number destination, credential or unsigned callback
+payload is accepted from the caller.
+
+Use one ordinary `buttons` block for up to three reply buttons, or one
+`choice` with `multi:false` for up to ten list rows. Text blocks and top-level
+text form the body; all other block combinations are refused without sending.
+CMA limits body text to 1,024 characters, reply-button labels to 20, and list-row
+labels to 24. Labels must be unique, nonempty and without control characters.
+There is no silent label truncation. A non-default style or selected appearance
+is a declared `plain_option_style` degradation. Native media, threaded replies
+and hand-offs cannot use this interaction contract. Named consumers require the
+separate consumer-interaction gate and the persisted owner snapshot described
+above; callbacks continue in the original named consumer conversation.
+
+```json
+{
+  "text": "Choose the deployment region",
+  "blocks": [{
+    "type": "choice", "id": "region", "prompt": "Select one region",
+    "multi": false,
+    "options": [
+      {"id":"sg", "label":"Singapore"},
+      {"id":"us", "label":"United States"}
+    ]
+  }]
+}
+```
+
+NyxID receives `reply.metadata.interactive` carrying a native button or list.
+Option IDs are CMA record/revision/action locators, not the caller's action
+values. Only after an exact outbound/platform receipt is durably bound can a
+signed callback resolve that locator. CMA checks the current source ACL and
+exact channel, route, platform, sender, private destination, original platform
+message, control kind, revision and stored action. The resulting interaction
+has the existing `block_id`, `action_id` and stored `values.selected` contract;
+a callback title never becomes an action value. Duplicate delivery has the same
+provider event/idempotency key and stored timestamp. Other selection attempts
+on a consumed record are refused. Foreign controls remain ordinary messages.
+
+Unknown sends have no usable reference and are not automatically resent. A
+single definite 429 may retry the same card. A transient callback storage error
+is retryable; it does not consume the card. Controls expire after 24 hours.
+`updateMessage` remains unsupported for WhatsApp, so a subsequent choice is a
+new message. Templates and initiated sends have independent contracts/gates.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+## Owner-initiated outbound messages
+
+An owner with `cma-eg:channels:update` may send without an incoming event through
+an existing configured NyxID relay source. `cma-eg:channels:read` permits receipt
+reads. This is separate from the consumer-key event/reply-target tools; an event
+reference is not fabricated. The deployment must enable
+`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED`; capability discovery exposes the current
+value as optional `relay_authoring.outbound_messages_writes_enabled`.
+
+The independent optional `relay_authoring.native_media_writes_enabled` reports
+whether the configured relay accepts native attachments. A missing field means
+unconfirmed availability, not permission to send media. This flag does not
+establish platform health or waive platform-specific media limits. Native media
+commit uses one bounded 60-second relay exchange and requires a platform message
+ID before confirming delivery. Missing receipts remain unknown and never trigger
+an automatic resend. Plain text retains its configured reply timeout.
+
+1. `POST /v1/channels/{channel_id}/outbound-messages`, with a required 1–128 visible
+   ASCII byte `Idempotency-Key`, accepts `{source_id, route_id, message}`. `message`
+   is the existing `OutboundMessage`. It returns 201 `OutboundReceipt`, initially
+   `status: prepared`. Preparation has no external delivery effect.
+   Repeating the exact saved owner/channel/key/body recovers the existing receipt
+   even after writer/media gates close or its old source configuration changes;
+   this recovery grants no new send authority and preserves cancellation.
+2. `POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send` accepts the
+   **same OutboundMessage** and commits at most one upstream attempt. The message
+   must match the canonical hash admitted at preparation. No automatic retry occurs.
+3. `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` reads the saved
+   receipt. `DELETE` cancels only a prepared operation; after commit it returns
+   409 `outbound_already_committed`. Concurrent commit/cancel uses one durable CAS.
+
+`route_id` must be the exact conversation UUID already present in the chosen
+source's persisted `route_ids`. There is no caller-supplied recipient, bot id,
+credential, arbitrary metadata or NyxID URL. Sending uses only that channel's
+stored channel key. The operation pins owner, channel record, exact source
+configuration and credential fingerprint. Unrelated record revision changes,
+including master-key resealing, do not revoke it. Current ownership and that
+authority are checked again at commit and immediately before dispatch. An
+authority change requires a fresh
+preparation; deletion, ownership transfer and credential rotation revoke pending
+use. NyxID independently requires an active addressable conversation, its assigned
+active agent key, `allow_agent_initiated`, an active bot with matching owner and
+platform, and platform support. Wildcard routes cannot initiate sends.
+
+Prepared operations expire after 24 hours. Encrypted, content-free operation
+records retain their original expiry for seven days, matching the existing
+interaction store. Their deterministic idempotency identity is domain-separated
+from reply receipts and callback interactions and includes the owner, channel
+record and key. Reusing a key with different content is a conflict. Use a fresh
+key only for a deliberately new message; after `retained_until`, the old key no
+longer has a replay guarantee. A restart preserves prepared operations for an
+explicit commit with the original body. Committed records without receipts return
+`delivery.outcome: unknown`; they never dispatch again, including after timeout,
+partial acceptance, restart, or receipt persistence failure. Read status after
+an ambiguous HTTP failure. `confirmed` means platform acceptance, not recipient
+read/delivery confirmation. Cancellation never retracts an accepted message.
+
+The request uses the shared bounded native image/file/audio/video types (public
+HTTPS URLs or up to 64 KiB aggregate decoded inline data, at most four attachments)
+and approved WhatsApp templates, controlled by the existing respective rollout
+flags. These preserve the corresponding typed NyxID `/channel-relay/send` body.
+The HTTP body limit is 128 KiB and the rendered relay envelope limit is 2 MiB;
+records store only hashes, so attachment contents are not squeezed into the 64 KiB
+record limit. NyxID owns remote URL validation, platform media limits, complete
+message splitting and template approval. CMA also applies its public URL policy
+before commit. Existing blocks render using their explicit `RenderingReport`;
+buttons, choices and forms use the recorded text fallback because unsolicited
+messages lack an admitted event's consumer callback lineage. Native interactive
+callbacks are not advertised. `thread_reply` and `reply_to` are refused: neither
+may manufacture inbound/thread authority. Templates never become arbitrary
+metadata or recipient input.
+
+The channel producer inspector exposes a text composer with explicit preparation,
+review, send, cancellation and status checks. The exact request/key and receipt
+are saved before network effects in per-tab, owner/channel-scoped session storage,
+without credentials. Reload offers an explicit status check using the same delivery
+ID, or recovery of an uncertain preparation with its original key. It never sends
+automatically. Unreadable/unwritable storage blocks new effects; changing account
+resets visible state without erasing another owner's unsettled request. SDK/API
+callers can use the full shared message type. SDK convenience helpers prepare once and commit once; an
+ambiguous commit carries the delivery reference for a read, never a hidden resend.
+
+
+### Typed WhatsApp template media and formatted values
+
+The same default-off `CMAEG_WHATSAPP_TEMPLATES_ENABLED` flag governs this additive
+contract for both event replies and explicit owner-initiated sends. Deploy all
+writers before enabling it. Template header references are separate from native
+attachment upload; they do not upload bytes or carry provider credentials.
+
+| Component | Permitted parameter kinds | Bounds |
+|---|---|---|
+| Header | `text`, `image`, `video`, `document` | Exactly one parameter |
+| Body | `text`, `currency`, `date_time` | One to twenty parameters, within the existing aggregate limit |
+| URL button | `text` | Exactly one approved URL suffix; indices 0–2 |
+
+`image` and `video` contain `{id?, link?}`. `document` contains
+`{id?, link?, filename?}`. Supply exactly one non-null numeric Meta media ID
+(1–32 digits) or public HTTPS URL (up to 8192 bytes). Null optional fields are
+omitted from the actual Meta payload. URLs cannot contain credentials, fragments
+or whitespace; both delivery paths reject private IP literals and local/internal
+hostnames before commitment. A document filename is one nonempty path component,
+up to 255 bytes without control characters. Meta checks uploaded-media ownership,
+actual content type, supported document formats and platform size limits; CMA
+never claims that local shape validation establishes these facts.
+
+Media-header replies use one delivery attempt with a 60-second budget, including
+when the media is referenced by ID, and require a native platform message ID in
+the receipt. A timeout or missing native receipt remains unknown and is never
+automatically resent. Templates without media retain the ordinary reply budget.
+
+`currency` is `{fallback_value, code, amount_1000}`: a 1–1024-byte fallback label,
+three uppercase ISO 4217 letters and a nonnegative integer amount multiplied by
+1000, at most 9,007,199,254,740,991 for exact TypeScript/Rust parity. Meta validates
+the currency itself. `date_time` is `{fallback_value}` in this CMA contract;
+structured date components are not accepted. Both labels reject control characters.
+These are body substitutions; they cannot become a destination or callback.
+
+The upstream references reviewed for these wire forms are Meta's
+[Cloud API Messages reference](https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages)
+and [template media guide](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-media/).
+NyxID's existing WhatsApp adapter uses Graph API v25.0 and preserves
+`metadata.template` under its fixed authenticated recipient. Local contract tests
+verify that both CMA reply and initiated-send envelopes preserve these typed
+objects; actual Meta approval, placeholder compatibility and delivery remain
+upstream checks. No live platform send is implied by these fixture tests.

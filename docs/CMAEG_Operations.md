@@ -174,11 +174,14 @@ applies with all media flags off.**
 | `CMAEG_ACCEPT_BUDGET_MS` | positive integer, ms | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
 | `CMAEG_TURN_TIMEOUT_MS` | positive integer, ms | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
+| `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
+| `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
+| `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
-| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. No threaded or named-consumer cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2216,9 +2219,9 @@ those controls. Existing Telegram record bytes and callback IDs are unchanged.
 
 Cards are limited to 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
-cannot combine native media or a native thread reply. Thread contexts and named
-consumers are refused because the existing callback contract does not retain
-thread evidence or route non-default consumer clicks. Native forms are not
+cannot combine native media or a native thread reply. Thread contexts are refused because the existing callback contract does not retain
+thread evidence. Named consumers require the separate consumer-interaction gate
+and retain their original provider binding and conversation. Native forms are not
 advertised; their fields stay plain text. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
 handles. A malformed/lost edit receipt stays unknown, and an old revision remains
@@ -2301,3 +2304,124 @@ embedded expiry, so there is no timed wait after which downgrading is safe.
 Keep a reader-compatible release until an explicit audit proves no enriched
 references remain usable. Do not use event-reference TTL as a rollback window.
 No reader, platform or destination authority is weakened by disabling issuance.
+
+
+## WhatsApp button and list rollout
+
+Keep `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=false` until every gateway reader is
+upgraded. A source must have `verify_raw_event:true`; trusted normalized messages
+cannot issue these controls. Existing text, templates, other platforms and
+unrelated WhatsApp buttons keep their previous behavior. Only private, unthreaded
+events qualify; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Cloud API does not identify a human versus
+an automated account; CMA binds a choice to the exact authenticated numeric
+sender and private destination without inventing a human classification.
+
+NyxID source `2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f` already accepts
+`reply.metadata.interactive` and includes original `interactive.button_reply` /
+`interactive.list_reply` plus `context.id` in signed callback bodies. WhatsApp
+message editing is absent upstream and remains unsupported. Source inspection
+and fake-transport tests do not establish a real bot's Graph permissions,
+customer-service window, or platform rendering. No NyxID code or deployment is
+part of this change.
+
+Before enabling, use an authorized private test conversation to verify both a
+reply-button click and list selection through a real WhatsApp account. Verify
+another account, a copied message, an unbound/expired record and a modified
+revision/action cannot invoke a provider. Restart a gateway between display and
+click; replay a callback and verify one logical provider event/idempotency key.
+Temporarily revoke the sender ACL and verify the card remains unused until a
+new permitted attempt. A confirmed send must include both a NyxID outbound UUID
+and platform message ID before the durable record becomes clickable.
+
+CMA accepts one `buttons` block with 1–3 options (20-character titles), or one
+single `choice` with 1–10 list rows (24-character titles), optionally alongside
+text blocks. It refuses multi-select, multiple controls, mixed forms/cards/links,
+native attachments and threaded replies before durable writes or sends. Labels
+are unique, nonempty and never truncated. Both kinds use a conservative 1,024
+character body, 16 KiB interactive JSON and 20 KiB complete relay body. Button
+styles and preselection become plain labels (`✓ ` for selected options), with a
+degraded rendering report. Current Meta reference limits are documented at
+[reply buttons](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/interactive-reply-buttons-messages)
+and [lists](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/interactive-list-messages).
+
+The first durable card write is the delivery commit point. Only an explicit
+HTTP 429 gets one paced retry with the same locator and channel credential.
+Timeouts, 5xx, missing/malformed receipts and failed receipt binding remain
+unknown, without an automatic resend or usable MessageRef. An unbound record
+never authorizes a click. A callback temporarily unable to write its CAS returns
+503 for retry; a consumed click keeps its original timestamp, values, reference,
+revision and stable event ID on redelivery. A different later click cannot reuse
+the consumed card. These are one-shot controls; send a new card for another
+choice because WhatsApp has no edit transport.
+
+Disabling issuance does not invalidate already issued controls. Keep compatible
+readers and master keys for their normal 24-hour lifetime. Old Telegram record
+bytes and locator formats remain unchanged. No rollout may claim real-platform
+acceptance until the authorized live acceptance checks above are recorded.
+
+The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+## Owner-initiated delivery rollout
+
+Owner-initiated delivery is disabled by default with
+`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED=false`. Enable only after all gateway
+readers include the owner outbound operation kind and deployed NyxID supports
+`POST /api/v1/channel-relay/send` with its assigned-key, allow-initiation and
+addressable-conversation checks. This does not create or broaden upstream routes.
+Media/templates require their existing independent rollout flags. Turning the
+writer gate off stops new preparation and commit, while retained receipts and
+pre-commit cancellation stay available. There is no background outbound scheduler;
+prepared operations require explicit commit. Never retry an unknown send under a
+new key. Operation records use the existing encrypted interaction collection and
+immutable seven-day TTL; no database migration or additional credentials are needed.
+
+
+## Named-consumer callback rollout
+
+Keep `CMAEG_CONSUMER_INTERACTIONS_ENABLED=false` until all gateway readers support
+`callback_owner` in encrypted `ic` interaction records. The flag controls new
+named Telegram, Lark/Feishu and WhatsApp controls, including replacement controls;
+it does not disable callbacks for retained issued cards. Platform gates and all
+existing sender/chat/source admission checks still apply. Plain replacement text
+can retire a consumed card while new control issuance is disabled.
+
+A new named card persists its exact consumer ID, provider binding, original
+conversation ID, partition key, source and single-consumer routing snapshot.
+Consumption verifies the current consumer still exists, is not pending and has
+a credential for that same provider binding. Rotating the credential is allowed;
+replacing the binding is not. The exact callback actor, chat/thread, route,
+platform message and revision/action must still match. Current ACL refusal does
+not consume the card. A durable CAS stores the chosen action and first timestamp;
+retries reuse that result and consumer-scoped idempotency key, even after restart
+or a display-name change. A callback never fans out or falls back to `default`.
+Default cards omit the new field and retain their existing bytes and dispatch.
+Legacy named records without an owner snapshot remain non-executable.
+
+Before activation, verify a named consumer's card across restart, credential
+rotation, duplicate delivery, current ACL revocation, removal/pending state and
+provider-binding replacement in authorized test chats. Confirm the callback
+reaches only the original consumer conversation. Keep compatible readers and
+keys until all issued cards expire; disabling issuance alone is not permission
+to remove the retained callback reader. Local fake-transport tests establish the
+CMA contract; live platform verification is still required before claiming it.
+
+Remaining CMA dependencies: ordinary named-consumer ingress routing/fan-out and
+`publishEvent` execution are not supplied by this callback change. Hand-off
+lineage currently persists root/hop/path/reply policy, but not the original human
+actor, conversation and callback audience. Hand-off controls therefore remain
+refused until CMA persists and validates that original authority through the
+publish path. This is a CMA implementation gap, not a NyxID limitation; never
+substitute the publishing agent's identity for the original human audience.
+
+## Typed WhatsApp template rollout
+
+WhatsApp template expansion retains the default-off template gate. Before enabling,
+confirm that all CMA writers accept typed header image/video/document references
+and body currency/date-time fallbacks, and verify an approved template with the
+deployed NyxID/Meta adapter. Native attachment uploads and initiated sends remain
+separately gated. This expansion grants no callback, arbitrary metadata, destination
+or media-upload authority. Template media links are forwarded to Meta; they are
+not downloaded by CMA or rewritten as native attachment uploads.
+Media-header replies allow up to 60 seconds for upstream processing and require
+a native platform receipt; a deadline or incomplete receipt leaves an unknown
+outcome, without retrying the send. Text-only templates retain the normal budget.
