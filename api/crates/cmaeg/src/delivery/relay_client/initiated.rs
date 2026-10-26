@@ -69,6 +69,8 @@ impl RelayClient {
             if platform != Platform::Whatsapp || !self.whatsapp_templates {
                 return Err(invalid("whatsapp_template_unsupported"));
             }
+            super::whatsapp::validate_template_links(template)
+                .map_err(|_| invalid("whatsapp_template_media_link_rejected"))?;
             Some(serde_json::json!({"template":template}))
         } else {
             None

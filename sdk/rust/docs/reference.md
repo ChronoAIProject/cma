@@ -325,11 +325,15 @@ or edit may have reached the platform and must not be blindly retried.
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
 before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
-`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the bounded
-name/language and positional text parameters. Templates are exclusive of ordinary
-text, blocks, native attachments and thread/reply targets. They reuse the event's
-authorized recipient, cannot be edited, and do not enable interactive callbacks
-or initiated sends. Templates must already be approved in the WhatsApp account;
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
+name/language and bounded positional parameters. Header parameters can be text
+or typed image/video/document references; body parameters can be text, currency
+or a date/time fallback label. URL buttons accept a text suffix only. Templates
+are exclusive of ordinary text, blocks, native attachments and thread/reply targets.
+Event replies retain the event's authorized recipient; owner-initiated sends use
+their separately admitted saved route. Templates cannot be edited and grant no
+interactive callback authority. The template capability alone does not enable
+initiated sends. Templates must already be approved in the WhatsApp account;
 see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
 ordinary message behavior. An unknown receipt must not be retried automatically.
 
@@ -396,3 +400,13 @@ consumer removal or provider rebinding invalidates the old card's authority.
 Disabling issuance preserves already-issued callbacks. There is no callback
 fan-out or default fallback. Hand-off controls remain unavailable because CMA
 has not yet persisted the original human callback audience through hand-offs.
+
+### Typed WhatsApp template parameters
+
+Template header media uses exactly one non-null `id` (1–32 Meta digits) or
+`link` (public HTTPS, up to 8192 bytes). Only `document` accepts `filename`.
+`currency` carries `fallback_value`, a three-letter uppercase `code` and
+`amount_1000` (nonnegative integer, at most 9,007,199,254,740,991).
+`date_time` carries `fallback_value` only. The gateway validates placement,
+lengths and destination authority; Meta validates approval and media ownership.
+The SDK exposes these exact typed fields; it does not infer callback recipients.

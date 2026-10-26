@@ -2412,3 +2412,16 @@ actor, conversation and callback audience. Hand-off controls therefore remain
 refused until CMA persists and validates that original authority through the
 publish path. This is a CMA implementation gap, not a NyxID limitation; never
 substitute the publishing agent's identity for the original human audience.
+
+## Typed WhatsApp template rollout
+
+WhatsApp template expansion retains the default-off template gate. Before enabling,
+confirm that all CMA writers accept typed header image/video/document references
+and body currency/date-time fallbacks, and verify an approved template with the
+deployed NyxID/Meta adapter. Native attachment uploads and initiated sends remain
+separately gated. This expansion grants no callback, arbitrary metadata, destination
+or media-upload authority. Template media links are forwarded to Meta; they are
+not downloaded by CMA or rewritten as native attachment uploads.
+Media-header replies allow up to 60 seconds for upstream processing and require
+a native platform receipt; a deadline or incomplete receipt leaves an unknown
+outcome, without retrying the send. Text-only templates retain the normal budget.

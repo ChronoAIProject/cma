@@ -2852,12 +2852,12 @@ Names contain 1–512 lowercase ASCII letters, digits or underscores. Language
 codes contain two or three lowercase ASCII letters and an optional underscore
 plus two uppercase region letters, such as `en`, `en_US` or `zh_CN`.
 `components` defaults to an empty array for parameterless templates. At most
-five components and twenty text parameters in total are accepted: one `header`
+five components and twenty parameters in total are accepted: one `header`
 with exactly one parameter, one `body` with one to twenty parameters, and unique
-URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Every
-parameter is `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without control
-characters. Image, currency, date/time, quick-reply and arbitrary parameter types
-are refused. URL button parameters substitute approved URL suffixes; they do not
+URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Text parameters are `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without
+control characters. Headers also accept a single typed `image`, `video` or
+`document` reference. Bodies also accept typed `currency` and `date_time` values.
+Quick-reply callback payloads and arbitrary parameter types are refused. URL button parameters substitute approved URL suffixes; they do not
 introduce gateway callbacks or change the delivery destination.
 
 Templates cannot be combined with `text`, nonempty `blocks`,
@@ -3058,3 +3058,48 @@ automatically. Unreadable/unwritable storage blocks new effects; changing accoun
 resets visible state without erasing another owner's unsettled request. SDK/API
 callers can use the full shared message type. SDK convenience helpers prepare once and commit once; an
 ambiguous commit carries the delivery reference for a read, never a hidden resend.
+
+
+### Typed WhatsApp template media and formatted values
+
+The same default-off `CMAEG_WHATSAPP_TEMPLATES_ENABLED` flag governs this additive
+contract for both event replies and explicit owner-initiated sends. Deploy all
+writers before enabling it. Template header references are separate from native
+attachment upload; they do not upload bytes or carry provider credentials.
+
+| Component | Permitted parameter kinds | Bounds |
+|---|---|---|
+| Header | `text`, `image`, `video`, `document` | Exactly one parameter |
+| Body | `text`, `currency`, `date_time` | One to twenty parameters, within the existing aggregate limit |
+| URL button | `text` | Exactly one approved URL suffix; indices 0–2 |
+
+`image` and `video` contain `{id?, link?}`. `document` contains
+`{id?, link?, filename?}`. Supply exactly one non-null numeric Meta media ID
+(1–32 digits) or public HTTPS URL (up to 8192 bytes). Null optional fields are
+omitted from the actual Meta payload. URLs cannot contain credentials, fragments
+or whitespace; both delivery paths reject private IP literals and local/internal
+hostnames before commitment. A document filename is one nonempty path component,
+up to 255 bytes without control characters. Meta checks uploaded-media ownership,
+actual content type, supported document formats and platform size limits; CMA
+never claims that local shape validation establishes these facts.
+
+Media-header replies use one delivery attempt with a 60-second budget, including
+when the media is referenced by ID, and require a native platform message ID in
+the receipt. A timeout or missing native receipt remains unknown and is never
+automatically resent. Templates without media retain the ordinary reply budget.
+
+`currency` is `{fallback_value, code, amount_1000}`: a 1–1024-byte fallback label,
+three uppercase ISO 4217 letters and a nonnegative integer amount multiplied by
+1000, at most 9,007,199,254,740,991 for exact TypeScript/Rust parity. Meta validates
+the currency itself. `date_time` is `{fallback_value}` in this CMA contract;
+structured date components are not accepted. Both labels reject control characters.
+These are body substitutions; they cannot become a destination or callback.
+
+The upstream references reviewed for these wire forms are Meta's
+[Cloud API Messages reference](https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages)
+and [template media guide](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-media/).
+NyxID's existing WhatsApp adapter uses Graph API v25.0 and preserves
+`metadata.template` under its fixed authenticated recipient. Local contract tests
+verify that both CMA reply and initiated-send envelopes preserve these typed
+objects; actual Meta approval, placeholder compatibility and delivery remain
+upstream checks. No live platform send is implied by these fixture tests.
