@@ -479,6 +479,27 @@ by this operation. Extended policy writes require deployment support. After a
 lost success, an exact retry can confirm the immediately following revision;
 other stale revisions return a conflict. The SDK never retries mutations itself.
 
+`getChannelActivity(id, {owner?})` returns a typed `cmaeg.ActivityPage` of recent
+events, consumer processing states and observed transport deliveries. The page
+advertises its retention window, item limit and `has_more`; it is a bounded view,
+not a complete audit log. `occurred_at` is source time and `received_at` is gateway
+receipt time. A consumer's completed processing state does not itself prove
+delivery: inspect each delivery's `outcome`, `recipients`, `observed_at` and
+optional confirmed receipt timestamp.
+
+`streamChannelActivity(id, {owner?, cursor?, lastEventId?, signal?})` is an async
+iterator of `cmaeg.ChannelActivityEvent`. Both `activity` and `reset` events carry
+a complete `ActivityPage` in `data`; replace the prior snapshot atomically. Each
+connection starts with a snapshot. `reset` indicates expired retention or missed
+notifications, and also replaces the entire snapshot. The SDK validates that the
+explicit SSE `id` equals the snapshot cursor before yielding it. Retain only the
+cursor of the snapshot your application successfully applied, then pass it to a
+new connection as `cursor` or `lastEventId` (`Last-Event-ID` takes precedence).
+The SDK never reconnects automatically. Clean EOF ends the connection; truncated
+frames fail. `timeoutMs` bounds the handshake, while `signal` cancels observation
+of the active stream. The gateway also closes each connection after five minutes.
+Owner selection applies to only that request and never changes client credentials.
+
 `OutboundMessage.native_attachments` explicitly requests native image, file,
 audio or video delivery using an HTTPS URL or bounded base64. Read event
 `capabilities.native_media` before using it; deployment support must be enabled.
