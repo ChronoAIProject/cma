@@ -2,8 +2,11 @@
 //! Source writes remain gated; application supervision and durable inbox scheduling
 //! must be composed explicitly before ordinary messaging is activated.
 pub(crate) mod facts;
+pub mod inbox_dispatch;
 mod inbox_reader;
+mod inbox_scan;
 mod normalize;
+mod runtime_source;
 pub use inbox_reader::{InboxLaunch, InboxReader, VerifiedInboxLaunch};
 pub(crate) mod outbound_media;
 pub(crate) mod rest;
@@ -33,6 +36,10 @@ mod journal_fixture;
 #[cfg(test)]
 mod journal_tests;
 
+#[cfg(test)]
+mod dispatch_fixture;
+#[cfg(test)]
+mod inbox_dispatch_tests;
 #[cfg(test)]
 mod media_tests;
 #[cfg(test)]
