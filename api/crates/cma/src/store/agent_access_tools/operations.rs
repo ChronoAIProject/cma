@@ -55,6 +55,20 @@ impl MongoAgentAccessToolSource {
             session,
         )
         .await?;
+        // Supplied keys belong to their issuer. CMA cannot revise their scope,
+        // and their retained expiry is intentionally unknown. This optional
+        // consent tool must not prevent a provider-bound Agent from opening;
+        // its required Event Gateway tools have separate binding authority.
+        if !snapshot
+            .resource
+            .lineage
+            .sandbox
+            .credential
+            .source
+            .is_managed()
+        {
+            return Ok(None);
+        }
         let agent = snapshot
             .resource
             .lineage
