@@ -2,7 +2,7 @@
 use super::{validation::validate_admission, AdmissionPolicy, ChannelSecrets};
 use crate::ValidationError;
 
-pub(crate) fn valid_id(value: &str) -> bool {
+pub fn valid_id(value: &str) -> bool {
     value
         .parse::<u64>()
         .is_ok_and(|id| id > 0 && id.to_string() == value)

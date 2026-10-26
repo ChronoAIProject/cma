@@ -85,6 +85,12 @@ pub enum AttachmentKind {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum AttachmentSource {
+    /// Exact native Discord message attachment; resolved with current bot custody.
+    Discord {
+        channel_id: String,
+        message_id: String,
+        attachment_id: String,
+    },
     /// Position of the attachment in the NyxID relay callback.
     NyxidRelay { index: u8 },
     /// Telegram Bot API file identifiers of a natively received message.
@@ -103,6 +109,7 @@ pub enum AttachmentSource {
 impl fmt::Debug for AttachmentSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Discord { .. } => formatter.write_str("Discord([REDACTED])"),
             Self::NyxidRelay { index } => formatter
                 .debug_struct("NyxidRelay")
                 .field("index", index)
@@ -320,6 +327,21 @@ fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(
         ) => {
             if !telegram_ids_valid(file_id, file_unique_id) {
                 return Err("Telegram file identifiers must match [A-Za-z0-9_-]".into());
+            }
+        }
+        (
+            AttachmentSource::Discord {
+                channel_id,
+                message_id,
+                attachment_id,
+            },
+            SourceKind::Discord { .. },
+        ) => {
+            if ![channel_id, message_id, attachment_id]
+                .into_iter()
+                .all(|id| crate::channel::discord::valid_id(id))
+            {
+                return Err("invalid Discord attachment identity".into());
             }
         }
         (AttachmentSource::Url { url }, SourceKind::Custom) => {

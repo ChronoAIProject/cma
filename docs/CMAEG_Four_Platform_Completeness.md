@@ -132,3 +132,20 @@ stays disabled in the deployment manifest. Bot transfer between channels also
 requires explicit source lifecycle management. The initial transport-only
 boundary above describes its original commit; this follow-up replaces its
 credential/ownership/quota/journal gaps without claiming full messaging delivery.
+
+## Native normalization, REST and media follow-up
+
+The native adapter now has genuine MESSAGE_CREATE normalization/admission and an
+immutable inbox-to-LaunchRequest reader, native sealed reply addresses, and exact
+native attachment locators. Native REST text and multipart replies use current
+bot custody, bounded preparation, disabled mentions, route gating/pacing and
+conservative unknown outcomes. Inbound media refreshes exact message metadata
+with the current bot credential and downloads only matching official CDN URLs
+without forwarding that credential. These capabilities are covered by local HTTP
+fixtures and do not require NyxID changes or native relay flags. The protocol's
+native Discord section records the supported bounds and refusal behavior.
+
+Startup source supervision and durable inbox scheduling into routed execution
+remain separate composition work. The source write gate remains off; this slice
+performs no live bot activation or external messaging. The earlier sections
+record the preceding slices and their then-open integration boundaries.

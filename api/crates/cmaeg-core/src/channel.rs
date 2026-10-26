@@ -15,6 +15,7 @@ use crate::{
 mod consumer;
 mod custom_attachments;
 pub(crate) mod discord;
+pub use discord::valid_id as valid_discord_id;
 mod extensions;
 mod lookup;
 mod partition;

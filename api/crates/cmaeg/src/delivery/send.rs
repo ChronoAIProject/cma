@@ -76,6 +76,7 @@ impl Sender {
             match &event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
                 ReplyAddress::Telegram { .. } => "telegram",
+                ReplyAddress::Discord { .. } => "discord",
                 _ => "custom",
             },
         );
@@ -89,6 +90,9 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if matches!(event.reply, ReplyAddress::Discord { .. }) {
+            return self.discord_reply(ctx, event, message).await;
+        }
         if message.whatsapp_template.is_some() {
             if !self.relay.whatsapp_templates_enabled()
                 || message.validate().is_err()

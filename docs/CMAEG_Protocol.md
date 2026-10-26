@@ -3243,12 +3243,54 @@ cannot advance the checkpoint. Retention is seven days from the message's native
 snowflake time; expired native IDs are refused after retention instead of being
 re-executed as new messages.
 
-This release slice supplies source readers, gated source writes, discovery,
-owned connection execution, and durable raw intake. It does **not** enable
-application startup, native REST replies/media, or dispatch these inbox records
-to the routed turn executor. Consequently ordinary native Discord messaging is
-not advertised as available and its write flag stays off. The remaining
-integration must validate native actor/conversation/media facts, turn the retained
-snapshot into one admitted routing plan, and recover that exact plan without
-rerouting. It must also supervise source discovery/reconnection/revocation and
-wire native reply custody before activation. Relay Discord behavior is unchanged.
+`discord::InboxReader::load` restores the exact immutable inbox manifest/chunks,
+checks their hash, native source custody and retention, and yields either a
+`LaunchRequest` or an explicit admission refusal. It normalizes real native
+MESSAGE_CREATE facts rather than constructing a relay callback: bots/webhooks,
+system messages, edits, malformed identities and unsupported content are refused.
+Guild membership comes from the native guild ID; mention and exact reply evidence
+use the same strict factual helpers as raw relay verification. Sender/chat/group
+admission runs before provider execution. Without proven thread metadata a thread
+partition is explicitly refused. Event identity is `discord:<bot_id>:<message_id>`.
+The original profile, routing and partition snapshot is retained; current source
+or credential revocation prevents replay, and consumer credentials must still
+match that snapshot. Application code must durably admit this launch once and
+recover its existing routing plan rather than create a new plan on retry.
+
+Native replies seal `{"type":"discord","bot_id":"77","channel_id":"99",
+"message_id":"700"}` inside the event reference. They contain no relay token.
+The current channel must still configure that bot and its encrypted credential.
+REST text sends target Discord API v10, split at 2,000 UTF-16 code units, disable
+all automatic mentions including replied-user pings, and use the existing send
+gate and route pacing. Explicit image/file/audio/video attachments support public
+HTTPS URLs and standard base64. The former use public-address resolution with
+pinned connections and no redirects; the latter retain the shared 64 KiB inline
+aggregate bound. At most four files and 8 MiB of aggregate prepared bytes are
+accepted. Multipart metadata preserves filenames, MIME types and descriptions.
+Native media delivery does not depend on NyxID relay-media deployment flags.
+Native controls, message edits, deletion and reactions remain unsupported;
+structured blocks use the established text fallback.
+
+Native inbound media uses `{"type":"discord","channel_id":"99",
+"message_id":"700","attachment_id":"500"}`. This nonsecret locator is
+bound into the activity digest. Every retrieval verifies the exact native reply
+address and current bot custody, fetches that exact message's current attachment
+metadata, then accepts only an official Discord CDN attachment URL whose channel
+and attachment IDs match. The bot credential is sent only to the fixed Discord
+API origin, never to the CDN. Response size, download size and deadlines are
+bounded; redirects and arbitrary origins are refused. Removing the source or
+credential revokes subsequent downloads. The existing inbound-media flag and
+per-consumer media audience still apply.
+
+REST 429 and exhausted quota headers apply a conservative cooldown. Ambiguous
+write transport failures, lost/malformed success responses and partial multi-part
+delivery remain `unknown`; this adapter never retries an uncertain send. Local
+HTTP fixtures cover native text/multipart delivery, admission, immutable inbox
+restoration, custody, CDN origin/identity restrictions, caps, rate limits and lost
+responses without sending messages to any external user.
+
+These readers and adapters do **not** themselves activate application startup or
+schedule inbox records. Source discovery/reconnection/revocation, durable inbox
+scheduling and routed recovery must be composed before enabling native messaging.
+The source write flag stays off in the deployment manifest. Relay Discord
+behavior and retained serialization remain compatible.

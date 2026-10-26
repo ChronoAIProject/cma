@@ -52,6 +52,11 @@ const STREAM_CHUNK: usize = 64 * 1024;
 /// The identifying string of a locator.
 pub fn locator_key(locator: &AttachmentSource) -> String {
     match locator {
+        AttachmentSource::Discord {
+            channel_id,
+            message_id,
+            attachment_id,
+        } => format!("discord:{channel_id}:{message_id}:{attachment_id}"),
         AttachmentSource::NyxidRelay { index } => format!("relay:{index}"),
         AttachmentSource::Telegram { file_unique_id, .. } => format!("telegram:{file_unique_id}"),
         AttachmentSource::Url { url } => url.clone(),
