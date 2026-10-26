@@ -1,0 +1,180 @@
+use super::{
+    delivery_gate::SEND_WINDOW,
+    dispatcher::{admission_error, current_target},
+    model::delivery_event,
+    storage,
+    tool_reply_gate::{CancelReply, ReplyGate, ToolContext},
+    tool_reply_store::{Admission, Kind, ReplyStore},
+    Authority, ExecutionError, Journal, Phase, TargetState,
+};
+use crate::{
+    auth::AgentCaller,
+    channels::resolver::ResolvedChannel,
+    delivery::{
+        durable::{receipt_for, DeliveryCoordinator},
+        intents::{DeliveryOutcome, IntentReceipt, ReplySource},
+    },
+    ingress::routing_store::PlanStore,
+};
+use cmaeg_core::{
+    message::OutboundMessage,
+    seal::{EventRefPayload, ReplyAddress},
+};
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct RoutedToolReplies {
+    plans: PlanStore,
+    journal: Journal,
+    authority: Arc<dyn Authority>,
+    coordinator: DeliveryCoordinator,
+}
+impl RoutedToolReplies {
+    pub fn new(
+        plans: PlanStore,
+        journal: Journal,
+        authority: Arc<dyn Authority>,
+        coordinator: DeliveryCoordinator,
+    ) -> Self {
+        Self {
+            plans,
+            journal,
+            authority,
+            coordinator,
+        }
+    }
+    /// None means no durable routed admission exists, preserving the live lane.
+    /// Any storage/authority error fails closed rather than falling back to it.
+    pub async fn reply(
+        &self,
+        caller: AgentCaller,
+        _channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: OutboundMessage,
+        delayed: bool,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        let Some(binding) = self.journal.tool_reply_binding(event).await? else {
+            return Ok(None);
+        };
+        let identity = binding.identity;
+        let plan = self
+            .plans
+            .load(&identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Corrupt)?;
+        if plan.admission_id != binding.root || plan.request_hash != binding.request_hash {
+            return Err(ExecutionError::Corrupt);
+        }
+        let consumer = event
+            .consumer
+            .clone()
+            .unwrap_or_else(cmaeg_core::ids::ConsumerId::default_consumer);
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == binding.target && target.launch.consumer == consumer)
+            .ok_or(ExecutionError::Invalid)?;
+        let expected = delivery_event(&plan, target);
+        if !same_event(&expected, event, delayed) {
+            return Err(ExecutionError::Invalid);
+        }
+        let current = current_target(self.authority.as_ref(), &plan, target).await?;
+        if caller.consumer(&current).ok().as_ref() != Some(&target.launch.consumer) {
+            return Err(ExecutionError::AuthorityChanged);
+        }
+        // Delayed capabilities may outlive original auto-reply authority. Such
+        // sends cannot race an automatic reply, whose original expiry is fixed.
+        if event.expires_at <= (self.journal.clock)() {
+            return if delayed {
+                Ok(None)
+            } else {
+                Err(ExecutionError::Expired)
+            };
+        }
+        let Some((execution, _)) = self.journal.read::<TargetState>(&target.id).await? else {
+            return Err(ExecutionError::Invalid);
+        };
+        if execution.root != plan.admission_id
+            || execution.owner != identity.owner
+            || execution.request_hash != plan.request_hash
+            || execution.body.is_none()
+            || !matches!(
+                execution.phase,
+                Phase::Starting | Phase::Accepted { .. } | Phase::Completed { .. } | Phase::Unknown
+            )
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        message.validate().map_err(|_| ExecutionError::Invalid)?;
+        let operation = storage::hash(&storage::bytes(&(&target.id, &message))?);
+        let store = ReplyStore(self.journal.clone());
+        let claim = match store.admit(&plan, target, Kind::Tool, operation).await? {
+            Admission::Claimed(claim) => claim,
+            Admission::Replay(receipt) => return Ok(Some(receipt)),
+            Admission::Pending => return Err(ExecutionError::Busy),
+            Admission::Unknown => {
+                return Ok(Some(receipt_for(DeliveryOutcome::Unknown {
+                    reason: "routed_reply_uncertain".into(),
+                })))
+            }
+            Admission::Suppressed => return Err(ExecutionError::Corrupt),
+            // The terminal barrier already excludes all automatic replay and
+            // unresolved sends. Long-lived reply-target capabilities keep their
+            // independent durable receipt path after that barrier.
+            Admission::Closed if delayed => return Ok(None),
+            Admission::Closed => return Err(ExecutionError::Invalid),
+        };
+        let result = if matches!(event.reply, ReplyAddress::Sync { .. }) {
+            receipt_for(DeliveryOutcome::Unsupported)
+        } else {
+            let gate = ReplyGate::tool(
+                store.clone(),
+                &claim,
+                ToolContext {
+                    authority: self.authority.clone(),
+                    plan: plan.clone(),
+                    target: target.clone(),
+                    channel_version: current.version,
+                    caller,
+                },
+            );
+            let cancel = CancelReply(gate.clone());
+            let result = tokio::time::timeout(
+                SEND_WINDOW,
+                self.coordinator.reply_from(
+                    current,
+                    event.clone(),
+                    message,
+                    gate,
+                    ReplySource::Tool,
+                ),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                receipt_for(DeliveryOutcome::Unknown {
+                    reason: "delivery_deadline".into(),
+                })
+            });
+            drop(cancel);
+            result
+        };
+        store.finish(&claim, &result).await?;
+        Ok(Some(result))
+    }
+}
+fn same_event(expected: &EventRefPayload, supplied: &EventRefPayload, delayed: bool) -> bool {
+    let mut expected = expected.clone();
+    if delayed {
+        if let ReplyAddress::NyxidRelay {
+            reply_token,
+            reply_token_expires_at,
+            ..
+        } = &mut expected.reply
+        {
+            *reply_token = cmaeg_core::channel::Secret::new("");
+            *reply_token_expires_at = 1;
+        }
+    }
+    &expected == supplied
+}

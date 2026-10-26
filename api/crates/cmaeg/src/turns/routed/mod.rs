@@ -17,6 +17,10 @@ mod projection_store;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+mod tool_replies;
+mod tool_reply_gate;
+mod tool_reply_index;
+mod tool_reply_store;
 
 pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, ReattachedResponse};
 pub use builder::ProductionFrozenTurnBuilder;
@@ -28,6 +32,8 @@ pub use journal::Journal;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
 };
+pub use tool_replies::RoutedToolReplies;
+pub use tool_reply_store::ToolReplyStatus;
 
 #[cfg(test)]
 mod adapter_test_server;
@@ -55,3 +61,5 @@ mod builder_tests;
 mod executor_tests;
 #[cfg(test)]
 mod projection_store_tests;
+#[cfg(test)]
+mod tool_reply_tests;

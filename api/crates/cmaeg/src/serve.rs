@@ -163,6 +163,7 @@ pub(crate) async fn serve(
         keys: state.master_keys.clone(),
         providers,
         delivery,
+        routed_replies: None,
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
         public_api_url: config.management.public_api_url.clone(),

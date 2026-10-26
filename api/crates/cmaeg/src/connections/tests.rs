@@ -135,6 +135,7 @@ impl Fixture {
             keys: self.keys.clone(),
             providers,
             delivery: Arc::new(crate::delivery::router::ShardedScheduler::new(delivery)),
+            routed_replies: None,
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
             public_api_url: management.public_url.clone(),

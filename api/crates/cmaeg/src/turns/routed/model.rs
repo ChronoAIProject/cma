@@ -119,7 +119,10 @@ impl FrozenTurn {
         Ok(())
     }
 }
-fn delivery_event(plan: &AdmittedPlan, target: &StoredTarget) -> cmaeg_core::seal::EventRefPayload {
+pub(super) fn delivery_event(
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+) -> cmaeg_core::seal::EventRefPayload {
     let mut event = target.launch.event.clone();
     if plan
         .targets

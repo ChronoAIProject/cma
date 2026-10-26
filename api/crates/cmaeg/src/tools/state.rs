@@ -37,6 +37,8 @@ pub struct ToolsState {
     pub keys: Arc<MasterKeyRing>,
     pub providers: Arc<ProviderClient>,
     pub delivery: Arc<dyn DeliverySink>,
+    /// Wire together with routed execution; None preserves legacy live tools.
+    pub routed_replies: Option<Arc<crate::turns::routed::RoutedToolReplies>>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
     pub public_api_url: String,
@@ -117,6 +119,15 @@ impl ToolsState {
                 .authorize_event(caller, reference, "replyToEvent")
                 .await?;
             let expires_at = event.expires_at;
+            if let Some(routed) = &self.routed_replies {
+                if let Some(receipt) = routed
+                    .reply(caller, &channel, &event, message.clone(), false)
+                    .await
+                    .map_err(super::routed_reply_error)?
+                {
+                    return Ok(receipt);
+                }
+            }
             let (receipt, received) = oneshot::channel();
             let result = self
                 .deliver(

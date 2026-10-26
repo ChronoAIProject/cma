@@ -145,6 +145,7 @@ impl GoldenApp {
             keys,
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: PUBLIC_URL.into(),
             public_api_url: PUBLIC_URL.into(),
