@@ -110,6 +110,7 @@ pub struct RelayClient {
     native_media: bool,
     text_edits: bool,
     native_discord_edits: bool,
+    native_discord_effects: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
@@ -125,6 +126,13 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    pub fn with_native_discord_effects(mut self, enabled: bool) -> Self {
+        self.native_discord_effects = enabled;
+        self
+    }
+    pub(super) fn native_discord_effects_enabled(&self) -> bool {
+        self.native_discord_effects
+    }
     /// Issue native edit references only after every reader supports their authority.
     /// Disabling issuance does not revoke already issued references.
     pub fn with_native_discord_edits(mut self, enabled: bool) -> Self {
@@ -236,6 +244,7 @@ impl RelayClient {
             native_media: false,
             text_edits: false,
             native_discord_edits: false,
+            native_discord_effects: false,
             lark_cards: false,
             whatsapp_templates: false,
             whatsapp_interactions: false,

@@ -283,16 +283,24 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
-        message_effects: state.telegram_effects_issuance_enabled.then(|| {
-            super::MessageEffectsCapabilities::new(
-                activity_verified
-                    && state.telegram_effects.is_some()
-                    && super::message_effects::authority::event_supported(
-                        channel, event, &activity,
-                    ),
-                None,
-            )
-        }),
+        message_effects: (state.telegram_effects_issuance_enabled
+            || state.discord_effects_issuance_enabled)
+            .then(|| {
+                super::MessageEffectsCapabilities::new(
+                    activity_verified
+                        && ((state.telegram_effects_issuance_enabled
+                            && state.telegram_effects.is_some()
+                            && super::message_effects::authority::event_supported(
+                                channel, event, &activity,
+                            ))
+                            || (state.discord_effects_issuance_enabled
+                                && state.discord_effects.is_some()
+                                && super::message_effects::discord::event_supported(
+                                    channel, event, &activity,
+                                ))),
+                    None,
+                )
+            }),
         whatsapp_templates: (state.whatsapp_templates_enabled
             && matches!(
                 event.reply,

@@ -74,11 +74,12 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
         .unwrap();
     let reference = MessageRef::seal(
         &MessageRefPayload {
-            discord_message: Some(DiscordMessageDestination {
+            discord_message: Some(Box::new(DiscordMessageDestination {
+                effects: None,
                 bot_id: "77".into(),
                 channel_id: "99".into(),
                 authority_sha256: [3; 32],
-            }),
+            })),
             telegram_effect: None,
             channel_id: channel.id.clone(),
             event_id: "discord:77:700".parse().unwrap(),

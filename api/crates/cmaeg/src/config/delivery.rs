@@ -5,6 +5,8 @@ pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
 pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
 pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_EDITS_ENABLED: &str = "CMAEG_NATIVE_DISCORD_EDITS_ENABLED";
+pub const CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: &str =
+    "CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED";
 pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_INTERACTIONS_ENABLED: &str = "CMAEG_WHATSAPP_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
@@ -55,6 +57,9 @@ pub(crate) fn relay_text_edits_from_env() -> Result<bool, ConfigError> {
 
 pub(crate) fn native_discord_edits_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_NATIVE_DISCORD_EDITS_ENABLED)
+}
+pub(crate) fn native_discord_effects_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED)
 }
 
 pub(crate) fn consumer_interactions_from_env() -> Result<bool, ConfigError> {

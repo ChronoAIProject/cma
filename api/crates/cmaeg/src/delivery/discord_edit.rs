@@ -29,7 +29,7 @@ pub(super) fn editable(message: &OutboundMessage) -> bool {
             .all(|block| matches!(block, Block::Text { .. } | Block::Link { .. }))
 }
 
-fn authority(
+pub(crate) fn authority(
     channel: &ResolvedChannel,
     consumer: Option<&ConsumerId>,
     bot: &str,
@@ -77,11 +77,19 @@ impl Sender {
             return None;
         };
         let reference = MessageRefPayload {
-            discord_message: Some(DiscordMessageDestination {
+            discord_message: Some(Box::new(DiscordMessageDestination {
+                effects: (self.relay.native_discord_effects_enabled() && event.lineage.is_none())
+                    .then(|| {
+                        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                        cmaeg_core::seal::DiscordEffectWindow {
+                            issued_at: now,
+                            expires_at: now.saturating_add(86_400),
+                        }
+                    }),
                 bot_id: bot_id.clone(),
                 channel_id: channel_id.clone(),
                 authority_sha256: authority(channel, event.consumer.as_ref(), bot_id)?,
-            }),
+            })),
             telegram_effect: None,
             channel_id: channel.id.clone(),
             event_id: event.event_id.clone(),

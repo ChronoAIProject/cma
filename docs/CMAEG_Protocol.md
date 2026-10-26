@@ -3426,3 +3426,49 @@ content. An uncorrelated response, interrupted transport or server failure stays
 `unknown`; no automatic duplicate write is attempted. A definite rate limit
 returns `rate_limited` and enforces the shared bot cooldown. Only a confirmed
 replacement returns the retained message reference.
+
+
+### Native Discord confirmed-message effects
+
+The existing message capabilities, delete and reaction REST/MCP operations also
+accept newly issued native Discord message references. The optional sealed
+`discord_message.effects` window binds issuance and expiry for at most 24 hours;
+legacy edit-only references omit it without changing their serialized form.
+`CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` defaults to false and requires
+`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for issuance. All serving and rollback
+readers must understand this field before writers are enabled. Disabling either
+issuance switch does not revoke previously authorized effects. Editing a message
+preserves its original effect window and cannot extend it.
+
+Only a confirmed single-part ordinary text/link reply can currently issue this
+authority. Multipart, media, interaction controls, relay destinations and handoff
+lineage do not grant native effects. A caller cannot supply arbitrary Discord
+channel or message IDs. Current owner, source policy, consumer, provider binding
+and consumer key are checked before and after a durable claim. A replacement bot
+token is allowed only when it authenticates as the original bot. Changing source
+or consumer authority invalidates the reference.
+
+Delete verifies that the exact message belongs to the bot and confirms only a
+Discord 204 receipt. Reaction accepts zero or one Unicode or custom emoji;
+custom IDs are resolved in the exact destination channel's guild. It rejects
+Telegram-specific `is_big` requests. Replacement removes only reactions with
+`me=true`, individually through `/@me`, preserving every other user's reactions.
+The operation has a five-second transport deadline and follows shared bot
+cooldowns. A partial mutation followed by failure is `unknown`; failed transport
+never justifies repeating an uncertain write. Capabilities describe protocol
+support, not a guarantee that Discord permits a particular current operation.
+
+A stable idempotency key covers both effects on the exact sealed message. A
+conflicting action is 409, concurrent/restarted callers replay the durable
+receipt, and an abandoned claim returns an uncertain outcome instead of sending
+again. Expired effect authority returns 410 while its independent text edit
+reference remains usable. These additions do not expand the Telegram or relay
+contracts.
+
+Different idempotency keys also serialize through a durable exact-message fence,
+so concurrent reaction replacements cannot leave two bot reactions. A busy or
+uncertain earlier operation rejects a new key as `native_message_effect_busy`
+without reading or writing Discord. Definitive persisted receipts release the
+fence; unknown outcomes, abandoned attempts and lost receipt writes retain it
+through authority expiry. There is no timeout takeover of a possibly late
+platform write. Same-key retries still replay the original receipt.
