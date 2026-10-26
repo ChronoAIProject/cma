@@ -144,6 +144,7 @@ impl Sender {
         {
             MessageRef::seal(
                 &MessageRefPayload {
+                    discord_message: None,
                     telegram_effect: None,
                     relay_message: self
                         .relay

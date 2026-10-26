@@ -19,6 +19,7 @@ pub(crate) async fn serve(
     complete_replies: bool,
     native_media: bool,
     relay_text_edits: bool,
+    native_discord_edits: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
@@ -93,6 +94,7 @@ pub(crate) async fn serve(
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_native_discord_edits(native_discord_edits)
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
@@ -187,6 +189,7 @@ pub(crate) async fn serve(
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
+        native_discord_edits_enabled: native_discord_edits,
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

@@ -3368,8 +3368,9 @@ pinned connections and no redirects; the latter retain the shared 64 KiB inline
 aggregate bound. At most four files and 8 MiB of aggregate prepared bytes are
 accepted. Multipart metadata preserves filenames, MIME types and descriptions.
 Native media delivery does not depend on NyxID relay-media deployment flags.
-Native controls, message edits, deletion and reactions remain unsupported;
-structured blocks use the established text fallback.
+Native controls, deletion and reactions remain unsupported; structured blocks
+use the established text fallback. Native single-message text edits use the
+separate reader-first contract below.
 
 Native inbound media uses `{"type":"discord","channel_id":"99",
 "message_id":"700","attachment_id":"500"}`. This nonsecret locator is
@@ -3394,3 +3395,34 @@ schedule inbox records. Source discovery/reconnection/revocation, durable inbox
 scheduling and routed recovery must be composed before enabling native messaging.
 The source write flag stays off in the deployment manifest. Relay Discord
 behavior and retained serialization remain compatible.
+
+### Native Discord text edits
+
+`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` defaults to false. After every serving and
+rollback reader supports the additive sealed destination, enabling it advertises
+`capabilities.edit=true` on native Discord event contexts and issues an opaque
+`message_ref` for a confirmed single-part text/link reply. Public REST
+`updateMessage` and its MCP tool retain their existing request and response
+shapes. Native-media messages, multiple text parts, cards, controls, partial
+delivery and uncertain delivery never receive this authority. Disabling the
+flag stops new issuance; already issued references remain usable.
+
+The encrypted reference binds the exact native bot, channel and returned message
+ID, plus the current CMA channel record, owner, source policy and consumer's
+provider/key authority. Updating first resolves the current channel without its
+cached definition. Removing or replacing the source, moving its ownership or
+changing the bound consumer authority refuses the operation. Bot-token rotation
+alone is allowed, but the current token must still pass `/users/@me` for the
+same bot before the native write. A token for another bot cannot edit through
+the reference, even if both bots can access the destination channel.
+
+Replacement content must render as one nonempty text message of at most 2,000
+UTF-16 code units. Native media, cards, controls, new thread targets and reply
+targets are refused. Delivery uses the existing route gate/pacing and one
+authenticated `PATCH /channels/{channel}/messages/{message}`. Automatic mentions
+remain disabled. Token verification and the PATCH share a five-second
+deadline. Success must return the exact message, channel, bot author and rendered
+content. An uncorrelated response, interrupted transport or server failure stays
+`unknown`; no automatic duplicate write is attempted. A definite rate limit
+returns `rate_limited` and enforces the shared bot cooldown. Only a confirmed
+replacement returns the retained message reference.

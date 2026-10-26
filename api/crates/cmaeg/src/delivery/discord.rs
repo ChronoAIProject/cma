@@ -138,10 +138,18 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
+        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable(message) {
+            if let DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            } = &receipt.delivery
+            {
+                receipt.message_ref = self.discord_message_ref(ctx.channel, event, id);
+            }
+        }
         (receipt, effects)
     }
 }
-fn outcome(error: RestError) -> DeliveryOutcome {
+pub(super) fn outcome(error: RestError) -> DeliveryOutcome {
     match error {
         RestError::RateLimited(retry_after) => DeliveryOutcome::RateLimited { retry_after },
         RestError::Rejected | RestError::NotFound => DeliveryOutcome::Rejected {

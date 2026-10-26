@@ -28,7 +28,7 @@ pub use interaction::{
 };
 pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
-pub use message_ref::{MessageRefPayload, RelayMessageDestination};
+pub use message_ref::{DiscordMessageDestination, MessageRefPayload, RelayMessageDestination};
 pub use pointer::ChannelPointer;
 pub use reply_target::{ReplyTargetPayload, ReplyTargetRef, REPLY_TARGET_TTL};
 pub use telegram_effect::{TelegramAdmissionProof, TelegramEffectAuthority, TELEGRAM_EFFECT_TTL};

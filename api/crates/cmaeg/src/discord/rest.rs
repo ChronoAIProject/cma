@@ -199,6 +199,52 @@ impl DiscordRest {
             .map(str::to_owned)
             .ok_or(RestError::Unknown)
     }
+    /// Edit one confirmed bot message without retries or changing its destination.
+    pub async fn edit_text(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        message: &str,
+        text: &str,
+    ) -> Result<(), RestError> {
+        if !valid_id(bot)
+            || !valid_id(channel)
+            || !valid_id(message)
+            || text.is_empty()
+            || text.encode_utf16().count() > 2000
+        {
+            return Err(RestError::Rejected);
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        self.ready(token)?;
+        tokio::time::timeout_at(deadline, self.verify_bot(token, bot))
+            .await
+            .map_err(|_| RestError::Unavailable)??;
+        self.ready(token)?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(RestError::Unavailable);
+        }
+        let response = self
+            .client
+            .patch(self.url(&format!("channels/{channel}/messages/{message}"))?)
+            .header("Authorization", format!("Bot {}", token.as_str()))
+            .timeout(remaining)
+            .json(&json!({"content":text,"allowed_mentions":{"parse":[],"replied_user":false}}))
+            .send()
+            .await
+            .map_err(|_| RestError::Unknown)?;
+        let body = self.decode(response, token, true).await?;
+        if body["id"].as_str() != Some(message)
+            || body["channel_id"].as_str() != Some(channel)
+            || body["author"]["id"].as_str() != Some(bot)
+            || body["content"].as_str() != Some(text)
+        {
+            return Err(RestError::Unknown);
+        }
+        Ok(())
+    }
     fn url(&self, path: &str) -> Result<Url, RestError> {
         self.origin.join(path).map_err(|_| RestError::Rejected)
     }

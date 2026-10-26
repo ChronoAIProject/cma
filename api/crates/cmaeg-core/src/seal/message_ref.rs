@@ -9,6 +9,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
+    /// Exact native Discord text destination; issued only after reader rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_message: Option<DiscordMessageDestination>,
     /// Optional authority for new native Telegram delete/reaction tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_effect: Option<super::TelegramEffectAuthority>,
@@ -29,6 +32,22 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(destination) = &self.discord_message {
+            if !crate::channel::valid_discord_id(&destination.bot_id)
+                || !crate::channel::valid_discord_id(&destination.channel_id)
+                || !crate::channel::valid_discord_id(&self.platform_message_id)
+                || self.route_id
+                    != format!("discord:{}:{}", destination.bot_id, destination.channel_id)
+                || self.telegram_effect.is_some()
+                || self.relay_message.is_some()
+                || self.interaction_record_id.is_some()
+            {
+                return Err(ValidationError::new(
+                    "/discord_message",
+                    "exact native Discord text destination required",
+                ));
+            }
+        }
         if let Some(effect) = &self.telegram_effect {
             effect.validate()?;
             if self.relay_message.is_some()
@@ -71,6 +90,15 @@ impl MessageRefPayload {
         }
         super::event_ref::validate_consumer(self.consumer.as_ref())
     }
+}
+
+/// Bound native source and consumer authority, excluding the replaceable bot token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DiscordMessageDestination {
+    pub bot_id: String,
+    pub channel_id: String,
+    pub authority_sha256: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
