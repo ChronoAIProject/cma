@@ -38,7 +38,7 @@
 }
 .delivery-flow .react-flow {
   --xy-background-color: var(--dsw-alias-bg-layer-2);
-  --xy-background-pattern-dots-color: var(--dsw-alias-border-l3);
+  --xy-background-pattern-color: var(--dsw-alias-border-l3);
   --xy-edge-stroke: var(--dsw-alias-border-l3);
   --xy-edge-stroke-width: 1;
   --xy-handle-background-color: var(--dsw-alias-bg-layer-1);
