@@ -184,6 +184,8 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let records = Arc::new(RecordClient::new(backend, "service-fixture").unwrap());
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
+        telegram_effects_issuance_enabled: false,
+        telegram_effects: None,
         lark_cards_enabled: false,
         resolver: ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default()),
         keys,
@@ -295,6 +297,7 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     let conversation = ConversationId::derive(&keys, &channel, 1, &partition);
     let expiry = mongodb::bson::DateTime::now().timestamp_millis() / 1000 + 1800;
     let payload = EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some(activity_digest(&activity)),
         channel_id: channel.clone(),

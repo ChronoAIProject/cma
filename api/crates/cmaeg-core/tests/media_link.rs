@@ -32,6 +32,7 @@ fn event(keys: &MasterKeyRing) -> EventRefPayload {
     .seal_id(keys)
     .unwrap();
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some(activity_digest(&activity)),
         conversation_id: ConversationId::derive(keys, &channel_id, 1, "chat-1"),

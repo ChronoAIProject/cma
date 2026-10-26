@@ -21,11 +21,16 @@ pub struct IngressState {
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
     /// Whether Telegram media is admitted; off, media is refused as before.
     pub media_enabled: bool,
+    pub telegram_effects_issuance_enabled: bool,
     /// Receives authenticated refusals, producers and authentication
     /// failures; a no-op unless the console is on.
     pub activity: Arc<dyn ActivityObserver>,
 }
 impl IngressState {
+    pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
+        self.telegram_effects_issuance_enabled = enabled;
+        self
+    }
     pub fn with_activity_observer(mut self, observer: Arc<dyn ActivityObserver>) -> Self {
         self.activity = observer;
         self
@@ -60,6 +65,7 @@ impl IngressState {
             telegram: None,
             receipt_observer: None,
             media_enabled: false,
+            telegram_effects_issuance_enabled: false,
             activity: Arc::new(NoopObserver),
             resolver,
             master_keys,

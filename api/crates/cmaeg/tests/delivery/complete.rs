@@ -120,6 +120,7 @@ async fn maximum_tool_ingress_and_automatic_text_fit_after_escaping_expansion() 
         &channel,
         automatic_activity,
         &EventRefPayload {
+            telegram_admission: None,
             event_id: "auto-event".parse().unwrap(),
             ..event
         },

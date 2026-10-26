@@ -44,6 +44,7 @@ fn channel_pointer_seals_and_opens() {
 #[test]
 fn event_reference_expires_and_redacts_debug() {
     let payload = EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: None,
         channel_id: channel_id(),
@@ -295,6 +296,7 @@ fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
         };
         activity.validate().expect("valid activity");
         let payload = EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel_id(),

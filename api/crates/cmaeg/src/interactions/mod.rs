@@ -238,6 +238,7 @@ impl InteractionStore {
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
         MessageRef::seal(
             &MessageRefPayload {
+                telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),
                 platform_message_id: destination.platform_id.clone(),
