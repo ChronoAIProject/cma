@@ -90,6 +90,7 @@ pub fn resolved(edit: impl FnOnce(&mut ChannelDefinition)) -> ResolvedChannel {
 
 pub fn event(reply: ReplyAddress) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: None,
         channel_id: channel_id(),

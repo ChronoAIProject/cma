@@ -42,6 +42,7 @@ fn lineage(hop: u8) -> Lineage {
 
 fn event() -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some("b".repeat(64)),
         channel_id: ChannelId::new("cmaeg1.ch.consumer-references").unwrap(),
@@ -58,6 +59,7 @@ fn event() -> EventRefPayload {
 
 fn message() -> MessageRefPayload {
     MessageRefPayload {
+        telegram_effect: None,
         channel_id: ChannelId::new("cmaeg1.ch.consumer-references").unwrap(),
         event_id: EventId::new("event-1").unwrap(),
         platform_message_id: "42".into(),

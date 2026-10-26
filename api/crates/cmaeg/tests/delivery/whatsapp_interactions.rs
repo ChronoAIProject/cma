@@ -339,8 +339,8 @@ async fn unsupported_controls_fail_before_any_durable_write_or_send() {
 async fn named_whatsapp_issuance_requires_gate_and_retained_callback_keeps_owner() {
     let mut setup = Setup::new().await;
     setup.named().await;
-    let mut disabled = setup.recording(true, 0);
-    let refused = disabled
+    let mut legacy = setup.recording(false, 0);
+    let before = legacy
         .reply(
             &setup.channel,
             &setup.event,
@@ -348,8 +348,24 @@ async fn named_whatsapp_issuance_requires_gate_and_retained_callback_keeps_owner
             ReplySource::Tool,
         )
         .await;
-    assert!(matches!(refused.delivery, DeliveryOutcome::Unsupported));
-    assert!(disabled.http.sent().is_empty());
+    assert!(matches!(before.delivery, DeliveryOutcome::Confirmed { .. }));
+    let expected = legacy.http.sent()[0].json();
+    legacy.finish().await;
+    let mut disabled = setup.recording(true, 0);
+    let fallback = disabled
+        .reply(
+            &setup.channel,
+            &setup.event,
+            choice(false),
+            ReplySource::Tool,
+        )
+        .await;
+    assert!(matches!(
+        fallback.delivery,
+        DeliveryOutcome::Confirmed { .. }
+    ));
+    assert_eq!(disabled.http.sent().len(), 1);
+    assert_eq!(disabled.http.sent()[0].json(), expected);
     assert!(setup.backend.records().is_empty());
     disabled.finish().await;
     let mut enabled = setup.recording_with_consumer(true, 0, true);
@@ -393,4 +409,54 @@ async fn named_whatsapp_issuance_requires_gate_and_retained_callback_keeps_owner
         .await
         .is_ok());
     enabled.finish().await;
+}
+
+#[tokio::test]
+async fn native_gate_keeps_legacy_whatsapp_text_for_trusted_normalized_sources() {
+    let mut setup = Setup::new().await;
+    let channel = Arc::get_mut(&mut setup.channel).unwrap();
+    let Source::NyxidRelay {
+        verify_raw_event,
+        trust_normalized,
+        ..
+    } = &mut channel.definition.sources[0]
+    else {
+        panic!()
+    };
+    *verify_raw_event = false;
+    *trust_normalized = true;
+    channel.definition.validate().unwrap();
+    for list in [false, true] {
+        let mut legacy = setup.recording(false, 0);
+        let before = legacy
+            .reply(
+                &setup.channel,
+                &setup.event,
+                choice(list),
+                ReplySource::Tool,
+            )
+            .await;
+        assert!(matches!(before.delivery, DeliveryOutcome::Confirmed { .. }));
+        let expected = legacy.http.sent()[0].json();
+        legacy.finish().await;
+        let mut enabled = setup.recording(true, 0);
+        let after = enabled
+            .reply(
+                &setup.channel,
+                &setup.event,
+                choice(list),
+                ReplySource::Tool,
+            )
+            .await;
+        assert!(matches!(after.delivery, DeliveryOutcome::Confirmed { .. }));
+        assert_eq!(enabled.http.sent().len(), 1);
+        assert_eq!(enabled.http.sent()[0].json(), expected);
+        assert!(setup.backend.records().is_empty());
+        assert!(setup
+            .provider
+            .log()
+            .iter()
+            .all(|request| request.method != "GET"));
+        enabled.finish().await;
+    }
 }

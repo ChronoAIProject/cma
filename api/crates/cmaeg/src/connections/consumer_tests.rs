@@ -38,6 +38,7 @@ async fn a_non_default_consumer_cannot_start_a_connection() {
     let event = |consumer: Option<ConsumerId>| {
         EventRef::seal(
             &EventRefPayload {
+                telegram_admission: None,
                 v: 1,
                 activity_sha256: None,
                 channel_id: channel.clone(),

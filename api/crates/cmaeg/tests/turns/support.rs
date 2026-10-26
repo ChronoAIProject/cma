@@ -103,6 +103,7 @@ impl Fixture {
         let conversation_id = ConversationId::derive(&self.keys, &self.channel.id, 1, &partition);
         let event_ref = EventRef::seal(
             &EventRefPayload {
+                telegram_admission: None,
                 v: 1,
                 activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
                 channel_id: self.channel.id.clone(),

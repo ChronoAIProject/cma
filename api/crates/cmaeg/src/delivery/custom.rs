@@ -249,6 +249,7 @@ mod tests {
 
     fn event(channel: &ResolvedChannel, reply: ReplyAddress) -> EventRefPayload {
         EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: None,
             channel_id: channel.id.clone(),

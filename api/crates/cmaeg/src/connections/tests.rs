@@ -142,6 +142,8 @@ impl Fixture {
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             lark_cards_enabled: false,
@@ -202,6 +204,7 @@ pub(super) fn connection(subject: &str, organization: bool) -> Connection {
         fingerprint: "fixture-plan-digest".into(),
         origin: Origin {
             event: EventRefPayload {
+                telegram_admission: None,
                 v: 1,
                 activity_sha256: Some("fixture-activity-digest".into()),
                 channel_id: "cmaeg1.ch.fixture".parse().unwrap(),

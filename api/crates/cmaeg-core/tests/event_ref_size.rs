@@ -87,6 +87,7 @@ fn lineage() -> Lineage {
 
 fn base(keys: &MasterKeyRing, event_id: String, reply: ReplyAddress) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some("f".repeat(64)),
         channel_id: channel_id(keys),
@@ -132,6 +133,7 @@ fn lengths(payload: EventRefPayload, keys: &MasterKeyRing) -> (usize, usize) {
     payload.validate().unwrap();
     let legacy = EventRef::seal(&payload, keys).unwrap().as_str().len();
     let bound = EventRefPayload {
+        telegram_admission: None,
         consumer: Some(ConsumerId::parse("csm_ffffffffffff").unwrap()),
         lineage: Some(lineage()),
         ..payload

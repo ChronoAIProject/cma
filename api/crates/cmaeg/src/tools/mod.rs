@@ -5,6 +5,7 @@ mod attachments;
 mod context;
 mod download_access;
 mod media_links;
+pub(crate) mod message_effects;
 mod reply_targets;
 mod state;
 pub use attachment_view::{
@@ -25,5 +26,6 @@ pub use media_links::{
     LinkRefusal, MediaDownloads, DOWNLOAD_RESPONSE_WEIGHT, DOWNLOAD_STREAMS_GLOBAL,
     DOWNLOAD_STREAMS_PER_CHANNEL,
 };
+pub use message_effects::{MessageEffectReceipt, MessageEffectsCapabilities, MessageEffectsClient};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;
