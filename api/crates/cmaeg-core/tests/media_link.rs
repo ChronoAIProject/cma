@@ -41,6 +41,7 @@ fn event(keys: &MasterKeyRing) -> EventRefPayload {
         partition_key: "chat-1".into(),
         expires_at: NOW + 1_800,
         reply: ReplyAddress::NyxidRelay {
+            thread_reply: false,
             message_id: "message-1".into(),
             route_id: "route-1".into(),
             platform: Platform::Telegram,

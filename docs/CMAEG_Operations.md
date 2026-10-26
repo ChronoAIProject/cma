@@ -112,6 +112,7 @@ applies with all media flags off.**
 | `CMAEG_METRICS_LISTEN` | socket address | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED` | `true` or `false` | `false` | Allows new scoped `bot_messages: native_mentions` policies and advertises `native_bot_mentions_v1` through authenticated channel capability discovery. Only exact `true`/`false` are accepted. Upgrade all gateway readers and consuming applications before enabling it. Turning it off prevents new opt-ins but retains existing policy execution; see [Native bot mention rollout](#native-bot-mention-rollout). |
+| `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
 | `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
@@ -205,6 +206,23 @@ combined with RUST_LOG enforces this, so even
 `RUST_LOG=trace,reqwest::connect=trace` prints none of them, and it applies
 with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
+
+## Native thread rollout
+
+Deploy with `CMAEG_THREAD_CONTRACT_WRITES_ENABLED=false`. Keep existing platform
+and channel settings intact while the new gateway readers roll out. The flag
+blocks new or changed thread contracts and their capability advertisement;
+unchanged contracts and their execution remain supported, as does removal.
+
+Wait for every old gateway Pod, including terminating/draining Pods, to exit.
+Verify that NyxID supports the dedicated `/api/v1/channel-relay/thread-reply`
+endpoint on every serving replica before enabling the flag. Verify an explicit
+native-thread reply in a controlled test channel before enabling production
+channel opt-ins. Ordinary channel replies retain their existing behavior.
+
+For rollback, disable new thread-contract writes first and retain a gateway
+version that can read already stored contracts and sealed thread reply targets.
+Disabling the flag does not migrate those records for an older binary.
 
 ## Native bot mention rollout
 

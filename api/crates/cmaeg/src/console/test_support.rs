@@ -205,6 +205,7 @@ impl ChannelReader for FakeReader {
 /// that must never reach the console.
 pub(crate) fn activity(event_id: &str) -> Activity {
     Activity {
+        thread: None,
         schema_version: 1,
         event_id: EventId::new(event_id).unwrap(),
         kind: ActivityKind::Message {

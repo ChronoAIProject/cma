@@ -33,6 +33,8 @@ pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Activity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<crate::thread::ThreadFacts>,
     pub schema_version: u16,
     pub event_id: EventId,
     pub kind: ActivityKind,
@@ -155,6 +157,15 @@ impl Activity {
                 "/schema_version",
                 "unsupported schema version",
             ));
+        }
+        if let Some(thread) = &self.thread {
+            thread.validate()?;
+            if thread.chat_id != self.conversation.id
+                || thread.sender_kind != self.actor.kind
+                || self.conversation.kind == ConversationKind::Private
+            {
+                return Err(ValidationError::new("/thread", "thread identity mismatch"));
+            }
         }
         require_string(self.event_id.as_str(), "/event_id", 1, 512)?;
         let identity_limit = if matches!(self.source, SourceKind::Custom) {

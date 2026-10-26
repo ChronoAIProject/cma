@@ -155,6 +155,22 @@ impl App {
         consumer: Option<ConsumerId>,
         credential: Secret,
     ) -> EventRef {
+        self.event_for_with_thread(actor, name, consumer, credential, false)
+            .await
+    }
+    pub async fn event_with_thread(&self, actor: &str, name: &str, threaded: bool) -> EventRef {
+        let key = self.definition.secrets.provider_credential.clone().unwrap();
+        self.event_for_with_thread(actor, name, None, key, threaded)
+            .await
+    }
+    async fn event_for_with_thread(
+        &self,
+        actor: &str,
+        name: &str,
+        consumer: Option<ConsumerId>,
+        credential: Secret,
+        threaded: bool,
+    ) -> EventRef {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
@@ -163,7 +179,11 @@ impl App {
         activity.conversation.id = format!("chat-{actor}");
         activity.event_id = name.parse().unwrap();
         activity.source = cmaeg_core::activity::SourceKind::NyxidRelay {
-            platform: cmaeg_core::channel::Platform::Telegram,
+            platform: if threaded {
+                cmaeg_core::channel::Platform::Lark
+            } else {
+                cmaeg_core::channel::Platform::Telegram
+            },
             route_id: format!("route-{actor}"),
         };
         let native = self
@@ -200,9 +220,14 @@ impl App {
                 }
             } else {
                 ReplyAddress::NyxidRelay {
+                    thread_reply: threaded,
                     message_id: name.into(),
                     route_id: format!("route-{actor}"),
-                    platform: cmaeg_core::channel::Platform::Telegram,
+                    platform: if threaded {
+                        cmaeg_core::channel::Platform::Lark
+                    } else {
+                        cmaeg_core::channel::Platform::Telegram
+                    },
                     reply_token: cmaeg_core::channel::Secret::new("fixture-unused-reply-token"),
                     reply_token_expires_at: now() + 600,
                 }

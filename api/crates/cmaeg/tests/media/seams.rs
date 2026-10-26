@@ -52,6 +52,7 @@ fn relayed() -> (
         Some(message(vec![attachment(AttachmentKind::Image, None)])),
     );
     let mut payload = event(ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: "nyx-message-1".into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,

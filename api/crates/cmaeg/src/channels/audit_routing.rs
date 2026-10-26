@@ -249,6 +249,7 @@ fn classify(
 fn names(extensions: Extensions) -> Vec<&'static str> {
     [
         (extensions.native_bot_mentions, "native_bot_mentions"),
+        (extensions.thread_contract, "thread_contract"),
         (extensions.routing, "routing"),
         (extensions.sources, "sources"),
     ]

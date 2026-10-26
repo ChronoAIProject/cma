@@ -2,7 +2,7 @@
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConsumerId, ConsumerName,
     ConversationId, ConversationKind, EventId, EventRef, MessageRef, Platform, ProblemCode,
-    ReplyChoice, RuleId, SourceId,
+    ReplyChoice, RuleId, SourceId, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,9 @@ pub struct ReplyTargetResponse {
 /// CMAEG `Activity` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Verified facts on explicitly negotiated group-thread channels.
+    pub thread: Option<ThreadFacts>,
     /// Wire field `actor`.
     pub actor: Actor,
     /// Wire field `conversation`.

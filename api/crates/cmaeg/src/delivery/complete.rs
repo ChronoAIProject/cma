@@ -53,7 +53,11 @@ impl Sender {
         }
         // Validate the exact bytes that will be dispatched before admission,
         // commitment or claiming the event's single-use token.
-        let prepared = match RelayClient::prepare(&event.reply, &part.text, None) {
+        let mut address = event.reply.clone();
+        if let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut address {
+            *thread_reply = message.thread_reply;
+        }
+        let prepared = match RelayClient::prepare(&address, &part.text, None) {
             Ok(prepared) => prepared,
             Err(outcome) => return (refused(rendering, outcome), effects),
         };

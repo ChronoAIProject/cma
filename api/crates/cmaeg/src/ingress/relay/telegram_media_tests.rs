@@ -368,6 +368,7 @@ fn envelope(rng: &mut Rng, message: &Value) -> RelayAttachments {
 
 fn activity(media: TelegramMedia, source: &SourceKind) -> Activity {
     Activity {
+        thread: None,
         schema_version: 1,
         event_id: EventId::new("message-1".to_owned()).unwrap(),
         kind: ActivityKind::Message {

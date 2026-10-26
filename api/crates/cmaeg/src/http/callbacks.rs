@@ -215,13 +215,42 @@ async fn admit_callback(
     let record = channel.definition.record_id.clone();
     let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
-    let facts = match observe(source, &verified.payload, state.media_enabled) {
+    let mut facts = match observe(source, &verified.payload, state.media_enabled) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
+    let mut selected_admission = std::borrow::Cow::Borrowed(admission);
+    if let Some(contract) = &channel.definition.reply.thread_contract {
+        if let cmaeg_core::channel::Source::NyxidRelay {
+            bot_id: Some(bot_id),
+            platform: cmaeg_core::channel::Platform::Lark | cmaeg_core::channel::Platform::Feishu,
+            ..
+        } = source
+        {
+            facts.thread =
+                match crate::ingress::relay::lark::thread_facts(&verified.payload, bot_id) {
+                    Ok(thread) => thread.map(Box::new),
+                    Err(error) => return Err(reject(error)),
+                };
+            if let Some(thread) = &facts.thread {
+                facts.mentioned =
+                    Some(thread.address == cmaeg_core::thread::ThreadAddress::Mention);
+                if contract.follow_chat_ids.contains(&thread.chat_id) {
+                    if let cmaeg_core::channel::AdmissionPolicy::Scoped { groups, .. } =
+                        selected_admission.to_mut()
+                    {
+                        // Chat/sender ACL and an explicit group deny still win.
+                        if *groups != cmaeg_core::channel::GroupAdmission::Deny {
+                            *groups = cmaeg_core::channel::GroupAdmission::All;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Err(reason) = admit(
-        admission,
+        &selected_admission,
         &AdmissionFacts {
             sender_id: &verified.payload.sender.platform_id,
             chat_id: &verified.payload.conversation.platform_id,

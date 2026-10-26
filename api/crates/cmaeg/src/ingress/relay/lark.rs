@@ -93,6 +93,7 @@ pub fn observe(
         None => Some(false),
     };
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: None,
         conversation,
@@ -238,4 +239,53 @@ fn identifier(value: Option<&Value>) -> Result<Option<&str>, VerificationError> 
         }
         Some(_) => Err(INVALID),
     }
+}
+
+/// Called only after `observe` authenticated and correlated the raw message.
+/// Missing ancestry remains unresolved; a parent is not assumed to be a root.
+pub(crate) fn thread_facts(
+    payload: &CallbackPayload,
+    bot_id: &str,
+) -> Result<Option<cmaeg_core::thread::ThreadFacts>, VerificationError> {
+    use cmaeg_core::thread::{ThreadAddress, ThreadFacts, ThreadKind};
+    let message = payload
+        .raw_platform_data
+        .as_ref()
+        .and_then(|raw| raw.pointer("/event/message"))
+        .ok_or(INVALID)?;
+    if message["chat_type"] != "group"
+        || payload
+            .raw_platform_data
+            .as_ref()
+            .and_then(|raw| raw.pointer("/event/sender/sender_type"))
+            .and_then(Value::as_str)
+            != Some("user")
+    {
+        return Ok(None);
+    }
+    let message_id = identifier(message.get("message_id"))?
+        .ok_or(INVALID)?
+        .to_owned();
+    let parent = identifier(message.get("parent_id"))?.map(str::to_owned);
+    let native = identifier(message.get("thread_id"))?.map(str::to_owned);
+    let root = identifier(message.get("root_id"))?
+        .map(str::to_owned)
+        .or_else(|| (parent.is_none() && native.is_none()).then(|| message_id.clone()));
+    let mentions = crate::ingress::native_mentions::lark(message, Some(bot_id));
+    Ok(Some(ThreadFacts {
+        version: 1,
+        kind: ThreadKind::Native,
+        chat_id: payload.conversation.platform_id.clone(),
+        message_id,
+        root_id: root,
+        native_thread_id: native,
+        parent_message_id: parent,
+        sender_kind: ActorKind::Human,
+        address: if mentions.bot {
+            ThreadAddress::Mention
+        } else {
+            ThreadAddress::NotAddressed
+        },
+        mentions_others: mentions.other && !mentions.bot && !mentions.everyone,
+    }))
 }

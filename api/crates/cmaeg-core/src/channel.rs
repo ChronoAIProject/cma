@@ -252,6 +252,8 @@ pub struct PartitionRule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_contract: Option<crate::thread::ThreadContract>,
     pub auto_final: bool,
     pub ack_after_ms: u32,
     #[serde(default)]
@@ -366,6 +368,9 @@ impl ChannelDefinition {
     }
 
     fn validate_tail(&self) -> Result<(), ValidationError> {
+        if let Some(contract) = &self.reply.thread_contract {
+            contract.validate(self)?;
+        }
         if self.reply.sinks.len() > MAX_SINKS {
             return Err(ValidationError::new("/reply/sinks", "too many sinks"));
         }

@@ -106,6 +106,7 @@ fn relay(keys: &MasterKeyRing) -> EventRefPayload {
         keys,
         "wamid.HBgLMTU1NTAwMDExMTEVAgASGCA2RkQ3MEY4QjY3RkE0RDY2".into(),
         ReplyAddress::NyxidRelay {
+            thread_reply: false,
             message_id: "wamid.HBgLMTU1NTAwMDExMTEVAgASGCA2RkQ3MEY4QjY3RkE0RDY2".into(),
             route_id: "5b3f0c6e-1c1d-4d39-9a8e-2f5b6c7d8e9f".into(),
             platform: Platform::Whatsapp,
