@@ -1,7 +1,8 @@
 //! Production preparation for one already admitted routed target. Never starts
 //! a response; only the provider's idempotent conversation PUT may create state.
 use super::{
-    dispatcher::validate_current, ExecutionError, FrozenDelivery, FrozenTurn, FrozenTurnBuilder,
+    dispatcher::validate_current, DefaultDestination, ExecutionError, FrozenDelivery, FrozenTurn,
+    FrozenTurnBuilder,
 };
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -17,7 +18,7 @@ use crate::{
     },
     MediaToolProviders,
 };
-use cmaeg_core::seal::MasterKeyRing;
+use cmaeg_core::{channel::ReplyChoice, seal::MasterKeyRing};
 use futures_util::future::BoxFuture;
 use std::{
     sync::Arc,
@@ -90,6 +91,12 @@ impl ProductionFrozenTurnBuilder {
         let credential = consumer
             .credential
             .ok_or(ExecutionError::AuthorityChanged)?;
+        let default_destination = match consumer.reply.destination {
+            ReplyChoice::Origin => None,
+            ReplyChoice::Default => {
+                Some(DefaultDestination::capture(current).ok_or(ExecutionError::Unsupported)?)
+            }
+        };
         let turn = LaunchRequest {
             channel: Arc::new(current.clone()),
             activity: plan.activity.clone(),
@@ -144,6 +151,7 @@ impl ProductionFrozenTurnBuilder {
                     label: consumer.label.to_owned(),
                     auto_final: consumer.reply.auto_final,
                     destination: consumer.reply.destination,
+                    default_destination,
                     policy: current.definition.reply.clone(),
                 },
             };

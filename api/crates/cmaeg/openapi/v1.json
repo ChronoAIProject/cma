@@ -2410,7 +2410,7 @@
         "type": "object"
       },
       "DefaultReply": {
-        "description": "The channel's default reply destination. Never sealed: replies resolve it\nfrom the current definition when a message is sent.",
+        "description": "The channel's default reply destination. Routed preparation pins its exact\nnonsecret address; sends require the current definition to still authorize\nthat address and resolve credentials separately.",
         "oneOf": [
           {
             "description": "A chat of the native Telegram source.",
@@ -7198,6 +7198,21 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
