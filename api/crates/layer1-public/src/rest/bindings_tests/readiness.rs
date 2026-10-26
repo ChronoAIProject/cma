@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::sandbox::store::{SandboxStore, WorkspaceStore};
 
-pub(super) async fn create_backing_resources(
+pub(in crate::rest) async fn create_backing_resources(
     store: &InMemorySandboxStore,
     binding: &ProviderBinding,
 ) {
