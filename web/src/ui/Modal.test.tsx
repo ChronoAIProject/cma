@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Modal } from './Modal';
 
@@ -233,4 +233,25 @@ describe('the dialog shell', () => {
       .map(([name]) => name);
     expect(shells).toEqual(['ui/Modal.css']);
   });
+});
+
+it('retains an opted-in editor without a closed focus trap or scroll lock', async () => {
+  const user = userEvent.setup();
+  const renderDialog = (open: boolean) => (
+    <Modal open={open} keepMounted title="Retained editor" onClose={vi.fn()}>
+      <input aria-label="Draft" defaultValue="" />
+    </Modal>
+  );
+  const { rerender, unmount } = render(renderDialog(true));
+  const input = screen.getByRole('textbox', { name: 'Draft' });
+  await user.type(input, 'Keep this uncertain edit');
+  await act(async () => rerender(renderDialog(false)));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.body.style.overflow).not.toBe('hidden');
+  expect(input.closest('.modal')).toHaveAttribute('inert');
+  await act(async () => rerender(renderDialog(true)));
+  expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(input);
+  expect(input).toHaveValue('Keep this uncertain edit');
+  unmount();
+  expect(document.body.style.overflow).not.toBe('hidden');
 });
