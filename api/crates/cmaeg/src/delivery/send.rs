@@ -47,12 +47,15 @@ pub(super) struct Sender {
     pub observer: Arc<dyn ActivityObserver>,
 }
 impl Sender {
-    /// Report a legacy delivery: the default consumer, to the event's origin.
+    /// Report the consumer bound to this event reference, at its origin.
     pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
         self.observer.delivered(
             &event.record_id,
             &event.event_id,
-            default_consumer(),
+            event
+                .consumer
+                .as_ref()
+                .unwrap_or_else(|| default_consumer()),
             step,
             outcome,
             Destination::Origin,

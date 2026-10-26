@@ -1,4 +1,4 @@
-//! Per-event delivery steps, shared by every scheduler that delivers an event.
+//! Per-event/consumer delivery steps, shared by every scheduler that delivers an event.
 use super::{
     event::EventState,
     gate::Ungated,
@@ -133,7 +133,7 @@ async fn send_text(
 /// gate and apply the send's effects as soon as it returns. The serial
 /// worker reads no event state while a send awaits, so reads and writes keep
 /// the order they had when the send mutated the state. The outcome is
-/// reported as `step` of the event's default consumer.
+/// reported as `step` of the consumer bound to the event reference.
 pub(super) async fn reply(
     sender: &Sender,
     state: &mut EventState,
