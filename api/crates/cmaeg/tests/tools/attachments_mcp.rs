@@ -87,8 +87,8 @@ async fn mcp_lists_five_tools_when_media_enabled() {
     let app = App::with_media(MediaSetup::new(vec![relayed(0, AttachmentKind::Image)])).await;
     let listed = tools(&app).await;
     assert_eq!(listed.len(), 5);
-    // Media adds no changes to the original tools beyond the reviewed optional key.
-    super::rpc::assert_tools_except_optional_reply_key(&mut json!({"tools":listed[..4]}));
+    // Media retains the old wire shape with reviewed additive key/docs updates.
+    super::rpc::assert_tools_with_reviewed_extensions(&mut json!({"tools":listed[..4]}));
     let tool = &listed[4];
     assert_eq!(tool["name"], "readEventAttachment");
     assert_eq!(tool["description"], DESCRIPTION);

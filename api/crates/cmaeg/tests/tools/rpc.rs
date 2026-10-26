@@ -132,7 +132,7 @@ async fn mcp_update_requires_both_references_to_name_the_same_event() {
 const TOOLS_LIST_GOLDEN: &str = include_str!("../fixtures/mcp-tools-list.json");
 
 #[tokio::test]
-async fn tools_list_matches_the_pre_refactor_golden_except_the_optional_reply_key() {
+async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     let app = App::new().await;
     let mut list = app
         .rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
@@ -140,11 +140,11 @@ async fn tools_list_matches_the_pre_refactor_golden_except_the_optional_reply_ke
         .json::<Value>()
         .await
         .unwrap();
-    assert_tools_except_optional_reply_key(&mut list["result"]);
+    assert_tools_with_reviewed_extensions(&mut list["result"]);
 }
 
-/// Preserve the recorded schemas, allowing only the reviewed optional key.
-pub(super) fn assert_tools_except_optional_reply_key(list: &mut Value) {
+/// Preserve recorded schemas apart from the optional key and native media docs.
+pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     for (tool, previous) in list["tools"]
         .as_array_mut()
@@ -152,6 +152,16 @@ pub(super) fn assert_tools_except_optional_reply_key(list: &mut Value) {
         .iter_mut()
         .zip(golden["tools"].as_array().unwrap())
     {
+        let media_description =
+            &mut tool["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
+        let previous_description =
+            &previous["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
+        assert!(
+            media_description == previous_description
+                || media_description
+                    == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
+        );
+        *media_description = previous_description.clone();
         let key = tool["inputSchema"]["$defs"]["ReplyArguments"]["properties"]
             .as_object_mut()
             .unwrap()
