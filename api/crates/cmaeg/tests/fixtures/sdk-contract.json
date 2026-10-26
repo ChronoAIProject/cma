@@ -98,11 +98,6 @@
   "ActivityConsumer": [
     {
       "consumer_id": "default",
-      "state": "received",
-      "deliveries": []
-    },
-    {
-      "consumer_id": "default",
       "state": "completed",
       "display_name": "Fixture Agent",
       "provider": "cma",
@@ -114,19 +109,6 @@
       "produced_at": "2026-10-27T03:00:04Z",
       "completed_at": "2026-10-27T03:00:05Z",
       "deliveries": [
-        {
-          "step": "reply",
-          "destination": "custom_stream",
-          "outcome": "buffered",
-          "observed_at": "2026-10-27T03:00:04Z",
-          "recipients": [
-            {
-              "kind": "custom",
-              "id": "fixture-recipient",
-              "thread_id": "fixture-thread"
-            }
-          ]
-        },
         {
           "step": "reply",
           "destination": "custom_webhook",
@@ -146,19 +128,6 @@
     }
   ],
   "ActivityDelivery": [
-    {
-      "step": "reply",
-      "destination": "custom_stream",
-      "outcome": "buffered",
-      "observed_at": "2026-10-27T03:00:04Z",
-      "recipients": [
-        {
-          "kind": "custom",
-          "id": "fixture-recipient",
-          "thread_id": "fixture-thread"
-        }
-      ]
-    },
     {
       "step": "reply",
       "destination": "custom_webhook",
@@ -218,19 +187,6 @@
               "deliveries": [
                 {
                   "step": "reply",
-                  "destination": "custom_stream",
-                  "outcome": "buffered",
-                  "observed_at": "2026-10-27T03:00:04Z",
-                  "recipients": [
-                    {
-                      "kind": "custom",
-                      "id": "fixture-recipient",
-                      "thread_id": "fixture-thread"
-                    }
-                  ]
-                },
-                {
-                  "step": "reply",
                   "destination": "custom_webhook",
                   "outcome": "delivered",
                   "observed_at": "2026-10-27T03:00:05Z",
@@ -256,10 +212,6 @@
     }
   ],
   "ActivityRecipient": [
-    {
-      "kind": "custom",
-      "id": "fixture-recipient"
-    },
     {
       "kind": "custom",
       "id": "fixture-recipient",
@@ -961,19 +913,6 @@
           "produced_at": "2026-10-27T03:00:04Z",
           "completed_at": "2026-10-27T03:00:05Z",
           "deliveries": [
-            {
-              "step": "reply",
-              "destination": "custom_stream",
-              "outcome": "buffered",
-              "observed_at": "2026-10-27T03:00:04Z",
-              "recipients": [
-                {
-                  "kind": "custom",
-                  "id": "fixture-recipient",
-                  "thread_id": "fixture-thread"
-                }
-              ]
-            },
             {
               "step": "reply",
               "destination": "custom_webhook",
@@ -5922,7 +5861,7 @@
       "is_big": false,
       "reaction": [
         {
-          "emoji": "\ud83d\udc4d",
+          "emoji": "👍",
           "type": "emoji"
         }
       ]
@@ -5934,7 +5873,7 @@
   ],
   "TelegramReaction": [
     {
-      "emoji": "\ud83d\udc4d",
+      "emoji": "👍",
       "type": "emoji"
     },
     {
