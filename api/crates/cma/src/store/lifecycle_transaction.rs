@@ -327,6 +327,20 @@ async fn advance_agent(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
+    let row = store
+        .agents
+        .find_one(doc! { "_id": current.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    super::agent_conversation_store::carry_checkpoint_fields(
+        &row,
+        current,
+        &change.agent,
+        &mut fields,
+    )
+    .map_err(ApplyError::Domain)?;
     fields.insert(
         "last_seq",
         Bson::Int64(

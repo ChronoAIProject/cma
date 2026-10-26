@@ -52,10 +52,12 @@ pub use agent_admission::{
 };
 mod agent_conversation;
 mod agent_message_checkpoint;
+mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_sign_in;
 pub use agent_lifecycle::{
