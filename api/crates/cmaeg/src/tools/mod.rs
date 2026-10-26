@@ -16,7 +16,9 @@ pub use attachments::{
     valid_request, AttachmentRead, BUDGET_ACQUIRE_MAX, BUDGET_RETRY_MS, MAX_INDEX, MAX_PAGE,
     MAX_RESULT_IMAGE_BYTES, REST_VIEW_WEIGHT, TOOL_WAIT,
 };
-pub use context::{Capabilities, ConsumerSummary, ContextResponse, PublicActivity};
+pub use context::{
+    Capabilities, ConsumerSummary, ContextResponse, NativeMediaCapabilities, PublicActivity,
+};
 pub(crate) use download_access::{Authorized, Refusal};
 pub(crate) use media_links::safe_name;
 pub use media_links::{

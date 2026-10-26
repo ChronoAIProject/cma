@@ -12,6 +12,13 @@ use cmaeg_core::{
 };
 
 fn build(body: serde_json::Value) -> Result<Source, cmaeg_core::ValidationError> {
+    build_with_flags(body, WriteFlags::default())
+}
+
+fn build_with_flags(
+    body: serde_json::Value,
+    flags: WriteFlags,
+) -> Result<Source, cmaeg_core::ValidationError> {
     let request: ChannelCreateRequest = serde_json::from_value(body).unwrap();
     build_definition(
         &request,
@@ -19,7 +26,7 @@ fn build(body: serde_json::Value) -> Result<Source, cmaeg_core::ValidationError>
         RecordId::new("record").unwrap(),
         BindingId::new("binding").unwrap(),
         ConformanceLevel::L1,
-        WriteFlags::default(),
+        flags,
     )
     .map(|definition| definition.sources[0].clone())
 }
@@ -30,6 +37,53 @@ fn legacy_relay_requests_serialize_without_new_fields_so_fingerprints_are_stable
     let source = serde_json::to_value(&request.sources[0]).unwrap();
     assert!(source.get("bot_id").is_none(), "{source}");
     assert!(source.get("trust_normalized").is_none(), "{source}");
+    assert!(source.get("verify_raw_event").is_none(), "{source}");
+}
+
+#[test]
+fn verified_relay_sources_are_an_explicit_compatible_management_opt_in() {
+    for platform in ["discord", "whatsapp"] {
+        let mut body = relay_body(platform, None);
+        body["sources"][0]["verify_raw_event"] = true.into();
+        validate_create_request(&serde_json::from_value(body.clone()).unwrap()).unwrap();
+        let error = build(body.clone()).unwrap_err();
+        assert_eq!(error.pointer, "/sources/0/verify_raw_event");
+        assert_eq!(error.message, "dynamic_sources_disabled");
+        let parsed = build_with_flags(
+            body.clone(),
+            WriteFlags {
+                dynamic_sources: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap()["verify_raw_event"],
+            true
+        );
+        body["sources"][0]["trust_normalized"] = true.into();
+        assert_eq!(
+            validate_create_request(&serde_json::from_value(body).unwrap())
+                .unwrap_err()
+                .pointer,
+            "/sources/0/verify_raw_event"
+        );
+        let legacy = build(relay_body(platform, Some(true))).unwrap();
+        assert!(serde_json::to_value(legacy)
+            .unwrap()
+            .get("verify_raw_event")
+            .is_none());
+    }
+    for platform in ["telegram", "lark", "feishu", "slack"] {
+        let mut body = relay_body(platform, None);
+        body["sources"][0]["verify_raw_event"] = true.into();
+        assert_eq!(
+            validate_create_request(&serde_json::from_value(body).unwrap())
+                .unwrap_err()
+                .pointer,
+            "/sources/0/verify_raw_event"
+        );
+    }
 }
 
 #[test]
@@ -342,4 +396,37 @@ async fn thread_contract_writes_and_advertisement_are_disabled_until_readers_are
     assert_eq!(cma.records().len(), records);
     stop.send(()).ok();
     task.await.unwrap();
+}
+
+#[tokio::test]
+async fn verified_sources_are_refused_before_provider_effects_until_all_readers_support_them() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    for platform in ["discord", "whatsapp"] {
+        let mut body = relay_body(platform, None);
+        body["sources"][0]["verify_raw_event"] = true.into();
+        let response = client
+            .post(format!("{base}/v1/channels"))
+            .bearer_auth("token-alice")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        let problem: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(
+            problem["detail"],
+            "/sources/0/verify_raw_event: dynamic_sources_disabled"
+        );
+    }
+    assert!(provider.requests().is_empty());
+    assert!(cma.records().is_empty());
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
 }

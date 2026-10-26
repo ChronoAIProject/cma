@@ -81,6 +81,9 @@ pub enum SourceRequest {
         bot_id: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         trust_normalized: bool,
+        /// Opt into verified Discord/WhatsApp facts without changing retained sources.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        verify_raw_event: bool,
         admission: AdmissionPolicy,
     },
     Custom {

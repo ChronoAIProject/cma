@@ -1,0 +1,201 @@
+import { Button } from '../../ui/Button';
+import { AdmissionFields } from './AdmissionFields';
+import { Choice, Section, StringList, TextField, Toggle } from './Fields';
+import { object, optional, strings, without, type Fields } from './model';
+import { ValueBuilder } from './ValueBuilder';
+const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack'];
+export function SourceFields({
+  value,
+  onChange,
+}: {
+  value: Fields;
+  onChange: (v: Fields) => void;
+}) {
+  const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
+  if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
+  if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
+    return (
+      <p>
+        This producer uses a configuration version this editor does not support. Its settings will
+        be retained.
+      </p>
+    );
+  return (
+    <>
+      <Section title={value.type === 'telegram' ? 'Telegram bot' : 'NyxID connection'}>
+        {value.type === 'nyxid_relay' ? (
+          <>
+            <Choice
+              label="Messaging platform"
+              value={value.platform}
+              options={platforms}
+              onChange={(platform) => {
+                const updated = {
+                  ...value,
+                  platform,
+                  ...(['discord', 'whatsapp'].includes(platform) && !value.trust_normalized
+                    ? { verify_raw_event: true }
+                    : {}),
+                };
+                onChange(
+                  ['discord', 'whatsapp'].includes(platform)
+                    ? updated
+                    : without(
+                        updated,
+                        platform === 'slack'
+                          ? ['verify_raw_event']
+                          : ['verify_raw_event', 'trust_normalized'],
+                      ),
+                );
+              }}
+            />
+            <TextField
+              label="NyxID issuer"
+              value={value.issuer}
+              onChange={(v) => set('issuer', v)}
+              required
+            />
+            <TextField
+              label="Signing key ID"
+              value={value.key_id}
+              onChange={(v) => set('key_id', v)}
+              required
+            />
+            <StringList
+              label="Route IDs"
+              value={strings(value.route_ids)}
+              onChange={(v) => set('route_ids', v)}
+            />
+            {['discord', 'whatsapp'].includes(String(value.platform)) ? (
+              <Choice
+                label="Incoming message verification"
+                value={
+                  value.verify_raw_event
+                    ? 'verified'
+                    : value.trust_normalized
+                      ? 'trusted'
+                      : 'refuse'
+                }
+                options={[
+                  { value: 'verified', label: 'Verify original platform event' },
+                  { value: 'trusted', label: 'Trust normalized NyxID messages' },
+                ]}
+                onChange={(mode) =>
+                  onChange({
+                    ...without(value, ['trust_normalized', 'verify_raw_event']),
+                    ...(mode === 'verified'
+                      ? { verify_raw_event: true }
+                      : { trust_normalized: true }),
+                  })
+                }
+              />
+            ) : ['slack'].includes(String(value.platform)) ? (
+              <Toggle
+                label="Trust normalized NyxID messages"
+                value={value.trust_normalized}
+                onChange={(v) => set('trust_normalized', v)}
+              />
+            ) : null}
+          </>
+        ) : null}
+        <TextField
+          label="Bot ID"
+          value={value.bot_id}
+          onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
+          required={value.type === 'telegram'}
+          hint="Use the platform's bot user ID for exact mention and reply matching."
+        />
+        <TextField
+          label="Bot username"
+          value={value.bot_username}
+          onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
+        />
+      </Section>
+      <AdmissionFields value={value.admission} onChange={(v) => set('admission', v)} />
+    </>
+  );
+}
+function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields) => void }) {
+  const auth = object(value.auth),
+    attachments = object(value.attachments);
+  const set = (key: string, next: unknown) => onChange(optional(value, key, next));
+  return (
+    <>
+      <Section title="Custom event authentication">
+        <Choice
+          label="Authentication method"
+          value={auth.type}
+          options={[
+            { value: 'hmac', label: 'HMAC signature' },
+            { value: 'nyxid_key', label: 'NyxID agent key' },
+          ]}
+          onChange={(type) =>
+            set('auth', type === 'hmac' ? { type, key_id: '' } : { type, key_hashes: [] })
+          }
+        />
+        {auth.type === 'hmac' ? (
+          <TextField
+            label="HMAC key ID"
+            value={auth.key_id}
+            onChange={(key_id) => set('auth', { ...auth, key_id })}
+            required
+          />
+        ) : (
+          <StringList
+            label="Allowed key hashes"
+            value={strings(auth.key_hashes)}
+            onChange={(key_hashes) => set('auth', { ...auth, key_hashes })}
+          />
+        )}
+        <TextField
+          label="Prompt template"
+          value={value.prompt_template}
+          onChange={(v) => set('prompt_template', v || undefined)}
+          multiline
+        />
+      </Section>
+      <Section title="Event attachments">
+        <Toggle
+          label="Accept event attachments"
+          value={value.attachments != null}
+          onChange={(enabled) =>
+            set('attachments', enabled ? { pointer: '/attachments', origins: [] } : undefined)
+          }
+        />
+        {value.attachments != null ? (
+          <>
+            <TextField
+              label="Attachment list path"
+              value={attachments.pointer}
+              onChange={(pointer) => set('attachments', { ...attachments, pointer })}
+              required
+              hint="Path inside event data, for example /attachments."
+            />
+            <StringList
+              label="Allowed HTTPS origins"
+              value={strings(attachments.origins)}
+              onChange={(origins) => set('attachments', { ...attachments, origins })}
+              max={16}
+            />
+          </>
+        ) : null}
+      </Section>
+      <Section title="Event data validation">
+        {value.schema != null ? (
+          <>
+            <ValueBuilder
+              label="Event schema"
+              value={value.schema}
+              onChange={(v) => set('schema', v)}
+            />
+            <Button onClick={() => set('schema', undefined)}>Remove schema validation</Button>
+          </>
+        ) : (
+          <Button onClick={() => set('schema', { type: 'object', properties: {} })}>
+            Add schema validation
+          </Button>
+        )}
+      </Section>
+    </>
+  );
+}

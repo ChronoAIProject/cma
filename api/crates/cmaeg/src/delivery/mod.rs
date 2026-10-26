@@ -3,6 +3,7 @@ mod complete;
 #[cfg(test)]
 mod complete_tests;
 pub mod custom;
+mod edit;
 pub mod engine;
 mod event;
 pub mod gate;

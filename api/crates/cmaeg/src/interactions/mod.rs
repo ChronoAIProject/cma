@@ -190,6 +190,7 @@ impl InteractionStore {
                 platform_message_id: destination.platform_id.clone(),
                 route_id: card.route_id.clone(),
                 interaction_record_id: Some(card.id.clone()),
+                relay_message: None,
                 consumer: card.consumer.clone(),
             },
             &self.keys,
