@@ -1,12 +1,10 @@
 //! What happens to a channel's events, reported to an observer.
 //!
 //! Ingress, launch and delivery call an [`ActivityObserver`] at each step an
-//! owner may want to inspect. Every call is synchronous and must return at
-//! once: the console's observer only queues with `try_send`, and the
-//! [`NoopObserver`] composed while the console is off does nothing at all.
-//! The arguments are the raw facts the caller already holds; an observer that
-//! keeps anything masks it before it leaves the call, so no observer can make
-//! a hot path wait or retain message content.
+//! owner may want to inspect. Durable receipt and lifecycle methods are awaited;
+//! retained console callbacks return at once and only queue with `try_send`.
+//! The arguments are the raw facts the caller already holds. Public Activity
+//! persistence keeps bounded identity and progress facts, never message content.
 use std::{sync::Arc, time::Instant};
 
 use cmaeg_core::{
@@ -99,6 +97,18 @@ pub trait ActivityObserver: Send + Sync {
     /// Public activity admission is durably committed before provider launch.
     /// The retained console callbacks below remain synchronous and lossy.
     fn receive<'a>(&'a self, _request: &'a LaunchRequest) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Restore a source's immutable first receipt before deferred admission.
+    /// The timestamp comes from verified durable intake, never a replay clock.
+    fn receive_at<'a>(
+        &'a self,
+        _owner: &'a str,
+        _record: &'a RecordId,
+        _activity: &'a Activity,
+        _received_at: i64,
+    ) -> BoxFuture<'a, Result<(), ()>> {
         Box::pin(async { Ok(()) })
     }
 

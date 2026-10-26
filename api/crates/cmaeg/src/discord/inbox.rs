@@ -32,7 +32,8 @@ impl DurableJournal {
             &[&authority.record, &authority.bot_id, message],
         );
         if let Some((existing, 1)) = self.store.load::<Inbox>(&id, true).await? {
-            return self.verify_inbox(&existing, authority, message).await;
+            let bytes = self.verify_inbox(&existing, authority, message).await?;
+            return self.observe_inbox(&existing, authority, &bytes).await;
         }
         let bytes = serde_json::to_vec(
             &json!({"dispatch":event.data,"channel":authority.public_definition}),
@@ -78,10 +79,13 @@ impl DurableJournal {
             .put(&id, &authority.owner, &inbox, None, Some(expiry))
             .await
         {
-            Ok(1) => Ok(()),
+            Ok(1) => self.observe_inbox(&inbox, authority, &bytes).await,
             Ok(_) => Err(GatewayError::Protocol),
             Err(error) => match self.store.load::<Inbox>(&id, true).await? {
-                Some((existing, 1)) => self.verify_inbox(&existing, authority, message).await,
+                Some((existing, 1)) => {
+                    let bytes = self.verify_inbox(&existing, authority, message).await?;
+                    self.observe_inbox(&existing, authority, &bytes).await
+                }
                 Some(_) => Err(GatewayError::Protocol),
                 None => Err(error),
             },
@@ -92,7 +96,7 @@ impl DurableJournal {
         inbox: &Inbox,
         authority: &Authority,
         message: &str,
-    ) -> Result<(), GatewayError> {
+    ) -> Result<Vec<u8>, GatewayError> {
         if inbox.kind != "discord_inbox_v1"
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
@@ -131,6 +135,6 @@ impl DurableJournal {
         {
             return Err(GatewayError::Protocol);
         }
-        Ok(())
+        Ok(bytes)
     }
 }

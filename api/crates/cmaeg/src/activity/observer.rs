@@ -41,6 +41,31 @@ impl ActivityObserver for ObservedActivity {
             }
         })
     }
+    fn receive_at<'a>(
+        &'a self,
+        owner: &'a str,
+        record: &'a RecordId,
+        activity: &'a Activity,
+        received_at: i64,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async move {
+            let received =
+                time::OffsetDateTime::from_unix_timestamp(received_at).map_err(|_| ())?;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.store
+                    .received_at(owner, record.as_str(), activity, received),
+            )
+            .await
+            {
+                Ok(Ok(())) => Ok(()),
+                _ => {
+                    tracing::warn!("channel activity intake persistence unavailable");
+                    Err(())
+                }
+            }
+        })
+    }
     fn checkpoint<'a>(
         &'a self,
         record: &'a RecordId,
