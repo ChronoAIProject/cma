@@ -8,6 +8,7 @@ mod body;
 mod dispatcher;
 mod journal;
 mod model;
+pub mod scheduler;
 mod storage;
 
 pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, ReattachedResponse};
@@ -23,6 +24,8 @@ mod adapter_test_server;
 mod adapter_tests;
 #[cfg(test)]
 mod recovery_tests;
+#[cfg(test)]
+mod scheduler_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

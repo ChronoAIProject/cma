@@ -134,3 +134,33 @@ Before activation, the preparation adapter, fenced delivery worker, scheduler,
 per-platform receipts and replay behavior need integration evidence. Rollout
 must select only explicitly enabled channels; existing channels retain their
 current execution path while the new path is verified.
+
+## Bounded admission recovery scheduling
+
+The scheduler is implemented as an uninstalled execution component. New durable
+admissions can offer identity-only wake-ups through `ScheduleHandle`; a full
+queue does not retract an admission. The recovery scanner independently visits
+committed manifests through the existing interaction-record API. It scans all
+owners as a service, authenticates each manifest against its stored owner, and
+never exposes another owner's payload through an owner-scoped endpoint.
+
+The default queue holds 512 target identities and at most eight executions run
+concurrently. Recovery visits at most 32 record heads per page, waits 250 ms
+between pages and five seconds between complete sweeps or failed reads. Empty
+pages can contain unrelated record kinds and do not end a paginated sweep. A
+failed read retains its cursor; completed sweeps restart at the beginning so
+inserts behind an earlier cursor are eventually discovered. Damaged admissions
+are reported and skipped without repair writes. Each full sweep still costs
+reads for unrelated interaction records and reconstruction of admitted payloads;
+these bounds do not establish a five-second restart-recovery guarantee.
+
+Running targets are deduplicated locally; a bounded cooldown cache limits repeat
+hints after completion. Local deduplication is an optimization only: every
+executor must still use the durable lease and current authority before effects.
+Executor panics release the local slot for later journal-based recovery; a failed
+scanner is reported as an unhealthy scheduler instead of silently abandoning
+recovery. Shutdown stops new starts, cancels only the read-only scanner, and
+drains running tasks for the configured budget (600 seconds by default). A
+forced abort is counted and leaves the durable effect journal authoritative.
+The new scheduler does not alter production ingress or start workers until its
+bootstrap and concrete replay/delivery executor are integrated and enabled.

@@ -231,3 +231,70 @@ async fn expired_hidden_unique_row_is_not_deleted_or_recreated() {
         .unwrap()
         .contains_key(upload.admission_id()));
 }
+
+#[tokio::test]
+async fn global_recovery_checks_each_owner_and_never_trusts_a_relabelled_head() {
+    let server = Server::start().await;
+    let mut expected = std::collections::BTreeMap::new();
+    for owner in ["first-owner", "second-owner"] {
+        let request = fixture::request(
+            |value| {
+                fixture::targets(value);
+                value["owner"]["subject"] = owner.into();
+            },
+            fixture::message("hello"),
+        );
+        let upload = Candidate::prepare(
+            &request,
+            &fixture::routed(&request),
+            b"source",
+            &fixture::keys(),
+            fixture::NOW,
+        )
+        .unwrap();
+        let plan = server.store().admit(&upload).await.unwrap();
+        expected.insert(owner.to_owned(), plan.admission_id);
+    }
+    let writes = server.memory.writes.load(Ordering::SeqCst);
+    let mut cursor = None;
+    let mut observed = std::collections::BTreeMap::new();
+    loop {
+        let page = server
+            .store()
+            .recover_all_page(cursor.as_deref(), 1)
+            .await
+            .unwrap();
+        assert!(page.issues.is_empty());
+        for plan in page.plans {
+            observed.insert(plan.identity.owner, plan.admission_id);
+        }
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(observed, expected);
+    let owner_page = server
+        .store()
+        .recover_page("first-owner", None, 32)
+        .await
+        .unwrap();
+    assert_eq!(owner_page.plans.len(), 1);
+    assert_eq!(owner_page.plans[0].identity.owner, "first-owner");
+    let swapped_id = expected["first-owner"].clone();
+    server
+        .memory
+        .rows
+        .lock()
+        .unwrap()
+        .get_mut(&swapped_id)
+        .unwrap()
+        .owner = "second-owner".into();
+    let page = server.store().recover_all_page(None, 32).await.unwrap();
+    assert_eq!(page.plans.len(), 1);
+    assert_eq!(page.plans[0].identity.owner, "second-owner");
+    assert_eq!(page.issues.len(), 1);
+    assert_eq!(page.issues[0].record_id, swapped_id);
+    assert_eq!(page.issues[0].error, AdmissionError::Corrupt);
+    assert_eq!(server.memory.writes.load(Ordering::SeqCst), writes);
+}
