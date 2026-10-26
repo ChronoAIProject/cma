@@ -71,7 +71,9 @@ expired authority to send replies.
 Only the primary target's frozen reference may retain a legacy synchronous
 waiter. Secondary targets receive `ReplyAddress::None`. This prevents sibling
 consumers from racing to close one synchronous response. Durable asynchronous
-platform delivery remains separate work.
+platform delivery uses the fenced receipts described in
+`docs/CMAEG_Durable_Delivery.md`; stream projection and worker composition remain
+separate integration work.
 
 Tests use the real `RecordClient` HTTP transport against a bounded record server
 that enforces create-only writes, CAS, expiry and lost-response faults. They cover
@@ -131,8 +133,8 @@ restart with GET-only recovery, absent versus zero cursor, uncertain responses,
 cancelled acceptance, malformed acceptance, revoked authority between GETs,
 lease expiry during snapshot, and foreign target/native Agent substitution.
 They complement the record/CAS tests and provider recovery protocol fixtures.
-Before activation, the fenced delivery worker, scheduler, per-platform receipts
-and complete replay behavior need integration evidence. Rollout
+Before activation, the scheduler, durable receipt delivery worker and complete
+replay/projection behavior need combined integration evidence. Rollout
 must select only explicitly enabled channels; existing channels retain their
 current execution path while the new path is verified.
 
@@ -206,9 +208,11 @@ is authenticated, the dispatcher renews its still-owned lease before committing
 failed renewal prevents the POST. Current authority and event expiry are checked
 again at the start boundary.
 
-The next composition seam is a bounded scheduler that loads committed target
-IDs, calls `HttpExecutionPort::dispatcher`, and hands accepted leases to a
-fenced replay/delivery worker. The worker must settle durable downstream
-receipts before journal acknowledgement. Existing `TurnRunner` launch,
+The implemented bounded scheduler offers committed target identities to its
+`TargetExecutor`. The remaining executor composition must call
+`HttpExecutionPort::dispatcher` and hand accepted leases to a fenced
+replay/projection worker. The worker must persist its projection state and use
+`RoutedDelivery` to settle durable downstream receipts before journal
+acknowledgement. Existing `TurnRunner` launch,
 sequencing, acceptance, retries and delivery are not rerouted by the builder;
 its extraction only shares preparation and rendering functions.
