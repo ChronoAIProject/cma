@@ -143,21 +143,26 @@ impl Sender {
                 .await;
             return (result, SendEffects::default());
         };
-        if self.relay.lark_cards_enabled()
+        let native_controls = (self.relay.lark_cards_enabled()
             && crate::interactions::lark::supported(*platform)
-            && crate::interactions::lark::requested(message)
-        {
-            return self.interactive_reply(ctx, event, message).await;
-        }
-        if *platform == Platform::Whatsapp
-            && self.relay.whatsapp_interactions_enabled()
-            && crate::interactions::whatsapp::requested(message)
-        {
-            return self.interactive_reply(ctx, event, message).await;
+            && crate::interactions::lark::requested(message))
+            || (*platform == Platform::Whatsapp
+                && self.relay.whatsapp_interactions_enabled()
+                && crate::interactions::whatsapp::requested(message));
+        if native_controls {
+            match self.relay_control_context(ctx, event).await {
+                Ok(Some(context)) => {
+                    return self
+                        .interactive_reply(ctx, event, message, Some(context))
+                        .await;
+                }
+                Ok(None) => {} // Preserve legacy text for contexts without native controls.
+                Err(_) => return (unsupported(), SendEffects::default()),
+            }
         }
         let interactive = *platform == Platform::Telegram && self.relay.interactions.is_some();
         if interactive && crate::interactions::has_controls(message) {
-            return self.interactive_reply(ctx, event, message).await;
+            return self.interactive_reply(ctx, event, message, None).await;
         }
         if self.relay.complete_replies() || !message.native_attachments.is_empty() {
             return self.complete_reply(ctx, event, message, interactive).await;
