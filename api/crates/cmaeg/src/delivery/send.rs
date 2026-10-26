@@ -49,6 +49,15 @@ pub(super) struct Sender {
 impl Sender {
     /// Report the consumer bound to this event reference, at its origin.
     pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
+        self.observe_at(event, step, outcome, Destination::Origin);
+    }
+    pub fn observe_at(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+        destination: Destination,
+    ) {
         self.observer.delivered(
             &event.record_id,
             &event.event_id,
@@ -58,7 +67,7 @@ impl Sender {
                 .unwrap_or_else(|| default_consumer()),
             step,
             outcome,
-            Destination::Origin,
+            destination,
         );
     }
 

@@ -9,6 +9,7 @@ mod builder;
 mod delivery;
 mod delivery_gate;
 mod delivery_state;
+mod destinations;
 mod dispatcher;
 mod executor;
 mod journal;
@@ -26,6 +27,7 @@ pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, Reattache
 pub use builder::ProductionFrozenTurnBuilder;
 pub use delivery::{FrameDelivery, ReplayEffect, RoutedDelivery};
 pub use delivery_state::{DeliveryCheckpoint, DeliveryStatus};
+pub use destinations::{validate_routed_delivery, DefaultDestination};
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
 pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
@@ -43,6 +45,8 @@ mod adapter_tests;
 mod delivery_crash_tests;
 #[cfg(test)]
 mod delivery_tests;
+#[cfg(test)]
+mod destination_tests;
 #[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]

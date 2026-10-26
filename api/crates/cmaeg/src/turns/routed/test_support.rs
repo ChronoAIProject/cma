@@ -107,6 +107,10 @@ pub fn frozen(
             label: consumer.label.into(),
             auto_final: consumer.reply.auto_final,
             destination: consumer.reply.destination,
+            default_destination: (consumer.reply.destination
+                == cmaeg_core::channel::ReplyChoice::Default)
+                .then(|| DefaultDestination::capture(current))
+                .flatten(),
             policy: current.definition.reply.clone(),
         },
     }

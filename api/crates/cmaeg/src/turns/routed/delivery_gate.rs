@@ -18,6 +18,7 @@ pub(super) struct DeliveryGate {
     plan: AdmittedPlan,
     target: StoredTarget,
     channel_version: u64,
+    destination: Option<super::DefaultDestination>,
     deadline: Instant,
     cancelled: AtomicBool,
 }
@@ -29,6 +30,7 @@ impl DeliveryGate {
         plan: AdmittedPlan,
         target: StoredTarget,
         channel_version: u64,
+        destination: Option<super::DefaultDestination>,
     ) -> Arc<Self> {
         Arc::new(Self {
             journal,
@@ -39,6 +41,7 @@ impl DeliveryGate {
             plan,
             target,
             channel_version,
+            destination,
             deadline: Instant::now() + SEND_WINDOW,
             cancelled: AtomicBool::new(false),
         })
@@ -58,7 +61,12 @@ impl DeliveryGate {
         let current = current_target(self.authority.as_ref(), &self.plan, &self.target)
             .await
             .map_err(|_| refused())?;
-        if current.version != self.channel_version {
+        if current.version != self.channel_version
+            || self
+                .destination
+                .as_ref()
+                .is_some_and(|destination| !destination.authorized(&current))
+        {
             return Err(refused());
         }
         self.journal

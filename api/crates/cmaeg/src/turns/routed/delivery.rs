@@ -224,6 +224,14 @@ impl RoutedDelivery {
         body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
         if let ReplayEffect::Reply(message) = &effect {
             message.validate().map_err(|_| ExecutionError::Invalid)?;
+            if body
+                .delivery
+                .default_destination
+                .as_ref()
+                .is_some_and(|destination| !destination.authorized(&current))
+            {
+                return Err(ExecutionError::AuthorityChanged);
+            }
         }
         // This shared CAS reservation closes the race between projection's
         // suppression lookup and a concurrently admitted tool reply.
@@ -231,15 +239,16 @@ impl RoutedDelivery {
         let mut automatic = None;
         let mut suppressed = false;
         let mut replayed = None;
+        let operation = storage::hash(&storage::bytes(&(
+            &target.id,
+            &checkpoint.response_id,
+            checkpoint.cursor,
+            &checkpoint.frame_hash,
+            &checkpoint.effect_hash,
+        ))?);
         if matches!(effect, ReplayEffect::Reply(_)) {
-            let operation = storage::hash(&storage::bytes(&(
-                &checkpoint.response_id,
-                checkpoint.cursor,
-                &checkpoint.frame_hash,
-                &checkpoint.effect_hash,
-            ))?);
             match store
-                .admit(&plan, target, Kind::Automatic, operation)
+                .admit(&plan, target, Kind::Automatic, operation.clone())
                 .await?
             {
                 Admission::Claimed(claim) => automatic = Some(claim),
@@ -266,10 +275,8 @@ impl RoutedDelivery {
                     .map_err(|_| ExecutionError::Expired)?
                     .payload;
                 // Ephemeral Sync waiters have no durable completion receipt.
-                // Default-destination projection must be implemented explicitly;
-                // never silently send a default-target message to the origin.
-                if body.delivery.destination != ReplyChoice::Origin
-                    || matches!(event.reply, ReplyAddress::Sync { .. })
+                if body.delivery.destination == ReplyChoice::Origin
+                    && matches!(event.reply, ReplyAddress::Sync { .. })
                 {
                     Some(receipt_for(DeliveryOutcome::Unsupported))
                 } else {
@@ -281,6 +288,7 @@ impl RoutedDelivery {
                         plan.clone(),
                         target.clone(),
                         current.version,
+                        body.delivery.default_destination.clone(),
                     );
                     let cancel = CancelSend(gate.clone());
                     let reply_gate = ReplyGate::automatic(
@@ -290,16 +298,34 @@ impl RoutedDelivery {
                         event.expires_at,
                     );
                     let cancel_reply = CancelReply(reply_gate.clone());
-                    let result = tokio::time::timeout(
-                        SEND_WINDOW,
-                        self.coordinator.reply(current, event, message, reply_gate),
-                    )
-                    .await
-                    .unwrap_or_else(|_| {
-                        receipt_for(DeliveryOutcome::Unknown {
-                            reason: "delivery_deadline".into(),
-                        })
-                    });
+                    let send = async {
+                        match body.delivery.default_destination.clone() {
+                            Some(destination) => {
+                                self.coordinator
+                                    .reply_default(
+                                        current,
+                                        event,
+                                        message,
+                                        reply_gate,
+                                        destination,
+                                        operation,
+                                    )
+                                    .await
+                            }
+                            None => {
+                                self.coordinator
+                                    .reply(current, event, message, reply_gate)
+                                    .await
+                            }
+                        }
+                    };
+                    let result = tokio::time::timeout(SEND_WINDOW, send)
+                        .await
+                        .unwrap_or_else(|_| {
+                            receipt_for(DeliveryOutcome::Unknown {
+                                reason: "delivery_deadline".into(),
+                            })
+                        });
                     drop(cancel_reply);
                     drop(cancel);
                     Some(result)

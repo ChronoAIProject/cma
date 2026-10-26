@@ -3,6 +3,8 @@ mod complete;
 #[cfg(test)]
 mod complete_tests;
 pub mod custom;
+mod default_reply;
+pub mod destination;
 pub mod durable;
 mod discord;
 #[cfg(test)]

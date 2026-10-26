@@ -17,6 +17,7 @@ pub struct DurableReply {
     pub message: OutboundMessage,
     pub gate: Arc<dyn SendGate>,
     pub source: ReplySource,
+    pub default_destination: Option<(super::destination::DefaultDestination, String)>,
     pub receipt: oneshot::Sender<IntentReceipt>,
 }
 impl std::fmt::Debug for DurableReply {
@@ -62,8 +63,38 @@ impl DeliveryCoordinator {
             message,
             gate,
             source,
+            default_destination: None,
             receipt,
         }));
+        self.enqueue(command, received).await
+    }
+    pub async fn reply_default(
+        &self,
+        channel: Arc<ResolvedChannel>,
+        event: EventRefPayload,
+        message: OutboundMessage,
+        gate: Arc<dyn SendGate>,
+        destination: super::destination::DefaultDestination,
+        operation: String,
+    ) -> IntentReceipt {
+        let (receipt, received) = oneshot::channel();
+        let command = DeliveryCommand::DurableReply(Box::new(DurableReply {
+            trace: tracing::Span::current(),
+            channel,
+            event,
+            message,
+            gate,
+            source: ReplySource::Stream,
+            default_destination: Some((destination, operation)),
+            receipt,
+        }));
+        self.enqueue(command, received).await
+    }
+    async fn enqueue(
+        &self,
+        command: DeliveryCommand,
+        received: oneshot::Receiver<IntentReceipt>,
+    ) -> IntentReceipt {
         if let Some(result) = self.sink.preflight(&command) {
             return result;
         }
