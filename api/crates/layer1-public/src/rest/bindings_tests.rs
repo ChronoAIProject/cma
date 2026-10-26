@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 mod readiness;
+pub(super) use readiness::create_backing_resources;
 
 struct Registry;
 #[async_trait::async_trait]
