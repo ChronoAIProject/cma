@@ -56,6 +56,7 @@ impl Journal {
                 retained_until: plan.retained_until,
                 event_expires_at: target.launch.event.expires_at,
                 phase: Phase::Pending,
+                delivery: None,
                 body: None,
                 ownership: Ownership {
                     worker: worker.into(),
@@ -160,9 +161,9 @@ impl Journal {
         Ok(())
     }
 
-    /// Call only after the exact numeric event has a durable downstream receipt.
-    /// Observing a provider SSE frame is not such a receipt. Platform sends with
-    /// uncertain outcomes need a separate journal and must not be blindly retried.
+    /// Requires the exact numeric event's durable downstream receipt. Merely
+    /// observing SSE or enqueueing a send cannot satisfy this checkpoint.
+    /// Unknown effects block progress until explicitly reconciled.
     pub async fn acknowledge_delivery(
         &self,
         lease: &mut Lease,
@@ -176,7 +177,14 @@ impl Journal {
         else {
             return Err(ExecutionError::Invalid);
         };
-        if expected != response_id || durable_cursor.is_some_and(|previous| cursor < previous) {
+        if expected != response_id
+            || durable_cursor.is_some_and(|previous| cursor < previous)
+            || !lease.state.delivery.as_ref().is_some_and(|checkpoint| {
+                checkpoint.response_id == response_id
+                    && checkpoint.cursor == cursor
+                    && checkpoint.status.settled()
+            })
+        {
             return Err(ExecutionError::Invalid);
         }
         self.transition(
@@ -202,7 +210,13 @@ impl Journal {
         else {
             return Err(ExecutionError::Invalid);
         };
-        if expected != response_id {
+        if expected != response_id
+            || !lease.state.delivery.as_ref().is_some_and(|checkpoint| {
+                checkpoint.status.settled()
+                    && Some(checkpoint.cursor) == *durable_cursor
+                    && checkpoint.terminal
+            })
+        {
             return Err(ExecutionError::Invalid);
         }
         self.transition(
@@ -235,6 +249,24 @@ fn validate(
         || (matches!(state.phase, Phase::Pending) && state.body.is_some())
     {
         return Err(ExecutionError::Corrupt);
+    }
+    if let Some(checkpoint) = &state.delivery {
+        let response = match &state.phase {
+            Phase::Accepted { response_id, .. } | Phase::Completed { response_id, .. } => {
+                response_id
+            }
+            _ => return Err(ExecutionError::Corrupt),
+        };
+        if &checkpoint.response_id != response
+            || [&checkpoint.frame_hash, &checkpoint.effect_hash]
+                .iter()
+                .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            || storage::bytes(checkpoint)?.len() > 20 * 1024
+            || matches!(checkpoint.status, super::DeliveryStatus::Settled { .. })
+                && !checkpoint.status.settled()
+        {
+            return Err(ExecutionError::Corrupt);
+        }
     }
     match &state.phase {
         Phase::Accepted { response_id, .. } | Phase::Completed { response_id, .. }

@@ -107,6 +107,11 @@ async fn run(
         WORKERS,
         |command| {
             let (channel, event, consumer) = match command {
+                DeliveryCommand::DurableReply(reply) => (
+                    &reply.event.channel_id,
+                    &reply.event.event_id,
+                    reply.event.consumer.as_ref(),
+                ),
                 DeliveryCommand::Reply { event, .. } | DeliveryCommand::Typing { event, .. } => {
                     (&event.channel_id, &event.event_id, event.consumer.as_ref())
                 }

@@ -24,11 +24,7 @@ async fn first_replay_includes_event_zero_until_its_delivery_is_acknowledged() {
         panic!("replay")
     };
     assert_eq!(durable_cursor, None);
-    setup
-        .journal()
-        .acknowledge_delivery(&mut lease, &response_id, 0)
-        .await
-        .unwrap();
+    acknowledge_no_effect(&setup, &mut lease, &response_id, 0, false).await;
     setup.journal().release(&mut lease).await.unwrap();
     let DispatchOutcome::Replay { durable_cursor, .. } = setup.dispatch().await.unwrap() else {
         panic!("replay")
@@ -81,11 +77,7 @@ async fn accepted_restart_replays_original_response_and_cursor_without_posting_a
             .await,
         Err(ExecutionError::Invalid)
     );
-    setup
-        .journal()
-        .acknowledge_delivery(&mut lease, &response_id, 7)
-        .await
-        .unwrap();
+    acknowledge_no_effect(&setup, &mut lease, &response_id, 7, true).await;
     assert_eq!(
         setup
             .journal()

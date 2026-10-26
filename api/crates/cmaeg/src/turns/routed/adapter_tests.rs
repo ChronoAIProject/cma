@@ -116,11 +116,7 @@ async fn exact_frozen_post_accepts_then_restarts_with_get_only_and_fresh_credent
         .iter()
         .all(|request| request.method == "GET" && request.bearer == "Bearer rotated-fixture"));
     assert!(!seen[2].uri.contains("starting_after"));
-    setup
-        .journal()
-        .acknowledge_delivery(&mut lease, &response_id, 0)
-        .await
-        .unwrap();
+    acknowledge_no_effect(&setup, &mut lease, &response_id, 0, false).await;
     let mut attached = port
         .reattach(
             &setup.plan.identity,

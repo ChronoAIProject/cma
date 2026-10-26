@@ -46,6 +46,21 @@ async fn handle(
     tracker: &TurnTracker,
 ) {
     match command {
+        DeliveryCommand::DurableReply(reply) => {
+            if reply.receipt.is_closed() {
+                return;
+            }
+            let context = SendContext {
+                trace: &reply.trace,
+                channel: &reply.channel,
+                // A replay never consumes a single-use ingress reply token.
+                first_send_done: true,
+                gate: reply.gate.as_ref(),
+            };
+            let (result, _) = sender.reply(&context, &reply.event, &reply.message).await;
+            sender.observe(&reply.event, DeliveryStep::Answer, &result.delivery);
+            let _ = reply.receipt.send(result);
+        }
         DeliveryCommand::Update {
             trace,
             channel,

@@ -274,6 +274,9 @@ impl ToolsState {
             Duration::from_secs(8)
         };
         let (channel, event_id) = match &command {
+            DeliveryCommand::DurableReply(reply) => {
+                (reply.channel.id.as_str(), reply.event.event_id.as_str())
+            }
             DeliveryCommand::Reply { channel, event, .. }
             | DeliveryCommand::Typing { channel, event, .. } => {
                 (channel.id.as_str(), event.event_id.as_str())
