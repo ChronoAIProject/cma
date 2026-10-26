@@ -317,6 +317,8 @@ fn native_bot_mentions_require_writes_flag_and_can_be_carried_or_removed() {
 #[test]
 fn native_threads_require_writes_flag_but_retained_contracts_and_removal_keep_working() {
     let mut value = serde_json::to_value(legacy()).unwrap();
+    value["secrets"]["agent_key_hash"] =
+        crate::channels::definition::hash_secret("thread-policy-fixture").into();
     value["sources"][0]["bot_id"] = json!("ou_receiver");
     let base: ChannelDefinition = serde_json::from_value(value.clone()).unwrap();
     value["reply"]["thread_contract"] = json!({"version":1,"follow_chat_ids":["oc_follow"]});
