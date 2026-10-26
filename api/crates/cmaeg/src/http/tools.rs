@@ -33,6 +33,7 @@ pub fn router(state: ToolsState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
             .merge(super::reply_targets::routes())
+            .merge(super::message_effects::routes())
             .route("/v1/events/{event_ref}/replies", post(reply_to_event))
             .route("/v1/messages/{message_ref}/update", post(update_message))
             .route("/v1/events/{event_ref}/typing", post(send_typing))

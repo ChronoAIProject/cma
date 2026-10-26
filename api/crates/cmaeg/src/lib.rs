@@ -58,8 +58,9 @@ pub use config::{
     CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
     CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL,
     CMAEG_PUBLIC_URL, CMAEG_RELAY_TEXT_EDITS_ENABLED, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
-    CMAEG_WHATSAPP_INTERACTIONS_ENABLED, CMAEG_WHATSAPP_TEMPLATES_ENABLED,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED, CMAEG_TOOLS_NYXID_SLUG,
+    CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN, CMAEG_WHATSAPP_INTERACTIONS_ENABLED,
+    CMAEG_WHATSAPP_TEMPLATES_ENABLED,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -141,6 +142,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let consumer_interactions = config::consumer_interactions_from_env()?;
     let whatsapp_interactions = config::whatsapp_interactions_from_env()?;
     let whatsapp_templates = config::whatsapp_templates_from_env()?;
+    let telegram_effects = config::telegram_message_effects_from_env()?;
     let config = Config::from_env()?;
     serve::serve(
         config,
@@ -151,6 +153,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         whatsapp_templates,
         whatsapp_interactions,
         consumer_interactions,
+        telegram_effects,
     )
     .await
 }

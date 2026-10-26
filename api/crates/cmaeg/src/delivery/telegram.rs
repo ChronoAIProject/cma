@@ -55,6 +55,7 @@ impl Sender {
                 return (receipt, effects);
             }
         };
+        let effect_issued_at = time::OffsetDateTime::now_utc().unix_timestamp();
         let controls = crate::interactions::has_controls(message);
         if controls && event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
             return (unsupported(), effects);
@@ -169,6 +170,7 @@ impl Sender {
                     } else if receipt.message_ref.is_none() {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
+                                telegram_effect: None,
                                 channel_id: event.channel_id.clone(),
                                 event_id: event.event_id.clone(),
                                 platform_message_id: platform_id,
@@ -192,6 +194,19 @@ impl Sender {
             receipt.delivery = DeliveryOutcome::Unknown {
                 reason: "partial_delivery".into(),
             };
+        }
+        if confirmed == parts.len() && self.relay.telegram_effects_enabled() {
+            if let Some(reference) = &receipt.message_ref {
+                if let Some(enriched) = crate::tools::message_effects::authority::enrich(
+                    reference,
+                    event,
+                    ctx.channel,
+                    &self.keys,
+                    effect_issued_at,
+                ) {
+                    receipt.message_ref = Some(enriched);
+                }
+            }
         }
         (receipt, effects)
     }
@@ -326,6 +341,17 @@ impl Sender {
                 }
             } else {
                 receipt.message_ref = MessageRef::seal(reference, &self.keys).ok();
+            }
+        }
+        if let (Some(authority), Some(updated)) = (&reference.telegram_effect, &receipt.message_ref)
+        {
+            if let Ok(mut opened) = updated.open(&self.keys) {
+                if opened.payload.platform_message_id == reference.platform_message_id
+                    && opened.payload.route_id == reference.route_id
+                {
+                    opened.payload.telegram_effect = Some(authority.clone());
+                    receipt.message_ref = MessageRef::seal(&opened.payload, &self.keys).ok();
+                }
             }
         }
         (receipt, effects)

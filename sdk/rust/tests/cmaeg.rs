@@ -425,3 +425,64 @@ async fn connection_operations_keep_owner_and_origin_authority_local_to_the_requ
 
 #[path = "cmaeg/outbound.rs"]
 mod outbound;
+#[tokio::test]
+async fn native_effect_operations_preserve_reference_and_idempotency_without_retries() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    server.expect(wire::json(
+        "GET",
+        "/v1/messages/opaque%2Fref/capabilities",
+        None,
+        200,
+        sample("MessageEffectsCapabilities"),
+        true,
+    ));
+    same(
+        client
+            .read_message_capabilities("opaque/ref")
+            .await
+            .unwrap(),
+        sample("MessageEffectsCapabilities"),
+    );
+    let mut expected = wire::json(
+        "POST",
+        "/v1/messages/opaque%2Fref/delete",
+        Some(json!({})),
+        200,
+        sample("MessageEffectReceipt"),
+        true,
+    );
+    expected
+        .headers
+        .insert("idempotency-key".into(), "effect-delete".into());
+    server.expect(expected);
+    same(
+        client
+            .delete_message("opaque/ref", "effect-delete")
+            .await
+            .unwrap(),
+        sample("MessageEffectReceipt"),
+    );
+    let body: MessageReactionRequest =
+        serde_json::from_value(sample("MessageReactionRequest")).unwrap();
+    let mut expected = wire::json(
+        "POST",
+        "/v1/messages/opaque%2Fref/reaction",
+        Some(serde_json::to_value(&body).unwrap()),
+        200,
+        sample("MessageEffectReceipt"),
+        true,
+    );
+    expected
+        .headers
+        .insert("idempotency-key".into(), "effect-reaction".into());
+    server.expect(expected);
+    same(
+        client
+            .set_message_reaction("opaque/ref", "effect-reaction", &body)
+            .await
+            .unwrap(),
+        sample("MessageEffectReceipt"),
+    );
+    server.assert_drained();
+}

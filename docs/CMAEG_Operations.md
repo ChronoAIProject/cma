@@ -182,6 +182,7 @@ applies with all media flags off.**
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
 | `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED` | boolean | `false` | Issues native Telegram admission evidence and effect authority on newly confirmed bot-message references; advertises delete/reaction tools after all readers are upgraded. Exactly `true`/`false`. Disabling stops new issuance and discovery; previously issued references remain usable until their 24-hour expiry or authority revocation. Relay transports are unsupported. |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2199,8 +2200,7 @@ existing numbered-text replies and does not alter Telegram cards. Enable it only
 after every gateway reader supports the optional `lark` identity in sealed
 interaction records and the deployed NyxID relay accepts `metadata.card` for
 sends/edits and authenticated `card.action.trigger` callbacks. The upstream
-adapter contract is present in production NyxID `d102570afaab`; the same source
-blobs are present in fetched main `2ab239cecbda8`. Source compatibility does not
+adapter contract is present in pinned NyxID main `2ab239cecbda8`. Source compatibility does not
 prove a real bot's event subscription, scopes or actual platform rendering.
 
 Before activation, use an explicitly authorized test chat to verify a choice,
@@ -2219,8 +2219,12 @@ those controls. Existing Telegram record bytes and callback IDs are unchanged.
 
 Cards are limited to 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
-cannot combine native media or a native thread reply. Thread contexts are refused because the existing callback contract does not retain
-thread evidence. Named consumers require the separate consumer-interaction gate
+cannot combine native media or a native thread reply. Structured replies in
+threaded or nonhuman contexts keep their existing text rendering because the
+callback contract does not retain the required audience. The same text behavior
+is retained for named consumers while their interaction gate is off. This choice
+is made before any durable card write or platform send; invalid context proofs
+and failures during a native send never trigger a second text send. Named consumers require the separate consumer-interaction gate
 and retain their original provider binding and conversation. Native forms are not
 advertised; their fields stay plain text. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
@@ -2311,7 +2315,12 @@ No reader, platform or destination authority is weakened by disabling issuance.
 Keep `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=false` until every gateway reader is
 upgraded. A source must have `verify_raw_event:true`; trusted normalized messages
 cannot issue these controls. Existing text, templates, other platforms and
-unrelated WhatsApp buttons keep their previous behavior. Only private, unthreaded
+unrelated WhatsApp buttons keep their previous behavior. Structured replies on
+trusted-normalized sources, or for named consumers while their interaction gate
+is off, retain their existing numbered-text rendering without a provider context
+lookup. Other valid contexts that cannot host native controls also keep the text
+path. Invalid context proofs and native-send failures never fall back or resend.
+Only private, unthreaded
 events qualify; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Cloud API does not identify a human versus
 an automated account; CMA binds a choice to the exact authenticated numeric
 sender and private destination without inventing a human classification.
@@ -2441,3 +2450,38 @@ not downloaded by CMA or rewritten as native attachment uploads.
 Media-header replies allow up to 60 seconds for upstream processing and require
 a native platform receipt; a deadline or incomplete receipt leaves an unknown
 outcome, without retrying the send. Text-only templates retain the normal budget.
+
+## Native Telegram message effects rollout
+
+Deploy compatible readers with `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED=false` first.
+Keep the flag false until every gateway replica understands the optional native
+admission/effect fields in sealed EventRef/MessageRef payloads. Old references keep
+existing reply/edit behavior and explicitly lack delete/reaction authority. No
+migration, new bot credential, NyxID deployment, or user reconnect is required.
+
+After enabling new issuance, confirm `readMessageCapabilities` on a newly delivered
+native Telegram `message_ref`. Only confirmed CMA bot messages qualify. A multipart
+reply's existing reference names its first part; it never authorizes deleting or
+reacting to all parts. Telegram/Lark/Feishu/WhatsApp/Discord **relay** sources remain
+unsupported, even if the same channel also has a native Telegram source. Existing
+references can be used when issuance is disabled again; their authority lasts at
+most 24 hours from the native send attempt. The containing message reference can
+still support legacy edits after this authority expires, so 24 hours is not a safe
+rollback horizon for old binaries that reject unknown payload fields. Keep a
+reader-compatible release until an explicit audit or reference replacement proves
+that no enriched references remain usable.
+
+Use one stable idempotency key per explicit delete/reaction action. The persisted
+receipt survives gateway restart. A concurrent/abandoned intent returns unknown,
+and a timeout, invalid acknowledgement or failed receipt write must never cause
+automatic resend. The same key with another payload/action conflicts. A Telegram
+429 is returned as rate limited; CMA does not perform a hidden retry. Only a
+confirmed Telegram `true` response reports confirmed success.
+
+The effect path rechecks the current channel record, owner, exact source bot,
+consumer, provider binding, agent key and routing authority before the durable
+claim and again before the request. It reapplies current actor/chat/group admission
+to evidence retained from authenticated ingress, including reply-to-bot facts.
+A revoked user/source/consumer/key therefore cannot reuse an old reference.
+External requests and pending intent outcomes are never logged with credentials
+or raw references. Existing sends incur no additional record reads when disabled.

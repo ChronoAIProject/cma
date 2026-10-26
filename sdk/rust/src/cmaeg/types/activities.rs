@@ -303,6 +303,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Exact-message effect support, absent before compatible reader rollout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effects: Option<super::MessageEffectsCapabilities>,
     /// Approved template replies, absent until verified for this WhatsApp relay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,

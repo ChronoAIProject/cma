@@ -1,4 +1,5 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
+mod effects;
 mod files;
 mod management;
 #[cfg(test)]
