@@ -20,10 +20,12 @@ use tokio::sync::OwnedSemaphorePermit;
 /// Everything an admitted chat turn needs once its request has been released.
 ///
 /// Admission helpers return this instead of dispatching themselves so that the
-/// raw body, its headers and every parsed copy are dropped before the
-/// acceptance wait; a waiting handler then holds only this small context.
+/// headers and parsed copies are dropped before the acceptance wait. Selected
+/// durable ingress retains at most 256 KiB of authenticated wire bytes until its
+/// admission commits; legacy ingress retains no raw body.
 pub(crate) struct AdmittedChat {
     pub request: LaunchRequest,
+    pub routed_source: Option<crate::ingress::routed::VerifiedIngress>,
     pub callback: Option<CallbackFacts>,
     pub route: String,
     pub now: i64,
@@ -39,6 +41,7 @@ pub(crate) async fn dispatch(
 ) -> Response {
     let AdmittedChat {
         mut request,
+        routed_source,
         callback,
         route,
         now,
@@ -120,7 +123,17 @@ pub(crate) async fn dispatch(
     request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch_holding(request, hold).await {
+    match state.launch_verified(request, routed_source, hold).await {
+        LaunchOutcome::Admitted {
+            conversation_id, ..
+        } => (
+            StatusCode::ACCEPTED,
+            Json(CallbackResponse::Accepted {
+                event_id,
+                conversation_id: conversation_id.to_string(),
+            }),
+        )
+            .into_response(),
         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
             StatusCode::ACCEPTED,
             Json(CallbackResponse::Accepted {

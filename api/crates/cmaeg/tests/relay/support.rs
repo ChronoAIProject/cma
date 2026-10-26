@@ -31,6 +31,9 @@ use std::sync::{
 };
 use tokio::task::JoinHandle;
 
+#[path = "activity_records.rs"]
+mod activity_records;
+
 pub const ISSUER: &str = "https://nyx.example";
 #[derive(Default)]
 pub struct Recorder {
@@ -169,7 +172,8 @@ impl Fixture {
                 .route("/jwks", get(jwks))
                 .route("/trap", get(jwks))
                 .route("/api/v1/gateway/channel-records/{id}", get(record))
-                .with_state(backend.clone()),
+                .with_state(backend.clone())
+                .merge(activity_records::router()),
         )
         .await;
         let keys =

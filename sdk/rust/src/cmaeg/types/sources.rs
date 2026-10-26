@@ -17,6 +17,16 @@ pub struct CustomAttachments {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Native Discord Gateway source; credentials remain in the encrypted channel.
+    #[serde(rename = "discord")]
+    Discord {
+        /// Exact bot identity.
+        bot_id: String,
+        /// Requested supported Gateway intents, including MESSAGE_CONTENT.
+        intents: u64,
+        /// Event admission policy.
+        admission: AdmissionPolicy,
+    },
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
@@ -77,6 +87,16 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Native Discord Gateway source; credentials remain in the encrypted channel.
+    #[serde(rename = "discord")]
+    Discord {
+        /// Exact bot identity.
+        bot_id: String,
+        /// Requested supported Gateway intents, including MESSAGE_CONTENT.
+        intents: u64,
+        /// Event admission policy.
+        admission: AdmissionPolicy,
+    },
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
@@ -129,4 +149,35 @@ pub enum SourceRequest {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attachments: Option<CustomAttachments>,
     },
+}
+
+/// CMAEG `SourceKind` wire shape.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SourceKind {
+    /// Native Discord ingress.
+    #[serde(rename = "discord")]
+    Discord {
+        /// Exact receiving bot identity.
+        bot_id: String,
+    },
+    /// Native Telegram ingress.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Source platform.
+        platform: Platform,
+        /// Telegram bot identifier.
+        bot_id: String,
+    },
+    /// Wire variant `nyxid_relay`.
+    #[serde(rename = "nyxid_relay")]
+    NyxidRelay {
+        /// Wire field `platform`.
+        platform: Platform,
+        /// Wire field `route_id`.
+        route_id: String,
+    },
+    /// Wire variant `custom`.
+    #[serde(rename = "custom")]
+    Custom {},
 }

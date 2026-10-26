@@ -29,3 +29,33 @@ pub use media_links::{
 pub use message_effects::{MessageEffectReceipt, MessageEffectsCapabilities, MessageEffectsClient};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;
+
+fn routed_reply_error(error: crate::turns::routed::ExecutionError) -> cmaeg_core::problem::Problem {
+    use crate::turns::routed::ExecutionError;
+    use cmaeg_core::problem::{Problem, ProblemCode};
+    let (code, status, detail) = match error {
+        ExecutionError::IdempotencyConflict => {
+            (ProblemCode::Conflict, 409, "reply_idempotency_conflict")
+        }
+        ExecutionError::OperationLimit => (ProblemCode::RateLimited, 429, "reply_operation_limit"),
+        ExecutionError::Busy => (ProblemCode::Conflict, 409, "routed_reply_in_progress"),
+        ExecutionError::AuthorityChanged => (ProblemCode::Forbidden, 403, "routed_reply_revoked"),
+        ExecutionError::Expired => (ProblemCode::EventRefExpired, 410, "event_ref_expired"),
+        ExecutionError::Invalid => (ProblemCode::InvalidRequest, 400, "routed_reply_invalid"),
+        _ => (ProblemCode::Internal, 503, "routed_reply_unavailable"),
+    };
+    Problem::new(code, status, detail)
+}
+
+pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::problem::Problem> {
+    if key.is_some_and(|key| {
+        key.is_empty() || key.len() > 128 || !key.bytes().all(|byte| (33..=126).contains(&byte))
+    }) {
+        return Err(cmaeg_core::problem::Problem::new(
+            cmaeg_core::problem::ProblemCode::InvalidRequest,
+            400,
+            "Idempotency-Key must contain 1..128 visible ASCII bytes",
+        ));
+    }
+    Ok(())
+}

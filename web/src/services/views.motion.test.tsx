@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import { Console } from '../Console';
@@ -74,7 +74,12 @@ it('fades a retained Event Gateway on re-entry while preserving its form and avo
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  fireEvent.click(
+    await within(await screen.findByRole('region', { name: 'Channel workspace' })).findByRole(
+      'button',
+      { name: 'New channel' },
+    ),
+  );
   const field = screen.getByRole('textbox', { name: 'Channel name' });
   const draft = 'Retained channel draft';
   fireEvent.change(field, { target: { value: draft } });

@@ -1,5 +1,5 @@
 use super::{
-    event::{key, now, EventKey, EventState},
+    event::{key, normalized_consumer, now, EventKey, EventState},
     gate::Ungated,
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, SendContext, Sender},
@@ -19,7 +19,7 @@ pub(super) async fn run(
     config: DeliveryConfig,
     tracker: Arc<TurnTracker>,
 ) {
-    // Each event belongs to exactly one worker, so state requires no cross-worker lock.
+    // Each event/consumer belongs to one worker; the fixed state cap includes every consumer.
     let mut events = HashMap::<EventKey, EventState>::new();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -46,6 +46,53 @@ async fn handle(
     tracker: &TurnTracker,
 ) {
     match command {
+        DeliveryCommand::DurableReply(reply) => {
+            if reply.receipt.is_closed() {
+                return;
+            }
+            let context = SendContext {
+                trace: &reply.trace,
+                channel: &reply.channel,
+                // A replay never consumes a single-use ingress reply token.
+                first_send_done: true,
+                gate: reply.gate.as_ref(),
+            };
+            let result = match &reply.default_destination {
+                Some((destination, operation)) => {
+                    sender
+                        .default_reply(
+                            &context,
+                            &reply.event,
+                            &reply.message,
+                            destination,
+                            operation,
+                        )
+                        .await
+                }
+                None => sender.reply(&context, &reply.event, &reply.message).await.0,
+            };
+            let step = match reply.source {
+                ReplySource::Tool => DeliveryStep::ToolReply,
+                ReplySource::Stream => DeliveryStep::Answer,
+            };
+            sender
+                .observe_at(
+                    &reply.event,
+                    step,
+                    &result.delivery,
+                    if reply.default_destination.is_some() {
+                        crate::turns::observer::Destination::Default
+                    } else {
+                        crate::turns::observer::Destination::Origin
+                    },
+                    reply
+                        .default_destination
+                        .as_ref()
+                        .map(|(destination, _)| destination),
+                )
+                .await;
+            let _ = reply.receipt.send(result);
+        }
         DeliveryCommand::Update {
             trace,
             channel,
@@ -82,7 +129,11 @@ async fn handle(
             if receipt.is_closed() {
                 return;
             }
-            let id = key(event.channel_id.as_str(), event.event_id.as_str());
+            let id = key(
+                event.channel_id.as_str(),
+                event.event_id.as_str(),
+                event.consumer.as_ref(),
+            );
             if !reserve(events, &id) {
                 let mut result = unsupported();
                 result.delivery = DeliveryOutcome::Rejected {
@@ -127,10 +178,48 @@ async fn handle(
                 || opened.payload.channel_id != turn.channel.id
                 || opened.payload.event_id != turn.activity.event_id
                 || opened.payload.record_id != turn.channel.pointer.record_id
+                || opened.payload.conversation_id != turn.conversation_id
+                || normalized_consumer(opened.payload.consumer.as_ref())
+                    != normalized_consumer(turn.consumer.as_ref())
             {
                 return;
             }
-            let id = key(turn.channel.id.as_str(), turn.activity.event_id.as_str());
+            let progress = match &outcome {
+                TurnOutcome::Accepted { response_id, .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Accepted,
+                    Some(response_id.clone()),
+                )),
+                TurnOutcome::MessageCommitted { .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Produced,
+                    None,
+                )),
+                TurnOutcome::Completed { .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Completed,
+                    None,
+                )),
+                TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
+                    Some(crate::activity::Change::state(
+                        turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                        crate::activity::ConsumerState::Failed,
+                        None,
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(change) = progress {
+                sender
+                    .observer
+                    .checkpoint(&opened.payload.record_id, &opened.payload.event_id, change)
+                    .await;
+            }
+            let id = key(
+                opened.payload.channel_id.as_str(),
+                opened.payload.event_id.as_str(),
+                opened.payload.consumer.as_ref(),
+            );
             if !reserve(events, &id) {
                 tracing::warn!("delivery event capacity reached");
                 return;
@@ -140,7 +229,10 @@ async fn handle(
                 cmaeg_core::activity::SourceKind::Custom
             );
             if custom {
-                sender.custom.stream(&opened.payload, &outcome);
+                let buffered = sender.custom.stream(&opened.payload, &outcome);
+                if outcome.terminal() {
+                    sender.custom.observe_local(&opened.payload, buffered).await;
+                }
             }
             let state = events
                 .entry(id)
@@ -162,7 +254,7 @@ async fn handle(
                         TurnOutcome::Completed { .. } => DeliveryStep::Answer,
                         _ => DeliveryStep::Failure,
                     };
-                    sender.observe(&state.event, step, &delivered);
+                    sender.observe(&state.event, step, &delivered).await;
                 }
                 if outcome.terminal() {
                     finish(state);

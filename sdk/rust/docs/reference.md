@@ -207,6 +207,33 @@ It does not provision or remove consumers, and extended policy writes require
 deployment support. An exact retry after lost success can confirm the immediately
 following revision; other stale revisions conflict. The SDK never retries it.
 
+`get_channel_activity(id, &ChannelActivityOptions { owner })` returns a typed
+`ActivityPage` of recent events, consumer processing states and actual transport
+observations. Use `Default::default()` for the authenticated creator or select an
+organization owner for that request. The page advertises `retention_days`,
+`limit` and `has_more`; it is a bounded recent view, not a complete audit log.
+`occurred_at` is normalized event time: the source timestamp when supplied, or
+gateway normalization time for custom CloudEvents without `time`. The original
+CloudEvent's `time` stays absent in that case; `occurred_at` alone does not establish
+a source timestamp. `received_at` is gateway receipt time. Processing
+completion does not itself prove delivery: inspect each delivery's `outcome`,
+`recipients`, `observed_at` and optional `confirmed_at` receipt timestamp.
+
+`stream_channel_activity(id, &StreamChannelActivityOptions::default())` opens a
+`ChannelActivityStream`. Its `next()` returns
+`Option<Result<ChannelActivityEvent>>`, with `Activity(ActivityPage)` and
+`Reset(ActivityPage)` variants. Each connection starts with a full snapshot;
+replace the prior snapshot atomically for either variant. `Reset` indicates
+expired retention or missed notifications. The SDK checks that the snapshot
+cursor matches the explicit SSE ID before returning it. Retain the cursor only
+after your application successfully applies the snapshot, then reconnect with
+`cursor` or `last_event_id` in `StreamChannelActivityOptions` (the header takes
+precedence). The SDK does not reconnect automatically. Clean EOF ends the
+connection normally; incomplete frames fail. Dropping the stream ends observation
+only. The configured request timeout covers the full stream, and the gateway
+also closes each connection after five minutes. Owner selection remains local
+to the request.
+
 `OutboundMessage::native_attachments` requests native image, file, audio or video
 delivery from an HTTPS URL or bounded base64. Check
 `ContextResponse.capabilities.native_media` first: support is deployment-gated.

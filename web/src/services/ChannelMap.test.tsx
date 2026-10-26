@@ -73,10 +73,10 @@ it('maps all producers and consumers with distinct identities and scoped facts w
   const fetcher = vi.fn();
   vi.stubGlobal('fetch', fetcher);
   const { container } = render(<MapFixture />);
-  const producers = screen.getByRole('region', { name: 'Producers' });
-  const consumers = screen.getByRole('region', { name: 'Consumers' });
-  expect(within(producers).getAllByRole('button')).toHaveLength(5);
-  expect(within(consumers).getAllByRole('button')).toHaveLength(3);
+  const producers = screen.getByRole('region', { name: 'Delivery map' });
+  const consumers = producers;
+  expect(await within(producers).findAllByRole('button', { name: /^Producer:/ })).toHaveLength(5);
+  expect(within(consumers).getAllByRole('button', { name: /^Consumer:/ })).toHaveLength(3);
   expect(
     within(producers).getByRole('button', { name: 'Producer: Telegram (Direct webhook)' }),
   ).toBeVisible();
@@ -104,7 +104,7 @@ it('maps all producers and consumers with distinct identities and scoped facts w
 });
 it('keeps keyboard navigation as normal buttons and leaves unknown identities explicit', async () => {
   render(<MapFixture />);
-  const unknown = screen.getByRole('button', { name: 'Consumer: custom (internal-worker)' });
+  const unknown = await screen.findByRole('button', { name: 'Consumer: custom (internal-worker)' });
   unknown.focus();
   await userEvent.keyboard('{Enter}');
   expect(unknown).toHaveAttribute('aria-pressed', 'true');

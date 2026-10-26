@@ -74,9 +74,10 @@ pub async fn callback(
 
 /// Authenticates and normalizes one native update into an admitted chat turn.
 ///
-/// Taking `request` by value means `parts`, `body` and the parsed update are
-/// dropped when this returns, before the caller waits for acceptance. The
-/// callback-query acknowledgement stays here so it still precedes dispatch.
+/// Headers and the parsed update are dropped when this returns. Selected
+/// durable ingress retains bounded authenticated wire bytes through commit;
+/// legacy ingress releases its body before acceptance waits. Callback-query
+/// acknowledgement stays here so it still precedes dispatch.
 async fn admit_update(
     state: &IngressState,
     channel_id: &str,
@@ -249,7 +250,9 @@ async fn admit_update(
         Ok(Built::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
+    let routed_source = state.capture_routed(&request, &body, true);
     Ok(AdmittedChat {
+        routed_source,
         request,
         callback,
         route,

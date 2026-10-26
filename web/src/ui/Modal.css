@@ -18,6 +18,9 @@
   padding-block: 20dvh;
   inset: 0;
 }
+.modal[hidden] {
+  display: none;
+}
 
 /*
  * The mask blurs as well as dims. Dimming alone leaves the page behind
@@ -147,4 +150,24 @@
     flex: none;
     overflow: visible;
   }
+}
+
+/* Sectioned editors retain the same shell and fixed viewport clearance on phones. */
+.modal__card[data-layout='sections'] {
+  width: min(960px, 60vw);
+  max-width: 60vw;
+  height: 60dvh;
+  max-height: 60dvh;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.modal__card[data-layout='sections'] .modal__content,
+.modal__card[data-layout='sections'] .modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.modal__card[data-layout='sections'] .modal__body {
+  padding: 0;
+  margin-top: 12px;
 }

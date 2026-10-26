@@ -1,4 +1,4 @@
-//! Eight bounded workers serialize commands by event without spawning per-send tasks.
+//! Eight bounded workers serialize commands by event and consumer without per-send tasks.
 use super::{
     event::key, intents::DeliveryCommand, pacing::Pacing, relay_client::RelayClient, send::Sender,
     worker,
@@ -106,18 +106,31 @@ async fn run(
         stop,
         WORKERS,
         |command| {
-            let (channel, event) = match command {
+            let (channel, event, consumer) = match command {
+                DeliveryCommand::DurableReply(reply) => (
+                    &reply.event.channel_id,
+                    &reply.event.event_id,
+                    reply.event.consumer.as_ref(),
+                ),
                 DeliveryCommand::Reply { event, .. } | DeliveryCommand::Typing { event, .. } => {
-                    (&event.channel_id, &event.event_id)
+                    (&event.channel_id, &event.event_id, event.consumer.as_ref())
                 }
-                DeliveryCommand::Update { message_ref, .. } => {
-                    (&message_ref.channel_id, &message_ref.event_id)
-                }
+                DeliveryCommand::Update { message_ref, .. } => (
+                    &message_ref.channel_id,
+                    &message_ref.event_id,
+                    message_ref.consumer.as_ref(),
+                ),
                 DeliveryCommand::StreamOutcome { turn, .. } => {
-                    (&turn.channel.id, &turn.activity.event_id)
+                    // The worker checks this identity against the authenticated EventRef
+                    // before admitting any state or transport effect.
+                    (
+                        &turn.channel.id,
+                        &turn.activity.event_id,
+                        turn.consumer.as_ref(),
+                    )
                 }
             };
-            key(channel.as_str(), event.as_str())[0] as usize % WORKERS
+            key(channel.as_str(), event.as_str(), consumer)[0] as usize % WORKERS
         },
         move |commands| worker::run(commands, sender.clone(), config.clone(), tracker.clone()),
     )

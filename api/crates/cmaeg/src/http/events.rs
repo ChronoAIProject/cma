@@ -108,18 +108,28 @@ pub async fn receive_event(
             .insert("retry-after", HeaderValue::from_static("1"));
         return response;
     };
-    // The request is consumed by preparation so its body is released before
-    // the acceptance wait; the launcher decides how long the permit is held.
+    // Preparation releases the request; only selected durable ingress retains
+    // bounded wire bytes until commit. Admission keeps the capacity permit.
     let PreparedEvent {
         turn,
+        routed_source,
         waiter,
-        accepted,
+        mut accepted,
         report,
     } = match prepare_event(&state, &channel_id, stream, request, timing).await {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
-    let outcome = state.ingress.launcher.launch_holding(turn, permit).await;
+    let outcome = state
+        .ingress
+        .launch_verified(turn, routed_source, permit)
+        .await;
+    if let LaunchOutcome::Admitted {
+        conversation_id, ..
+    } = &outcome
+    {
+        accepted.conversation_id = conversation_id.clone();
+    }
     report.outcome(&state.ingress, LaunchClass::of(&outcome));
     match outcome {
         LaunchOutcome::Refused(error) => {
@@ -132,6 +142,14 @@ pub async fn receive_event(
             }
             response
         }
+        LaunchOutcome::Admitted {
+            sync_waiter_attached: false,
+            ..
+        } if waiter.is_some() => {
+            // Durable acceptance is replayable; the original process-local
+            // stream is not. Dropping this unbound waiter also releases capacity.
+            (StatusCode::ACCEPTED, Json(accepted)).into_response()
+        }
         _ => match waiter {
             Some(waiter) => Sse::new(waiter.stream())
                 .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -140,9 +158,10 @@ pub async fn receive_event(
         },
     }
 }
-/// An authenticated event ready to launch, with the request already released.
+/// An authenticated event ready to launch, with bounded optional durable bytes.
 struct PreparedEvent {
     turn: LaunchRequest,
+    routed_source: Option<crate::ingress::routed::VerifiedIngress>,
     waiter: Option<Waiter>,
     accepted: EventAccepted,
     report: EventReport,
@@ -194,9 +213,9 @@ impl EventReport {
 }
 /// Authenticates and normalizes one custom event into a launchable turn.
 ///
-/// Taking `request` by value means `parts`, `body` and the parsed CloudEvent
-/// are dropped when this returns, before the caller waits for acceptance.
-/// Every early return is the handler's final response.
+/// Headers and the parsed CloudEvent are dropped when this returns. Selected
+/// durable ingress retains bounded authenticated wire bytes through commit;
+/// legacy ingress releases its body before acceptance waits.
 async fn prepare_event(
     state: &CustomIngressState,
     channel_id: &str,
@@ -282,6 +301,7 @@ async fn prepare_event(
         ));
     };
     // Authenticated from here on: every refusal is reported for the console.
+    let attributes_signed = structured || matches!(hint, ProducerHint::NyxidKey { .. });
     let mut report = EventReport {
         record: channel.definition.record_id.clone(),
         hint,
@@ -389,7 +409,11 @@ async fn prepare_event(
         event_id: turn.activity.event_id.clone(),
         conversation_id: turn.conversation_id.clone(),
     };
+    let routed_source = state
+        .ingress
+        .capture_routed(&turn, &body, attributes_signed);
     Ok(PreparedEvent {
+        routed_source,
         turn,
         waiter,
         accepted,

@@ -17,7 +17,9 @@ import { NodeInspector } from './NodeInspector';
 import { ChannelNodeTests } from './ChannelNodeTests';
 import { ChannelOutboundMessage } from './ChannelOutboundMessage';
 import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
-import { ChannelTable } from './ChannelTable';
+import { ChannelActivity } from './ChannelActivity';
+import { GatewayWelcome } from './GatewayWelcome';
+import { GatewayRecordMeta } from './GatewayRecordMeta';
 import { ExistingChannel } from './ExistingChannel';
 import { RelayCapabilitiesProvider } from './RelayCapabilities';
 import './EventGateway.css';
@@ -31,6 +33,7 @@ interface EventGatewayProps {
   readonly denied: Denied;
   readonly children?: (slots: EventGatewaySlots) => ReactNode;
   readonly onNavigate?: () => void;
+  readonly active?: boolean;
 }
 export function EventGateway(props: EventGatewayProps) {
   const identity = JSON.stringify([props.session.subject, [...props.session.permissions].sort()]);
@@ -40,7 +43,13 @@ export function EventGateway(props: EventGatewayProps) {
     </RelayCapabilitiesProvider>
   );
 }
-function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewayProps) {
+function EventGatewayBody({
+  session,
+  denied,
+  children,
+  onNavigate,
+  active = true,
+}: EventGatewayProps) {
   const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
   const [selected, setSelected] = useState<string>();
   const [visited, setVisited] = useState<readonly string[]>([]);
@@ -53,7 +62,7 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
     created && !rows.some((row) => row.record_id === created.record_id) ? [created, ...rows] : rows
   ).filter((row) => !deleted.includes(row.record_id));
   // Nothing is open until somebody chooses a channel: the page opens on the
-  // table of every channel, which a collapsed sidebar cannot hide.
+  // welcome surface until a channel is selected.
   const current = items.find((row) => row.record_id === selected);
   const canCreate = can(session, 'event-gateway', 'channels:create');
   useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
@@ -73,7 +82,7 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
     setCreating(true);
     onNavigate?.();
   };
-  // A channel's breadcrumb returns to the table; its editor stays mounted.
+  // A channel's breadcrumb returns home; its editor stays mounted.
   const channelsCrumb: Crumb = {
     label: 'Channels',
     href: routePath({ kind: 'event_gateway' }),
@@ -85,13 +94,21 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
   const sidebar = (
     <section className="gateway-sidebar" aria-label="Channels">
       <div className="gateway-sidebar__heading">
-        <h2>Channels</h2>
-        <Button disabled={channels.busy} onClick={channels.refresh} aria-label="Refresh channels">
+        {canCreate ? (
+          <Button size="sm" onClick={startCreate}>
+            New channel
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          disabled={channels.busy}
+          onClick={channels.refresh}
+          aria-label="Refresh channels"
+        >
           Refresh
         </Button>
       </div>
-      {canCreate ? <Button onClick={startCreate}>New channel</Button> : null}
-      {/* The page's table already says it is loading; the rail keeps the failure. */}
+      {/* The welcome surface shows loading; the rail retains failures. */}
       <PageStatus error={channels.error} retry={channels.refresh} />
       {channels.value && items.length === 0 ? (
         <p className="gateway-sidebar__empty">No channels yet.</p>
@@ -108,9 +125,15 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
               onClick={() => select(channel.record_id)}
             >
               <span>{channel.definition.name}</span>
-              <small>
-                {channel.provider.slug} · {channel.definition.sources.length} sources
-              </small>
+              <GatewayRecordMeta
+                createdAt={
+                  channel.created_at ??
+                  (typeof channel.definition.created_at === 'string'
+                    ? channel.definition.created_at
+                    : undefined)
+                }
+                owner={channel.owner ?? channel.definition.owner}
+              />
             </button>
           </li>
         ))}
@@ -158,6 +181,7 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
           >
             <ChannelDetail
               channel={channel}
+              active={active && !creating && channel.record_id === current?.record_id}
               channelsCrumb={channelsCrumb}
               session={session}
               denied={denied}
@@ -174,23 +198,11 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
           </section>
         ))}
       {!creating && !current ? (
-        <section className="gateway-empty">
-          <PageHeader
-            breadcrumb={[{ label: 'Event Gateway' }, { label: 'Channels' }]}
-            title="Event Gateway"
-            description="Choose a channel to view its endpoints, configure event delivery, or send a test."
-          />
-          <ChannelTable
-            channels={items}
-            loading={channels.busy && !channels.value}
-            unavailable={
-              channels.value === undefined && channels.error !== undefined
-                ? 'Channels could not be loaded.'
-                : undefined
-            }
-            onSelect={select}
-          />
-        </section>
+        <GatewayWelcome
+          kind="channel"
+          onCreate={canCreate ? startCreate : undefined}
+          loading={channels.busy && !channels.value}
+        />
       ) : null}
     </div>
   );
@@ -206,6 +218,7 @@ function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewa
 
 function ChannelDetail({
   channel,
+  active,
   channelsCrumb,
   session,
   denied,
@@ -214,6 +227,7 @@ function ChannelDetail({
 }: {
   readonly channel: ChannelListItem;
   readonly channelsCrumb: Crumb;
+  readonly active: boolean;
   readonly session: ServiceSession;
   readonly denied: Denied;
   readonly onChanged: (channel?: Channel) => void;
@@ -233,6 +247,7 @@ function ChannelDetail({
       {hasChannelAddress(channel) ? (
         <AddressedChannel
           channel={channel}
+          active={active}
           session={session}
           denied={denied}
           onChanged={onChanged}
@@ -243,6 +258,7 @@ function ChannelDetail({
           {(resolved) => (
             <AddressedChannel
               channel={resolved}
+              active={active}
               session={session}
               denied={denied}
               onChanged={onChanged}
@@ -256,18 +272,22 @@ function ChannelDetail({
 }
 function AddressedChannel({
   channel,
+  active,
   session,
   denied,
   onChanged,
   onDeleted,
 }: {
   readonly channel: Channel;
+  readonly active: boolean;
   readonly session: ServiceSession;
   readonly denied: Denied;
   readonly onChanged: (channel?: Channel) => void;
   readonly onDeleted: () => void;
 }) {
   const inspectorId = useId();
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectorSection, setInspectorSection] = useState<'overview' | 'activity'>('overview');
   const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
   const [confirmed, setConfirmed] = useState<Channel>();
   const current = confirmed && confirmed.version >= channel.version ? confirmed : channel;
@@ -285,28 +305,63 @@ function AddressedChannel({
       <ChannelMap
         channel={current}
         selection={selected}
+        onActivity={() => {
+          setSelection({ kind: 'channel' });
+          setInspectorSection('activity');
+          setInspecting(true);
+        }}
         onSelect={(next) => {
+          setInspectorSection('overview');
           setSelection(next);
-          requestAnimationFrame(() => {
-            const inspector = document.getElementById(inspectorId);
-            if (
-              !inspector ||
-              inspector.getClientRects().length === 0 ||
-              (inspector.parentElement?.clientWidth ?? 0) >= 1080
-            )
-              return;
-            inspector.scrollIntoView?.({
-              block: 'start',
-              behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-                ? 'instant'
-                : 'smooth',
-            });
-          });
+          setInspecting(true);
         }}
         inspectorId={inspectorId}
         canAddProducer={editable}
       />
-      <NodeInspector channel={current} selection={selected} id={inspectorId}>
+      <NodeInspector
+        channel={current}
+        selection={selected}
+        id={inspectorId}
+        open={active && inspecting}
+        initialSection={inspectorSection}
+        onClose={() => setInspecting(false)}
+        send={
+          editable ? (
+            <ChannelOutboundMessage
+              owner={session.subject}
+              channel={current}
+              selection={selected}
+              denied={denied}
+            />
+          ) : undefined
+        }
+        tests={
+          can(session, 'event-gateway', 'channels:test') ? (
+            <div hidden={newProducer}>
+              <ChannelNodeTests
+                channelId={current.channel_id}
+                channelVersion={current.version}
+                selection={selected}
+                denied={denied}
+              />
+            </div>
+          ) : undefined
+        }
+        activity={
+          selected.kind === 'channel' ? (
+            <ChannelActivity
+              channelId={current.channel_id}
+              owner={session.subject}
+              active={active && inspecting}
+            />
+          ) : undefined
+        }
+        danger={
+          selected.kind === 'channel' && can(session, 'event-gateway', 'channels:delete') ? (
+            <DeleteChannel channel={current} denied={denied} onDone={onDeleted} />
+          ) : undefined
+        }
+      >
         {editable ? (
           <ChannelEditor
             channel={current}
@@ -320,32 +375,6 @@ function AddressedChannel({
         ) : (
           <p className="channel-field-hint">You have read-only access to this configuration.</p>
         )}
-        {editable ? (
-          <ChannelOutboundMessage
-            owner={session.subject}
-            channel={current}
-            selection={selected}
-            denied={denied}
-          />
-        ) : null}
-        {can(session, 'event-gateway', 'channels:test') ? (
-          <div hidden={newProducer}>
-            <ChannelNodeTests
-              channelId={current.channel_id}
-              channelVersion={current.version}
-              selection={selected}
-              denied={denied}
-            />
-          </div>
-        ) : null}
-        <div hidden={selected.kind !== 'channel'}>
-          {can(session, 'event-gateway', 'channels:delete') ? (
-            <section className="channel-inspector__danger">
-              <h3>Delete channel</h3>
-              <DeleteChannel channel={current} denied={denied} onDone={onDeleted} />
-            </section>
-          ) : null}
-        </div>
       </NodeInspector>
     </div>
   );

@@ -16,6 +16,8 @@ use utoipa::OpenApi;
         crate::tools::AttachmentViewKind,
     )),
     paths(
+        http::activity::latest,
+        http::activity::stream,
         http::outbound::prepare,
         http::outbound::read,
         http::outbound::commit,

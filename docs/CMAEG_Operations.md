@@ -1,5 +1,33 @@
 # CMA Event Gateway operations
 
+## Durable recent activity
+
+Public channel activity uses independent encrypted `channel_recent_activity_v1`
+records in the existing `eg_interaction_records` collection. No collection,
+credential, environment variable or external service is added. Each owner/channel
+has deterministic daily records, bounded to 50 rows and 44,000 plaintext bytes;
+existing interaction TTL removes each daily record at its fixed seven-day
+boundary. Existing routed recovery ignores this separate record kind. The
+original admission, execution, reply authority and runtime records are unchanged.
+
+Incoming authenticated work commits its receipt before starting a provider turn.
+Failure to persist that receipt refuses launch with
+HTTP 503 with `provider_unavailable` and detail `channel_activity_unavailable`;
+retry retains the original event identity.
+Progress observations occur only at meaningful lifecycle boundaries and actual
+transport outcomes, never on each text delta. A failed progress observation is
+logged and must not repeat an accepted provider turn or confirmed platform send.
+Each progress observation has a three-second deadline, so storage failure cannot
+leave the execution or delivery worker indefinitely blocked on activity tracking.
+Absence of a timestamp is not evidence that the corresponding action occurred.
+
+The current single gateway replica publishes notifications after committed
+activity updates. A new or reconnected SSE reader restores authoritative daily
+snapshots, including after a process restart; no process-local ring is the source
+of activity truth. GET/SSE snapshots are bounded recent activity, not an archival
+ledger. Future multiple-replica service must add shared commit notification before
+claiming the same immediate push guarantee across replicas.
+
 ## Public documentation
 
 The gateway itself serves a single `/docs` document combining the integration
@@ -33,9 +61,11 @@ channel ownership and credential-specific gateway checks remain authoritative.
 The canonical `cma-event-gateway` deployment retains the Console and inbound
 media behavior from live source `976e877379038cec7c76ab185f5b99d2f099dba1`.
 Console OAuth continues to use `client_secret_post`, its own session cookie,
-owner checks and CSRF forms. The shared web portal uses the independent
-Event Gateway OAuth client and Mongo-backed browser session; a Console cookie
-does not authorize the portal API. Media remains enabled with the 2 GiB
+owner checks and CSRF forms. The shared web portal uses the existing Agent
+Manager browser login through its credential-custody bridge; a Console cookie
+does not authorize the portal API. Channel Activity's exact read routes also
+use that bridge, with immediate SSE forwarding and fresh authentication on
+reconnect. Media remains enabled with the 2 GiB
 memory request/limit and 32 MiB media volume. The empty speech-to-text URL and
 FFmpeg directory keep transcription and transformation disabled, as in the
 live configuration.
@@ -114,10 +144,16 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED` | `true` or `false` | `false` | Allows new scoped `bot_messages: native_mentions` policies and advertises `native_bot_mentions_v1` through authenticated channel capability discovery. Only exact `true`/`false` are accepted. Upgrade all gateway readers and consuming applications before enabling it. Turning it off prevents new opt-ins but retains existing policy execution; see [Native bot mention rollout](#native-bot-mention-rollout). |
 | `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | `true` or `false` | `false` | Allows policy-only routing edits after all replicas and rollback targets understand stored routing. Does not provision consumers or enable fanout execution. |
 | `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` | `true` or `false` | `false` | Allows new or changed Discord/WhatsApp raw verification independently from dynamic source topology. Enable only after all readers and rollback targets support it. Exact retained settings remain usable when disabled; no automatic trust downgrade. |
+| `CMAEG_NATIVE_DISCORD_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Discord source/credential writes after all readers and rollback images support them. Keep disabled until native inbox dispatch, REST delivery and source supervision are integrated; this flag does not activate sockets. |
+| `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for the explicit selected records. Off or an empty selection starts no native worker, scans or Discord requests. Authoring remains separately gated. |
+| `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` | comma-separated canonical UUID v4 IDs | empty | Initial bounded rollout selection, at most 64 records. When enabled, every selected record must also be in `CMAEG_ROUTED_CHANNEL_RECORDS` and routed recovery must be on. Sources need their original ready channel identity and an explicit routing snapshot. This staged allowlist is not automatic source discovery. |
 | `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED` | `true` or `false` | `false` | Allows extended source lists and partition shapes after all readers support them. Existing settings may carry through unchanged. Does not enable Discord/WhatsApp raw verification. |
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
+| `CMAEG_ROUTED_RECOVERY_ENABLED` | boolean | `false` | Installs the durable admission adapter, replay executor, tool receipts and supervised recovery scheduler. Required before selecting records or enabling admission. Keep enabled while retained routed work can execute or retry. A stopped recovery worker removes readiness; shutdown uses the existing turn drain deadline. See [durable routed execution](CMAEG_Routed_Execution.md). |
+| `CMAEG_ROUTED_ADMISSION_ENABLED` | boolean | `false` | Allows new routed plans only for explicitly selected records. Set false to pause new admissions with 503 while exact committed retries and recovery continue. This does not disable the channel's legacy path when no routing policy exists. |
+| `CMAEG_ROUTED_CHANNEL_RECORDS` | comma-separated explicit record IDs | empty | At most 64 IDs; no wildcard. Unselected ingress keeps its existing launcher without admission-store reads. Retain selected IDs while their durable identities can be retried; removing selection is not a safe rollback. Provider replay capability must be explicitly configured and proved before a new routed plan is accepted. |
 | `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media/video messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
 | `CMAEG_MEDIA_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1..=26214400. Most bytes fetched for one attachment; Telegram and NyxID serve at most 20 MiB themselves. Validated at startup even while `CMAEG_MEDIA_ENABLED` is `false`, like every media budget below; an out-of-bounds or non-decimal value fails startup naming the key. |
 | `CMAEG_MEDIA_INFLIGHT_BYTES` | unsigned decimal, bytes | `67108864` | `CMAEG_MEDIA_MAX_BYTES`..=1073741824. Pod-wide bytes held at once by fetched originals and transform outputs; a reservation larger than the budget takes all of it, so one maximum-size original can always proceed. |
@@ -176,7 +212,7 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
-| `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
+| `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
 | `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
@@ -217,6 +253,55 @@ combined with RUST_LOG enforces this, so even
 `RUST_LOG=trace,reqwest::connect=trace` prints none of them, and it applies
 with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
+
+## Provider response recovery transport
+
+Recovery is an explicit per-provider opt-in. Existing provider definitions omit
+`paths.recovery` and retain their POST and streaming behavior. After deploying
+compatible registry readers everywhere, the CMA provider may add this member to
+its existing `paths` object:
+
+```json
+{"recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}}
+```
+
+Both paths are required and use the CMA Responses v2 dialect. The same strict
+allowlisted origin, normalized templates and encoded opaque path segments apply.
+Redirects are never followed. Do not infer recovery from a provider's POST path
+or name. Leave Nyxbot recovery absent until its deployed API supplies a verified
+snapshot/replay contract. The deployment manifest includes the same opt-in
+example and deliberately leaves both provider entries unchanged.
+
+The transport only reads an already accepted response using the fresh consumer
+agent key supplied by the dispatcher. CMA's response endpoints recheck current
+command/binding and stream authority. There is no management-token fallback,
+conversation creation or turn POST. A snapshot must match the sealed journal's
+accepted response ID and the frozen command's exact metadata. Its
+`conversation.id` is CMA's native Agent ID, not the gateway's conversation alias;
+retain that Agent ID and check it on subsequent snapshots and lifecycle frames.
+
+Replay requires `x-cma-response-id` to match the requested accepted response.
+Each durable SSE ID must be the canonical decimal `sequence_number`, contiguous
+from zero or `starting_after + 1`. Gaps, duplicates, changed IDs, metadata, native
+Agent IDs and lifecycle types are refused. An SSE `error` without an ID reports
+observation failure, even if it contains `sequence_number`; it never emits a
+durable failed-turn event or advances the checkpoint. End-of-stream without a
+durable terminal event is likewise an observation failure.
+
+Snapshot bodies are bounded at 4 MiB, HTTP error bodies at 64 KiB, replay wire
+bytes at 16 MiB and individual SSE frames at 1 MiB. One read/replay attempt lasts
+at most the configured provider request timeout or 60 seconds, whichever is
+shorter; a later attempt resumes from the last committed cursor. Dropping or
+cancelling a read releases its provider concurrency permit, including an idle
+stream or pending response headers. Non-200 HTTP responses preserve their status
+and bounded code in `ProviderError::Rejected`; 429 retains `Retry-After` as
+`Busy`. In this read-only recovery API, a 5xx refusal is an observation error
+eligible for policy-controlled retry, never proof the durable command failed.
+
+This transport does not activate routed ingress or provide its journal,
+dispatcher, delivery fencing or checkpoint policy. The dispatcher must advance
+the durable cursor only after confirming the corresponding downstream durable
+effect, and must never resubmit an accepted turn when observation fails.
 
 ## Native thread rollout
 
@@ -2437,6 +2522,23 @@ actor, conversation and callback audience. Hand-off controls therefore remain
 refused until CMA persists and validates that original authority through the
 publish path. This is a CMA implementation gap, not a NyxID limitation; never
 substitute the publishing agent's identity for the original human audience.
+
+The default-publisher lineage correction only makes the sealed reader consistent
+with the channel policy: `default` may appear once as a publisher in a bounded
+path. It does not change the recipient encoding (`consumer` stays absent for
+`default`), tool authentication, channel/record binding or expiry checks. Deploy
+compatible readers everywhere before any future writer emits default-publisher
+lineage; older readers reject it. Existing references require no migration.
+
+There is still no `publishEvent` REST/MCP execution handler. The pure routing
+resolver's `published` input resolves targets but does not authorize publication.
+Before that input can be used in production, a CMA executor must authenticate
+the exact channel consumer against its unexpired parent reference, check current
+`publish.enabled` and allowed targets, preserve the original reply audience,
+extend the authenticated lineage without revisits, and enforce the channel's
+hop limit, per-root budget, rate limits and idempotency. Target resolution alone
+does not provide these checks. Do not expose the tool or enable hand-off controls
+until that executor and its delivery path are implemented and verified.
 
 ## Typed WhatsApp template rollout
 

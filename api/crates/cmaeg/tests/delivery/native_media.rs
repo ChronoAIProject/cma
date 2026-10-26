@@ -1,9 +1,7 @@
 //! Native media against the real sender with an in-process NyxID transport.
 use super::{
     fake_http::{Answer, FakeHttp},
-    recording_fixtures::{
-        event, native_channel, relay_activity, relay_channel, relay_reply, REPLY_TOKEN,
-    },
+    recording_fixtures::{event, relay_activity, relay_channel, relay_reply, REPLY_TOKEN},
     recording_support::{Hooks, Recording},
 };
 use cmaeg::{
@@ -141,20 +139,10 @@ async fn explicit_thread_media_keeps_original_target_and_legacy_attachment_block
 #[tokio::test(start_paused = true)]
 async fn unsupported_destinations_disabled_rollout_and_controls_never_send_or_consume_credentials()
 {
-    for case in ["disabled", "native", "slack", "custom", "controls"] {
-        let (mut recording, mut channel, mut event) =
-            setup(FakeHttp::platforms(), case != "disabled");
+    for case in ["disabled", "slack", "custom", "controls"] {
+        let (mut recording, channel, mut event) = setup(FakeHttp::platforms(), case != "disabled");
         let mut request = media();
         match case {
-            "native" => {
-                channel = native_channel();
-                event.reply = ReplyAddress::Telegram {
-                    bot_id: "77".into(),
-                    chat_id: "42".into(),
-                    message_id: "5".into(),
-                    thread_id: None,
-                };
-            }
             "slack" => {
                 if let ReplyAddress::NyxidRelay { platform, .. } = &mut event.reply {
                     *platform = Platform::Slack;

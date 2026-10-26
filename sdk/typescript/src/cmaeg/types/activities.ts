@@ -63,6 +63,12 @@ export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 // the event reference's authority.
 export const AttachmentSourceSchema = tagged(
   {
+    discord: object({
+      channel_id: text,
+      message_id: text,
+      attachment_id: text,
+      type: enumeration('discord'),
+    }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
     telegram: object({
       file_id: text,
@@ -141,6 +147,7 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    discord: object({ bot_id: text, type: enumeration('discord') }),
     telegram: object({
       platform: PlatformSchema,
       bot_id: text,

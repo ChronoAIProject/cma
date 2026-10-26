@@ -47,16 +47,63 @@ pub(super) struct Sender {
     pub observer: Arc<dyn ActivityObserver>,
 }
 impl Sender {
-    /// Report a legacy delivery: the default consumer, to the event's origin.
-    pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
+    /// Report the consumer bound to this event reference, at its origin.
+    pub async fn observe(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+    ) {
+        self.observe_at(event, step, outcome, Destination::Origin, None)
+            .await;
+    }
+    pub async fn observe_at(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+        destination: Destination,
+        default: Option<&super::destination::DefaultDestination>,
+    ) {
         self.observer.delivered(
             &event.record_id,
             &event.event_id,
-            default_consumer(),
+            event
+                .consumer
+                .as_ref()
+                .unwrap_or_else(|| default_consumer()),
             step,
             outcome,
-            Destination::Origin,
+            destination,
         );
+        if default.is_none()
+            && matches!(
+                event.reply,
+                ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
+            )
+        {
+            // Custom delivery reports its actual local queue and each webhook
+            // leg separately; the compatibility aggregate is not another send.
+            return;
+        }
+        self.observer
+            .checkpoint(
+                &event.record_id,
+                &event.event_id,
+                crate::activity::facts::delivery(
+                    event
+                        .consumer
+                        .as_ref()
+                        .unwrap_or_else(|| default_consumer())
+                        .as_str(),
+                    step,
+                    outcome,
+                    destination,
+                    &event.reply,
+                    default,
+                ),
+            )
+            .await;
     }
 
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(
@@ -73,6 +120,7 @@ impl Sender {
             match &event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
                 ReplyAddress::Telegram { .. } => "telegram",
+                ReplyAddress::Discord { .. } => "discord",
                 _ => "custom",
             },
         );
@@ -86,6 +134,14 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if matches!(event.reply, ReplyAddress::Discord { .. }) {
+            return self.discord_reply(ctx, event, message).await;
+        }
+        if !message.native_attachments.is_empty()
+            && matches!(event.reply, ReplyAddress::Telegram { .. })
+        {
+            return self.native_media_reply(ctx, event, message).await;
+        }
         if message.whatsapp_template.is_some() {
             if !self.relay.whatsapp_templates_enabled()
                 || message.validate().is_err()

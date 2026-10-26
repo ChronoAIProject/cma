@@ -39,7 +39,7 @@ afterEach(() => {
 
 it.each([
   ['Agent Manager', '/agent-manager', 'Welcome to CMA'],
-  ['Event Gateway', '/event-gateway', 'Event Gateway'],
+  ['Event Gateway', '/event-gateway', 'Connect events to action'],
 ])(
   'enters %s with expanded navigation after home redirect and on direct entry',
   async (service, path, heading) => {
@@ -63,7 +63,7 @@ it('retains manual toggles across service navigation and avoids a home history l
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   fireEvent.click(screen.getByRole('button', { name: 'Hide navigation' }));
   chooseService('Event Gateway');
-  await screen.findByRole('heading', { name: 'Event Gateway' });
+  await screen.findByRole('region', { name: 'Channel workspace' });
   expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Show navigation' }));

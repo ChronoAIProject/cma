@@ -5,6 +5,8 @@ use super::{
     relay_client::{RelayClient, RelayTransport, REQUEST_MAX_BYTES},
     send::{SendContext, Sender},
 };
+mod destinations;
+mod durable;
 mod whatsapp;
 use crate::{
     channels::resolver::ResolvedChannel,

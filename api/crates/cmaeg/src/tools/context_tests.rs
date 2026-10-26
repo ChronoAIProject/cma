@@ -48,7 +48,7 @@ fn relay_text_edit_discovery_preserves_legacy_shape_and_limits_supported_platfor
 }
 
 #[test]
-fn native_media_discovery_requires_deployment_attestation_and_a_supported_relay() {
+fn native_media_discovery_distinguishes_native_transports_from_attested_relays() {
     for platform in [
         Platform::Telegram,
         Platform::Lark,
@@ -68,16 +68,29 @@ fn native_media_discovery_requires_deployment_attestation_and_a_supported_relay(
     }
     for source in [
         SourceKind::Custom,
-        SourceKind::Telegram {
-            platform: Platform::Telegram,
-            bot_id: "77".into(),
-        },
         SourceKind::NyxidRelay {
             platform: Platform::Slack,
             route_id: "route".into(),
         },
     ] {
         assert!(NativeMediaCapabilities::for_source(&source, true).is_none());
+    }
+    for source in [
+        SourceKind::Telegram {
+            platform: Platform::Telegram,
+            bot_id: "77".into(),
+        },
+        SourceKind::Discord {
+            bot_id: "77".into(),
+        },
+    ] {
+        for enabled in [false, true] {
+            let capability = NativeMediaCapabilities::for_source(&source, enabled).unwrap();
+            assert_eq!(capability.kinds, ["image", "file", "audio", "video"]);
+            assert_eq!(capability.sources, ["url", "base64"]);
+            assert_eq!(capability.max_attachments, 4);
+            assert_eq!(capability.max_inline_bytes, 65536);
+        }
     }
     assert!(serde_json::to_value(Capabilities::telegram())
         .unwrap()

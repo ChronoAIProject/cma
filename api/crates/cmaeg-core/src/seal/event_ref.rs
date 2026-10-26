@@ -41,6 +41,11 @@ pub struct EventRefPayload {
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
 pub enum ReplyAddress {
+    Discord {
+        bot_id: String,
+        channel_id: String,
+        message_id: String,
+    },
     Telegram {
         bot_id: String,
         chat_id: String,
@@ -69,6 +74,16 @@ pub enum ReplyAddress {
 impl fmt::Debug for ReplyAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+            } => formatter
+                .debug_struct("Discord")
+                .field("bot_id", bot_id)
+                .field("channel_id", channel_id)
+                .field("message_id", message_id)
+                .finish(),
             Self::NyxidRelay {
                 message_id,
                 route_id,
@@ -112,6 +127,11 @@ impl fmt::Debug for ReplyAddress {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 enum ReplyAddressWire {
+    Discord {
+        bot_id: String,
+        channel_id: String,
+        message_id: String,
+    },
     Telegram {
         bot_id: String,
         chat_id: String,
@@ -145,6 +165,15 @@ impl Serialize for ReplyAddress {
         S: Serializer,
     {
         let wire = match self {
+            Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+            } => ReplyAddressWire::Discord {
+                bot_id: bot_id.clone(),
+                channel_id: channel_id.clone(),
+                message_id: message_id.clone(),
+            },
             Self::NyxidRelay {
                 message_id,
                 route_id,
@@ -190,6 +219,15 @@ impl<'de> Deserialize<'de> for ReplyAddress {
         D: Deserializer<'de>,
     {
         Ok(match ReplyAddressWire::deserialize(deserializer)? {
+            ReplyAddressWire::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+            } => Self::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+            },
             ReplyAddressWire::NyxidRelay {
                 message_id,
                 route_id,
@@ -361,6 +399,24 @@ impl EventRefPayload {
             })?;
         }
         match &self.reply {
+            ReplyAddress::Discord {
+                bot_id,
+                channel_id,
+                message_id,
+            } => {
+                for (field, id) in [
+                    ("bot_id", bot_id),
+                    ("channel_id", channel_id),
+                    ("message_id", message_id),
+                ] {
+                    if !crate::channel::discord::valid_id(id) {
+                        return Err(ValidationError::new(
+                            format!("/reply/{field}"),
+                            "invalid Discord identity",
+                        ));
+                    }
+                }
+            }
             ReplyAddress::NyxidRelay {
                 message_id,
                 route_id,

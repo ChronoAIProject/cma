@@ -8,6 +8,9 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "mongo_versions.rs"]
+mod versions;
+
 pub const RECORDS: &str = "eg_channel_records";
 pub const CONNECTIONS: &str = "eg_connection_records";
 pub const INTERACTIONS: &str = "eg_interaction_records";

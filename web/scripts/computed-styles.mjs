@@ -7,8 +7,8 @@
  * the entire product rendering on browser defaults because of it.
  *
  * So this asks the one question jsdom cannot: load the built page in a real
- * browser and check that every custom property the sheets reference resolves
- * to something, in both themes.
+ * browser and check CMA's body tokens and React Flow's scoped rendered styles
+ * in both themes. Optional vendor overrides need their real fallback context.
  *
  * Run against the production build, not the source. A stylesheet that is
  * correct in `src/` and broken after bundling is still broken.
@@ -16,6 +16,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { open, ready, visit } from './browser.mjs';
+import { styleReferences } from './style-references.mjs';
+import { flowStyles, flowResponse } from './flow-styles.mjs';
 
 const PORT = 4318;
 const DIST = 'dist/assets';
@@ -29,7 +31,7 @@ const DIST = 'dist/assets';
  */
 const EXEMPT = new Map();
 
-/** Every custom property the built sheets reference. */
+/** Every custom property the built sheets reference, with its owning scope. */
 function referenced() {
   const css = readdirSync(DIST)
     .filter((name) => name.endsWith('.css'))
@@ -38,7 +40,8 @@ function referenced() {
   if (css.length === 0) {
     throw new Error(`no stylesheets in ${DIST} — run the build first`);
   }
-  return [...new Set([...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]))].sort();
+  const flowCss = readFileSync('node_modules/@xyflow/react/dist/style.css', 'utf8');
+  return styleReferences(css, flowCss);
 }
 
 /**
@@ -192,7 +195,7 @@ async function errorSurface(page, port) {
 }
 
 async function main() {
-  const names = referenced();
+  const { body: names, flow } = referenced();
   const { page, close } = await open({ port: PORT });
 
   try {
@@ -210,6 +213,11 @@ async function main() {
      */
     let identity = 'signedOut';
     page.on('request', (request) => {
+      const response = flowResponse(new URL(request.url()).pathname);
+      if (response) {
+        void request.respond(response);
+        return;
+      }
       if (new URL(request.url()).pathname === '/auth/session') {
         if (identity === 'unreachable') {
           void request.abort('failed');
@@ -284,6 +292,9 @@ async function main() {
     for (const problem of await fills(page)) problems.push(`authenticated ${problem}`);
     for (const problem of await oneIndicator(page)) problems.push(`authenticated: ${problem}`);
 
+    if (flow.length === 0) throw new Error('no React Flow references in the production build');
+    problems.push(...(await flowStyles(page, PORT)));
+
     identity = 'unreachable';
     problems.push(...(await errorSurface(page, PORT)));
     identity = 'signedOut';
@@ -298,7 +309,8 @@ async function main() {
     }
     console.log(
       `computed styles: ${String(names.length)} properties resolve in both themes ` +
-        `(${String(EXEMPT.size)} exempt)`,
+        `(${String(EXEMPT.size)} exempt); ${String(flow.length)} scoped Flow references; ` +
+        'canvas, edges, handles and controls match CMA tokens in both themes',
     );
   } finally {
     await close();

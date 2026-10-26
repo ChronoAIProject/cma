@@ -64,7 +64,7 @@ pub struct Capabilities {
     /// inbound media is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbound_media: Option<InboundMediaCapabilities>,
-    /// Explicit native attachments, absent until the relay deployment is verified.
+    /// Explicit native attachments; relay sources require deployment attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media: Option<NativeMediaCapabilities>,
 }
@@ -79,10 +79,14 @@ pub struct NativeMediaCapabilities {
 
 impl NativeMediaCapabilities {
     fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
-        let SourceKind::NyxidRelay { platform, .. } = source else {
-            return None;
+        let supported = match source {
+            SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,
+            SourceKind::NyxidRelay { platform, .. } => {
+                enabled && crate::delivery::relay_client::native_media_supported(*platform)
+            }
+            _ => false,
         };
-        if !enabled || !crate::delivery::relay_client::native_media_supported(*platform) {
+        if !supported {
             return None;
         }
         Some(Self {
@@ -106,6 +110,12 @@ impl Capabilities {
             native_media: None,
             whatsapp_templates: None,
             message_effects: None,
+        }
+    }
+    pub fn native_discord() -> Self {
+        Self {
+            max_text_chars: 2000,
+            ..Self::plain_text()
         }
     }
     pub fn native_telegram() -> Self {
@@ -300,6 +310,7 @@ pub(super) fn project(
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
+            SourceKind::Discord { .. } => Capabilities::native_discord(),
             SourceKind::NyxidRelay { platform, .. } => {
                 Capabilities::relay_with_text_edits(platform, state.relay_text_edits_enabled)
             }

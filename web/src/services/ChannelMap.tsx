@@ -1,7 +1,7 @@
-import { useId } from 'react';
+import { useId, useMemo } from 'react';
 import { Button } from '../ui/Button';
-import { ChannelNodeIcon } from './ChannelNodeIcon';
 import type { Channel } from './ChannelEditor';
+import { DeliveryFlow } from './DeliveryFlow';
 import {
   channelNodes,
   selectionKey,
@@ -14,6 +14,7 @@ export function ChannelMap({
   channel,
   selection,
   onSelect,
+  onActivity,
   inspectorId,
   canAddProducer = false,
 }: {
@@ -21,85 +22,65 @@ export function ChannelMap({
   readonly selection: ChannelSelection;
   readonly onSelect: (selection: ChannelSelection) => void;
   readonly inspectorId: string;
+  readonly onActivity?: () => void;
   readonly canAddProducer?: boolean;
 }) {
   const heading = useId();
-  const { producers, consumers } = channelNodes(channel);
-  const selected = selectionKey(selection);
-  const node = (value: ChannelNode) => (
-    <li key={value.key}>
-      <button
-        type="button"
-        className="channel-map__node"
-        aria-label={`${value.selection.kind === 'producer' ? 'Producer' : value.selection.kind === 'consumer' ? 'Consumer' : 'Channel'}: ${value.title} (${value.subtitle})`}
-        aria-pressed={selected === value.key}
-        aria-controls={inspectorId}
-        onClick={() => onSelect(value.selection)}
-        data-kind={value.selection.kind}
-      >
-        <span className="channel-map__icon" aria-hidden="true" data-identity={value.identity}>
-          <ChannelNodeIcon node={value} />
-        </span>
-        <span className="channel-map__text">
-          <strong title={value.title}>{value.title}</strong>
-          <span title={value.subtitle}>{value.subtitle}</span>
-          <small title={value.detail} data-pending={value.pending || undefined}>
-            {value.detail}
-          </small>
-        </span>
-      </button>
-    </li>
-  );
+  const groups = useMemo(() => {
+    const { producers, consumers } = channelNodes(channel);
+    const center: ChannelNode = {
+      key: 'channel',
+      selection: { kind: 'channel' },
+      title: channel.definition.name,
+      subtitle: 'Route events to agents',
+      detail: `Version ${channel.version}`,
+    };
+    return [producers, [center], consumers];
+  }, [channel]);
   return (
     <section className="channel-map" aria-labelledby={heading}>
       <div className="channel-map__heading">
-        <h2 id={heading}>Delivery map</h2>
-        <p>Select a node to configure its part of the journey.</p>
-      </div>
-      <div className="channel-map__stages">
-        <section
-          className="channel-map__stage channel-map__stage--producers"
-          aria-label="Producers"
-        >
-          <h3>
-            Producers <span>{producers.length}</span>
-          </h3>
-          {producers.length > 0 ? (
-            <ul>{producers.map(node)}</ul>
-          ) : (
-            <p className="channel-map__empty">No producers configured</p>
-          )}
-          {canAddProducer && producers.length < 4 ? (
-            <Button
-              placement="channel-map__add"
-              onClick={() => onSelect({ kind: 'producer', index: producers.length })}
-            >
+        <div>
+          <h2 id={heading}>Delivery map</h2>
+          <p>Select a node to configure its part of the journey.</p>
+        </div>
+        <div className="channel-map__actions">
+          {onActivity ? <Button onClick={onActivity}>Activity</Button> : null}
+          {canAddProducer && groups[0]!.length < 4 ? (
+            <Button onClick={() => onSelect({ kind: 'producer', index: groups[0]!.length })}>
               Add producer
             </Button>
           ) : null}
-        </section>
-        <section className="channel-map__stage channel-map__stage--channel" aria-label="Channel">
-          <h3>Channel</h3>
-          <ul>
-            {node({
-              key: 'channel',
-              selection: { kind: 'channel' },
-              title: channel.definition.name,
-              subtitle: 'Route events to agents',
-              detail: `Version ${channel.version}`,
-            })}
-          </ul>
-        </section>
-        <section
-          className="channel-map__stage channel-map__stage--consumers"
-          aria-label="Consumers"
-        >
-          <h3>
-            Consumers <span>{consumers.length}</span>
-          </h3>
-          <ul>{consumers.map(node)}</ul>
-        </section>
+        </div>
       </div>
+      <DeliveryFlow
+        groups={groups}
+        selected={selectionKey(selection)}
+        onSelect={onSelect}
+        inspectorId={inspectorId}
+      />
+      <details className="channel-map__outline">
+        <summary>Browse delivery nodes</summary>
+        {groups.map((nodes, index) => (
+          <section key={index} aria-label={['Producers', 'Channel', 'Consumers'][index]}>
+            <h3>{['Producers', 'Channel', 'Consumers'][index]}</h3>
+            {nodes.length === 0 ? (
+              <p>No producers configured</p>
+            ) : (
+              nodes.map((node) => (
+                <button
+                  type="button"
+                  key={node.key}
+                  onClick={() => onSelect(node.selection)}
+                  aria-controls={inspectorId}
+                >
+                  {node.title} <small>{node.subtitle}</small>
+                </button>
+              ))
+            )}
+          </section>
+        ))}
+      </details>
       <p className="channel-map__legend">
         Configured connections · Events follow the channel’s routing rules
       </p>
