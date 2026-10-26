@@ -1458,3 +1458,104 @@ so release preparation must complete before restarting the API. New allocation,
 prepared and native warm capacity, owner resume and the daily update service all
 consume this same release pointer. Existing running users update only after
 their admitted idle update or resume; changing the pointer does not stop work.
+
+### API, Gateway and Web publication from PR #1118 (2026-10-26)
+
+The merged outbound-interaction candidate `7a9145735bf78abfc1764af4dd907fc710fa805f`
+was deployed to the existing northeast control-plane cluster using the passing
+GitHub CI run `40337886137`, attempt `1`. The three tested native archives carry
+merge checkout `db92f87c1de5d238f560c362b67fce41d6eee102` and source tree
+`183dedd0e9ebecfc55acc2b676fe532cc09a7cb5`. Each archive, image configuration,
+layer identity, CI scan result and imported destination digest was verified.
+
+| Deployment | Imported immutable image digest |
+|---|---|
+| `cma-agent-manager` | `sha256:8f64559e0cefd61a6d4db034697e94458f15a8584766e8495d643f12f9e8e474` |
+| `cma-event-gateway` | `sha256:9c25bb351e315b0f8485216b6e6c8e828c55e8d68946c5ce686d7e4a3b1ef0cb` |
+| `cma-web` | `sha256:ffd0b835ce397afbc696010a9a48b0b3cddf369ba66573bd37831a718e31c2e9` |
+
+All three Deployments became Ready. Before the Gateway switch, active turns,
+media jobs and media bytes were zero; its normal drain policy was retained.
+The existing runtime default, API configuration, Pod settings and pool targets
+were preserved. The new outbound, raw-verification, native-mention,
+multi-consumer, dynamic-source, relay-edit, native-media, Lark-card, WhatsApp and
+interaction gates remain explicitly disabled. The previously enabled thread
+contract remains enabled. This release does not activate those gated features.
+
+The production comparison passed all 15 checks, including the identities of
+8 mapped user Pods and 19 user PVCs, all recorded Agent lineages, unchanged owner
+Channel configuration, additive public operations and capability discovery.
+A separate owner history sample retained 21 Agent lineages and 1,656 durable
+events. All 7 assets referenced by the prior public entry page remained
+byte-identical, backed by the retained Web image initializer. A known orphan
+binding returned `409 binding_resources_unavailable` in 249 ms, replacing its
+incorrect previous `200 ready` response.
+
+Resource identity continuity does not mean every runtime restart counter stayed
+constant. One pre-existing failing runtime retained its Pod UID, image and PVC
+while its restart count increased from 270 to 271 during the comparison. Its
+previous container log reports a missing workspace identity file and exit code
+2 at `2026-10-26T15:16:13Z`, before the new API container started at
+`2026-10-26T15:17:39Z`. The same existing warm pool replaced one unassigned member
+and its PVC during background reconciliation; the current default target and
+ready count remained one. These observations are separate from the successful
+control-plane rollout and do not establish a repair of that runtime failure or
+external platform message delivery.
+
+The operator retained the publication receipt with SHA-256
+`c8f3b6df3a4c5c2c557ae7368008c3348623c37ac7268d243f15f740b81394e2`
+and production comparison with SHA-256
+`e6210d45ddc3bc0e4d9db9f685ff38b27452cc612391c080270bf498036f8bdb`.
+
+### API, Gateway and Web publication from PR #1119 (2026-10-27)
+
+The native message-effects candidate `4361756ab1bf88227f30e62c98a0e6bbc2813230`
+was published from GitHub CI run `40356228720`, attempt `1`. The three verified
+native archives carry merge checkout `4526e31d816fdf151736d10f209ca8607dae1771`
+and source tree `a813d0747a727174df1a56148870abf120bbe63b`, matching merged
+`develop` commit `e06ed57675c1fbf2fce75c0be999c76fb2652328`. Publication verified
+the CI scan, archive, image configuration, layer and imported destination
+identities. The deployment manifests record those exact immutable images and
+per-component artifact identities.
+
+| Deployment | Imported immutable image digest | CI artifact |
+|---|---|---|
+| `cma-agent-manager` | `sha256:359f348e2b026a82d3057ceecdc0d1eb467110834cb9270ec2ec15a4a419a434` | `12668132850` |
+| `cma-event-gateway` | `sha256:6c5688d8dc41e4efda285a1b60af57384c41f38526c8c295d2a29c6bce8cdda7` | `12668225504` |
+| `cma-web` | `sha256:2ee79459e6b103def05fb5c430d0aa6c060dc01ee97c868d781c24c2c8409f6e` | `12665818389` |
+
+All three Deployments became Ready on the recorded images. The production
+comparison passed all 15 checks: API configuration and service settings,
+8 mapped user Pod identities, 19 user PVC identities, Agent lineage, owner
+Channel configuration, retained assets and additive public operations were
+preserved. A separate history sample retained 21 owner Agents and 1,656 durable
+events. All 7 current entry-page assets loaded, and all 7 prior entry-page assets
+retained their exact hashes. The known orphan binding continues to return the
+typed `409 binding_resources_unavailable` response, measured at 231 ms.
+
+The comparison also observed the existing `cma-claim-c44c0a5e...` runtime's
+restart count increasing from 293 to 294 with its original Pod UID, image and
+PVC unchanged, plus one replenished warm-pool Pod/PVC. These observations were
+reviewed separately. This verification covers the control-plane rollout,
+resource/history continuity and public API contract; it does not establish
+that every runtime is healthy or that live external platform delivery works.
+The source-pin change itself performs no cluster mutation.
+
+Web initialization retains the preceding `ffd0b835ce39` release and all earlier
+asset initializers so existing browser tabs can still load their referenced
+files. The runtime image, runtime default, Sandbox/PVC resources and existing
+Pod policies are unchanged. The already enabled outbound-message and relay raw
+verification flags remain `true`; other feature gates retain their current
+values. The source annotations also retain the existing runtime CI artifact
+and Gateway authoring activation provenance.
+
+Source validation passed strict kubeconform for all 49 resources with no skipped
+resources, kube-linter policy checks, HTTPRoute ownership and native Sandbox
+isolation contracts. Image/provenance pins and the retained initializer settings
+match the generated release patch; semantic comparison found no other Pod-policy
+changes. These source checks do not establish production continuity.
+
+The operator retained the publication receipt with SHA-256
+`1fe81036befcd3e62ad866544553a56c67f88afb37cd278e53f327379d470ce7`
+and production comparison with SHA-256
+`b8b7402c1a06595e1df533649bcd8e4e46fdb6f405069c45201584d1106a673b`.
