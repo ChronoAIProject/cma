@@ -1,8 +1,8 @@
 //! Activities wire types for the independent CMAEG v1 protocol.
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConsumerId, ConsumerName,
-    ConversationId, ConversationKind, EventId, EventRef, MessageRef, Platform, ProblemCode,
-    ReplyChoice, RuleId, SourceId, ThreadFacts,
+    ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode, ReplyChoice,
+    RuleId, SourceId, SourceKind, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -231,6 +231,16 @@ pub struct Attachment {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttachmentSource {
+    /// Native Discord attachment, resolved with current bot custody.
+    #[serde(rename = "discord")]
+    Discord {
+        /// Exact receiving channel.
+        channel_id: String,
+        /// Exact native message.
+        message_id: String,
+        /// Exact attachment resource.
+        attachment_id: String,
+    },
     /// Wire variant `nyxid_relay`.
     #[serde(rename = "nyxid_relay")]
     NyxidRelay {
@@ -458,29 +468,4 @@ pub struct PublicActivity {
     /// The routing decision of a routed event; absent on unrouted events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ActivityRouting>,
-}
-
-/// CMAEG `SourceKind` wire shape.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum SourceKind {
-    /// Native Telegram ingress.
-    #[serde(rename = "telegram")]
-    Telegram {
-        /// Source platform.
-        platform: Platform,
-        /// Telegram bot identifier.
-        bot_id: String,
-    },
-    /// Wire variant `nyxid_relay`.
-    #[serde(rename = "nyxid_relay")]
-    NyxidRelay {
-        /// Wire field `platform`.
-        platform: Platform,
-        /// Wire field `route_id`.
-        route_id: String,
-    },
-    /// Wire variant `custom`.
-    #[serde(rename = "custom")]
-    Custom {},
 }

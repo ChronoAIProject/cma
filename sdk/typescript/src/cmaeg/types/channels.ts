@@ -59,6 +59,7 @@ export type HmacSecretRequest = Output<typeof HmacSecretRequestSchema>;
 export const CredentialsRequestSchema = object({
   agent_key: SecretSchema,
   channel_key: optional(nullable(SecretSchema)),
+  discord_bot_token: optional(nullable(SecretSchema)),
   telegram_bot_token: optional(nullable(SecretSchema)),
   telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(array(HmacSecretRequestSchema)),
@@ -128,6 +129,12 @@ export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
 export const SourceRequestSchema = tagged(
   {
+    discord: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      intents: integer,
+      type: enumeration('discord'),
+    }),
     telegram: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -330,6 +337,12 @@ export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 
 export const SourceSchema = tagged(
   {
+    discord: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      intents: integer,
+      type: enumeration('discord'),
+    }),
     telegram: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -431,6 +444,7 @@ export type ChannelPage = Output<typeof ChannelPageSchema>;
 export const CredentialPatchSchema = object({
   agent_key: optional(nullable(SecretSchema)),
   channel_key: optional(nullable(SecretSchema)),
+  discord_bot_token: optional(nullable(SecretSchema)),
   telegram_bot_token: optional(nullable(SecretSchema)),
   telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(nullable(array(HmacSecretRequestSchema))),

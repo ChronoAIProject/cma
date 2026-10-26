@@ -330,6 +330,12 @@
     {
       "pointer": "/fixture",
       "type": "inline"
+    },
+    {
+      "type": "discord",
+      "channel_id": "99",
+      "message_id": "700",
+      "attachment_id": "500"
     }
   ],
   "AttachmentImage": [
@@ -644,7 +650,8 @@
           }
         ],
         "telegram_bot_token": "fixture",
-        "telegram_webhook_secret": "fixture"
+        "telegram_webhook_secret": "fixture",
+        "discord_bot_token": "native-fixture"
       },
       "name": "fixture",
       "partition": {
@@ -2472,7 +2479,8 @@
           }
         ],
         "telegram_bot_token": "fixture",
-        "telegram_webhook_secret": "fixture"
+        "telegram_webhook_secret": "fixture",
+        "discord_bot_token": "native-fixture"
       },
       "expected_version": 1,
       "name": "fixture",
@@ -2884,7 +2892,8 @@
         }
       ],
       "telegram_bot_token": "fixture",
-      "telegram_webhook_secret": "fixture"
+      "telegram_webhook_secret": "fixture",
+      "discord_bot_token": "native-fixture"
     }
   ],
   "CredentialsRequest": [
@@ -2898,7 +2907,8 @@
         }
       ],
       "telegram_bot_token": "fixture",
-      "telegram_webhook_secret": "fixture"
+      "telegram_webhook_secret": "fixture",
+      "discord_bot_token": "native-fixture"
     }
   ],
   "CustomAttachments": [
@@ -3962,6 +3972,14 @@
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
       "type": "telegram"
+    },
+    {
+      "type": "discord",
+      "bot_id": "77",
+      "intents": 37377,
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "SourceKind": [
@@ -3982,6 +4000,10 @@
       "type": "telegram",
       "platform": "telegram",
       "bot_id": "12345678"
+    },
+    {
+      "type": "discord",
+      "bot_id": "77"
     }
   ],
   "SourceRequest": [
@@ -4055,6 +4077,14 @@
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
       "type": "telegram"
+    },
+    {
+      "type": "discord",
+      "bot_id": "77",
+      "intents": 37377,
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "TestChannelResponse": [

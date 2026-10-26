@@ -139,6 +139,7 @@ describe('CMAEG attachment locators', () => {
       'telegram',
       'url',
       'inline',
+      'discord',
     ]);
     for (const example of locators) expect(AttachmentSourceSchema(example)).toEqual(example);
     for (const example of examples.Attachment ?? [])
