@@ -18,8 +18,10 @@ use crate::{
         },
         IngressState,
     },
+    media::service::MediaService,
+    tools::ToolsState,
     turns::TurnTracker,
-    DeliveryConfig,
+    DeliveryConfig, MediaToolProviders,
 };
 use cmaeg_core::{
     channel::Secret,
@@ -67,6 +69,13 @@ impl Drop for App {
 }
 impl App {
     pub async fn new(auto_final: bool) -> Self {
+        Self::configured(auto_final, |_| {}, None).await
+    }
+    pub async fn configured(
+        auto_final: bool,
+        edit: impl FnOnce(&mut Value),
+        media: Option<Arc<MediaService>>,
+    ) -> Self {
         let records = Server::start().await;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         records.memory.clock.store(now, Ordering::SeqCst);
@@ -80,6 +89,7 @@ impl App {
         value["reply"]["auto_final"] = auto_final.into();
         value["routing"]["consumers"] = json!([]);
         value["secrets"]["consumer_keys"] = json!([]);
+        edit(&mut value);
         let definition = routing_fixture::definition(value);
         definition.validate().unwrap();
         let pointer = ChannelPointer {
@@ -111,13 +121,16 @@ impl App {
         let provider = HttpServer::start().await;
         provider.memory.lock().unwrap().config.replay_frames = Some(executor_tests::frames());
         let providers = provider.client(true, Duration::from_secs(5));
-        let builder = Arc::new(ProductionFrozenTurnBuilder::new(
-            providers.clone(),
-            keys.clone(),
-        ));
+        let builder = Arc::new(
+            ProductionFrozenTurnBuilder::new(providers.clone(), keys.clone())
+                .with_media(media.clone(), Default::default())
+                .with_media_tool_providers(Arc::new(MediaToolProviders::from_iter(["cma_codex"
+                    .parse()
+                    .unwrap()]))),
+        );
         let authority: Arc<dyn Authority> = Arc::new(resolver.clone());
         let port = Arc::new(HttpExecutionPort::new(
-            providers,
+            providers.clone(),
             builder,
             store.clone(),
             journal.clone(),
@@ -126,17 +139,39 @@ impl App {
         let waiters = Arc::new(SyncRegistry::default());
         let custom = CustomDelivery::new("https://gateway.example".into(), waiters.clone());
         let (tx, rx) = mpsc::channel(1);
+        let delivery_sink = Arc::new(ShardedScheduler::new(tx));
         let delivery = RoutedDelivery::new(
             store.clone(),
             journal.clone(),
             authority,
-            DeliveryCoordinator::new(Arc::new(ShardedScheduler::new(tx)))
-                .with_custom_stream(custom),
+            DeliveryCoordinator::new(delivery_sink.clone()).with_custom_stream(custom),
         );
+        let tracker = TurnTracker::new(Readiness::initialized());
+        let tools = ToolsState {
+            whatsapp_templates_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_media_enabled: false,
+            relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
+            resolver: resolver.clone(),
+            keys: keys.clone(),
+            providers,
+            delivery: delivery_sink,
+            routed_replies: Some(Arc::new(delivery.tool_replies())),
+            tracker: tracker.clone(),
+            public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
+            media: media.clone(),
+            downloads: Default::default(),
+        };
         let executor = Arc::new(RoutedTargetExecutor::new(
             port,
             delivery,
-            TurnTracker::new(Readiness::initialized()),
+            tracker,
             &DeliveryConfig::default(),
         ));
         let (scheduler, schedule) = Scheduler::new(
@@ -160,11 +195,13 @@ impl App {
         .with_sync_delivery(true);
         let ingress = IngressState::new(resolver, keys, Default::default(), Arc::new(NoLegacy))
             .unwrap()
+            .with_media_enabled(media.is_some())
             .with_routed(Some(Arc::new(routed)));
         let router = crate::http::events::router(CustomIngressState {
             ingress,
             waiters: waiters.clone(),
-        });
+        })
+        .merge(crate::http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!(
             "http://{}/v1/channels/{channel}/events",

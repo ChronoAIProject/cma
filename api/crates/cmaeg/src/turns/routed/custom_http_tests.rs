@@ -84,6 +84,7 @@ async fn public_custom_authentication_failure_does_not_admit_or_contact_provider
     assert_eq!(response.status(), 401);
     app.drain().await;
     assert!(app.plans().await.is_empty());
+    assert!(app.records.memory.rows.lock().unwrap().is_empty());
     assert!(app.provider.seen().is_empty());
     assert!(app.waiters.is_empty());
 }
