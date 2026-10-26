@@ -94,7 +94,7 @@ impl App {
         records.memory.clock.store(now, Ordering::SeqCst);
         let keys = Arc::new(fixture::keys());
         let record = uuid::Uuid::new_v4().to_string();
-        let mut value = routing_fixture::routed();
+        let mut value = routing_fixture::routed_with_key(AGENT_KEY);
         value["record_id"] = record.clone().into();
         value["sources"] = json!([routing_fixture::custom()]);
         value["partition"]["key"] = "per_event".into();
@@ -102,8 +102,6 @@ impl App {
         value["reply"]["auto_final"] = auto_final.into();
         value["routing"]["consumers"] = json!([]);
         value["secrets"]["consumer_keys"] = json!([]);
-        value["secrets"]["provider_credential"] = AGENT_KEY.into();
-        value["secrets"]["agent_key_hash"] = routing_fixture::hash(AGENT_KEY).into();
         edit(&mut value);
         let definition = routing_fixture::definition(value);
         definition.validate().unwrap();
