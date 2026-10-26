@@ -21,6 +21,7 @@ pub mod providers;
 pub mod records;
 pub mod runtime;
 mod serve;
+mod serve_routed;
 mod serve_storage;
 mod service_auth;
 pub mod telegram;

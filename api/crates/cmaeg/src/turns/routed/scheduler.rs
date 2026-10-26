@@ -84,6 +84,10 @@ pub struct ScheduleHandle {
     sender: mpsc::Sender<WorkItem>,
 }
 impl ScheduleHandle {
+    /// Closed on shutdown or loss of recovery; fresh admissions must pause.
+    pub fn accepting(&self) -> bool {
+        !self.sender.is_closed()
+    }
     /// Only call after admission commits. Full/closed queues do not lose work:
     /// the durable scan will find the original manifest after restart or pressure.
     /// False means this local wake-up did not enqueue every target.
@@ -111,6 +115,7 @@ pub struct Scheduler {
     config: ScheduleConfig,
     sender: mpsc::Sender<WorkItem>,
     receiver: mpsc::Receiver<WorkItem>,
+    failure: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 #[derive(Default)]
 pub struct ScheduleReport {
@@ -139,9 +144,16 @@ impl Scheduler {
                 config,
                 sender,
                 receiver,
+                failure: None,
             },
             handle,
         ))
+    }
+
+    /// Report loss of recovery immediately, before draining active executions.
+    pub fn with_failure_reporter(mut self, report: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.failure = Some(report);
+        self
     }
 
     /// Stop new scheduling immediately, then let admitted tasks finish within
@@ -152,7 +164,12 @@ impl Scheduler {
         if *stop.borrow() {
             return report;
         }
-        let mut scan = tokio::spawn(scan(self.source, self.sender, self.config, stop.clone()));
+        let mut scan = ScanTask(tokio::spawn(scan(
+            self.source,
+            self.sender,
+            self.config,
+            stop.clone(),
+        )));
         let mut tasks = JoinSet::new();
         let mut active = HashMap::<Id, WorkItem>::new();
         let mut cooldown = HashMap::<(String, String), Instant>::new();
@@ -161,9 +178,10 @@ impl Scheduler {
             tokio::select! {
                 biased;
                 _ = stopped(&mut stop) => break,
-                _ = &mut scan => {
+                _ = &mut scan.0 => {
                     report.recovery_failed = true;
                     scan_finished = true;
+                    if let Some(failure) = &self.failure { failure(); }
                     tracing::error!("routed recovery task stopped unexpectedly");
                     break;
                 }
@@ -194,10 +212,11 @@ impl Scheduler {
                 }
             }
         }
+        self.receiver.close();
         // Scanning has no effects and may be cancelled at any read boundary.
         if !scan_finished {
-            scan.abort();
-            let _ = scan.await;
+            scan.0.abort();
+            let _ = (&mut scan.0).await;
         }
         let drain = tokio::time::sleep(self.config.drain_timeout);
         tokio::pin!(drain);
@@ -215,6 +234,14 @@ impl Scheduler {
             }
         }
         report
+    }
+}
+
+/// Aborting the outer service must also stop its otherwise detached scanner.
+struct ScanTask(tokio::task::JoinHandle<()>);
+impl Drop for ScanTask {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

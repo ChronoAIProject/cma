@@ -13,6 +13,8 @@ use std::{collections::BTreeSet, env};
 
 pub const CMAEG_NON_HUMAN_PROVIDERS: &str = "CMAEG_NON_HUMAN_PROVIDERS";
 pub const CMAEG_ROUTED_CHANNEL_RECORDS: &str = "CMAEG_ROUTED_CHANNEL_RECORDS";
+pub const CMAEG_ROUTED_RECOVERY_ENABLED: &str = "CMAEG_ROUTED_RECOVERY_ENABLED";
+pub const CMAEG_ROUTED_ADMISSION_ENABLED: &str = "CMAEG_ROUTED_ADMISSION_ENABLED";
 
 /// The one provider whose agents are known to answer custom events and
 /// hand-offs.
@@ -25,6 +27,10 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 /// registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutingConfig {
+    /// Keep enabled while any durably admitted target still needs recovery.
+    pub recovery_enabled: bool,
+    /// Pauses new routed admissions without abandoning accepted work or retries.
+    pub admission_enabled: bool,
     /// Explicit rollout selection; an empty set preserves all legacy ingress.
     pub execution_records: BTreeSet<String>,
     /// Provider slugs whose agents answer non-human actors (custom events,
@@ -45,7 +51,9 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
             )))
         }
     };
-    Ok(RoutingConfig {
+    let config = RoutingConfig {
+        recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
+        admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
         execution_records: execution_records(
             env::var(CMAEG_ROUTED_CHANNEL_RECORDS)
                 .map(Some)
@@ -58,7 +66,21 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
                 .as_deref(),
         )?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
-    })
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+impl RoutingConfig {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        if !self.recovery_enabled && (self.admission_enabled || !self.execution_records.is_empty())
+        {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_RECOVERY_ENABLED} must be enabled before selecting records or admitting routed events"
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn execution_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
@@ -156,6 +178,21 @@ pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn admission_requires_recovery_but_recovery_can_continue_after_admission_stops() {
+        let mut config = RoutingConfig::default();
+        assert!(config.validate().is_ok());
+        config.admission_enabled = true;
+        assert!(config.validate().is_err());
+        config.admission_enabled = false;
+        config.execution_records.insert("retained-channel".into());
+        assert!(config.validate().is_err());
+        config.recovery_enabled = true;
+        assert!(config.validate().is_ok());
+        config.admission_enabled = true;
+        assert!(config.validate().is_ok());
+    }
 
     #[test]
     fn execution_selection_defaults_off_and_rejects_broad_or_invalid_selection() {

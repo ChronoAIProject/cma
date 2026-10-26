@@ -1,7 +1,7 @@
 //! Ordinary ingress planning only: no persistence, provider calls or new tokens.
 //!
-//! This module is deliberately not connected to ingress. A dispatcher must
-//! durably admit a plan and isolate delivery by consumer before using it. A
+//! Selected verified ingress durably admits this plan before scheduling it. A
+//! dispatcher must isolate delivery by consumer before using it. A
 //! replay restores that original plan; it must not run routing against a newer
 //! policy. Current owner/source/consumer authority still needs rechecking before
 //! effects. Callback ownership and agent-published events use separate paths.

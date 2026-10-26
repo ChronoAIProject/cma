@@ -281,6 +281,50 @@ async fn unproved_provider_replay_is_refused_before_durable_admission() {
 }
 
 #[tokio::test]
+async fn pausing_admission_keeps_committed_retries_and_refuses_new_work_before_writes() {
+    let mut setup = Setup::new(&request(), true).await;
+    let first = admitted(setup.launch(request(), b"wire", true).await);
+    Arc::get_mut(setup.state.routed.as_mut().unwrap())
+        .unwrap()
+        .admission_enabled = false;
+    let writes = setup.server.memory.writes.load(Ordering::SeqCst);
+    assert_eq!(
+        admitted(setup.launch(request(), b"wire", true).await),
+        first
+    );
+    let mut another = request();
+    another.activity.event_id = fixture::event_id("new-event");
+    another.idempotency_key =
+        cmaeg_core::ids::IdempotencyKey::from_event(&another.activity.event_id);
+    let activity = another.activity.clone();
+    fixture::rewrite_ref(&mut another, |event| {
+        event.event_id = activity.event_id.clone();
+        event.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(&activity));
+    });
+    assert!(matches!(
+        setup.launch(another, b"new-wire", true).await,
+        LaunchOutcome::Refused(Problem { status: 503, .. })
+    ));
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn stopped_scheduler_refuses_new_admission_before_writing() {
+    let request = request();
+    let setup = Setup::new(&request, true).await;
+    drop(setup._scheduler);
+    let captured = setup.state.capture_routed(&request, b"wire", true);
+    let permit = setup.state.inflight.clone().try_acquire_owned().unwrap();
+    assert!(matches!(
+        setup.state.launch_verified(request, captured, permit).await,
+        LaunchOutcome::Refused(Problem { status: 503, .. })
+    ));
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn oversized_selected_body_is_not_copied_or_admitted() {
     let request = request();
     let setup = Setup::new(&request, true).await;

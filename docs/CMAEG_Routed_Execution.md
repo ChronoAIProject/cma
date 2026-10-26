@@ -5,16 +5,23 @@ This is a disabled execution foundation, following
 preparation builder, bounded scheduler, durable delivery receipts and
 replay/projection executor are implemented. HTTP ingress can use the durable
 admission adapter when explicitly composed with a channel-record selection.
-Production composition remains required before activation. Durable tool-reply
-suppression is integrated. No production fan-out or provider capability is enabled by this
-change. Existing ingress and default launch behavior are unchanged.
+Service composition, recovery supervision and durable tool-reply suppression are
+integrated. Both runtime switches default off. No production fan-out or provider
+capability is enabled by this change. Combined deployment verification and the
+delivery equivalence limits below remain prerequisites for activation.
 
 ## Verified HTTP ingress admission
 
 `CMAEG_ROUTED_CHANNEL_RECORDS` accepts at most 64 explicit record IDs, with no
-wildcard, and defaults to empty. Service composition does not yet install the
-adapter, so the setting alone does not activate execution. Unselected channels
-retain their existing launcher and make no admission-store read. For selected
+wildcard, and defaults to empty. `CMAEG_ROUTED_RECOVERY_ENABLED=true` installs the
+adapter, executor and supervised scheduler, and is required before selecting
+records. `CMAEG_ROUTED_ADMISSION_ENABLED=true` additionally permits new routed
+plans; leaving it false still accepts exact committed retries and recovers
+already admitted work. New routed events receive 503 while admission is paused.
+Both switches default false. Keep the selected record IDs and recovery enabled
+while retained admissions can be retried or executed; removing selection is not
+a safe rollback of those identities. Unselected channels retain their existing
+launcher and make no admission-store read. For selected
 ordinary events, native Telegram, relay and custom-event handlers capture the
 exact bytes only after authentication. The 256 KiB limit is checked without
 copying an oversized body; oversized selected requests receive 413. Interactive
@@ -162,7 +169,7 @@ current execution path while the new path is verified.
 
 ## Bounded admission recovery scheduling
 
-The scheduler is implemented as an uninstalled execution component. New durable
+The scheduler is installed only when recovery is explicitly enabled. New durable
 admissions can offer identity-only wake-ups through `ScheduleHandle`; a full
 queue does not retract an admission. The recovery scanner independently visits
 committed manifests through the existing interaction-record API. It scans all
@@ -187,8 +194,12 @@ scanner is reported as an unhealthy scheduler instead of silently abandoning
 recovery. Shutdown stops new starts, cancels only the read-only scanner, and
 drains running tasks for the configured budget (600 seconds by default). A
 forced abort is counted and leaves the durable effect journal authoritative.
-The new scheduler does not alter production ingress or start workers until its
-bootstrap and concrete replay/delivery executor are integrated and enabled.
+The service starts it after startup checks and listener binding. Unexpected
+scanner exit immediately adds `routed_recovery_failed` to readiness; a worker
+panic or other unexpected exit does the same. The service stops new scheduling
+when shutdown begins and drains routed work alongside live turns under the same
+global deadline, before draining the delivery engine. Dropping the service also
+cancels its scanner, so startup failure or forced shutdown cannot detach it.
 
 ## Production preparation and composition seam
 

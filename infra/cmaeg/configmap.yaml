@@ -11,6 +11,9 @@ data:
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "false"
   # Explicit record IDs only. Empty preserves all existing ingress paths.
   CMAEG_ROUTED_CHANNEL_RECORDS: ""
+  # Keep recovery and selected records after stopping admission, until retained work expires.
+  CMAEG_ROUTED_RECOVERY_ENABLED: "false"
+  CMAEG_ROUTED_ADMISSION_ENABLED: "false"
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "false"
   # Compatible readers are deployed; each delivery still requires owner commit.
   CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED: "true"
