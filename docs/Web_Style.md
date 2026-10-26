@@ -3495,3 +3495,29 @@ blocks sending with an inline explanation. Use “Review message”, “Send mes
 and “Cancel” for the explicit actions; avoid internal preparation terminology.
 
 | 2026-10-26 | Retain owner/channel message recovery across reloads with original keys, explicit status checks and plain review/send labels. |
+
+### Initiated-message native media (2026-10-26)
+
+The producer inspector's existing message composer may show Media attachments
+when the gateway explicitly advertises native-media writes for a supported relay
+platform. An absent capability keeps new media controls hidden. Reuse Section,
+Choice, TextField and Button, the existing channel form grid, row and hint styles;
+introduce no new colors, spacing or motion. Each of at most four entries has a
+stable identity, an Image/File/Audio/Video picker and a required HTTPS URL, with
+optional filename, MIME type and caption. Remove affects only that entry. Show
+an inline validation reason and prevent review while any attachment is invalid.
+Message text is optional with valid media. Do not expose raw JSON or arbitrary
+recipient fields, and do not fetch previews when the inspector opens.
+
+Review shows every media kind, exact URL, optional metadata and saved destination
+as readable wrapping text. The separate Send action submits the exact reviewed
+body. Opening, returning or reloading never sends automatically. Preserve version
+1 text journals without reshaping requests; new media journals use version 2 and
+retain their exact body, idempotency key and uncertain receipt. Gate changes keep
+saved review, Cancel and Check delivery status available while blocking new
+media sends. Unsaved media fields are retained when temporarily hidden. Media
+send requests allow the gateway's longer upload budget before showing uncertainty;
+review, cancellation and status requests retain the normal short budget. Reuse
+the existing Presence notice transition and reduced-motion behavior.
+
+| 2026-10-26 | Add typed URL-based native media to initiated channel messages with up to four image/file/audio/video entries, explicit review/send, media-only support, validation and exact versioned recovery. Preserve saved media and status access when write capabilities change. |

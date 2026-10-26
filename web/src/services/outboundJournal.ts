@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { validStoredOutboundMessage, type OutboundMessage } from './outboundMedia';
 
 export interface OutboundReceipt {
   delivery_id: string;
@@ -8,7 +9,7 @@ export interface OutboundReceipt {
 }
 export interface OutboundDraft {
   key: string;
-  body: { source_id: string; route_id: string; message: { text: string } };
+  body: { source_id: string; route_id: string; message: OutboundMessage };
 }
 export interface OutboundIntent {
   draft: OutboundDraft;
@@ -40,7 +41,7 @@ function load(key: string): { intent?: OutboundIntent; error?: string } {
     const intent = saved.intent;
     const draft = intent?.draft;
     if (
-      saved.version !== 1 ||
+      ![1, 2].includes(saved.version) ||
       !draft ||
       typeof draft.key !== 'string' ||
       !/^[\x21-\x7e]{1,128}$/.test(draft.key) ||
@@ -48,7 +49,7 @@ function load(key: string): { intent?: OutboundIntent; error?: string } {
       !draft.body.source_id ||
       typeof draft.body.route_id !== 'string' ||
       !draft.body.route_id ||
-      typeof draft.body.message?.text !== 'string' ||
+      !validStoredOutboundMessage(draft.body.message, saved.version) ||
       typeof intent.uncertain !== 'boolean' ||
       (intent.receipt !== undefined &&
         (!validOutboundReceipt(intent.receipt) || intent.receipt.route_id !== draft.body.route_id))
@@ -70,7 +71,14 @@ export function useOutboundJournal(owner: string, recordId: string) {
   const [saved, setSaved] = useState(() => load(key));
   const retain = (intent?: OutboundIntent) => {
     try {
-      if (intent) sessionStorage.setItem(key, JSON.stringify({ version: 1, intent }));
+      if (intent)
+        sessionStorage.setItem(
+          key,
+          JSON.stringify({
+            version: intent.draft.body.message.native_attachments?.length ? 2 : 1,
+            intent,
+          }),
+        );
       else sessionStorage.removeItem(key);
       setSaved({ intent });
       return true;

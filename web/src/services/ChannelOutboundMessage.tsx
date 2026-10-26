@@ -7,6 +7,13 @@ import { Choice, TextField } from './channelForm/Fields';
 import { object, list, text, type ChannelSelection } from './channelTopology';
 import { segment, serviceRequest, ServiceError, type Denied } from './client';
 import { useRelayCapabilities } from './RelayCapabilities';
+import { OutboundMediaFields, OutboundMediaReview } from './OutboundMediaFields';
+import {
+  composeOutboundMessage,
+  nativeAttachments,
+  outboundAttachmentError,
+  type OutboundMediaDraft,
+} from './outboundMedia';
 
 import { useOutboundJournal, validOutboundReceipt, type OutboundReceipt } from './outboundJournal';
 
@@ -25,6 +32,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false } = journal.intent ?? {};
   const [message, setMessage] = useState('');
+  const [media, setMedia] = useState<OutboundMediaDraft[]>([]);
   const [route, setRoute] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -38,14 +46,32 @@ function Composer({ owner, channel, selection, denied }: Props) {
   const selectedRoute = routes.includes(route) ? route : (routes[0] ?? '');
   const base = `/v1/channels/${segment(channel.channel_id)}/outbound-messages`;
   const enabled = capabilities.authoring?.outbound_messages_writes_enabled === true;
+  const mediaEnabled =
+    capabilities.authoring?.native_media_writes_enabled === true &&
+    ['telegram', 'lark', 'feishu', 'discord', 'whatsapp'].includes(
+      draft ? draft.body.source_id.replace(/^relay_/, '') : text(source.platform),
+    );
+  const mediaError = nativeAttachments(media)
+    .map((item, index) => {
+      const error = outboundAttachmentError(item);
+      return error ? `Attachment ${index + 1}: ${error}` : '';
+    })
+    .find(Boolean);
+  const hasMedia = (draft?.body.message.native_attachments?.length ?? media.length) > 0;
+  const mediaUnavailable = hasMedia && !mediaEnabled;
+  const canReview =
+    !!selectedRoute && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
+
   async function act(action: 'prepare' | 'send' | 'read' | 'cancel') {
     if (active.current || journal.error) return;
+    if ((action === 'send' || action === 'prepare') && (!enabled || mediaUnavailable)) return;
+    if (action === 'prepare' && !draft && !canReview) return;
     const captured = draft ?? {
       key: crypto.randomUUID(),
       body: {
         source_id: `relay_${text(source.platform)}`,
         route_id: selectedRoute,
-        message: { text: message },
+        message: composeOutboundMessage(message, media),
       },
     };
     // Save the exact request and uncertainty before any network effect. A reload
@@ -55,7 +81,9 @@ function Composer({ owner, channel, selection, denied }: Props) {
     active.current = abort;
     setPending(true);
     setError('');
-    const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(15000)]);
+    const timeout =
+      action === 'send' && captured.body.message.native_attachments?.length ? 65000 : 15000;
+    const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]);
     try {
       let value: OutboundReceipt;
       if (action === 'prepare') {
@@ -136,6 +164,15 @@ function Composer({ owner, channel, selection, denied }: Props) {
             onChange={setRoute}
           />
           <TextField label="Message text" value={message} onChange={setMessage} multiline />
+          {mediaEnabled ? <OutboundMediaFields items={media} onChange={setMedia} /> : null}
+          {!mediaEnabled && media.length ? (
+            <OutboundMediaReview items={nativeAttachments(media)} />
+          ) : null}
+          {mediaError && mediaEnabled ? (
+            <p className="channel-field-hint" role="status">
+              {mediaError}
+            </p>
+          ) : null}
         </fieldset>
       ) : (
         <div>
@@ -143,8 +180,14 @@ function Composer({ owner, channel, selection, denied }: Props) {
             Destination: {draft?.body.route_id ?? receipt?.route_id}
           </p>
           <p>{draft?.body.message.text}</p>
+          <OutboundMediaReview items={draft?.body.message.native_attachments ?? []} />
         </div>
       )}
+      {mediaUnavailable ? (
+        <p className="channel-field-hint" role="status">
+          Your attachments are retained. Media sending is currently unavailable on this gateway.
+        </p>
+      ) : null}
       <Presence>
         {journal.error || error ? <Alert tone="warning">{journal.error ?? error}</Alert> : null}
       </Presence>
@@ -167,10 +210,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
         {!receipt ? (
           <Button
             disabled={
-              pending ||
-              !!journal.error ||
-              !enabled ||
-              (!draft && (!selectedRoute || !message.trim()))
+              pending || !!journal.error || !enabled || mediaUnavailable || (!draft && !canReview)
             }
             onClick={() => void act('prepare')}
           >
@@ -179,7 +219,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
         ) : null}
         {receipt?.status === 'prepared' && !uncertain ? (
           <Button
-            disabled={pending || !!journal.error || !enabled}
+            disabled={pending || !!journal.error || !enabled || mediaUnavailable}
             onClick={() => void act('send')}
           >
             Send message
@@ -201,6 +241,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
             onClick={() => {
               if (journal.retain()) {
                 setMessage('');
+                setMedia([]);
                 setError('');
               }
             }}
