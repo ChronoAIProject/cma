@@ -132,7 +132,14 @@ with `auto_final=false`, tool suppression, or a terminal no-effect projection.
 Suppressed completion controls contain no automatic answer text. Secondary
 consumers cannot emit into or close the primary stream.
 
-Terminal result webhooks remain independent sinks, with one bounded record per
+Custom origin delivery includes webhook-only channels as well as channels with a
+Sync sink. Committed messages produce `cmaeg.response.message`; completion and
+failure produce their own `cmaeg.response.completed` and `cmaeg.response.failed`
+callbacks even when automatic answer text is disabled. Text deltas stay local
+to the live stream. A callback verifies its exact bytes with the configured
+HMAC key; a local buffer result never proves that callback was delivered.
+
+Result webhooks remain independent sinks, with one bounded record per
 frozen URL/signing-key-id pair (at most the channel's existing three-sink limit).
 Every new attempt rechecks current authority and uses current credentials.
 Local queue failure does not erase a confirmed webhook receipt. Each webhook's

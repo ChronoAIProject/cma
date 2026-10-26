@@ -1,7 +1,6 @@
 //! Public signed Custom HTTP through routed admission, real inline media and tool reads.
 use super::{custom_http_fixture::App, test_support::fixture, Phase, TargetState};
 use crate::{
-    channels::routing_fixture,
     media::{
         budget::InflightBytes,
         service::{MediaDeps, MediaService},
@@ -130,9 +129,9 @@ async fn public_custom_inline_attachment_survives_routed_provider_and_authentica
         .ascii_serialization();
     let reference = context["event_ref"].as_str().unwrap();
     let tool = format!("{base}/v1/events/{reference}/attachments/0?view=text");
-    let key = routing_fixture::agent_key("default");
+    let key = super::custom_http_fixture::AGENT_KEY;
     let client = reqwest::Client::new();
-    let read = client.get(&tool).bearer_auth(&key).send().await.unwrap();
+    let read = client.get(&tool).bearer_auth(key).send().await.unwrap();
     let status = read.status();
     let view: Value = read.json().await.unwrap();
     assert_eq!(status, 200, "{view}");
@@ -157,7 +156,7 @@ async fn public_custom_inline_attachment_survives_routed_provider_and_authentica
     tampered["activity"]["kind"]["ce"]["data"]["attachments"][0]["url"] =
         "data:text/plain;base64,dGFtcGVyZWQ=".into();
     app.provider.memory.lock().unwrap().config.event_context = Some(tampered);
-    let rejected = client.get(&tool).bearer_auth(&key).send().await.unwrap();
+    let rejected = client.get(&tool).bearer_auth(key).send().await.unwrap();
     let status = rejected.status();
     let problem: Value = rejected.json().await.unwrap();
     assert_eq!(status, 503, "{problem}");

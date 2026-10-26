@@ -17,6 +17,7 @@ use std::{
 #[derive(Clone)]
 pub struct Config {
     pub replay_frames: Option<Vec<Value>>,
+    pub mirror_replay_metadata: bool,
     pub event_context: Option<Value>,
     pub replay_idle: bool,
     pub replay_tail: String,
@@ -35,6 +36,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             replay_frames: None,
+            mirror_replay_metadata: false,
             event_context: None,
             replay_idle: false,
             replay_tail: String::new(),
@@ -235,7 +237,10 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         if !post {
             if let Some(events) = config.replay_frames {
                 frames.clear();
-                for event in events {
+                for mut event in events {
+                    if config.mirror_replay_metadata && event["response"].is_object() {
+                        event["response"]["metadata"] = json!(metadata);
+                    }
                     let sequence = event["sequence_number"].as_u64().unwrap();
                     if after.is_some_and(|after| sequence <= after) {
                         continue;
