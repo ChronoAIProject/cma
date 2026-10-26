@@ -305,15 +305,31 @@ The delivery guard atomically arbitrates tool/automatic sends and closes before
 terminal acknowledgement, including terminal frames with no public effect. A
 lookup alone does not establish this exclusion.
 
-Routed tool replies are not fully equivalent to the live tool lane. The current
-direct tool API supplies no stable per-invocation identity, so its durable
-operation identity is the original target plus canonical outbound-message hash.
-Two intentionally separate calls with identical content under that same target
-are therefore treated as the same operation, and an already confirmed reply is
-returned without another send. This is an explicit compatibility tradeoff of the
-opt-in lane; existing live channels keep their prior behavior. Before broad
-activation, add an optional stable operation/tool-call identity that remains
-unchanged across retries, and test both identical-content independent calls and
-same-operation retries. A new random identity on each retry would defeat durable
-deduplication. No full routed delivery-equivalence claim or production activation
-is made by this slice.
+Direct replies accept an optional caller-supplied stable operation identity:
+`Idempotency-Key` on REST `POST /v1/events/{event_ref}/replies`, or
+`idempotency_key` in native MCP `replyToEvent`. The REST body remains the existing
+outbound message. Keys contain 1–128 visible ASCII bytes; malformed or duplicate
+REST headers are rejected. Reuse a key and the same canonical message on a retry.
+Different keys allow intentionally separate identical messages. Reusing a key
+with different content returns `409 reply_idempotency_conflict` before sending.
+The server never creates a new operation key to retry an uncertain outcome.
+
+On the opt-in durable routed lane, the shared reply guard reserves at most 64
+keyed operations per original target before creating operation records or
+sending. A 65th distinct key returns `429 reply_operation_limit` without a write
+or delivery; previous keys remain replayable. Encrypted operation records retain
+the original target's exact expiry and bind the target, owner, admission, key,
+canonical content, claim and actual receipt. Their receipts are persisted before
+the shared guard settles. Recovery reconciles a saved receipt before automatic
+output; ambiguous writes remain pending or unknown and cannot authorize a resend.
+Retries replay the original receipt, including rejected, unsupported or unknown
+outcomes, even after another keyed operation or terminal close. Authorization
+and event expiry checks still apply. An unknown result must not be retried with
+a newly invented key.
+
+Requests without a key keep the prior content-hash operation identity on the
+opt-in routed lane and do not allocate keyed operation records. Existing live
+channels preserve their non-idempotent delivery and storage behavior, including
+when a valid optional key is supplied. This additive extension fixes the
+identical-message distinction for callers supplying keys; it makes no broader
+routed delivery-equivalence claim and does not activate production ingress.

@@ -1550,11 +1550,26 @@ A transport success alone does not mean platform delivery succeeded.
 
 | Name | REST | MCP arguments |
 | --- | --- | --- |
-| `replyToEvent` | POST `/v1/events/{event_ref}/replies`, body message | `{event_ref,message}` |
+| `replyToEvent` | POST `/v1/events/{event_ref}/replies`, body message, optional `Idempotency-Key` header | `{event_ref,message,idempotency_key?}` |
 | `updateMessage` | POST `/v1/messages/{message_ref}/update`, body message | `{event_ref,message_ref,message}`; same event or verified callback for this exact card |
 | `sendTyping` | POST `/v1/events/{event_ref}/typing`, no body | `{event_ref}` |
 | `readEventContext` | GET `/v1/events/{event_ref}/context` | `{event_ref}` |
 | `readEventAttachment` | GET `/v1/events/{event_ref}/attachments/{index}` | `{event_ref,index,view?,page?}` |
+
+The direct-reply key is optional and accepts 1–128 visible ASCII bytes; REST
+rejects duplicate or malformed `Idempotency-Key` headers. On the durable routed
+lane, the key names one operation under the original target. The same key and
+canonical message replays its retained receipt; changed content returns
+`409 reply_idempotency_conflict` before delivery. Different keys may intentionally
+send identical content. The guard reserves at most 64 keyed operations before
+any effect or operation-record creation; a new key above this bound returns
+`429 reply_operation_limit`, while existing receipts remain replayable. These
+records use the original target's exact retention and never extend event
+capabilities. Pending or unknown outcomes fail closed; callers must preserve the
+key, and the server never invents a new retry identity. Receipts persist before
+shared-guard settlement, permitting reconciliation after a crash. No-key routed
+requests retain their earlier content-hash behavior. Legacy live replies retain
+their existing delivery/storage semantics even with a valid optional key.
 
 Native MCP preserves the four original names above, and lists
 `readEventAttachment` only when media is enabled. NyxID's OpenAPI discovery

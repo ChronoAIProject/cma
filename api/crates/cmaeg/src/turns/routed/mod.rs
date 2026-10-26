@@ -18,6 +18,7 @@ mod projection_store;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+mod tool_operation;
 mod tool_replies;
 mod tool_reply_gate;
 mod tool_reply_index;
@@ -70,3 +71,6 @@ mod tool_reply_tests;
 
 #[cfg(test)]
 mod executor_tool_tests;
+
+#[cfg(test)]
+mod tool_operation_tests;

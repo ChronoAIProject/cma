@@ -280,10 +280,19 @@ JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 | Native tool | Arguments | Purpose |
 | --- | --- | --- |
 | `readEventContext` | `{event_ref}` | Read full activity and actual transport capabilities |
-| `replyToEvent` | `{event_ref,message:{text}}` | Send a reply |
+| `replyToEvent` | `{event_ref,message:{text},idempotency_key?}` | Send a reply |
 | `updateMessage` | `{event_ref,message_ref,message:{text}}` | Edit when supported |
 | `sendTyping` | `{event_ref}` | Typing indicator when supported |
 | `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page, or get a single-use download command; listed only when media is enabled |
+
+For durable routed replies, pass a stable `idempotency_key` (1–128 visible ASCII
+bytes); the REST equivalent is one optional `Idempotency-Key` header with the
+unchanged outbound-message body. Keep the key and message unchanged on retries.
+Use a new key for an intentional new send, including identical content. Changed
+content under an existing key conflicts before delivery. At most 64 keyed
+operations are retained per original target, until its original expiry; existing
+keys remain replayable at that bound. Unknown receipts do not authorize retrying
+with a new key. Legacy live events retain their existing non-idempotent behavior.
 
 `readEventAttachment` returns a text item with the view JSON followed by MCP
 image items, and no `structuredContent`. In code mode the model must call

@@ -19,6 +19,8 @@ pub(super) const LEASE_SECONDS: i64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecutionError {
+    IdempotencyConflict,
+    OperationLimit,
     Invalid,
     Unavailable,
     Uncertain,
