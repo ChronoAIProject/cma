@@ -71,6 +71,11 @@ pub fn custom() -> Value {
 /// `default` is presented as `lead`; `reviewer` (cma_codex) and `nyx`
 /// (nyxbot) are additional consumers; every event goes to `default`.
 pub fn routed() -> Value {
+    routed_with_key(&agent_key("default"))
+}
+
+/// Use an explicit fixture key when exercising public credential parsing.
+pub fn routed_with_key(default_key: &str) -> Value {
     let mut value = base();
     value["sources"] = json!([telegram(), relay("lark", ROUTE), custom()]);
     value["partition"]["key"] = "fixed".into();
@@ -78,8 +83,8 @@ pub fn routed() -> Value {
         {"type": "result_webhook", "url": "https://receiver.example/events", "hmac_key_id": "key-1"}]);
     value["profile_digest"] = digest_of(&value["profile"]).into();
     value["secrets"] = json!({
-        "agent_key_hash": hash(&agent_key("default")),
-        "provider_credential": agent_key("default"),
+        "agent_key_hash": hash(default_key),
+        "provider_credential": default_key,
         "channel_key": "fixture-channel-key",
         "telegram_bot_token": "77:fixture",
         "telegram_webhook_secret": "fixture-webhook",
