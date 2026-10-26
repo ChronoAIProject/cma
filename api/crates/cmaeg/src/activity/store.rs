@@ -14,6 +14,9 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 
+#[path = "refresh.rs"]
+mod refresh;
+
 const KIND: &str = "channel_recent_activity_v1";
 const MAX_PLAINTEXT: usize = 44_000;
 type Contexts = BTreeMap<(String, String), (String, i64)>;
@@ -286,6 +289,9 @@ impl ActivityStore {
             Err(RecordError::NotFound) => return Ok(None),
             Err(error) => return Err(error),
         };
+        if value.version == 0 || value.version > i64::MAX as u64 {
+            return Err(malformed());
+        }
         let opened = open_interaction(&self.keys, &id, &value.blob).map_err(invalid)?;
         let bucket: Bucket = serde_json::from_slice(&opened.payload).map_err(invalid)?;
         if bucket.kind != KIND
