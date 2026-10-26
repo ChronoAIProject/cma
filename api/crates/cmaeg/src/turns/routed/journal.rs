@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct Journal {
+    pub(super) activity: Option<Arc<crate::activity::ActivityStore>>,
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -18,6 +19,7 @@ pub struct Journal {
 impl Journal {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            activity: None,
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {
@@ -25,6 +27,26 @@ impl Journal {
                     .duration_since(UNIX_EPOCH)
                     .map_or(0, |value| value.as_secs().try_into().unwrap_or(i64::MAX))
             }),
+        }
+    }
+
+    pub fn with_activity(mut self, activity: Arc<crate::activity::ActivityStore>) -> Self {
+        self.activity = Some(activity);
+        self
+    }
+    pub(super) async fn observe(
+        &self,
+        identity: &crate::ingress::routing_store::EventIdentity,
+        change: crate::activity::Change,
+    ) {
+        if let Some(activity) = &self.activity {
+            activity
+                .observe(
+                    identity.record_id.as_str(),
+                    identity.event_id.as_str(),
+                    &change,
+                )
+                .await;
         }
     }
 

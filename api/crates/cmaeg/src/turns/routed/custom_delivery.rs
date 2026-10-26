@@ -159,6 +159,27 @@ impl RoutedDelivery {
             evidence.local = Some(custom.local(&event, effect));
             drop(cancel);
             self.record_custom(lease, &evidence).await?;
+            if effect.terminal() {
+                let mut change = crate::activity::facts::delivery(
+                    target.launch.consumer.as_str(),
+                    crate::turns::observer::DeliveryStep::Answer,
+                    &DeliveryOutcome::Unknown {
+                        reason: "local_stream".into(),
+                    },
+                    crate::turns::observer::Destination::Origin,
+                    &event.reply,
+                    None,
+                );
+                if let Some(delivery) = &mut change.delivery {
+                    delivery.outcome = match evidence.local {
+                        Some(LocalStreamOutcome::Buffered) => "buffered",
+                        Some(LocalStreamOutcome::Unavailable) => "unavailable",
+                        _ => "unknown",
+                    }
+                    .into();
+                }
+                self.journal.observe(&plan.identity, change).await;
+            }
         }
         for index in 0..evidence.webhooks.len() {
             if !matches!(evidence.webhooks[index].status, WebhookStatus::NotStarted) {
@@ -193,6 +214,22 @@ impl RoutedDelivery {
             });
             drop(cancel);
             let uncertain = matches!(outcome, DeliveryOutcome::Unknown { .. });
+            self.journal
+                .observe(
+                    &plan.identity,
+                    crate::activity::facts::delivery(
+                        target.launch.consumer.as_str(),
+                        crate::turns::observer::DeliveryStep::Answer,
+                        &outcome,
+                        crate::turns::observer::Destination::Origin,
+                        &cmaeg_core::seal::ReplyAddress::ResultWebhook {
+                            url: destination.url.clone(),
+                            hmac_key_id: String::new(),
+                        },
+                        None,
+                    ),
+                )
+                .await;
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
             self.record_custom(lease, &evidence).await?;
             if uncertain {

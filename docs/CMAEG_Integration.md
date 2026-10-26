@@ -45,6 +45,7 @@ and bounds each connection by the existing 125-second transport lifetime.
 Clients reconnect and atomically apply the server's latest activity snapshot;
 no periodic history polling is needed.
 
+
 Existing `https://bot-gateway.chrono-ai.fun` API, webhook and setup URLs continue
 to work. Keep retained callback URLs and signatures unchanged during migration;
 an installed Telegram webhook on the old host is preserved. Newly generated
@@ -61,6 +62,51 @@ The proxy already maps to the gateway's `/v1` base. For example, direct
 NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
+
+## Live channel activity
+
+`GET /v1/channels/{channel_id}/activity` reads the owner's recent channel
+activity immediately. Verified incoming events are recorded before provider
+launch, so opening the channel after sending an event does not depend on an
+in-memory console queue or a refresh interval. The response is
+`{items,cursor,retention_days,limit,has_more}`. It contains at most 50 events
+across the current and previous six UTC days; the encrypted byte budget may
+retain fewer. `has_more=true` explicitly indicates truncation. This is recent
+operational activity, not a complete audit history.
+
+For live updates, connect to
+`GET /v1/channels/{channel_id}/activity/stream`. Each SSE `activity` event carries
+a complete replacement snapshot with the same shape; its `id` is the opaque
+cursor. Every connection sends the current snapshot first. Reconnect with
+`Last-Event-ID` or the `cursor` query parameter. A cursor older than retention
+receives an SSE `reset` event containing the current full snapshot. Apply each
+snapshot atomically. The service subscribes before reading, and commits changes
+before publishing update notifications. No client polling is required.
+
+Activity names the source, actor, source conversation/thread, selected consumer,
+provider and provider conversation. Consumer display names and native agent IDs
+are present only when recorded authority supplies them. `occurred_at` is the
+source's timestamp; `received_at` is the gateway's receipt timestamp.
+`dispatched_at` starts an attempt, `accepted_at` records actual provider
+acceptance, `produced_at` records committed response output, and `completed_at`
+records terminal response observation or recovered processing completion.
+`failed` means a provider reported failure or incomplete output. A completed
+processing checkpoint alone never proves a successful response: recovery retains
+the recorded terminal outcome, or reports `unknown` when that evidence is absent.
+Missing evidence remains null.
+
+Delivery entries identify their origin/default destination and recorded
+recipient. Platform confirmation and local HTTP buffering are distinct:
+`outcome=buffered` has no `confirmed_at`, while a confirmed platform or webhook
+receipt has one. Each legacy Custom HTTP webhook keeps its own result, including
+mixed success and failure. Webhook identities expose the destination origin,
+excluding credentials, path, query and fragments. Message bodies, raw attachment
+locators and channel credentials are excluded from activity snapshots.
+
+Reads and streams use the same owner authorization as channel management.
+Streams revalidate their credential and channel access before updated snapshots
+under the existing authentication cache policy, and reconnect after a bounded
+connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 ## Choose your integration
 

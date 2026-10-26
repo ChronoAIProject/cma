@@ -85,6 +85,13 @@ impl RoutedIngress {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
         }
+        observer.receive(request).await.map_err(|_| {
+            Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "channel_activity_unavailable",
+            )
+        })?;
         // Restore committed selection before looking at mutable routing policy.
         let committed = match self.plans.replay(request, &source.body).await {
             Ok(Some(plan)) => plan,
@@ -168,6 +175,25 @@ impl RoutedIngress {
             ));
         observer.admitted(&committed.identity.record_id, &committed.activity);
         for target in &committed.targets {
+            let mut change = crate::activity::Change::state(
+                target.launch.consumer.as_str(),
+                crate::activity::ConsumerState::Queued,
+                None,
+            );
+            change.provider = Some(target.launch.provider.slug.to_string());
+            change.conversation_id = Some(target.launch.event.conversation_id.to_string());
+            change.display_name = request
+                .channel
+                .definition
+                .consumer(Some(&target.launch.consumer))
+                .map(|c| c.label.to_owned());
+            observer
+                .checkpoint(
+                    &committed.identity.record_id,
+                    &committed.identity.event_id,
+                    change,
+                )
+                .await;
             observer.launched(
                 &committed.identity.record_id,
                 &committed.identity.event_id,

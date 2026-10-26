@@ -43,7 +43,8 @@ pub(crate) fn compose(
         return Ok(None);
     }
     let plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
-    let journal = Journal::new((*state.records).clone(), state.master_keys.clone());
+    let journal = Journal::new((*state.records).clone(), state.master_keys.clone())
+        .with_activity(state.activity.clone());
     let authority: Arc<dyn Authority> = Arc::new(state.resolver.clone());
     let builder =
         ProductionFrozenTurnBuilder::new(state.providers.clone(), state.master_keys.clone())

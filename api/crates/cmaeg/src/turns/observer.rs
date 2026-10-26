@@ -96,6 +96,22 @@ pub struct ProducerFacts<'a> {
 /// Receives the steps of a channel's events. Every method defaults to doing
 /// nothing, so an implementation observes only what it needs.
 pub trait ActivityObserver: Send + Sync {
+    /// Public activity admission is durably committed before provider launch.
+    /// The retained console callbacks below remain synchronous and lossy.
+    fn receive<'a>(&'a self, _request: &'a LaunchRequest) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Persist an actual lifecycle fact. Observation failure must never cause
+    /// retrying an already accepted provider turn or confirmed platform effect.
+    fn checkpoint<'a>(
+        &'a self,
+        _record: &'a RecordId,
+        _event: &'a EventId,
+        _change: crate::activity::Change,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
     /// An authenticated event is about to launch.
     fn admitted(&self, _record: &RecordId, _activity: &Activity) {}
 
@@ -230,8 +246,12 @@ impl TurnLauncher for ObservedLauncher {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
         let launched = self.admit(&request);
         Box::pin(async move {
+            if self.observer.receive(&request).await.is_err() {
+                return activity_unavailable();
+            }
             let outcome = self.inner.launch(request).await;
             self.report(&launched, &outcome);
+            self.checkpoint(&launched, &outcome).await;
             outcome
         })
     }
@@ -243,9 +263,42 @@ impl TurnLauncher for ObservedLauncher {
     ) -> BoxFuture<'_, LaunchOutcome> {
         let launched = self.admit(&request);
         Box::pin(async move {
+            if self.observer.receive(&request).await.is_err() {
+                return activity_unavailable();
+            }
             let outcome = self.inner.launch_holding(request, hold).await;
             self.report(&launched, &outcome);
+            self.checkpoint(&launched, &outcome).await;
             outcome
         })
     }
+}
+
+impl ObservedLauncher {
+    async fn checkpoint(&self, launched: &Launched, outcome: &LaunchOutcome) {
+        use crate::activity::{Change, ConsumerState};
+        let (state, response) = match outcome {
+            LaunchOutcome::Accepted { response_id } => {
+                (ConsumerState::Accepted, Some(response_id.clone()))
+            }
+            LaunchOutcome::Admitted { .. } | LaunchOutcome::Deferred => {
+                (ConsumerState::Queued, None)
+            }
+            LaunchOutcome::Refused(_) => (ConsumerState::Refused, None),
+        };
+        self.observer
+            .checkpoint(
+                &launched.record,
+                &launched.event_id,
+                Change::state(launched.consumer.as_str(), state, response),
+            )
+            .await;
+    }
+}
+pub(crate) fn activity_unavailable() -> LaunchOutcome {
+    LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
+        cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+        503,
+        "channel_activity_unavailable",
+    ))
 }

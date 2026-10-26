@@ -1,5 +1,33 @@
 # CMA Event Gateway operations
 
+## Durable recent activity
+
+Public channel activity uses independent encrypted `channel_recent_activity_v1`
+records in the existing `eg_interaction_records` collection. No collection,
+credential, environment variable or external service is added. Each owner/channel
+has deterministic daily records, bounded to 50 rows and 44,000 plaintext bytes;
+existing interaction TTL removes each daily record at its fixed seven-day
+boundary. Existing routed recovery ignores this separate record kind. The
+original admission, execution, reply authority and runtime records are unchanged.
+
+Incoming authenticated work commits its receipt before starting a provider turn.
+Failure to persist that receipt refuses launch with
+HTTP 503 with `provider_unavailable` and detail `channel_activity_unavailable`;
+retry retains the original event identity.
+Progress observations occur only at meaningful lifecycle boundaries and actual
+transport outcomes, never on each text delta. A failed progress observation is
+logged and must not repeat an accepted provider turn or confirmed platform send.
+Each progress observation has a three-second deadline, so storage failure cannot
+leave the execution or delivery worker indefinitely blocked on activity tracking.
+Absence of a timestamp is not evidence that the corresponding action occurred.
+
+The current single gateway replica publishes notifications after committed
+activity updates. A new or reconnected SSE reader restores authoritative daily
+snapshots, including after a process restart; no process-local ring is the source
+of activity truth. GET/SSE snapshots are bounded recent activity, not an archival
+ledger. Future multiple-replica service must add shared commit notification before
+claiming the same immediate push guarantee across replicas.
+
 ## Public documentation
 
 The gateway itself serves a single `/docs` document combining the integration

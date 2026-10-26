@@ -75,16 +75,22 @@ async fn handle(
                 ReplySource::Tool => DeliveryStep::ToolReply,
                 ReplySource::Stream => DeliveryStep::Answer,
             };
-            sender.observe_at(
-                &reply.event,
-                step,
-                &result.delivery,
-                if reply.default_destination.is_some() {
-                    crate::turns::observer::Destination::Default
-                } else {
-                    crate::turns::observer::Destination::Origin
-                },
-            );
+            sender
+                .observe_at(
+                    &reply.event,
+                    step,
+                    &result.delivery,
+                    if reply.default_destination.is_some() {
+                        crate::turns::observer::Destination::Default
+                    } else {
+                        crate::turns::observer::Destination::Origin
+                    },
+                    reply
+                        .default_destination
+                        .as_ref()
+                        .map(|(destination, _)| destination),
+                )
+                .await;
             let _ = reply.receipt.send(result);
         }
         DeliveryCommand::Update {
@@ -178,6 +184,37 @@ async fn handle(
             {
                 return;
             }
+            let progress = match &outcome {
+                TurnOutcome::Accepted { response_id, .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Accepted,
+                    Some(response_id.clone()),
+                )),
+                TurnOutcome::MessageCommitted { .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Produced,
+                    None,
+                )),
+                TurnOutcome::Completed { .. } => Some(crate::activity::Change::state(
+                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                    crate::activity::ConsumerState::Completed,
+                    None,
+                )),
+                TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
+                    Some(crate::activity::Change::state(
+                        turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                        crate::activity::ConsumerState::Failed,
+                        None,
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(change) = progress {
+                sender
+                    .observer
+                    .checkpoint(&opened.payload.record_id, &opened.payload.event_id, change)
+                    .await;
+            }
             let id = key(
                 opened.payload.channel_id.as_str(),
                 opened.payload.event_id.as_str(),
@@ -192,7 +229,10 @@ async fn handle(
                 cmaeg_core::activity::SourceKind::Custom
             );
             if custom {
-                sender.custom.stream(&opened.payload, &outcome);
+                let buffered = sender.custom.stream(&opened.payload, &outcome);
+                if outcome.terminal() {
+                    sender.custom.observe_local(&opened.payload, buffered).await;
+                }
             }
             let state = events
                 .entry(id)
@@ -214,7 +254,7 @@ async fn handle(
                         TurnOutcome::Completed { .. } => DeliveryStep::Answer,
                         _ => DeliveryStep::Failure,
                     };
-                    sender.observe(&state.event, step, &delivered);
+                    sender.observe(&state.event, step, &delivered).await;
                 }
                 if outcome.terminal() {
                     finish(state);
