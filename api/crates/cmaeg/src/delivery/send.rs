@@ -86,6 +86,21 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.whatsapp_template.is_some() {
+            if !self.relay.whatsapp_templates_enabled()
+                || message.validate().is_err()
+                || !matches!(
+                    event.reply,
+                    ReplyAddress::NyxidRelay {
+                        platform: Platform::Whatsapp,
+                        ..
+                    }
+                )
+            {
+                return (unsupported(), SendEffects::default());
+            }
+            return self.complete_reply(ctx, event, message, false).await;
+        }
         if !message.native_attachments.is_empty()
             && (!self.relay.native_media_enabled()
                 || !matches!(

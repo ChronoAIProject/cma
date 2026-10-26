@@ -16,6 +16,9 @@ pub use media::{
     validate as validate_native_attachments, NativeAttachment, NativeMediaKind, NativeMediaSource,
     MAX_NATIVE_ATTACHMENTS, MAX_NATIVE_INLINE_BYTES,
 };
+#[path = "whatsapp_template.rs"]
+mod whatsapp_template;
+pub use whatsapp_template::*;
 
 pub const MAX_MESSAGE_TEXT_BYTES: usize = 32 * 1_024;
 pub const MAX_BLOCKS: usize = 16;
@@ -23,6 +26,9 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Approved WhatsApp template; exclusive of text, blocks, media and reply targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template: Option<WhatsappTemplate>,
     /// Explicit native media delivery. Legacy attachment blocks remain links.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub native_attachments: Vec<NativeAttachment>,
@@ -158,6 +164,18 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(template) = &self.whatsapp_template {
+            template.validate()?;
+            if self.text.is_some()
+                || !self.blocks.is_empty()
+                || !self.native_attachments.is_empty()
+                || self.thread_reply
+                || self.reply_to.is_some()
+            {
+                return Err(ValidationError::new("/whatsapp_template", "templates cannot be combined with text, blocks, native attachments, threads or reply_to"));
+            }
+            return Ok(());
+        }
         if self.text.is_none() && self.blocks.is_empty() && self.native_attachments.is_empty() {
             return Err(ValidationError::new(
                 "/",

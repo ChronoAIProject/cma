@@ -202,6 +202,7 @@ impl App {
         );
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
+            whatsapp_templates_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             lark_cards_enabled: false,

@@ -621,7 +621,8 @@
           "url",
           "base64"
         ]
-      }
+      },
+      "whatsapp_templates": true
     }
   ],
   "ChannelCreateRequest": [
@@ -2710,7 +2711,8 @@
             "url",
             "base64"
           ]
-        }
+        },
+        "whatsapp_templates": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -2822,7 +2824,8 @@
             "url",
             "base64"
           ]
-        }
+        },
+        "whatsapp_templates": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3223,7 +3226,35 @@
       "reply_to": "fixture",
       "text": "fixture",
       "thread_reply": true,
-      "native_attachments": []
+      "native_attachments": [],
+      "whatsapp_template": {
+        "name": "order_update",
+        "language": {
+          "code": "en_US"
+        },
+        "components": [
+          {
+            "type": "body",
+            "parameters": [
+              {
+                "type": "text",
+                "text": "Order 42"
+              }
+            ]
+          },
+          {
+            "type": "button",
+            "sub_type": "url",
+            "index": "0",
+            "parameters": [
+              {
+                "type": "text",
+                "text": "42"
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "PartitionKey": [
@@ -5203,5 +5234,80 @@
   "SourceCheckStatus": [
     "passed",
     "unavailable"
+  ],
+  "WhatsappTemplate": [
+    {
+      "name": "order_update",
+      "language": {
+        "code": "en_US"
+      },
+      "components": [
+        {
+          "type": "body",
+          "parameters": [
+            {
+              "type": "text",
+              "text": "Order 42"
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "sub_type": "url",
+          "index": "0",
+          "parameters": [
+            {
+              "type": "text",
+              "text": "42"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "WhatsappTemplateLanguage": [
+    {
+      "code": "en_US"
+    }
+  ],
+  "WhatsappTemplateParameter": [
+    {
+      "type": "text",
+      "text": "Order 42"
+    }
+  ],
+  "WhatsappTemplateButtonType": [
+    "url"
+  ],
+  "WhatsappTemplateComponent": [
+    {
+      "type": "header",
+      "parameters": [
+        {
+          "type": "text",
+          "text": "Hello"
+        }
+      ]
+    },
+    {
+      "type": "body",
+      "parameters": [
+        {
+          "type": "text",
+          "text": "Order 42"
+        }
+      ]
+    },
+    {
+      "type": "button",
+      "sub_type": "url",
+      "index": "0",
+      "parameters": [
+        {
+          "type": "text",
+          "text": "42"
+        }
+      ]
+    }
   ]
 }

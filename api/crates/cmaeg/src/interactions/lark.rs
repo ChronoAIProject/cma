@@ -68,7 +68,11 @@ pub(crate) fn render(
     id: &str,
     revision: u64,
 ) -> Result<(Value, RenderingReport), Error> {
-    if !message.native_attachments.is_empty() || message.thread_reply || revision == 0 {
+    if message.whatsapp_template.is_some()
+        || !message.native_attachments.is_empty()
+        || message.thread_reply
+        || revision == 0
+    {
         return Err(Error::Denied);
     }
     let mut elements = Vec::new();

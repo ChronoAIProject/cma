@@ -24,6 +24,7 @@ pub(super) fn destination(
     outbound: Option<String>,
 ) -> Option<RelayMessageDestination> {
     if !message.native_attachments.is_empty()
+        || message.whatsapp_template.is_some()
         || crate::interactions::has_controls(message)
         || text.is_empty()
         || text.encode_utf16().count() > text_limit(platform)?
@@ -53,7 +54,10 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // A replacement answers no event, so it never marks a first send.
         let effects = SendEffects::default();
-        if !message.native_attachments.is_empty() || message.thread_reply {
+        if !message.native_attachments.is_empty()
+            || message.thread_reply
+            || message.whatsapp_template.is_some()
+        {
             return (unsupported(), effects);
         }
         let channel = ctx.channel;

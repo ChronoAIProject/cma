@@ -44,6 +44,7 @@ fn native_cards_refuse_media_threads_and_oversize_without_truncation() {
         json!({"text":"x".repeat(4001)}),
         json!({"text":"x".repeat(3995),"blocks":[{"type":"link","url":"https://example.com","label":"Open link"}]}),
         json!({"text":"hello","thread_reply":true}),
+        json!({"whatsapp_template":{"name":"order_update","language":{"code":"en_US"}}}),
         json!({"native_attachments":[{"kind":"file","source":{"type":"base64","data":"YQ=="}}]}),
     ] {
         assert!(render(&message(value), "30d4d6fe46f64e2db382123456789abc", 1).is_err());
