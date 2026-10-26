@@ -2,6 +2,13 @@
 //! Source writes remain gated; application supervision and durable inbox scheduling
 //! must be composed explicitly before ordinary messaging is activated.
 pub mod activation;
+mod components;
+#[cfg(test)]
+mod components_execution_tests;
+#[cfg(test)]
+pub(crate) mod components_fixture;
+#[cfg(test)]
+mod components_tests;
 pub(crate) mod facts;
 pub mod inbox_dispatch;
 mod inbox_reader;
@@ -64,3 +71,10 @@ mod routed_execution_tests;
 mod thread_execution_tests;
 #[cfg(test)]
 mod thread_tests;
+pub(crate) fn native_source_revision(
+    definition: &cmaeg_core::channel::ChannelDefinition,
+) -> Option<String> {
+    journal_model::Authority::from_definition(definition)
+        .ok()
+        .map(|authority| authority.revision)
+}

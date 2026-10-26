@@ -57,9 +57,10 @@ export function DiscordSourceFields({
           onChange={(enabled) => intent(4096, enabled)}
         />
         <p className="channel-field-hint">
-          Message Content Intent is required. Bot messages and interaction callbacks are not
-          supported. Thread sessions require verified native channel metadata enabled by the
-          operator; otherwise thread partitioning is refused.
+          Message Content Intent is required. Bot messages are not supported. Native buttons and
+          single-select menus require operator enablement and are unavailable in threads. Thread
+          sessions require verified native channel metadata enabled by the operator; otherwise
+          thread partitioning is refused.
         </p>
       </Section>
       <AdmissionFields

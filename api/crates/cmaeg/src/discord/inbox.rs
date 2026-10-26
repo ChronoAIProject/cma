@@ -13,8 +13,18 @@ impl DurableJournal {
         authority: &Authority,
         event: &Dispatch,
     ) -> Result<(), GatewayError> {
+        event.message_id().ok_or(GatewayError::Protocol)?;
+        self.persist_inbox(authority, event, None).await
+    }
+    pub(super) async fn persist_inbox(
+        &self,
+        authority: &Authority,
+        event: &Dispatch,
+        component: Option<&super::components::Snapshot>,
+    ) -> Result<(), GatewayError> {
         let received_at = (self.store.clock)() / 1000;
-        let message = event.message_id().ok_or(GatewayError::Protocol)?;
+        let message =
+            super::protocol::snowflake(&event.data["id"]).ok_or(GatewayError::Protocol)?;
         // Discord IDs embed their creation time. Once the seven-day dedup
         // window expires, old replays are refused instead of launching twice.
         let created = (message.parse::<u64>().map_err(|_| GatewayError::Protocol)? >> 22) as i64
@@ -37,7 +47,8 @@ impl DurableJournal {
             return self.observe_inbox(&existing, authority, &bytes).await;
         }
         let mut body = json!({"dispatch":event.data,"channel":authority.public_definition});
-        if self.api.thread_metadata
+        if component.is_none()
+            && self.api.thread_metadata
             && super::thread_context::candidate(
                 &event.data,
                 &authority.admission,
@@ -50,6 +61,10 @@ impl DurableJournal {
                     .await,
             )
             .map_err(|_| GatewayError::Protocol)?;
+        }
+        if let Some(component) = component {
+            body["component"] =
+                serde_json::to_value(component).map_err(|_| GatewayError::Protocol)?;
         }
         let bytes = serde_json::to_vec(&body).map_err(|_| GatewayError::Protocol)?;
         if bytes.len() > 2 * 1024 * 1024 {
@@ -104,7 +119,7 @@ impl DurableJournal {
             },
         }
     }
-    async fn verify_inbox(
+    pub(super) async fn verify_inbox(
         &self,
         inbox: &Inbox,
         authority: &Authority,

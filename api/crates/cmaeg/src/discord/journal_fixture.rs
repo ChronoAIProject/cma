@@ -46,7 +46,7 @@ pub struct Memory {
 }
 pub struct Fixture {
     pub memory: Arc<Memory>,
-    pub store: Store,
+    pub(super) store: Store,
     pub api: DiscordApi,
     pub record: String,
     task: tokio::task::JoinHandle<()>,

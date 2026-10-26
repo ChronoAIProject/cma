@@ -25,6 +25,7 @@ pub(crate) async fn serve(
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
+    discord_interactions: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -103,6 +104,7 @@ pub(crate) async fn serve(
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
+        .with_discord_interactions(discord_interactions)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
         .with_interactions(interactions.clone()),
@@ -190,6 +192,7 @@ pub(crate) async fn serve(
             telegram,
         ))),
         whatsapp_templates_enabled: whatsapp_templates,
+        discord_interactions_enabled: discord_interactions,
         whatsapp_interactions_enabled: whatsapp_interactions,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,

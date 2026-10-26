@@ -20,7 +20,9 @@ pub struct Capture {
     pub content_type: Option<String>,
     pub body: Vec<u8>,
 }
+type OnCall = Arc<dyn Fn(&Capture) + Send + Sync>;
 pub struct Memory {
+    pub on_call: Mutex<Option<OnCall>>,
     pub calls: Mutex<Vec<Capture>>,
     pub identities: Mutex<Vec<Capture>>,
     pub status: Mutex<StatusCode>,
@@ -43,6 +45,7 @@ impl Drop for Fixture {
 impl Fixture {
     pub async fn new() -> Self {
         let memory = Arc::new(Memory {
+            on_call: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             identities: Mutex::new(Vec::new()),
             status: Mutex::new(StatusCode::OK),
@@ -98,6 +101,9 @@ async fn endpoint(State(state): State<Arc<Memory>>, request: Request) -> Respons
                 serde_json::to_vec(&*state.bot.lock().unwrap()).unwrap(),
             ))
             .unwrap();
+    }
+    if let Some(on_call) = state.on_call.lock().unwrap().as_ref() {
+        on_call(&capture);
     }
     state.calls.lock().unwrap().push(capture);
     if let Some((status, body)) = state.responses.lock().unwrap().pop_front() {

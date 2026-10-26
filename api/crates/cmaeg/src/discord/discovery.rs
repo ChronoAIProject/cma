@@ -21,14 +21,16 @@ pub struct Discovery {
 }
 #[derive(Clone)]
 pub struct DiscordApi {
-    client: Client,
-    origin: Url,
+    pub(super) client: Client,
+    pub(super) origin: Url,
+    pub(super) components: Option<std::sync::Arc<super::components::Runtime>>,
     limits: DiscordRest,
     pub(super) thread_metadata: bool,
 }
 impl DiscordApi {
     pub fn new() -> Result<Self, GatewayError> {
         Ok(Self {
+            components: None,
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 .timeout(Duration::from_secs(4))

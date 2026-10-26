@@ -10,8 +10,9 @@ new secret; public channel definitions and activation status never expose it.
 The bot must already exist, be installed in the intended server, have access to
 its channels and have Message Content Intent enabled in the Discord Developer
 Portal. Native intake supports ordinary human messages and the existing text and
-attachment paths. Bot messages and interaction callbacks remain outside this
-source. Only single-shard bots are supported. Proven thread behavior has its own
+attachment paths. Bot messages are unsupported. Native buttons and single-select
+callbacks require separate [operator enablement](CMAEG_Native_Discord_Interactions.md)
+and currently exclude threads. Only single-shard bots are supported. Proven thread behavior has its own
 contract and gates; ordinary conversation partitioning is the baseline here.
 
 ## Deployment gates
