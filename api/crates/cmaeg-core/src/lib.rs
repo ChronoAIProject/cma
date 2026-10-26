@@ -16,6 +16,7 @@ pub mod thread;
 
 /// Neutral messages emitted by an agent turn.
 pub mod message;
+pub mod message_effect;
 
 /// Chat text conventions, such as bot addresses, shared by routing and rendering.
 pub mod chat;

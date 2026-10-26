@@ -100,3 +100,6 @@ data:
   CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL: "100"
   CMAEG_CONSOLE_ACTIVITY_MAX_BYTES: "33554432"
   CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL: "32"
+
+  # Issue new native Telegram effect references only after every reader is upgraded.
+  CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: "false"

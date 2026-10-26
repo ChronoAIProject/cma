@@ -23,6 +23,7 @@ pub(crate) async fn serve(
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     consumer_interactions: bool,
+    telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -86,6 +87,7 @@ pub(crate) async fn serve(
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
         .with_consumer_interactions(consumer_interactions)
+        .with_telegram_effects(telegram_effects)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -140,11 +142,16 @@ pub(crate) async fn serve(
         config.ingress,
         observers.launcher(runner.clone()),
     )?
-    .with_telegram(telegram)
+    .with_telegram(telegram.clone())
+    .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        telegram_effects_issuance_enabled: telegram_effects,
+        telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
+            telegram,
+        ))),
         whatsapp_templates_enabled: whatsapp_templates,
         whatsapp_interactions_enabled: whatsapp_interactions,
         consumer_interactions_enabled: consumer_interactions,

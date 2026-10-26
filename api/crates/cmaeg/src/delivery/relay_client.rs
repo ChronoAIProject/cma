@@ -113,6 +113,7 @@ pub struct RelayClient {
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     consumer_interactions: bool,
+    telegram_effects: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -140,6 +141,13 @@ impl RelayClient {
         self.whatsapp_interactions
     }
 
+    pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
+        self.telegram_effects = enabled;
+        self
+    }
+    pub(super) fn telegram_effects_enabled(&self) -> bool {
+        self.telegram_effects
+    }
     /// Enable only after the deployed relay preserves approved template metadata.
     pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
         self.whatsapp_templates = enabled;
@@ -220,6 +228,7 @@ impl RelayClient {
             whatsapp_templates: false,
             whatsapp_interactions: false,
             consumer_interactions: false,
+            telegram_effects: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })

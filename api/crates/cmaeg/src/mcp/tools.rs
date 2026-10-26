@@ -54,15 +54,15 @@ struct AttachmentSchemas;
 ///
 /// Each hint is stated per tool rather than derived from a shared flag, so a
 /// tool whose hints do not follow the existing pattern needs no special case.
-struct ToolSpec {
-    name: &'static str,
-    description: &'static str,
+pub(super) struct ToolSpec {
+    pub(super) name: &'static str,
+    pub(super) description: &'static str,
     /// The argument schema's component name in [`Schemas`].
-    schema: &'static str,
-    read_only: bool,
-    destructive: bool,
-    idempotent: bool,
-    open_world: bool,
+    pub(super) schema: &'static str,
+    pub(super) read_only: bool,
+    pub(super) destructive: bool,
+    pub(super) idempotent: bool,
+    pub(super) open_world: bool,
 }
 const TOOLS: [ToolSpec; 4] = [
     ToolSpec {
@@ -124,12 +124,12 @@ pub fn list(media_enabled: bool) -> Value {
     }
     json!({"tools":tools})
 }
-fn definitions(document: utoipa::openapi::OpenApi) -> Value {
+pub(super) fn definitions(document: utoipa::openapi::OpenApi) -> Value {
     let mut document = serde_json::to_value(document).unwrap();
     rewrite_refs(&mut document);
     document["components"]["schemas"].clone()
 }
-fn describe(tool: &ToolSpec, definitions: &Value) -> Value {
+pub(super) fn describe(tool: &ToolSpec, definitions: &Value) -> Value {
     let mut schema = definitions[tool.schema].clone();
     schema["$defs"] = definitions.clone();
     json!({
@@ -177,6 +177,9 @@ pub async fn call(
     let invalid = || Problem::new(ProblemCode::InvalidRequest, 400, "invalid tool arguments");
     if name == ATTACHMENT_TOOL.name {
         return read_attachment(state, caller, arguments).await;
+    }
+    if super::message_effects::handles(name) {
+        return super::message_effects::call(state, caller, name, arguments).await;
     }
     let value = match name {
         "replyToEvent" => {
@@ -265,6 +268,6 @@ async fn read_attachment(
 /// Wrapping happens per call site rather than once for every tool because
 /// `readEventAttachment` needs a content-only result without
 /// `structuredContent`.
-fn envelope(value: Value) -> Value {
+pub(super) fn envelope(value: Value) -> Value {
     json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
 }

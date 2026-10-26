@@ -106,6 +106,8 @@ impl ConsumerGateway {
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
             lark_cards_enabled: false,
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,
@@ -174,6 +176,7 @@ fn ready_connection() -> Connection {
         fingerprint: "fixture-plan".into(),
         origin: Origin {
             event: EventRefPayload {
+                telegram_admission: None,
                 v: 1,
                 consumer: None,
                 lineage: None,

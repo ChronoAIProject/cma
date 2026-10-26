@@ -13,6 +13,7 @@ pub(crate) mod html;
 pub mod management;
 mod management_responses;
 pub mod media;
+pub mod message_effects;
 pub mod metrics;
 pub mod outbound;
 pub mod problems;

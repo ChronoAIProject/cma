@@ -139,6 +139,7 @@ pub(crate) fn launch(
     keys: &MasterKeyRing,
     received: Instant,
     now: i64,
+    effects_enabled: bool,
 ) -> Result<Built, VerificationError> {
     let invalid = || VerificationError("telegram_activity_invalid");
     let Observed {
@@ -147,6 +148,13 @@ pub(crate) fn launch(
         update_id,
         message_id,
     } = observed;
+    let telegram_admission = effects_enabled.then(|| cmaeg_core::seal::TelegramAdmissionProof {
+        actor_id: payload.sender.platform_id.clone(),
+        actor_kind: facts.actor,
+        conversation_kind: facts.conversation,
+        mentioned: facts.mentioned,
+        replied_to_bot: exact_reply_to_bot(payload.raw_platform_data.as_ref(), bot_id),
+    });
     let event_id = EventId::new(format!("telegram:{bot_id}:{update_id}")).map_err(|_| invalid())?;
     let activity = Activity {
         thread: None,
@@ -196,6 +204,7 @@ pub(crate) fn launch(
     );
     let event_ref = EventRef::seal(
         &EventRefPayload {
+            telegram_admission,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
@@ -228,3 +237,23 @@ pub(crate) fn launch(
         received_at: received,
     })))
 }
+
+/// Effects need evidence about this receiving bot, not merely any bot sender.
+fn exact_reply_to_bot(raw: Option<&Value>, bot_id: &str) -> Option<bool> {
+    let raw = raw?;
+    let parent = if let Some(callback) = raw.get("callback_query") {
+        callback.get("message")?
+    } else {
+        let message = raw.get("message").or_else(|| raw.get("edited_message"))?;
+        let Some(parent) = message.get("reply_to_message") else {
+            return Some(false);
+        };
+        parent
+    };
+    let from = parent.get("from")?;
+    Some(from.get("is_bot")?.as_bool()? && from.get("id")?.as_i64()?.to_string() == bot_id)
+}
+
+#[cfg(test)]
+#[path = "telegram_effect_tests.rs"]
+mod effect_tests;
