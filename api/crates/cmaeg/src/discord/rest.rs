@@ -140,12 +140,31 @@ impl DiscordRest {
         text: &str,
         files: &[PreparedFile],
     ) -> Result<String, RestError> {
+        self.send_components(token, bot, channel, reply_to, text, files, None)
+            .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn send_components(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        reply_to: Option<&str>,
+        text: &str,
+        files: &[PreparedFile],
+        components: Option<&Value>,
+    ) -> Result<String, RestError> {
         if !valid_id(bot)
             || !valid_id(channel)
             || reply_to.is_some_and(|id| !valid_id(id))
             || text.chars().map(char::len_utf16).sum::<usize>() > 2000
-            || (text.is_empty() && files.is_empty())
+            || (text.is_empty() && files.is_empty() && components.is_none())
             || files.len() > 4
+            || components.is_some_and(|value| {
+                value
+                    .as_array()
+                    .is_none_or(|rows| rows.is_empty() || rows.len() > 5)
+            })
         {
             return Err(RestError::Rejected);
         }
@@ -154,6 +173,9 @@ impl DiscordRest {
         self.ready(token)?;
         let mut payload =
             json!({"content":text,"allowed_mentions":{"parse":[],"replied_user":false}});
+        if let Some(components) = components {
+            payload["components"] = components.clone();
+        }
         if let Some(message) = reply_to {
             payload["message_reference"] =
                 json!({"message_id":message,"channel_id":channel,"fail_if_not_exists":false});

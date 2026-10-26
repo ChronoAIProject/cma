@@ -141,6 +141,7 @@ impl Fixture {
             public_api_url: management.public_url.clone(),
             advertise_public_api_url: true,
             whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,

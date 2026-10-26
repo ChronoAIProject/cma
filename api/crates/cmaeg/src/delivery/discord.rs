@@ -24,6 +24,11 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if self.relay.discord_interactions_enabled()
+            && crate::interactions::discord::requested(message)
+        {
+            return self.discord_controls(ctx, event, message).await;
+        }
         let effects = SendEffects::default();
         let ReplyAddress::Discord {
             bot_id,

@@ -21,6 +21,28 @@ impl Candidate {
         keys: &MasterKeyRing,
         now: i64,
     ) -> Result<Self, AdmissionError> {
+        Self::prepare_inner(request, plan, source_body, keys, now, false)
+    }
+    pub(crate) fn prepare_native_interaction(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+    ) -> Result<Self, AdmissionError> {
+        if crate::ingress::native_interaction::plan(request, keys, now).as_ref() != Ok(plan) {
+            return Err(AdmissionError::Invalid);
+        }
+        Self::prepare_inner(request, plan, source_body, keys, now, true)
+    }
+    fn prepare_inner(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+        native: bool,
+    ) -> Result<Self, AdmissionError> {
         if source_body.len() > MAX_SOURCE_BYTES {
             return Err(AdmissionError::TooLarge);
         }
@@ -33,7 +55,9 @@ impl Candidate {
             })?
             .payload;
         let mut incoming = plan.activity.clone();
-        incoming.routing = None;
+        if !native {
+            incoming.routing = None;
+        }
         let identity = EventIdentity {
             owner: request.channel.definition.owner.subject.clone(),
             channel_id: request.channel.id.clone(),
@@ -42,9 +66,10 @@ impl Candidate {
         };
         identity.validate()?;
         if incoming != request.activity
-            || request.consumer.is_some()
-            || matches!(incoming.kind, ActivityKind::Interaction(_))
-            || original.consumer.is_some()
+            || (!native
+                && (request.consumer.is_some()
+                    || matches!(incoming.kind, ActivityKind::Interaction(_))
+                    || original.consumer.is_some()))
             || original.lineage.is_some()
             || !original.verifies_activity(&incoming)
             || original.channel_id != identity.channel_id
@@ -69,7 +94,12 @@ impl Candidate {
         }
         let admission_id = identity.admission_id();
         let payload = AdmittedPlan {
-            kind: PAYLOAD_KIND.into(),
+            kind: if native {
+                NATIVE_INTERACTION_KIND
+            } else {
+                PAYLOAD_KIND
+            }
+            .into(),
             admission_id: admission_id.clone(),
             identity,
             request_hash: codec::request_hash(&incoming, source_body)?,
@@ -142,10 +172,16 @@ impl AdmittedPlan {
             .routing
             .as_ref()
             .ok_or(AdmissionError::Corrupt)?;
-        if self.kind != PAYLOAD_KIND
+        let native = self.kind == NATIVE_INTERACTION_KIND;
+        if (self.kind != PAYLOAD_KIND && !native)
             || self.admission_id != self.identity.admission_id()
             || self.activity.validate().is_err()
-            || matches!(self.activity.kind, ActivityKind::Interaction(_))
+            || if native {
+                !crate::ingress::native_interaction::shape(&self.activity)
+                    || !matches!(self.source, cmaeg_core::channel::Source::Discord { .. })
+            } else {
+                matches!(self.activity.kind, ActivityKind::Interaction(_))
+            }
             || self.activity.event_id != self.identity.event_id
             || self.targets.len() != routing.targets.len()
             || self.targets.is_empty()

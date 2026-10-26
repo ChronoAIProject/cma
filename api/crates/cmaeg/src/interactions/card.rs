@@ -40,6 +40,16 @@ pub struct Card {
     /// New WhatsApp records retain the exact control kind. Legacy bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp: Option<WhatsappKind>,
+    /// Native Discord identity is absent from every historical card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord: Option<super::discord::Identity>,
+}
+impl Card {
+    pub(crate) fn consumed_at(&self) -> Option<&str> {
+        self.consumed
+            .as_ref()
+            .map(|click| click.occurred_at.as_str())
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,7 +107,7 @@ pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error>
     }
     let mut parts = value.split(':');
     let kind = parts.next();
-    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l")) {
+    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l" | "cd1")) {
         return Err(Error::Denied);
     }
     let id =

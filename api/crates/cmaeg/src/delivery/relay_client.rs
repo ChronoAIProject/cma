@@ -114,6 +114,7 @@ pub struct RelayClient {
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
+    discord_interactions: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
     pub telegram: crate::telegram::TelegramClient,
@@ -141,6 +142,13 @@ impl RelayClient {
     }
     pub(super) fn native_discord_edits_enabled(&self) -> bool {
         self.native_discord_edits
+    }
+    pub fn with_discord_interactions(mut self, enabled: bool) -> Self {
+        self.discord_interactions = enabled;
+        self
+    }
+    pub(super) fn discord_interactions_enabled(&self) -> bool {
+        self.discord_interactions
     }
     /// Gate named-consumer cards until all readers support retained owner bindings.
     pub fn with_consumer_interactions(mut self, enabled: bool) -> Self {
@@ -248,6 +256,7 @@ impl RelayClient {
             lark_cards: false,
             whatsapp_templates: false,
             whatsapp_interactions: false,
+            discord_interactions: false,
             consumer_interactions: false,
             telegram_effects: false,
             interactions: None,

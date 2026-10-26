@@ -345,6 +345,13 @@ pub(super) fn project(
     {
         capabilities.buttons = "native_interactive".into();
     }
+    if state.discord_interactions_enabled
+        && consumer_controls
+        && activity_verified
+        && crate::interactions::discord::eligible(channel, event, &activity)
+    {
+        capabilities.buttons = "native_components".into();
+    }
     if !consumer_controls && !matches!(activity.source, SourceKind::Custom) {
         capabilities.buttons = "numbered_text".into();
     }

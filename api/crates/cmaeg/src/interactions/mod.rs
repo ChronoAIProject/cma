@@ -17,6 +17,10 @@ use std::sync::Arc;
 
 mod card;
 mod consume;
+pub(crate) mod discord;
+pub(crate) mod discord_consume;
+#[cfg(test)]
+mod discord_tests;
 mod keyboard;
 pub(crate) mod lark;
 pub(crate) mod owner;
@@ -106,6 +110,7 @@ impl InteractionStore {
             || card.expires_at <= now()
             || !owner::valid(&card)
             || !whatsapp::valid_record(&card)
+            || !discord::valid(&card)
             || card.lark.as_ref().is_some_and(|identity| {
                 !lark::supported(identity.platform)
                     || card.thread.is_some()
@@ -179,6 +184,9 @@ impl InteractionStore {
             ReplyAddress::Telegram {
                 bot_id, chat_id, ..
             } => crate::telegram::route(bot_id, chat_id),
+            ReplyAddress::Discord {
+                bot_id, channel_id, ..
+            } => discord::route(bot_id, channel_id),
             _ => return Err(Error::Denied),
         };
         let lark = match &event.reply {
@@ -216,6 +224,11 @@ impl InteractionStore {
             None
         };
         let card = Card {
+            discord: if matches!(event.reply, ReplyAddress::Discord { .. }) {
+                Some(discord::identity(channel, event, &context.activity)?)
+            } else {
+                None
+            },
             callback_owner: owner::prepare(channel, event, &context.activity)?,
             lark,
             whatsapp,
@@ -264,6 +277,7 @@ impl InteractionStore {
         MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                discord_message: None,
                 telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),
@@ -295,6 +309,7 @@ impl InteractionStore {
         if old.channel_id != channel.id
             || !owner::current(&old, channel)
             || old.whatsapp.is_some()
+            || old.discord.is_some()
             || old.route_id != reference.route_id
             || old.event_id != reference.event_id
             || destination.platform_id != reference.platform_message_id
@@ -349,7 +364,9 @@ impl InteractionStore {
 }
 
 fn markup(card: &Card) -> Result<serde_json::Value, Error> {
-    if card.whatsapp.is_some() {
+    if card.discord.is_some() {
+        discord::render(&card.message, &card.id, card.revision)
+    } else if card.whatsapp.is_some() {
         whatsapp::markup(card)
     } else if card.lark.is_some() {
         lark::markup(card)

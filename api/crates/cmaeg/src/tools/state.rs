@@ -25,6 +25,7 @@ pub struct ToolsState {
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
+    pub discord_interactions_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.

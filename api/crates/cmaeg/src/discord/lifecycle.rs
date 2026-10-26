@@ -138,7 +138,9 @@ impl Worker {
             records: records.clone(),
             keys: keys.clone(),
             resolver: ingress.resolver.clone(),
-            api: DiscordApi::new()?.with_thread_metadata(thread_metadata),
+            api: DiscordApi::new()?
+                .with_thread_metadata(thread_metadata)
+                .with_components(ingress.clone()),
             activity: ingress.activity.clone(),
         });
         let dispatcher = InboxDispatcher::with_selection(records, keys, ingress, selection.clone());
