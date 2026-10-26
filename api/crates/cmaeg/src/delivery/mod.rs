@@ -24,5 +24,8 @@ mod send;
 mod step;
 pub mod sync;
 mod telegram;
+mod telegram_media;
+#[cfg(test)]
+mod telegram_media_tests;
 pub mod webhook_client;
 mod worker;

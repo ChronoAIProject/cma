@@ -64,7 +64,7 @@ pub struct Capabilities {
     /// inbound media is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbound_media: Option<InboundMediaCapabilities>,
-    /// Explicit native attachments, absent until the relay deployment is verified.
+    /// Explicit native attachments; relay sources require deployment attestation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media: Option<NativeMediaCapabilities>,
 }
@@ -80,7 +80,7 @@ pub struct NativeMediaCapabilities {
 impl NativeMediaCapabilities {
     fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
         let supported = match source {
-            SourceKind::Discord { .. } => true,
+            SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,
             SourceKind::NyxidRelay { platform, .. } => {
                 enabled && crate::delivery::relay_client::native_media_supported(*platform)
             }
