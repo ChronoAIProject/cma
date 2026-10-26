@@ -6,6 +6,8 @@ mod bindings;
 mod bots;
 #[path = "public_contract/context.rs"]
 mod context;
+#[path = "public_contract/documents.rs"]
+mod documents;
 #[path = "public_contract/event_workers.rs"]
 mod event_workers;
 #[path = "public_contract/experience.rs"]
@@ -26,7 +28,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/event-worker-profiles") {
+    if op.contains("/api/v1/documents") {
+        documents::dispatch(c).await
+    } else if op.contains("/event-worker-profiles") {
         event_workers::dispatch(c).await
     } else if op.contains("/api/v1/bots")
         || op.contains("/api/v1/bot-setups")
@@ -39,6 +43,7 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
+        || op == "GET /api/v2/agents/{agent_id}/events/head"
     {
         agent_events_v2::dispatch(c).await
     } else if op.contains("/api/v2") {

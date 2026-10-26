@@ -26,6 +26,17 @@ impl HomeProvisionReceipt {
     pub fn validate(&self) -> Result<()> {
         self.provider_scope.validate()?;
         self.home.validate_for(&self.home.request.sandbox_id)?;
+        if self
+            .home
+            .request
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope != &self.provider_scope)
+        {
+            return Err(AdapterError::Rejected(
+                "home creation receipt has another provider scope".into(),
+            ));
+        }
         if !crate::provider_finality::identifier(&self.operation_id)
             || !crate::provider_finality::identifier(&self.creation_resource_version)
             || !crate::provider_finality::digest(&self.creation_response_sha256)

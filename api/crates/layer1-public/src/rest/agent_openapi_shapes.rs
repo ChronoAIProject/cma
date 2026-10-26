@@ -1,5 +1,6 @@
 //! Public request and response shapes for CMA Agents.
 
+use super::agent_observation_shapes::{AgentRuntimeMetadataView, AgentTurnUsageView};
 use layer2_core::profiles::{PermissionLevel, SkillSource, ThinkingEffort};
 use layer2_core::sandbox::{
     Agent, AgentLineage, AgentStatus, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
@@ -160,6 +161,11 @@ pub(crate) struct InstanceProfileReferenceView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct FirstMessageStateView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    purpose: Option<layer2_core::sandbox::FirstMessagePurpose>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_sequence: Option<u64>,
     #[schema(value_type = String)]
     state: FirstMessageDelivery,
     queued_at: String,
@@ -171,6 +177,8 @@ pub(crate) struct FirstMessageStateView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentListItemView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_metadata: Option<AgentRuntimeMetadataView>,
     id: String,
     sandbox_id: String,
     workspace_id: String,
@@ -180,6 +188,8 @@ pub(crate) struct AgentListItemView {
     profile: AgentProfileSummaryView,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_title: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -193,6 +203,8 @@ impl From<Agent> for AgentListItemView {
             worktree_id: agent.worktree_id.to_string(),
             status: agent.status,
             profile: (&agent).into(),
+            runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
+            owner_title: agent.conversation.preferences.title,
             title: agent.title,
             created_at: agent.created_at,
             updated_at: agent.updated_at,
@@ -208,7 +220,16 @@ pub(crate) struct AgentPageView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AgentBootstrapView {
+    operation_id: String,
+    sandbox_id: String,
+    workspace_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_metadata: Option<AgentRuntimeMetadataView>,
     id: String,
     #[schema(value_type = String)]
     status: AgentStatus,
@@ -216,10 +237,14 @@ pub(crate) struct AgentView {
     worktree: WorktreeSummaryView,
     workspace: WorkspaceContextView,
     sandbox: SandboxContextView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bootstrap: Option<AgentBootstrapView>,
     conforms_to: Vec<&'static str>,
     reach: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     paused_notice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,6 +278,13 @@ impl AgentView {
             workspace,
             sandbox,
         } = lineage;
+        let bootstrap = agent
+            .bootstrap_lineage(&sandbox, &workspace)
+            .map(|operation_id| AgentBootstrapView {
+                operation_id: operation_id.into(),
+                sandbox_id: sandbox.id.to_string(),
+                workspace_id: workspace.id.to_string(),
+            });
         let first_message =
             agent
                 .conversation
@@ -260,14 +292,18 @@ impl AgentView {
                 .as_ref()
                 .map(|message| FirstMessageStateView {
                     state: message.state,
+                    purpose: message.purpose,
+                    turn_sequence: message.turn_sequence,
                     queued_at: message.queued_at.clone(),
                     completed_at: message.completed_at.clone(),
                     failed_at: message.failed_at.clone(),
                 });
         Self {
             id: agent.id.to_string(),
+            bootstrap,
             status: agent.status,
             profile: (&agent).into(),
+            runtime_metadata: AgentRuntimeMetadataView::from_agent(&agent),
             worktree: WorktreeSummaryView {
                 id: worktree.id.to_string(),
                 name: worktree.name,
@@ -305,6 +341,7 @@ impl AgentView {
                 .into_iter()
                 .map(|service| service.to_string())
                 .collect(),
+            owner_title: agent.conversation.preferences.title,
             title: agent.title,
             paused_notice,
             first_message,
@@ -413,6 +450,8 @@ pub(crate) enum AgentTranscriptRoleView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentUsageView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) current_turn: Option<AgentTurnUsageView>,
     pub(crate) agent_id: String,
     pub(crate) through_seq: u64,
     pub(crate) input_tokens: u64,

@@ -119,8 +119,13 @@ for (const origin of ['manual', 'trigger'] as const) {
       element.setAttribute('data-continuity-fixture', 'original'),
     );
     const creationLabel = origin === 'manual' ? 'Created manually' : 'Created by Trigger';
-    await expect(page.locator('.agent-header__source')).toContainText(creationLabel);
-    await page.getByRole('button', { name: 'Show Agent details' }).click();
+    await page.getByRole('button', { name: 'More Agent actions' }).click();
+    await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
+      creationLabel,
+    );
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'More Agent actions' }).click();
+    await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
     await page.getByRole('button', { name: 'Sharing', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Resource sharing' });
     await expect(dialog.getByText('No direct organization grants.')).toBeVisible();
@@ -184,7 +189,11 @@ for (const origin of ['manual', 'trigger'] as const) {
     await expect(composer).toHaveValue('Keep my unsent personal work');
     await expect(composer).toHaveAttribute('data-continuity-fixture', 'original');
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
-    await expect(page.locator('.agent-header__source')).toContainText(creationLabel);
+    await page.getByRole('button', { name: 'More Agent actions' }).click();
+    await expect(page.getByRole('menu', { name: 'More Agent actions' })).toContainText(
+      creationLabel,
+    );
+    await page.keyboard.press('Escape');
     expect(boundary.agent).toEqual(retained);
     expect(commands).toHaveLength(4);
     expect(commands.every((command) => command.key)).toBe(true);

@@ -62,13 +62,25 @@ describe('the CMA mark', () => {
     }
   });
 
-  it('selects the favicon ink from the operating-system scheme', () => {
+  it('matches the conversation mark inside its dark circular favicon tile', () => {
     const favicon = documentFor('cma-favicon.svg');
-    const style = favicon.querySelector('style')?.textContent ?? '';
-    expect(markParts(favicon)).toHaveLength(5);
-    expect(markParts(favicon).every((element) => paintIs(element, 'currentColor'))).toBe(true);
-    expect(style).toContain('svg{color:#0E61AC}');
-    expect(style).toContain('@media(prefers-color-scheme:dark){svg{color:#C3FD43}}');
+    const icon = favicon.querySelector('svg > svg');
+    const parts = [...(icon?.children ?? [])];
+    expect(parts).toHaveLength(5);
+    expect(parts.every((element) => paintIs(element, 'currentColor'))).toBe(true);
+    expect(icon?.getAttribute('color')).toBe('#c3fd43');
+    expect([
+      icon?.getAttribute('x'),
+      icon?.getAttribute('y'),
+      icon?.getAttribute('width'),
+      icon?.getAttribute('height'),
+    ]).toEqual(['0', '0', '32', '32']);
+    expect(icon?.getAttribute('viewBox')).toBe('12 7.25 76 76');
+    expect(favicon.querySelector('circle')?.getAttribute('fill')).toBe('#18181b');
+    expect(favicon.documentElement.getAttribute('viewBox')).toBe('0 0 32 32');
+    expect(parts.map((part) => part.outerHTML)).toEqual(
+      markParts(documentFor('cma-mark.svg')).map((part) => part.outerHTML),
+    );
   });
 });
 
@@ -162,8 +174,10 @@ describe('browser chrome metadata', () => {
       link.getAttribute('href'),
     );
     expect(icons).toEqual([
-      './src/assets/brand/png/favicon-32.png',
-      './src/assets/brand/cma-favicon.svg',
+      './src/assets/brand/png/favicon-16.png?no-inline',
+      './src/assets/brand/png/favicon-32.png?no-inline',
+      './src/assets/brand/png/favicon-48.png?no-inline',
+      './src/assets/brand/cma-favicon.svg?no-inline',
     ]);
   });
 });

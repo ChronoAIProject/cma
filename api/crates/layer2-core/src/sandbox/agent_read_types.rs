@@ -69,6 +69,8 @@ pub struct AgentTranscript {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_turn: Option<super::AgentTurnUsage>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub context_used: u64,

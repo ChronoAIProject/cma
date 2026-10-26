@@ -2,6 +2,43 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents().create_lifecycle` for Image Manager selections and inline Agent
+configuration. Omit the image to use the deployment default. Persist the exact
+request and key before submission so an uncertain result can be retried safely.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
+# async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
+let request = AgentLifecycleCreateRequest {
+    workspace_id: None,
+    sandbox_id: None,
+    name: "Research".into(), image: None, repository: None, profile: None,
+};
+let receipt = client.agents().create_lifecycle(&request, &key).await?;
+let operation = client.agents().read_lifecycle(&receipt.id).await?;
+if operation.status == AgentLifecycleStatus::Succeeded {
+    // Only now is operation.agent_id ready to open.
+}
+# Ok(())
+# }
+```
+
+The receipt acknowledges durable admission. Poll `read_lifecycle` until global
+success; a phase event's `ready` state is only one gate. `WaitingForConnection`
+supplies missing services and an owner-bound connection target. After the owner
+verifies those connections, repeat `create_lifecycle` with the original request
+and key to resume the same operation. `Failed` is terminal and includes a safe
+error when available.
+
+Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
+Omit `image` and `repository` in this mode. The Agent inherits the existing
+Sandbox key scope; extra service scopes are refused and selecting a subset does
+not reduce the inherited scope. This path requires permission to use the
+Workspace and does not require permission to create a new Sandbox. Reusing the
+same idempotency key with another Workspace is a conflict.
+
 One Agent belongs to one allocated Worktree in an owned Workspace and Sandbox.
 Its frozen Agent profile controls model, reasoning effort, permissions, and
 skills. An Agent's conversation is shared by REST, AG-UI, and Responses.
@@ -49,6 +86,7 @@ array preserves owner steering interleaved with Agent answers. `owner_message`
 is only the initial owner-message summary; `agent_messages` contains only
 assistant-message summaries. Concatenating those summaries loses the actual
 conversation order and later owner guidance.
+
 # Organization share management
 
 `client.resource_access()` provides `effective`, `list_shares`, `read_share`,
@@ -221,7 +259,6 @@ WebP are supported. At most 256 immutable artifacts are retained per Agent;
 pages contain at most 50. Revoked authority prevents future reads but cannot
 recall a file already downloaded.
 
-
 ## Channel usage
 
 `agents().channel_usage(agent_id)` returns explicit channel facts independently
@@ -258,7 +295,6 @@ These methods only observe facts. Binding history never grants authority, and
 these routes cannot write or clear channel usage. Every request rechecks current
 resource authority after membership or sharing changes.
 
-
 `AgentProvenanceInventoryOptions` combines `channel_active` and `channel_history`
 with `creation_origin` and existing personal, organization or shared scope.
 `Some(false)` for active and `Some(true)` for history selects detached historical
@@ -271,3 +307,178 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents().models(agent_id)` returns the admitted model catalog with each model's
+`id`, display `label`, and current runtime `available` flag. A retained runtime
+may return the catalog with every choice unavailable.
+
+`agents().settings(agent_id)` reads desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `update_settings(agent_id, &body, &key)` takes
+`UpdateAgentSettingsRequest` with all three settings for an idle Agent and a
+stable `IdempotencyKey`. Retry an uncertain HTTP reply with the exact body and
+key. `pending: true` means the durable desired settings still await runtime
+acknowledgement; read again until `pending` clears before treating them as applied.
+The immutable creation profile is preserved.
+
+## Additive skills
+
+`agents().skills(agent_id)` returns profile and live skill items, their
+`AgentSkillStatus` (`Pending`, `Installed`, or `Failed`), and `pending`,
+`can_install`, and optional `unavailable_reason`. Items may include a display
+name or failure detail. The server determines whether the Agent is idle and its
+exact runtime supports installation.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::InstallAgentSkillRequest};
+
+async fn add_skill(client: &Client, agent_id: &str, key: &IdempotencyKey) -> Result<()> {
+    let request = InstallAgentSkillRequest {
+        id: "research".into(), version: "1.0".into(),
+    };
+    let admitted = client.agents().install_skill(agent_id, &request, key).await?;
+    println!("Installation pending: {}", admitted.pending);
+    let current = client.agents().skills(agent_id).await?;
+    for skill in current.items { println!("{} {:?}", skill.id, skill.status); }
+    Ok(())
+}
+```
+
+Installation requires an exact Ornn version and a stable idempotency key. Retry
+an uncertain reply with the same request and key. The `202` result records
+admission; poll `skills()` within your application's deadline until `pending`
+clears, then inspect each item's status before treating it as installed. A
+failed installation is reported explicitly. Installation preserves the original
+creation profile.
+
+## Service access decisions
+
+`agents().access_requests(agent_id)` reads `AgentAccessRequestList` for the
+current owner. Each request carries its exact Agent identity, request ID,
+service selection, reason and durable status. Approval requires an explicit
+`ApproveAgentAccessRequest` and `IdempotencyKey`; denial uses
+`deny_access_request(agent_id, request_id, &key)`. Services contain 1–32 ASCII
+identifiers of 1–128 bytes using letters, digits, hyphens and underscores.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::{AgentAccessRequest, ApproveAgentAccessRequest}};
+
+async fn approve_services(
+    client: &Client,
+    agent_id: &str,
+    request_id: &str,
+    services: Vec<String>,
+    key: &IdempotencyKey,
+) -> Result<AgentAccessRequest> {
+    client.agents().approve_access_request(
+        agent_id, request_id, &ApproveAgentAccessRequest { services }, key,
+    ).await
+}
+```
+
+Use the same body and key after an uncertain reply: the durable service returns
+current progress on replay. `AgentAccessStatus::Connecting` and `Applying` include
+a connection target naming this access request for the owner's service connection
+flow. Recheck that target if a connection expires while access is being applied;
+reconnecting preserves the approved scope and the current request.
+`Applying` awaits runtime verification; only `Succeeded` confirms applied access.
+Read the list again after connecting services. `Denied` and `Failed` are terminal,
+with an optional safe `error` detail. The SDK rejects crossed Agent/request
+identities, inconsistent connection targets and duplicate list IDs. Listing never
+approves services or resumes an Agent.
+
+An explicit retry after a failed access request is a new pending consent attempt.
+Its optional `retry_of` names the preserved failed request. The Agent tool returns
+new attempt parameters after failure; old-key replay continues to return the old
+outcome. New attempts require fresh owner approval and never inherit an earlier
+approval or runtime update.
+
+To add or revoke services directly, call `agents().update_service_access(agent_id, &body, &key)` with `UpdateAgentServiceAccessRequest { services, expected_services }`.
+`services` is the exact desired shared Sandbox scope; `expected_services` is the
+last observed effective scope. Both must include `chrono-llm-public` and
+`ornn-api`. Save is explicit owner consent. The service returns HTTP 202 and the
+durable access request, and rejects stale selections with HTTP 409 before
+changing access. Preserve the same body and key after an uncertain reply.
+Prepare any external service connections before final approval. An active
+Sandbox receives its replacement credential without restarting Agents;
+`succeeded` confirms runtime acknowledgement, old-key revocation and callback
+delivery to the originating Agent. An already paused Sandbox waits for resume.
+
+## Runtime observations
+
+Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`
+with the provider's canonical `working_directory` and session `description`.
+The `runtime_metadata_changed` event updates the same snapshot. These fields
+do not rewrite the immutable Workspace/Worktree paths or infer changes from
+shell commands. Shared readers do not receive private directory metadata.
+
+`description_source` optionally identifies `provider_title` or `prompt_preview`;
+absence means unknown. `description_is_setup_preview: true` is positive evidence
+that this provider preview came from the exact recorded automatic setup input.
+Only a `prompt_preview` with that flag should be excluded from the display title.
+An explicit `provider_title` remains authoritative even if its text equals setup
+text. Use the configured Agent title when a setup preview is excluded; no semantic
+title generator or first actual user-task inference is implied. Keep these fields
+with `description` as one snapshot when replaying metadata updates.
+
+Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence`. Missing purpose is legacy unknown;
+Agent creation origin and user-role message position are not substitutes for it.
+A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
+
+`usage_updated` contains absolute lifetime input/output consumption and
+`turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
+observed turn. The usage read also exposes optional `current_turn`. Match that
+sequence to the running turn before displaying a current-turn counter. Context
+compaction can reduce context size while lifetime counts remain unchanged.
+Counts include cached input and advance only on provider reports; absent
+historical usage is never inferred from message length. Retained older runtimes
+continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agents().upload_attachment(agent_id, name, media_type, content, &key).await` uploads one binary file of at most 20 MiB to an owner-authorized active Agent. Empty files are supported. Use `application/octet-stream` for an unknown media type. The returned `AgentAttachment` includes the verified persisted `path`, sanitized `name`, exact `size_bytes`, `media_type`, and `sha256`.
+
+Uploading never sends a message or executes content. Refer to the returned path in the next Agent input. Retry an uncertain result with the same key and unchanged filename, type and bytes. Conflicting reuse is refused. Attachments require a supported runtime with full persistent home storage and are stored under `/home/attachments/<agent-id>/<attachment-id>/`; retained unsupported images and inactive Agents return typed errors. The existing approved-artifact APIs retain their separate publication contract.
+
+## Message feedback
+
+`agents().message_feedback(agent_id, EventOptions { after, limit })` reads private
+owner votes as a `ResourcePage<MessageFeedback, u64>`. Pass each non-null `next`
+as `after`; page size is 1–200. `set_message_feedback(agent_id, "event:42",
+Some(MessageVote::Up))` sets a positive vote; use `MessageVote::Down` to switch or
+`None` to remove it. The ID uses the transcript's durable message sequence.
+These idempotent metadata writes need no command key and never create turns.
+Serialize changes to one message and avoid replaying an old write after a newer
+choice. Current owner authority is required; shared readers cannot inspect or
+change these votes.
+
+### Agent session share links
+
+`resource_access().create_agent_share_link(agent_id, &CreateAgentShareLinkRequest,
+&key)` creates an Agent-only view or view-write link. Supply a cryptographically
+random 32-byte token encoded as lowercase hex, and retain it in the share URL
+fragment. The server stores only its digest. `AgentShareAudience` selects public,
+organization, or canonical user subjects resolved with `share_recipients`.
+`agent_share_links` returns metadata without secrets; `redeem_agent_share_link`
+binds possession to the current signed-in recipient. `revoke_agent_share_link`
+uses the current revision to invalidate this link while retaining independent
+links. `EffectiveAccess.shared_by` carries public owner attribution.
+
+### Persistent-home files
+
+`client.agent_files().list(agent_id, "")` lists `/home/`, including hidden
+entries. Pass a relative path to expand a directory. `read(agent_id, path,
+max_bytes)` returns base64 content and its digest; `download(agent_id, path)`
+returns raw bytes, with a dedicated 32 MiB transfer limit.
+
+`write(agent_id, &AgentFileWrite)` uses the last-read `expected_sha256` for
+compare-and-swap saves. Omission means create-only; `directory: Some(true)` with
+empty content creates a folder. `remove(agent_id, path, recursive)` deletes one
+target, recursively only when explicitly requested. File writes and
+`redeem_agent_share_link(share_id, token)` need no idempotency key. No mutation
+is automatically retried. Retain local edits after a conflict and reread before
+an explicit retry. View links may browse/download; only owners and current
+view-write links may change files. Older runtimes return
+`file_runtime_unsupported` until updated while idle.

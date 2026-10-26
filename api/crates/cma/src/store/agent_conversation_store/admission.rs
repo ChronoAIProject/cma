@@ -14,9 +14,13 @@ pub(super) async fn require_current(
     session: &mut ClientSession,
 ) -> Result<(), SandboxStoreError> {
     if mutation
-        .execution_fence
+        .settings_fence
         .as_ref()
         .is_some_and(|fence| fence.require_current().is_err())
+        || mutation
+            .execution_fence
+            .as_ref()
+            .is_some_and(|fence| fence.require_current().is_err())
         || mutation
             .trigger_execution_fence
             .as_ref()
@@ -52,7 +56,18 @@ pub(super) async fn validate_and_fence(
     let Some(mut parent) = parent else {
         return Ok(());
     };
-    if let Some(fence) = &mutation.execution_fence {
+    if let Some(fence) = &mutation.settings_fence {
+        use super::super::resource_access::{read_execution_snapshot, ReadError};
+        let snapshot = read_execution_snapshot(store, fence.target(), session)
+            .await
+            .map_err(|error| match error {
+                ReadError::Driver(error) => ApplyError::Driver(error),
+                ReadError::Domain(_) => ApplyError::Domain(SandboxStoreError::Conflict),
+            })?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    } else if let Some(fence) = &mutation.execution_fence {
         store
             .bindings
             .conversation_authority(fence.binding_authority(), session)

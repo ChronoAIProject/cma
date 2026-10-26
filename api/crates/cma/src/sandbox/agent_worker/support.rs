@@ -99,41 +99,52 @@ impl AgentWorker {
     }
 
     pub(super) async fn context(&self, agent: &Agent) -> Result<AgentContext, WorkerFailure> {
-        let sandbox = self
-            .dependencies
-            .store
-            .get_sandbox(&agent.sandbox_id)
-            .await
+        // These IDs come from the claimed Agent. Read independently, then retain
+        // the existing error precedence and validate all lineage before adoption.
+        let (sandbox, workspace, worktree) = tokio::join!(
+            self.dependencies.store.get_sandbox(&agent.sandbox_id),
+            self.dependencies.store.get_workspace(&agent.workspace_id),
+            self.dependencies.store.get_worktree(&agent.worktree_id),
+        );
+        let sandbox = sandbox
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
-        let workspace = self
-            .dependencies
-            .store
-            .get_workspace(&agent.workspace_id)
-            .await
+        let workspace = workspace
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
-        let worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
-            .await
+        let worktree = worktree
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
         validate_lineage(agent, &sandbox, &workspace, &worktree)?;
+        if sandbox.status == SandboxStatus::Rotating && !sandbox.restored_connection_is_ready(agent)
+        {
+            return Err(WorkerFailure::retryable(
+                "agent_runtime_update_in_progress",
+                "the retained runtime update is pending",
+            ));
+        }
         if sandbox.lifecycle.checkpoint_capture.is_some() {
             return Err(WorkerFailure::retryable(
                 "agent_checkpoint_in_progress",
                 "checkpoint writer resumption is pending",
             ));
         }
+        let inspection_started = std::time::Instant::now();
         let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
         )
-        .await
-        .map_err(adapter_failure)?;
+        .await;
+        tracing::info!(
+            agent_id = %agent.id,
+            sandbox_id = %sandbox.id,
+            step = ?agent.work.step,
+            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+            succeeded = attached.is_ok(),
+            "Agent runtime inspection completed"
+        );
+        let attached = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
             workspace,
@@ -204,9 +215,20 @@ impl AgentWorker {
 
     async fn retry(
         &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_at(agent, failure, now, now + self.config.retry_delay)
+            .await
+    }
+
+    pub(super) async fn retry_at(
+        &self,
         mut agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
+        ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
@@ -214,11 +236,7 @@ impl AgentWorker {
         let stamp = rfc3339_at(now);
         agent
             .work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + self.config.retry_delay),
-            )
+            .retry(&self.config.holder, fence, rfc3339_at(ready_at))
             .map_err(|_| SandboxStoreError::Conflict)?;
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
@@ -373,7 +391,7 @@ pub(super) fn skill_failure(error: AgentSkillResolutionError) -> WorkerFailure {
     }
 }
 
-fn record_receipt(
+pub(super) fn record_receipt(
     agent: &mut Agent,
     evidence: RequestEvidence,
     completed_at: &str,
@@ -422,7 +440,12 @@ pub(super) fn validate_lineage(
         && worktree.agent_id.as_ref() == Some(&agent.id)
         && worktree.path == format!("{}/.worktrees/{}", workspace.path, worktree.name)
         && worktree.branch == format!("cma/{}", worktree.name)
-        && workspace.resolved_commit.as_ref() == Some(&worktree.base_commit);
+        && (workspace.resolved_commit.as_ref() == Some(&worktree.base_commit)
+            || (worktree.base_commit.is_empty()
+                && agent.has_no_runtime_effects()
+                && matches!((&agent.origin, &sandbox.origin),
+                    (layer2_core::sandbox::AgentOrigin::Lifecycle { operation_id: a },
+                    layer2_core::sandbox::SandboxOrigin::Lifecycle { operation_id: s }) if a == s)));
     if valid {
         Ok(())
     } else {

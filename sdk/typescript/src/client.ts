@@ -1,3 +1,4 @@
+import { Documents } from './documents.js';
 import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
@@ -15,6 +16,8 @@ import {
 } from './discovery.js';
 import type { OperationOptions } from './http.js';
 import { Agents } from './agents.js';
+import { AgentAttachments } from './agents/attachments.js';
+import { AgentFiles } from './agent-files.js';
 import { Marketplace } from './marketplace.js';
 import { Profiles } from './profiles.js';
 import { Sandboxes } from './sandboxes.js';
@@ -35,6 +38,7 @@ import { AgentEventsV2 } from './agent-events-v2/index.js';
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
   readonly #config: ResolvedConfig;
+  readonly documents: Documents;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
   readonly gatewayConnectionRecords: GatewayRecords;
@@ -44,6 +48,8 @@ export class Cma {
   readonly gatewayInteractions: GatewayInteractions;
   readonly eventWorkerProfiles: EventWorkerProfiles;
   readonly agents: Agents;
+  readonly agentAttachments: AgentAttachments;
+  readonly agentFiles: AgentFiles;
   readonly resourceAccess: ResourceAccess;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
@@ -70,6 +76,7 @@ export class Cma {
 
   constructor(config: ClientConfig = {}) {
     this.#config = resolveConfig(config);
+    this.documents = new Documents(this.#config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.gatewayConnectionRecords = new GatewayRecords(this.#config, 'connection-records');
@@ -79,6 +86,8 @@ export class Cma {
     this.gatewayInteractions = new GatewayInteractions(this.#config);
     this.eventWorkerProfiles = new EventWorkerProfiles(this.#config);
     this.agents = new Agents(this.#config);
+    this.agentAttachments = new AgentAttachments(this.#config);
+    this.agentFiles = new AgentFiles(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);

@@ -14,6 +14,11 @@ impl HostedAdapter {
             .deployment
             .render_runtime(&request.spec, request.generation)?;
         self.verify_spec_home(&request.spec).await?;
+        if let Some(home) = &request.spec.home_volume {
+            self.backend
+                .verify_home_route(&rendered, &home.request)
+                .await?;
+        }
         let identity = provider_request_identity(&rendered)?;
         let request_sha256 = crate::provider_request_digest(request)?;
         let receipt = self
@@ -60,6 +65,127 @@ impl HostedAdapter {
         Ok(status)
     }
 
+    pub(super) fn retained_request(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        generation: u64,
+    ) -> crate::Result<crate::provider::ProviderSandboxRequest> {
+        if invalid_handle(&request.handle) || request.spec.home_volume.is_none() {
+            return Err(AdapterError::Rejected(
+                "native suspension requires an exact runtime and persistent home".into(),
+            ));
+        }
+        self.deployment.render_adoption(request, generation)
+    }
+
+    pub(super) async fn suspend_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        observe_only: bool,
+    ) -> crate::Result<()> {
+        let rendered = self.retained_request(request, request.generation)?;
+        self.verify_spec_home(&request.spec).await?;
+        self.verify_adoption_home_route(request)?;
+        if observe_only {
+            self.backend
+                .verify_suspended(&request.handle, &rendered)
+                .await?;
+        } else {
+            self.backend.suspend(&request.handle, &rendered).await?;
+            self.states.lock().await.remove(&request.handle);
+        }
+        self.verify_spec_home(&request.spec).await
+    }
+
+    pub(super) async fn resume_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.transition_exact(request, successor, false).await
+    }
+
+    pub(super) async fn upgrade_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.transition_exact(request, successor, true).await
+    }
+
+    async fn transition_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+        upgrade: bool,
+    ) -> crate::Result<RuntimeHandle> {
+        let mut allowed = request.spec.clone();
+        allowed.reaches.clone_from(&successor.spec.reaches);
+        if upgrade {
+            if successor.spec.runtime_image.is_none()
+                || request.expected_image.is_none()
+                || !request.spec.home_volume.as_ref().is_some_and(|home| {
+                    home.request.policy.is_native_vct() && home.receipt.native_authority.is_some()
+                })
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime upgrade requires an explicit image and original native VCT home"
+                        .into(),
+                ));
+            }
+            allowed
+                .runtime_image
+                .clone_from(&successor.spec.runtime_image);
+        }
+        if successor.generation <= request.generation || successor.spec != allowed {
+            return Err(AdapterError::Rejected(
+                "runtime transition must advance generation and retain its admitted specification"
+                    .into(),
+            ));
+        }
+        let previous = self.retained_request(request, request.generation)?;
+        // Preserve the persisted image even when the deployment default changed.
+        let mut resumed = request.clone();
+        resumed.spec = successor.spec.clone();
+        resumed.generation = successor.generation;
+        if upgrade {
+            resumed
+                .expected_image
+                .clone_from(&successor.spec.runtime_image);
+        }
+        let next = self.retained_request(&resumed, successor.generation)?;
+        let previous_identity = provider_request_identity(&previous)?;
+        let next_identity = provider_request_identity(&next)?;
+        self.verify_spec_home(&request.spec).await?;
+        self.verify_adoption_home_route(request)?;
+        {
+            let mut states = self.states.lock().await;
+            if let Some(state) = states.get(&request.handle) {
+                if state.provision != previous_identity && state.provision != next_identity {
+                    return Err(AdapterError::Rejected(
+                        "resume conflicts with another runtime generation".into(),
+                    ));
+                }
+            }
+            states.remove(&request.handle);
+        }
+        let home = request.spec.home_volume.as_deref().ok_or_else(|| {
+            AdapterError::Rejected("runtime transition requires its persisted home".into())
+        })?;
+        if upgrade {
+            self.backend
+                .upgrade_with_home(&request.handle, &previous, &next, home)
+                .await?;
+        } else {
+            self.backend
+                .resume_with_home(&request.handle, &previous, &next, home)
+                .await?;
+        }
+        self.verify_spec_home(&request.spec).await?;
+        self.attach_state(request.handle.clone(), &successor.spec, next_identity)
+            .await
+    }
+
     pub(super) async fn provision_exact(
         &self,
         spec: &SandboxSpec,
@@ -67,8 +193,16 @@ impl HostedAdapter {
     ) -> crate::Result<RuntimeHandle> {
         let request = self.deployment.render_runtime(spec, generation)?;
         self.verify_spec_home(spec).await?;
+        if let Some(home) = &spec.home_volume {
+            self.backend
+                .verify_home_route(&request, &home.request)
+                .await?;
+        }
         let identity = provider_request_identity(&request)?;
-        let handle = self.backend.provision(request).await?;
+        let handle = match spec.home_volume.as_deref() {
+            Some(home) => self.backend.provision_with_home(request, home).await?,
+            None => self.backend.provision(request).await?,
+        };
         self.verify_spec_home(spec).await?;
         self.attach_state(handle, spec, identity).await
     }
@@ -95,12 +229,11 @@ impl HostedAdapter {
                 "runtime adoption handle is invalid".into(),
             ));
         }
-        let mut deployment = self.deployment.clone();
-        if let Some(image) = &adoption.expected_image {
-            deployment.image.uri = image.clone();
-        }
-        let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
+        let request = self
+            .deployment
+            .render_adoption(adoption, adoption.generation)?;
         self.verify_spec_home(&adoption.spec).await?;
+        self.verify_adoption_home_route(adoption)?;
         let expected = provider_request_identity(&request)?;
         let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
             return Ok(None);
@@ -134,7 +267,7 @@ impl HostedAdapter {
         Ok(())
     }
 
-    async fn attach_state(
+    pub(super) async fn attach_state(
         &self,
         handle: RuntimeHandle,
         spec: &SandboxSpec,
@@ -165,6 +298,17 @@ impl HostedAdapter {
         Ok(handle)
     }
 
+    pub(super) fn verify_adoption_home_route(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        if let Some(home) = &request.spec.home_volume {
+            self.backend
+                .verify_retained_home_route(&request.handle, &home.request)?;
+        }
+        Ok(())
+    }
+
     async fn verify_spec_home(&self, spec: &SandboxSpec) -> crate::Result<()> {
         if let Some(home) = &spec.home_volume {
             home.validate_for(&spec.sandbox_id)?;
@@ -181,7 +325,10 @@ impl HostedAdapter {
         Ok(())
     }
 
-    async fn verify_home(&self, home: &crate::HomeVolumeAttachment) -> crate::Result<()> {
+    pub(super) async fn verify_home(
+        &self,
+        home: &crate::HomeVolumeAttachment,
+    ) -> crate::Result<()> {
         self.home_volumes
             .as_ref()
             .ok_or_else(|| {
@@ -192,7 +339,7 @@ impl HostedAdapter {
     }
 }
 
-fn validate_inventory(inventory: &[RuntimeObservation]) -> crate::Result<()> {
+pub(super) fn validate_inventory(inventory: &[RuntimeObservation]) -> crate::Result<()> {
     let mut handles = BTreeSet::new();
     let mut generations = BTreeSet::new();
     for observation in inventory {

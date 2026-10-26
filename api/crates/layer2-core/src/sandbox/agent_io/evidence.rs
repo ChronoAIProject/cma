@@ -66,6 +66,7 @@ impl CommandEvidence {
         if let AgentLogKind::TurnStarted {
             turn_sequence,
             origin_key,
+            ..
         } = &entry.kind
         {
             if *turn_sequence != entry.seq {

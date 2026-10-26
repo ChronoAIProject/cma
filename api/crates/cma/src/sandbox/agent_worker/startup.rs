@@ -23,6 +23,7 @@ const UPDATE_BUFFER: usize = 256;
 
 #[path = "startup_attachment.rs"]
 mod attachment;
+pub(super) use attachment::validated_open_request;
 
 impl AgentWorker {
     pub(super) async fn add_worktree(
@@ -35,6 +36,21 @@ impl AgentWorker {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
+        if self
+            .dependencies
+            .store
+            .prepared_agent_replay_matches(
+                &agent,
+                &context.sandbox,
+                &context.workspace,
+                &context.worktree,
+            )
+            .await?
+        {
+            return self
+                .replay_prepared_resources(agent, context, now + started.elapsed())
+                .await;
+        }
         let request = WorktreeRequest::new(
             format!(
                 "worktree:{}:{}:add:v1",
@@ -201,6 +217,7 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
+        let attempt_now = now;
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
@@ -268,8 +285,37 @@ impl AgentWorker {
             Ok(attachment) => attachment,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        let result = self
-            .startup_progress(
+        let result = async {
+            match self
+                .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
+                    return self
+                        .publish_prepared_connection(
+                            &agent,
+                            &context,
+                            &attachment,
+                            attempt_now + started.elapsed(),
+                        )
+                        .await;
+                }
+                Err(SandboxStoreError::Conflict) => {
+                    return self
+                        .retain_completed_open_after_conflict(
+                            &agent,
+                            &context.sandbox,
+                            &request,
+                            &attachment,
+                            attempt_now + started.elapsed(),
+                        )
+                        .await;
+                }
+                Err(error) => return Err(error),
+                Ok(false) => {}
+            }
+            self.startup_progress(
                 agent,
                 AgentWorkStep::PublishReady,
                 now,
@@ -277,7 +323,9 @@ impl AgentWorker {
                 Some((conversation_id, generation)),
                 &context.sandbox,
             )
-            .await;
+            .await
+        }
+        .await;
         match result {
             Ok(()) => Ok(()),
             Err(error) => {

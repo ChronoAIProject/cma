@@ -75,7 +75,11 @@ impl AgentWorkerStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
+        if !current.work.is_due(&now)
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || (parent.status == crate::sandbox::SandboxStatus::Rotating
+                && !parent.restored_connection_is_ready(current))
+        {
             return Ok(None);
         }
         let mut claimed = current.clone();
@@ -178,6 +182,11 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .sandboxes
         .get(&current.sandbox_id)
         .ok_or(SandboxStoreError::NotFound)?;
+    let workspace = state
+        .workspaces
+        .get(&current.workspace_id)
+        .ok_or(SandboxStoreError::NotFound)?;
+    crate::sandbox::store::validate_agent_workspace_binding(current, mutation, sandbox, workspace)?;
     validate_agent_work_mutation_with_sandbox(
         current,
         current_worktree,

@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Owner-visible Event Gateway connection available for a consumer.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ConsumerConnection {
+    /// Opaque owned connection reference.
+    pub connection_ref: String,
+    /// Human-readable connection label.
+    pub label: String,
+}
+
 /// Published profile pinned by Bot creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotProfileRef {
@@ -66,6 +75,53 @@ pub struct BotReply {
     /// Milliseconds until progress acknowledgement; zero disables it.
     pub ack_after_ms: u32,
 }
+/// Immutable Image Manager selection for inline consumer authoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotImageReference {
+    /// Image Manager identifier.
+    pub id: String,
+    /// Optional immutable Image Manager version.
+    pub version: Option<String>,
+}
+/// Optional GitHub workspace source for inline consumer authoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotRepository {
+    /// HTTPS GitHub repository URL.
+    pub url: String,
+    /// Optional branch, tag or commit reference.
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+}
+/// Ornn skill selected for an inline Agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotInlineSkill {
+    /// Skill identifier.
+    pub id: String,
+    /// Optional immutable skill version.
+    pub version: Option<String>,
+}
+/// Services requested by an inline Agent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BotInlinePermissions {
+    /// Service identifiers whose credentials the Agent may use.
+    pub services: Vec<String>,
+}
+/// Inline model, reasoning, permission and skill configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BotInlineAgentProfile {
+    /// Optional model override.
+    pub model: Option<String>,
+    /// Reasoning effort name.
+    pub reasoning_effort: Option<String>,
+    /// Guarded or autonomous execution mode.
+    pub permission_mode: Option<String>,
+    /// Optional system instructions.
+    pub system_prompt: Option<String>,
+    /// Selected Ornn skills.
+    pub skills: Vec<BotInlineSkill>,
+    /// Requested service scope.
+    pub permissions: BotInlinePermissions,
+}
 /// Bot creation request. No credential values are accepted or returned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBot {
@@ -73,8 +129,21 @@ pub struct CreateBot {
     pub name: String,
     /// Personally owned channel bot already registered with NyxID.
     pub nyxid_bot_id: String,
-    /// Published Agent profile.
-    pub profile: BotProfileRef,
+    /// Opaque Event Gateway connection. Mutually exclusive with nyxid_bot_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    /// Immutable Image Manager selection for inline authoring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<BotImageReference>,
+    /// Optional GitHub workspace source for inline authoring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<BotRepository>,
+    /// Inline Agent setup. Profile references remain for historical clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<BotInlineAgentProfile>,
+    /// Published Agent profile for compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<BotProfileRef>,
     /// Personally owned Sandbox profile; omit to pin the platform default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_profile: Option<BotProfileRef>,
@@ -158,6 +227,9 @@ pub struct Bot {
     pub name: String,
     /// Selected NyxID channel bot identifier.
     pub nyxid_bot_id: String,
+    /// Opaque Event Gateway connection, when this Bot is a consumer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     /// Pinned Agent profile reference.
     pub profile: BotProfileRef,
     /// Pinned Sandbox profile; absent on servers predating environment selection.

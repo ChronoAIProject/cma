@@ -7,6 +7,7 @@ import type {
   AgentUsage,
   ConfiguredSandboxCapacity,
   CreateAgentInput,
+  CreateInlineWorkspaceInput,
   CreateSandboxInput,
   CreateWorkspaceInput,
   ProfileReference,
@@ -14,13 +15,22 @@ import type {
   SandboxDetail,
   SandboxEvent,
   SandboxSummary,
+  SandboxRuntimeUpdate,
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
-import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
+import type {
+  AccessibleAgentSource,
+  AgentAttachment,
+  AgentProvenance,
+  AgentResources,
+} from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
+import type { ConnectionTarget } from '../connections/client';
+import type { AgentFilesClient } from './agentFiles';
+import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -39,10 +49,182 @@ export interface AgentStreamOptions extends ReadOptions {
   readonly onEvent: (event: AgentLiveEvent) => void;
 }
 
+export interface AgentLifecycleCreateInput {
+  readonly name: string;
+  readonly workspace_id?: string;
+  readonly sandbox_id?: string;
+  readonly image?: { readonly id: string; readonly version?: string };
+  readonly repository?: { readonly url: string; readonly ref?: string };
+  readonly profile?: {
+    readonly model?: string;
+    readonly reasoning_effort?: string;
+    readonly permission_mode?: 'guarded' | 'autonomous';
+    readonly system_prompt?: string;
+    readonly skills?: readonly { readonly id: string; readonly version?: string }[];
+    readonly permissions?: { readonly services: readonly string[] };
+  };
+}
+
+export interface AgentSkillState {
+  readonly id: string;
+  readonly name?: string;
+  readonly version: string;
+  readonly source: 'ornn';
+  readonly status: 'installed' | 'pending' | 'failed';
+  readonly error?: string;
+}
+export interface AgentSkillsView {
+  readonly can_install: boolean;
+  readonly unavailable_reason?: string;
+  readonly items: readonly AgentSkillState[];
+  readonly pending: boolean;
+}
+
+export interface AgentModelOption {
+  readonly id: string;
+  readonly label: string;
+  readonly available: boolean;
+}
+
+export interface AgentPreferencesView {
+  readonly title?: string;
+  readonly system_prompt: string;
+  readonly prompt_pending: boolean;
+  readonly prompt_supported: boolean;
+  readonly revision: number;
+}
+export interface UpdateAgentPreferences {
+  readonly expected_revision: number;
+  readonly title?: string;
+  readonly system_prompt?: string;
+}
+
+export interface AgentSettingsView {
+  readonly pending?: boolean;
+  readonly model: string;
+  readonly reasoning_effort: 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
+  readonly permission_mode: 'guarded' | 'autonomous';
+}
+
+export type MessageVote = 'up' | 'down' | null;
+export interface MessageFeedback {
+  readonly message_id: string;
+  readonly vote: MessageVote;
+}
+
+export interface AgentLifecycleCreateReceipt {
+  readonly id: string;
+  readonly status?: string;
+}
+
+export interface AgentLifecycleOperationEvent {
+  readonly sequence: number;
+  readonly phase: string;
+  readonly status: string;
+  readonly message: string;
+  readonly occurred_at: string;
+}
+
+export interface AgentLifecycleOperationView {
+  readonly id: string;
+  readonly status: string;
+  readonly phase: string;
+  readonly agent_id?: string;
+  readonly error?: string;
+  readonly events: readonly AgentLifecycleOperationEvent[];
+  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
+}
+
+export interface AgentLifecycleConnectionRequired {
+  readonly code: 'connection_required';
+  readonly services: readonly string[];
+  readonly target: ConnectionTarget;
+}
+
+export class AgentLifecycleCreateError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly connection?: AgentLifecycleConnectionRequired;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    connection?: AgentLifecycleConnectionRequired,
+  ) {
+    super(message);
+    this.name = 'AgentLifecycleCreateError';
+    this.status = status;
+    this.code = code;
+    this.connection = connection;
+  }
+}
+
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly documents?: DocumentsClient;
+  readonly files?: AgentFilesClient;
+  readonly readMessageFeedback?: (
+    agentId: string,
+    options?: ReadOptions,
+  ) => Promise<readonly MessageFeedback[]>;
+  readonly setMessageFeedback?: (
+    agentId: string,
+    messageId: string,
+    vote: MessageVote,
+    options?: ReadOptions,
+  ) => Promise<MessageFeedback>;
+  readonly updateSandboxRuntime?: (
+    id: string,
+    targetVersion: string,
+    options: CommandOptions,
+  ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
+  readonly uploadAgentAttachment?: (
+    id: string,
+    file: File,
+    options: CommandOptions,
+  ) => Promise<AgentAttachment>;
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
+  /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
+  readonly createAgentLifecycle?: (
+    input: AgentLifecycleCreateInput,
+    options: CommandOptions,
+  ) => Promise<AgentLifecycleCreateReceipt>;
+  readonly readAgentLifecycle?: (
+    operationId: string,
+    options?: ReadOptions,
+  ) => Promise<AgentLifecycleOperationView>;
+  readonly readAgentSkills?: (id: string, options?: ReadOptions) => Promise<AgentSkillsView>;
+  readonly installAgentSkill?: (
+    id: string,
+    skill: { readonly id: string; readonly version: string },
+    options: CommandOptions,
+  ) => Promise<AgentSkillsView>;
+  readonly readAgentModels?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<readonly AgentModelOption[]>;
+  readonly readAgentPreferences?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly updateAgentPreferences?: (
+    id: string,
+    preferences: UpdateAgentPreferences,
+    options: CommandOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
+  readonly updateAgentSettings?: (
+    id: string,
+    settings: AgentSettingsView,
+    options: CommandOptions,
+  ) => Promise<AgentSettingsView>;
+  readonly grantSandboxServiceAccess?: (
+    id: string,
+    services: readonly string[],
+    options: CommandOptions,
+  ) => Promise<void>;
   readonly botViews?: BotClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
@@ -53,6 +235,7 @@ export interface CmaWebClient {
     options?: PageOptions<number>,
   ): Promise<ResourcePage<AgentEvent, number>>;
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
+  exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
   readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
@@ -72,6 +255,11 @@ export interface CmaWebClient {
   createWorkspace(
     sandboxId: string,
     input: CreateWorkspaceInput,
+    options: CommandOptions,
+  ): Promise<WorkspaceDetail>;
+  createInlineWorkspace(
+    sandboxId: string,
+    input: CreateInlineWorkspaceInput,
     options: CommandOptions,
   ): Promise<WorkspaceDetail>;
   createAgent(
@@ -107,6 +295,7 @@ export const unavailableClient: CmaWebClient = {
   readAgent: unavailable,
   readAgentEvents: unavailable,
   readAgentTranscript: unavailable,
+  exportAgentHistory: unavailable,
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
   readAgentSource: unavailable,
@@ -118,6 +307,7 @@ export const unavailableClient: CmaWebClient = {
   runAgent: unavailable,
   createSandbox: unavailable,
   createWorkspace: unavailable,
+  createInlineWorkspace: unavailable,
   createAgent: unavailable,
   pauseSandbox: unavailable,
   reviveSandbox: unavailable,

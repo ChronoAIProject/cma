@@ -1,6 +1,7 @@
 //! Safe common event vocabulary, separate from the v1 raw-log projection.
 use crate::agents::{
-    AgentOperationDelivery, AgentOperationKind, AgentWorkStep, FirstMessageDelivery,
+    AgentOperationDelivery, AgentOperationKind, AgentSkillInstallStatus, AgentWorkStep,
+    FirstMessageDelivery,
 };
 use crate::instances::AgentStatus;
 use serde::Deserialize;
@@ -72,6 +73,13 @@ pub enum AgentEventKind {
         step: AgentWorkStep,
         /// The public `failure` observation from this record.
         failure: TypedFailure,
+    },
+    /// Runtime-confirmed state of an additive Agent skill.
+    SkillInstallationChanged {
+        /// Owner-visible skill identity.
+        skill_id: String,
+        /// Pending, confirmed installed, or failed installation.
+        status: AgentSkillInstallStatus,
     },
     /// Safe durable turn started record.
     TurnStarted {
@@ -168,6 +176,28 @@ pub enum AgentEventKind {
         /// The public `context_window` observation from this record.
         #[serde(deserialize_with = "super::types::required_nullable")]
         context_window: Option<u64>,
+    },
+    /// Updated canonical provider metadata, available to personal owners.
+    RuntimeMetadataChanged {
+        /// Current metadata snapshot.
+        metadata: crate::agents::AgentRuntimeMetadata,
+    },
+    /// Actual lifetime and per-turn consumed usage, independent of context size.
+    UsageUpdated {
+        /// Lifetime input, including cached input.
+        input_tokens: u64,
+        /// Lifetime output.
+        output_tokens: u64,
+        /// Current context observation.
+        context_used: u64,
+        /// Known context limit.
+        context_window: Option<u64>,
+        /// Most recently observed durable turn.
+        turn_sequence: Option<u64>,
+        /// Consumed input in that turn.
+        turn_input_tokens: u64,
+        /// Consumed output in that turn.
+        turn_output_tokens: u64,
     },
     /// Safe durable mode changed record.
     ModeChanged {

@@ -11,10 +11,11 @@ use super::documents::{read_trigger, trigger_document};
 use super::queries;
 use super::{driver_error, MongoTriggerDefinitionStore, MUTATION_ATTEMPTS};
 
-pub(super) async fn delete_unpublished(
+pub(super) async fn delete(
     store: &MongoTriggerDefinitionStore,
     id: &TriggerId,
     owner: &SubjectId,
+    archived_at: String,
 ) -> Result<(), TriggerStoreError> {
     let result = store
         .definitions
@@ -30,10 +31,11 @@ pub(super) async fn delete_unpublished(
     if result.deleted_count == 1 {
         return Ok(());
     }
-    match queries::owned(store, id, owner).await? {
-        Some(_) => Err(TriggerStoreError::AlreadyPublished),
-        None => Err(TriggerStoreError::NotFound),
-    }
+    owned(store, id, owner, |trigger| {
+        trigger.archive(archived_at.clone())?;
+        Ok(())
+    })
+    .await
 }
 
 pub(super) async fn owned<T>(

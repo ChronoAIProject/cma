@@ -12,20 +12,43 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod consumer;
+mod custom_attachments;
+mod extensions;
+mod lookup;
+mod partition;
 mod platform;
+mod routing;
+mod routing_validation;
 mod secrets;
+mod source_id;
 mod telegram;
+pub use consumer::{
+    Consumer, ConsumerReply, ConsumerView, DefaultConsumer, EffectiveReply, PublishPolicy,
+    ReplyChoice,
+};
+pub use custom_attachments::{
+    CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
+    MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
+};
+pub use extensions::Extensions;
+pub use routing::{
+    default_receives_all, ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern,
+    ReplyLabel, RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
+    MAX_MATCH_ENTRY_BYTES, MAX_RULES, MAX_TARGETS, ROUTING_POLICY_VERSION,
+};
 pub use secrets::{ChannelSecrets, Secret};
+pub use source_id::{SourceId, AGENT_SOURCE_ID};
+mod sources;
 mod validation;
 pub use platform::Platform;
 pub(crate) use validation::validate_https_url;
-use validation::{
-    validate_admission, validate_custom_auth, validate_hash, validate_nonempty_unique,
-    validate_relay_identity,
-};
+use validation::{validate_admission, validate_hash, validate_relay_identity};
 
 pub const CHANNEL_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCES: usize = 4;
+/// The most sources a reader accepts: Telegram, one relay per platform and custom.
+pub const MAX_EXTENDED_SOURCES: usize = 8;
 pub const MAX_ROUTE_IDS: usize = 64;
 pub const MAX_SINKS: usize = 3;
 pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
@@ -117,6 +140,9 @@ pub enum Source {
         prompt_template: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<Value>,
+        // Omitted when absent, so definitions without it keep their bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<CustomAttachments>,
     },
 }
 
@@ -138,7 +164,45 @@ pub enum AdmissionPolicy {
         senders: IdentityAdmission,
         chats: IdentityAdmission,
         groups: GroupAdmission,
+        /// Native exact bot mentions only. The caller must bound downstream
+        /// automated execution; the gateway grants no human execution identity.
+        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
+        bot_messages: BotMessageAdmission,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BotMessageAdmission {
+    #[default]
+    Deny,
+    NativeMentions,
+}
+impl BotMessageAdmission {
+    pub fn is_deny(&self) -> bool {
+        *self == Self::Deny
+    }
+}
+impl AdmissionPolicy {
+    pub fn native_bot_mentions(&self) -> bool {
+        matches!(
+            self,
+            Self::Scoped {
+                bot_messages: BotMessageAdmission::NativeMentions,
+                ..
+            }
+        )
+    }
+}
+impl Source {
+    pub fn native_bot_mentions(&self) -> bool {
+        match self {
+            Self::Telegram { admission, .. } | Self::NyxidRelay { admission, .. } => {
+                admission.native_bot_mentions()
+            }
+            Self::Custom { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -180,6 +244,9 @@ pub enum PartitionKey {
 pub struct PartitionRule {
     pub version: u16,
     pub key: PartitionKey,
+    /// The key for custom events on a chat-keyed channel; absent means `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_key: Option<PartitionKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -219,6 +286,9 @@ pub struct ChannelDefinition {
     pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
+    /// Multi-consumer routing; absent on every legacy channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingPolicy>,
     #[serde(default, skip_serializing)]
     pub secrets: ChannelSecrets,
     pub created_at: String,
@@ -235,8 +305,45 @@ pub struct ChannelCreation {
 }
 
 impl ChannelDefinition {
-    /// Validate the complete definition before it is persisted.
+    /// The reader: the rules every definition this image accepts must meet,
+    /// whether restored from storage or admitted by management. It accepts
+    /// every legacy definition, the extended source and partition shapes
+    /// only where the legacy rules refuse them or `custom_key` is present,
+    /// and a routing policy only when it meets its own rules against the
+    /// rest of the definition. Writes of those shapes are refused
+    /// separately, by the write gate.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        self.validate_head()?;
+        if self.validate_legacy_sources_and_partition().is_err() {
+            sources::validate_extended_sources(&self.sources, &self.secrets)?;
+            self.partition.validate_extended(&self.sources)?;
+        } else if self.partition.custom_key.is_some() {
+            self.partition.validate_extended(&self.sources)?;
+        }
+        self.validate_tail()?;
+        self.validate_routing()
+    }
+
+    /// Today's complete validation, kept verbatim; it ignores `routing`,
+    /// which older images cannot read at all. The write gate answers a
+    /// write that older images could not read with this error while its flag
+    /// is off, so the caller sees the pointer and message it always has.
+    pub fn validate_legacy(&self) -> Result<(), ValidationError> {
+        // The first error wins, so this order is part of the refusal contract.
+        self.validate_head()?;
+        self.validate_legacy_sources_and_partition()?;
+        self.validate_tail()
+    }
+
+    /// Today's source and partition rules alone. They are the only rules the
+    /// multi-consumer extensions relax, so they decide whether an older image
+    /// can still read a definition, for readers and the routing audit alike.
+    pub fn validate_legacy_sources_and_partition(&self) -> Result<(), ValidationError> {
+        sources::validate_legacy_sources(&self.sources, &self.secrets)?;
+        self.partition.validate_legacy(&self.sources)
+    }
+
+    fn validate_head(&self) -> Result<(), ValidationError> {
         if self.schema_version != CHANNEL_SCHEMA_VERSION {
             return Err(ValidationError::new(
                 "/schema_version",
@@ -257,112 +364,13 @@ impl ChannelDefinition {
                 "does not match profile",
             ));
         }
-        if self.sources.is_empty() || self.sources.len() > MAX_SOURCES {
-            return Err(ValidationError::new(
-                "/sources",
-                "must contain one to four sources",
-            ));
-        }
-        let mut variants = BTreeSet::new();
-        let mut relay_platforms = BTreeSet::new();
-        let mut has_custom = false;
-        for (index, source) in self.sources.iter().enumerate() {
-            let pointer = format!("/sources/{index}");
-            match source {
-                Source::Telegram {
-                    bot_id,
-                    bot_username,
-                    admission,
-                } => {
-                    if !variants.insert("telegram") {
-                        return Err(ValidationError::new(
-                            &pointer,
-                            "source variant is duplicated",
-                        ));
-                    }
-                    telegram::validate(
-                        bot_id,
-                        bot_username.as_deref(),
-                        admission,
-                        &self.secrets,
-                        &pointer,
-                    )?;
-                }
-                Source::NyxidRelay {
-                    issuer,
-                    jwks_url,
-                    key_id,
-                    route_ids,
-                    platform,
-                    bot_username,
-                    bot_id,
-                    trust_normalized,
-                    admission,
-                } => {
-                    if !variants.insert("nyxid_relay") {
-                        return Err(ValidationError::new(
-                            &pointer,
-                            "source variant is duplicated",
-                        ));
-                    }
-                    if !relay_platforms.insert(*platform) {
-                        return Err(ValidationError::new(&pointer, "platform is duplicated"));
-                    }
-                    require_string(issuer, &format!("{pointer}/issuer"), 1, 512)?;
-                    require_string(key_id, &format!("{pointer}/key_id"), 1, 512)?;
-                    validate_https_url(jwks_url, &format!("{pointer}/jwks_url"))?;
-                    // An unbound source admits no callbacks until its owner attaches routes.
-                    if !route_ids.is_empty() {
-                        validate_nonempty_unique(
-                            route_ids,
-                            &format!("{pointer}/route_ids"),
-                            MAX_ROUTE_IDS,
-                        )?;
-                    }
-                    validate_relay_identity(
-                        *platform,
-                        bot_username.as_deref(),
-                        bot_id.as_deref(),
-                        *trust_normalized,
-                        &pointer,
-                    )?;
-                    validate_admission(admission, &pointer)?;
-                }
-                Source::Custom {
-                    auth,
-                    prompt_template,
-                    schema,
-                } => {
-                    if has_custom {
-                        return Err(ValidationError::new(
-                            &pointer,
-                            "source variant is duplicated",
-                        ));
-                    }
-                    has_custom = true;
-                    variants.insert("custom");
-                    validate_custom_auth(auth, &pointer)?;
-                    if let Some(prompt) = prompt_template {
-                        require_string(
-                            prompt,
-                            &format!("{pointer}/prompt_template"),
-                            0,
-                            MAX_PROMPT_TEMPLATE_BYTES,
-                        )?;
-                    }
-                    if schema.is_some() {
-                        return Err(ValidationError::new(
-                            format!("{pointer}/schema"),
-                            "must be null in v1",
-                        ));
-                    }
-                }
-            }
-        }
+        Ok(())
+    }
+
+    fn validate_tail(&self) -> Result<(), ValidationError> {
         if let Some(contract) = &self.reply.thread_contract {
             contract.validate(self)?;
         }
-        self.partition.validate(&self.sources)?;
         if self.reply.sinks.len() > MAX_SINKS {
             return Err(ValidationError::new("/reply/sinks", "too many sinks"));
         }
@@ -377,6 +385,7 @@ impl ChannelDefinition {
                 )?;
             }
         }
+        // Readers accept a channel with no sources; its replies still need one.
         if self
             .reply
             .sinks
@@ -403,7 +412,7 @@ impl ChannelDefinition {
             .as_object()
             .cloned()
             .expect("channel definition is an object");
-        object.insert("secrets".into(), json!({
+        let mut secrets = json!({
             "agent_key_hash": self.secrets.agent_key_hash,
             "channel_key": self.secrets.channel_key.as_ref().map(Secret::as_str),
             "hmac_secrets": self.secrets.hmac_secrets.iter().map(|(key, secret)| {
@@ -412,7 +421,18 @@ impl ChannelDefinition {
             "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
             "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
             "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
-        }));
+        });
+        // Emitted only when present, so a legacy blob keeps its exact bytes and
+        // an older image, which refuses the unknown key, can still read it.
+        if !self.secrets.consumer_keys.is_empty() {
+            secrets["consumer_keys"] = self
+                .secrets
+                .consumer_keys
+                .iter()
+                .map(|(id, secret)| json!([id, secret.as_str()]))
+                .collect();
+        }
+        object.insert("secrets".into(), secrets);
         Value::Object(object)
     }
 
@@ -428,50 +448,5 @@ impl ChannelDefinition {
             json!({ "agent_key_hash": self.secrets.agent_key_hash }),
         );
         Value::Object(object)
-    }
-}
-
-impl PartitionRule {
-    fn validate(&self, sources: &[Source]) -> Result<(), ValidationError> {
-        if self.version != 1 {
-            return Err(ValidationError::new(
-                "/partition/version",
-                "unsupported version",
-            ));
-        }
-        let has_custom = sources
-            .iter()
-            .any(|source| matches!(source, Source::Custom { .. }));
-        let has_relay = sources
-            .iter()
-            .any(|source| matches!(source, Source::NyxidRelay { .. } | Source::Telegram { .. }));
-        if has_custom
-            && !matches!(
-                self.key,
-                PartitionKey::Fixed | PartitionKey::EventSubject | PartitionKey::PerEvent
-            )
-        {
-            return Err(ValidationError::new(
-                "/partition/key",
-                "custom sources require fixed, event_subject, or per_event",
-            ));
-        }
-        if matches!(
-            self.key,
-            PartitionKey::EventSubject | PartitionKey::PerEvent
-        ) && !has_custom
-        {
-            return Err(ValidationError::new(
-                "/partition/key",
-                "requires a custom source",
-            ));
-        }
-        if matches!(self.key, PartitionKey::Thread) && !has_relay {
-            return Err(ValidationError::new(
-                "/partition/key",
-                "requires a chat source",
-            ));
-        }
-        Ok(())
     }
 }

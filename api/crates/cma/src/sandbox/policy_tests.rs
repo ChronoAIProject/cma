@@ -57,7 +57,7 @@ fn live_policy() -> (Arc<MemorySettings>, LiveSandboxPolicy) {
 async fn policy_reads_live_limits_retention_and_configured_services() {
     let (store, policy) = live_policy();
     let initial = policy.current_sandbox_policy().await.unwrap();
-    assert_eq!(initial.max_sandboxes_per_owner, 3);
+    assert_eq!(initial.max_sandboxes_per_owner, 10);
     assert_eq!(initial.max_sandboxes_per_visitor, 1);
     assert_eq!(initial.inactivity_pause_after_seconds, 900);
     assert_eq!(initial.retention_grace, Duration::from_secs(7 * 86_400));

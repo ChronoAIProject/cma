@@ -56,9 +56,20 @@ string_enum! { /// Stop reason accepted by the owner-facing command.
     pub enum StopReason { Owner => "owner" }
 }
 
+string_enum! { /// Authoritative first-message admission purpose; absent on legacy records.
+    pub enum FirstMessagePurpose { Setup => "setup", Task => "task" }
+}
+string_enum! { /// Provenance of a provider description; absent when unknown.
+    pub enum AgentDescriptionSource { ProviderTitle => "provider_title", PromptPreview => "prompt_preview" }
+}
+
 /// Durable state of the message supplied at Agent creation.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FirstMessageState {
+    /// Admission purpose; absent means unknown.
+    pub purpose: Option<FirstMessagePurpose>,
+    /// Exact durable turn, once dispatch is fenced.
+    pub turn_sequence: Option<u64>,
     /// Current delivery state.
     pub state: FirstMessageDelivery,
     /// Queue timestamp.
@@ -151,6 +162,11 @@ pub struct AgentSandbox {
 /// Owner-facing Agent list item.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentSummary {
+    /// Canonical runtime observations, absent on retained older runtimes.
+    pub runtime_metadata: Option<AgentRuntimeMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit owner rename, which takes precedence over a provider-generated title.
+    pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
     /// Owning Sandbox identifier.
@@ -173,7 +189,23 @@ pub struct AgentSummary {
 
 /// Complete owner-facing Agent resource with its hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentBootstrap {
+    /// Exact lifecycle operation that admitted this Agent and its fresh Sandbox.
+    pub operation_id: String,
+    /// Original owned Sandbox identifier.
+    pub sandbox_id: String,
+    /// Exact profile Workspace reserved for this Agent.
+    pub workspace_id: String,
+}
+
+/// Complete owner-facing Agent resource with its hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {
+    /// Canonical runtime observations, absent on retained older runtimes.
+    pub runtime_metadata: Option<AgentRuntimeMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit owner rename, which takes precedence over a provider-generated title.
+    pub owner_title: Option<String>,
     /// Agent identifier.
     pub id: String,
     /// Current status.
@@ -186,6 +218,8 @@ pub struct Agent {
     pub workspace: AgentWorkspace,
     /// Owning Sandbox.
     pub sandbox: AgentSandbox,
+    /// Fresh lifecycle bootstrap lineage while messages can be queued before runtime readiness.
+    pub bootstrap: Option<AgentBootstrap>,
     /// Public conformance identifiers.
     pub conforms_to: Vec<String>,
     /// Granted capability identifiers.
@@ -328,6 +362,8 @@ pub struct AgentTranscript {
 /// Durable usage folded through one log position.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentUsage {
+    /// Latest observed turn, identified independently of context compaction.
+    pub current_turn: Option<AgentTurnUsage>,
     /// Agent identifier.
     pub agent_id: String,
     /// Last included event sequence.
@@ -373,4 +409,27 @@ pub struct AgentResources {
     pub received_bytes: Option<u64>,
     /// Sent network bytes, when known.
     pub sent_bytes: Option<u64>,
+}
+
+/// Canonical provider conversation metadata; individual shell commands do not change it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentRuntimeMetadata {
+    /// Persisted conversation working directory.
+    pub working_directory: Option<String>,
+    /// Provider conversation description.
+    pub description: Option<String>,
+    /// Explicit title or prompt preview; absent means unknown.
+    pub description_source: Option<AgentDescriptionSource>,
+    /// True only when exact input evidence identifies an automatic setup preview.
+    pub description_is_setup_preview: Option<bool>,
+}
+/// Actual consumed usage within one durable Agent turn.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentTurnUsage {
+    /// Durable turn sequence.
+    pub turn_sequence: u64,
+    /// Input tokens, including cached input.
+    pub input_tokens: u64,
+    /// Output tokens reported by the provider.
+    pub output_tokens: u64,
 }

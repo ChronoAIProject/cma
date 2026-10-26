@@ -1,3 +1,4 @@
+import { documentDispatch } from './public-contract/documents.js';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -32,6 +33,7 @@ import {
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
 
 const dispatch = {
+  ...documentDispatch,
   ...botDispatch,
   ...eventWorkerDispatch,
   ...resourceDispatch,
@@ -169,9 +171,14 @@ describe('shared public contract', () => {
           }
           expect(headers.get(name), name).toBe(value);
         }
-        expect(init?.body === undefined ? undefined : JSON.parse(String(init.body))).toEqual(
-          fixture.id === 'responses-conversation-content-type' ? {} : fixture.request.body,
-        );
+        if (fixture.operation === 'POST /api/v1/agents/{id}/attachments') {
+          expect(init?.body).toBeInstanceOf(Blob);
+          expect(await (init?.body as Blob).text()).toBe(fixture.request.rawBody);
+        } else {
+          expect(init?.body === undefined ? undefined : JSON.parse(String(init.body))).toEqual(
+            fixture.id === 'responses-conversation-content-type' ? {} : fixture.request.body,
+          );
+        }
         return response(fixture);
       });
       const client = createClient({

@@ -143,6 +143,11 @@ pub(super) fn record_path(state_root: &Path, record: &Record) -> PathBuf {
             field(&mut digest, workspace);
             field(&mut digest, name);
         }
+        ResourceKey::AgentSkill { agent_id, skill_id } => {
+            digest.update(b"agent_skill\0");
+            field(&mut digest, agent_id);
+            field(&mut digest, skill_id);
+        }
         ResourceKey::AgentHome { agent_id } => {
             digest.update(b"agent_home\0");
             field(&mut digest, agent_id);

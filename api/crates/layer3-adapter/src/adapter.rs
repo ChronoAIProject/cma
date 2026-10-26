@@ -24,7 +24,90 @@ pub trait SandboxAdapter: Send + Sync {
         None
     }
 
+    /// Persist the returned storage authority before allocating a home. Runtime
+    /// selection and storage policy must remain stable across retries.
+    async fn reserve_home_request(
+        &self,
+        _runtime: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::HomeVolumeRequest> {
+        Ok(home.clone())
+    }
+
+    /// Verify retained home authority before provider operations that only take a handle.
+    fn verify_retained_home_route(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        None
+    }
+    /// Resolve pool authority from the durable home before claim recovery or cleanup.
+    fn native_pools_for_home(
+        &self,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        Ok(self.native_pools())
+    }
+
+    /// Select a provider and an eligible pool before any home allocation. The
+    /// caller persists the returned binding (or ordinary home decision).
+    async fn select_native_pool(
+        &self,
+        _request: &RuntimeProvisionRequest,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        Ok(None)
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
+
+    /// Stop the exact runtime Pod while retaining its provider object and volume.
+    async fn suspend_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime suspension is unavailable".into(),
+        ))
+    }
+
+    async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime suspension observation is unavailable".into(),
+        ))
+    }
+
+    /// Delete a persisted provider identity and all Pods without requiring a live process.
+    async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "retained runtime deletion is unavailable".into(),
+        ))
+    }
+
+    /// Resume the same provider object with a reserved generation and admitted service scope.
+    async fn resume_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _next: &RuntimeProvisionRequest,
+    ) -> Result<RuntimeHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime resumption is unavailable".into(),
+        ))
+    }
+
+    /// Explicitly replace only the image of an idle, suspended native runtime.
+    /// The successor pins its image and retains the original provider and home.
+    async fn upgrade_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _next: &RuntimeProvisionRequest,
+    ) -> Result<RuntimeHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "native runtime upgrades are unavailable".into(),
+        ))
+    }
 
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
@@ -70,6 +153,14 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Optional exact termination evidence. Queried only after runtime loss is confirmed.
+    async fn runtime_termination(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        Ok(None)
+    }
+
     /// Observe the complete provider inventory or refuse the whole result.
     async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
         Err(crate::AdapterError::Unsupported(
@@ -87,10 +178,93 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Collect adoption and process status within one call. Implementations may
+    /// share fresh predicates inside this call; effects still obtain fresh fences.
+    async fn inspect_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        let Some(observation) = self.adopt_runtime(request).await? else {
+            return Ok(None);
+        };
+        if observation.handle != request.handle
+            || observation.sandbox_id != request.spec.sandbox_id
+            || observation.generation != request.generation
+            || !observation.lifecycle.is_running()
+        {
+            return Err(crate::AdapterError::Rejected(
+                "provider did not adopt the exact bound runtime".into(),
+            ));
+        }
+        let status = if request.spec.home_volume.is_some() {
+            Some(self.runtime_status(&request.handle).await?)
+        } else {
+            None
+        };
+        Ok(Some(crate::RuntimeInspection {
+            observation,
+            status,
+        }))
+    }
+
     /// Reclaim one exact provider observation without trusting a reused handle.
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "observed runtime reclamation is not supported".into(),
+        ))
+    }
+
+    /// Publish an exact owner upload within the retained home, never an arbitrary path.
+    async fn upload_agent_attachment(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentAttachmentRequest,
+        _content: Vec<u8>,
+    ) -> Result<crate::AgentAttachmentReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "agent attachments are unavailable on this runtime".into(),
+        ))
+    }
+
+    /// List one directory in the retained runtime home. Paths are relative to
+    /// that home and are validated by the runtime supervisor.
+    async fn list_agent_files(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileListRequest,
+    ) -> Result<crate::AgentFileListReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn read_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileReadRequest,
+    ) -> Result<crate::AgentFileReadReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn write_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileWriteRequest,
+    ) -> Result<crate::AgentFileWriteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn delete_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileDeleteRequest,
+    ) -> Result<crate::AgentFileDeleteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
         ))
     }
 
@@ -189,6 +363,17 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    async fn install_agent_skill(
+        &self,
+        _handle: &RuntimeHandle,
+        _authority_fence: u64,
+        _request: &crate::AgentSkillInstallRequest,
+    ) -> crate::Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "live skill installation is unavailable".into(),
+        ))
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
@@ -242,6 +427,18 @@ pub trait SandboxAdapter: Send + Sync {
         handle: &RuntimeHandle,
         agent: &AgentSlot,
     ) -> Result<ConversationSnapshot>;
+
+    /// Export the agent-sandbox-owned session JSONL for one admitted Agent.
+    /// Implementations preserve the runtime's bounded NDJSON payload.
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &AgentSlot,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
+    }
 
     /// Exact disposable paths relative to the sandbox home, in canonical order.
     /// Callers supply every retained agent slot, including terminal agents.

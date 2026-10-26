@@ -2,6 +2,11 @@ use layer3_adapter::wire::WireOperation;
 
 pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
     Some(match tag {
+        "list_agent_files" => WireOperation::ListAgentFiles,
+        "read_agent_file" => WireOperation::ReadAgentFile,
+        "write_agent_file" => WireOperation::WriteAgentFile,
+        "delete_agent_file" => WireOperation::DeleteAgentFile,
+        "upload_agent_attachment" => WireOperation::UploadAgentAttachment,
         "cache_skill_archive" => WireOperation::CacheSkillArchive,
         "runtime_status" => WireOperation::RuntimeStatus,
         "tool_proxy_status" => WireOperation::ToolProxyStatus,
@@ -15,6 +20,7 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "add_worktree" => WireOperation::AddWorktree,
         "remove_worktree" => WireOperation::RemoveWorktree,
         "materialize_agent_home" => WireOperation::MaterializeAgentHome,
+        "install_agent_skill" => WireOperation::InstallAgentSkill,
         "remove_agent_home" => WireOperation::RemoveAgentHome,
         "open_agent" => WireOperation::OpenAgent,
         "close_agent" => WireOperation::CloseAgent,

@@ -1038,15 +1038,15 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
@@ -1054,7 +1054,6 @@
               "pause_after_seconds": 900
             },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -1181,11 +1180,6 @@
             "revive": {
               "allowed": false,
               "reason": "not_paused"
-            },
-            "latest_snapshot": {
-              "epoch": 1,
-              "saved_at": "2026-09-05T00:29:00Z",
-              "download_url": "/api/v1/sandboxes/sbx_route/snapshots/1/download"
             },
             "operation": {
               "purpose": "revive",

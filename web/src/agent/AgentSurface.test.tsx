@@ -4,11 +4,72 @@ import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
 import { ApiError } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from '../api/context';
-import { workspaceFixture } from '../test/hierarchy';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript, type ConversationState } from './conversation';
 import type { AgentController, AgentResourceState } from './controller';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
+
+it('places settings inside the composer box and preserves draft and busy-turn apply rules', async () => {
+  const defaults = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  } as const;
+  const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
+  const client = agentClient({
+    readAgentSettings: async () => defaults,
+    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }],
+    updateAgentSettings: update,
+  });
+  const draw = (busy: boolean) => (
+    <CmaClientProvider client={client}>
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller({
+          status: 'ready',
+          detail: { ...AGENT_DETAIL, status: busy ? 'working' : 'ready' },
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        })}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  const chip = await screen.findByRole('button', { name: /^Model and reasoning effort/ });
+  expect(chip).toHaveTextContent('GPT-6 High');
+  const form = screen.getByRole('form', { name: 'Message Agent' });
+  // Settings sit inside the composer box, in the row of controls under the draft.
+  const controls = form.querySelector('.agent-composer__box > .agent-composer__controls');
+  expect(controls).not.toBeNull();
+  expect(controls!.previousElementSibling).toBe(screen.getByRole('textbox', { name: 'Message' }));
+  expect(controls).toContainElement(chip);
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Permission mode' }));
+  expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Retain this draft' },
+  });
+  const actor = userEvent.setup();
+  await actor.click(chip);
+  const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+  await actor.keyboard('{ArrowLeft}');
+  expect(slider).toHaveAttribute('aria-valuetext', 'Medium');
+  expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
+  expect(controls).toContainElement(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(update).not.toHaveBeenCalled();
+  view.rerender(draw(false));
+  expect(chip).toHaveTextContent('GPT-6 Medium');
+  await actor.click(screen.getByRole('button', { name: 'Apply settings' }));
+  expect(update).toHaveBeenCalledWith(
+    'agt_1',
+    { ...defaults, reasoning_effort: 'medium' },
+    expect.objectContaining({ idempotencyKey: expect.any(String) }),
+  );
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain this draft');
+});
 
 it('shows authorized history while later pages load and preserves the editable draft when hydration finishes', async () => {
   let finish!: (page: { items: [] }) => void;
@@ -39,18 +100,18 @@ it('shows authorized history while later pages load and preserves the editable d
     </CmaClientProvider>,
   );
   expect(await screen.findByText('The repository is ready.')).toBeInTheDocument();
-  expect(
-    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
-  ).toBeInTheDocument();
+  const loadingNotice = screen
+    .getByText('Loading conversation activity.')
+    .closest('[role="status"]');
+  expect(loadingNotice).toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   expect(draft).toBeEnabled();
   fireEvent.change(draft, { target: { value: 'Keep this draft' } });
-  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   await act(async () => finish({ items: [] }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
-  expect(
-    screen.getByText('Loading conversation activity.').closest('[role="status"]'),
-  ).toHaveAttribute('inert');
+  // Retain the node: a busy test worker can finish the exit before waitFor resolves.
+  expect(loadingNotice).toHaveAttribute('inert');
   await waitFor(() =>
     expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument(),
   );
@@ -99,7 +160,7 @@ it('preserves a draft and visible history while incomplete event activity retrie
     const draft = screen.getByRole('textbox', { name: 'Message' });
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: 'Retain this unsubmitted draft' } });
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
     unavailable = false;
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(
@@ -149,6 +210,115 @@ function controller(
   };
 }
 
+const ALL_ACTIONS = {
+  createWorkspace: true,
+  createAgent: true,
+  pauseSandbox: true,
+  deleteSandbox: true,
+  removeWorkspace: true,
+  stopAgent: true,
+  deleteAgent: true,
+  exportHistory: true,
+};
+
+it('offers Stop, Export and Delete from the header, with the reason Delete is unavailable', async () => {
+  const onAgentAction = vi.fn();
+  const actor = userEvent.setup();
+  const ready = controller(
+    {
+      status: 'ready',
+      detail: AGENT_DETAIL,
+      workspace: workspaceFixture(),
+      conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+    },
+    undefined,
+    { progressObservation: { sandbox: sandboxFixture(), stale: false } },
+  );
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={ready}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+      permissions={ALL_ACTIONS}
+      onAgentAction={onAgentAction}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(
+    screen.getByRole('menuitem', {
+      name: 'Delete agent Stop this Agent before deleting it and its Worktree.',
+    }),
+  ).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeInTheDocument();
+  // Destructive last, after a separator.
+  // Details first, then the creation origin, then the actions with destructive last.
+  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
+    'Stop agent',
+    'Export history',
+    'Delete agent Stop this Agent before deleting it and its Worktree.',
+  ]);
+  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(3);
+  await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
+  expect(onAgentAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
+});
+
+it('holds every header action while another action is being confirmed', async () => {
+  const onAgentAction = vi.fn();
+  const actor = userEvent.setup();
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller(
+        {
+          status: 'ready',
+          detail: AGENT_DETAIL,
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+        },
+        undefined,
+        { progressObservation: { sandbox: sandboxFixture(), stale: false } },
+      )}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+      permissions={ALL_ACTIONS}
+      actionsBusy
+      onAgentAction={onAgentAction}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  const stop = screen.getByRole('menuitem', {
+    name: 'Stop agent Another action is still being confirmed.',
+  });
+  await actor.click(stop);
+  expect(onAgentAction).not.toHaveBeenCalled();
+});
+
+it('offers only the Details toggle and creation origin to a reader without actions', async () => {
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller({
+        status: 'ready',
+        detail: AGENT_DETAIL,
+        workspace: workspaceFixture(),
+        conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+      })}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
+  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
+    'Show Agent details',
+  ]);
+  expect(screen.getByRole('menu')).toHaveTextContent('Creation origin unavailable');
+});
+
 it('holds approval and Stop response controls during history hydration', async () => {
   const conversation: ConversationState = {
     ...conversationFromTranscript(AGENT_TRANSCRIPT),
@@ -170,7 +340,8 @@ it('holds approval and Stop response controls during history hydration', async (
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeDisabled();
@@ -207,7 +378,8 @@ it('holds approvals while saving and distinguishes pending admission from an act
     savingStartedAt: '2026-09-08T00:00:00Z',
   };
   const { rerender } = render(draw({ inputAvailability }));
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Keep my draft' } });
   expect(draft).toBeEnabled();
@@ -215,8 +387,11 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
-  expect(screen.getByText('Starting.', { exact: true })).toBeInTheDocument();
-  expect(document.querySelector('.agent-header__status')).toHaveTextContent('Working');
+  expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'More Agent actions' })).toHaveAttribute(
+    'title',
+    'Agent one · Working',
+  );
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));
@@ -255,7 +430,8 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
 });
 
 it('names the full lineage and exposes messages, approvals, tools, reasoning, usage, and details', async () => {
@@ -287,24 +463,23 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
       onNavigate={vi.fn()}
     />,
   );
-  expect(screen.getByRole('navigation', { name: 'Agent location' })).toHaveTextContent(
-    'Atlas/chrono-bot/Agent',
-  );
+  expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
-  expect(screen.getByRole('article', { name: 'Tool call: Typecheck' })).toHaveTextContent(
-    'shell · completed',
-  );
-  expect(screen.getByRole('article', { name: 'Tool call: Typecheck' })).toHaveTextContent(
-    'Duration not reported',
-  );
+  const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
+  expect(tool).toHaveTextContent('shell');
+  expect(tool).toHaveTextContent('Completed');
+  expect(tool).not.toHaveTextContent(/duration/i);
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
-  expect(screen.getByLabelText('Agent usage')).toHaveTextContent('120 input');
+  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+    /120 input/,
+  );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
   expect(approve).toHaveBeenCalledWith('approval_1', 'allow');
-  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   expect(onDetailsOpenChange).toHaveBeenCalledWith(true);
 });
 
@@ -326,7 +501,8 @@ it('removes completed preparation while preserving active and failed preparation
     />
   );
   const { rerender } = render(draw(AGENT_DETAIL));
-  expect(await screen.findByText('Resources unavailable')).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
   rerender(
     draw({

@@ -8,13 +8,13 @@ mod agent_worker;
     reason = "cleanup request seal awaits effect and restore integration"
 )]
 mod checkpoint_maintenance;
-pub(crate) use checkpoint_maintenance::ExportDependencies;
-mod checkpoint_purger;
 mod composition;
 mod credential;
 mod home;
+mod home_native;
 mod live_agent_stopper;
 mod live_agents;
+pub(crate) mod native_prepared;
 mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
@@ -31,7 +31,6 @@ pub(crate) mod worker;
 mod workspace_worker;
 
 pub(crate) use agent_skills::OrnnAgentSkillResolver;
-pub(crate) use checkpoint_purger::DurableCheckpointObjectPurger;
 pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };

@@ -2,6 +2,41 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents.createLifecycle` to create an Agent from an Image Manager selection
+and inline configuration. Omit `image` for the deployment default. Persist the
+exact request and idempotency key before sending it; an uncertain response must
+be retried with the same body and key.
+
+```ts
+import type { Cma, AgentLifecycleCreateRequest } from '@chronoai/cma-sdk';
+
+export async function provisionAgent(client: Cma, idempotencyKey: string) {
+  const request: AgentLifecycleCreateRequest = {
+    name: 'Research',
+    profile: { permission_mode: 'guarded', reasoning_effort: 'medium' },
+  };
+  const receipt = await client.agents.createLifecycle(request, { idempotencyKey });
+  return client.agents.readLifecycle(receipt.id);
+}
+```
+
+The receipt acknowledges durable admission. Poll `readLifecycle(receipt.id)`
+until the global `status` is `succeeded` before opening `agent_id`. A phase event
+whose status is `ready` is only one gate. `waiting_for_connection` includes the
+missing services and an owner-bound target for the connection flow. After the
+owner verifies those connections, repeat the original `createLifecycle` call
+with its exact request and key to resume the same operation and child resources.
+`failed` is terminal; surface its safe error to the caller.
+
+Set `workspace_id` to add an Agent to an existing Workspace owned by the caller.
+The Workspace must be ready. Omit `image` and `repository` because the selected
+Workspace supplies both. This mode requires permission to use the Workspace;
+permission to create a new Sandbox is unnecessary. The Agent inherits its parent
+Sandbox's key scope. Omit `profile.permissions.services`, or provide a subset of
+the inherited services; additional services are rejected and a subset does not
+reduce the inherited scope. Reusing the same idempotency key with another
+Workspace is a conflict.
+
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or
@@ -298,3 +333,193 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents.settings(agentId)` reads the owner's desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `agents.updateSettings(agentId, body,
+{ idempotencyKey })` supplies all three settings for an idle Agent. Retain the
+exact body and key when an HTTP reply is uncertain. `pending: true` records
+accepted desired settings; read again until runtime acknowledgement clears
+`pending` before treating them as applied. The immutable creation profile is
+preserved.
+
+`agents.models(agentId)` returns `{ models }`, where each model has `id`, `label`
+and `available`. Only select rows whose `available` flag is true: this reflects
+both the Agent's admitted model service and current runtime support. The catalog
+does not change settings; use `updateSettings` with the chosen model ID.
+
+## Live skills
+
+`agents.skills(agentId)` reads `{ items, pending, can_install, unavailable_reason? }`.
+Each item contains `id`, exact `version`, `source: 'ornn'`, and a `status` of
+`pending`, `installed`, or `failed`, with optional `name` and `error`.
+Use `can_install` and `unavailable_reason` to present current runtime support and
+readiness; current authorization and readiness are checked again during admission.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function addSkill(
+  agentId: string,
+  skillId: string,
+  exactVersion: string,
+  installationKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.installSkill(
+    agentId,
+    { id: skillId, version: exactVersion },
+    { idempotencyKey: installationKey },
+  );
+}
+```
+
+Choose an explicit skill and version from `profileAuthoring.searchSkills`. A `202`
+response records accepted installation work. Reuse the unchanged body and key
+after an uncertain reply, then read `skills` again until the selected item is
+`installed` or `failed`. Only `installed` confirms runtime acknowledgement.
+Installation is additive and preserves the immutable creation profile.
+
+## Service access decisions
+
+`agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.
+Each request has an `id`, exact `agent_id`, `services`, `reason` and durable `status`.
+`approveAccessRequest` sends the owner's explicit service selection with a stable
+idempotency key. `denyAccessRequest` sends an explicit denial with its own key.
+Services contain 1–32 ASCII identifiers of 1–128 characters using letters, digits,
+hyphens and underscores. Authentication and current ownership are checked by the
+service; the SDK does not infer approval from an Agent message.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function approveServices(
+  agentId: string,
+  requestId: string,
+  services: string[],
+  decisionKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.approveAccessRequest(
+    agentId,
+    requestId,
+    { services },
+    { idempotencyKey: decisionKey },
+  );
+}
+```
+
+Retry an uncertain decision with the unchanged body and original key. The durable
+service returns current progress on replay. `connecting` and `applying` include
+`connection.target = { type: 'agent_access_request', id: requestId }` for the
+owner's connection flow. Recheck that target if a connection expires while access
+is being applied; reconnecting preserves the approved scope and current request.
+`applying` means runtime verification is pending; only `succeeded` confirms applied
+access. Read the list again after a connection return. `denied` and `failed` are
+terminal outcomes; an optional `error` supplies safe failure detail. SDK validation rejects crossed Agent/request identities,
+inconsistent connection targets, and duplicate list IDs.
+
+An explicit retry after a failed access request is a new pending consent attempt.
+Its optional `retry_of` names the preserved failed request. The Agent tool returns
+new attempt parameters after failure; old-key replay continues to return the old
+outcome. New attempts require fresh owner approval and never inherit an earlier
+approval or runtime update.
+
+To add or revoke services directly, call `agents.updateServiceAccess(agentId, body, options)` with `{ services, expected_services }`.
+`services` is the exact desired shared Sandbox scope; `expected_services` is the
+last observed effective scope. Both must include `chrono-llm-public` and
+`ornn-api`. Save is explicit owner consent. The service returns HTTP 202 and the
+durable access request, and rejects stale selections with HTTP 409 before
+changing access. Preserve the same body and key after an uncertain reply.
+Prepare any external service connections before final approval. An active
+Sandbox receives its replacement credential without restarting Agents;
+`succeeded` confirms runtime acknowledgement, old-key revocation and callback
+delivery to the originating Agent. An already paused Sandbox waits for resume.
+
+## Runtime observations
+
+Owned Agent detail and hierarchy entries optionally expose `runtime_metadata`
+with the provider's canonical `working_directory` and session `description`.
+The `runtime_metadata_changed` event updates the same snapshot. These fields
+do not rewrite the immutable Workspace/Worktree paths or infer changes from
+shell commands. Shared readers do not receive private directory metadata.
+
+`description_source` optionally identifies `provider_title` or `prompt_preview`;
+absence means unknown. `description_is_setup_preview: true` is positive evidence
+that this provider preview came from the exact recorded automatic setup input.
+Only a `prompt_preview` with that flag should be excluded from the display title.
+An explicit `provider_title` remains authoritative even if its text equals setup
+text. Use the configured Agent title when a setup preview is excluded; no semantic
+title generator or first actual user-task inference is implied. Keep these fields
+with `description` as one snapshot when replaying metadata updates.
+
+Owned Agent detail also exposes optional `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence`. Missing purpose is legacy unknown;
+Agent creation origin and user-role message position are not substitutes for it.
+A Trigger task attached to a reused lifecycle Agent retains `task` purpose.
+
+`usage_updated` contains absolute lifetime input/output consumption and
+`turn_sequence`, `turn_input_tokens`, `turn_output_tokens` for the most recent
+observed turn. The usage read also exposes optional `current_turn`. Match that
+sequence to the running turn before displaying a current-turn counter. Context
+compaction can reduce context size while lifetime counts remain unchanged.
+Counts include cached input and advance only on provider reports; absent
+historical usage is never inferred from message length. Retained older runtimes
+continue emitting the compatible `usage` vocabulary.
+
+## File attachments
+
+`client.agentAttachments.upload(agentId, file, { idempotencyKey, signal })` uploads one browser `File` or `Blob` to the owner's active Agent. Pass `name` when using a plain `Blob`. Any regular file type is accepted, including images; each file may contain up to 20 MiB, including empty files. The binary body retains its declared media type. Names are sanitized into an ASCII basename and each operation gets a distinct directory.
+
+The result contains `id`, `agentId`, `name`, `path`, `size`, `mediaType` and `sha256`. The verified `path` is under `/home/attachments/<agent-id>/<attachment-id>/`. Include that path in your subsequent Agent input when ready; uploading never sends a message or executes content. A lost response may be retried with exactly the same key, filename, media type and bytes. Reusing a key for different content returns a conflict. Aborting an uncertain request does not guarantee the file was not committed; preserve the key for recovery.
+
+Only current owner authority may upload. Shared conversation readers and delegated Agents cannot write files through this route. The runtime must prove a full persisted home and the attachment capability; older runtime images and inactive Agents return a typed refusal. Existing Sandboxes are not rotated by this feature. File storage lasts with the Sandbox's persisted home; the approved artifact API remains the separate publication and download interface.
+
+## Message feedback
+
+`agents.messageFeedback(agentId, { after, limit })` reads private owner votes as
+`{ items, next }`. Pass each non-null `next` as `after` until it is null; page size
+is 1–200. `agents.setMessageFeedback(agentId, 'event:42', 'up')` sets a positive
+vote; use `'down'` to switch or `null` to remove it. The message ID uses the
+transcript's durable message sequence. These idempotent metadata writes need no
+command key and never create turns. Serialize changes to one message and avoid
+replaying an old write after a newer choice. Current owner authority is required;
+shared readers cannot inspect or change these votes.
+
+### Agent session share links
+
+`client.resourceAccess.createAgentShareLink(agentId, { audience, mode, token }, options)`
+creates an Agent-only share link. `mode` is `view` or `view_write`. `audience` is
+`{ kind: 'public' }`, `{ kind: 'organization', organization_id }`, or
+`{ kind: 'users', subjects }`. Resolve display names to canonical user subjects
+with `shareRecipients(agentId, search)` before creating a users link. The owner
+must select an existing CMA user; arbitrary usernames are not identity proofs.
+
+Generate `token` from 32 cryptographically random bytes encoded as 64 lowercase
+hex characters. Store the secret only in the share URL fragment, never a query
+parameter. Reuse the exact body and idempotency key on retry. The server retains
+only a digest and never returns the secret. `listAgentShareLinks` returns active
+link metadata. The signed-in recipient calls `redeemAgentShareLink(shareId,
+token)` once, then uses ordinary Agent APIs. `revokeAgentShareLink` takes the
+current revision and invalidates this link's recipients immediately; independent
+links remain valid. `effective(...).shared_by` provides the owner's public
+identity for a shared-session banner. No Agent link grants Sandbox lifecycle or
+sharing-management access.
+
+### Persistent-home files
+
+`client.agentFiles.list(agentId, '')` lists `/home/`; pass a relative directory
+path to lazily expand it. Hidden entries are included. `read(agentId, path,
+{ maxBytes })` returns base64 content and its SHA-256; `download(agentId, path)`
+returns bytes. Transfers are bounded to 32 MiB. File responses use their own
+bounded transport; ordinary API responses retain their existing limit.
+
+`write(agentId, { path, content_base64, expected_sha256 })` saves only if the
+last-read digest matches. Omit `expected_sha256` for create-only uploads, or use
+`directory: true` and empty content to create a folder. A conflict preserves
+server contents; retain the local draft and reread before explicitly retrying.
+`remove(agentId, path, recursive)` deletes only that target. These file mutations
+need no command key and are never retried automatically. The owner or a current
+view-write link may write; view links may browse and download. An old runtime
+returns `file_runtime_unsupported` until it is updated while idle.

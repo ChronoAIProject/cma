@@ -1,22 +1,26 @@
 //! Stateless MCP streamable HTTP using JSON responses and the shared tools service.
+pub mod results;
 pub mod tools;
 use crate::{
     auth::AgentCaller,
     http::problems::{problem, protocol_headers},
+    media::forward::{forward_bytes, TOOL_BODY_DEADLINE},
     tools::ToolsState,
 };
 use axum::{
     body::to_bytes,
     extract::{Request, State},
-    http::{HeaderValue, StatusCode},
+    http::{header::CONTENT_TYPE, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
+use results::ToolOutput;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
+use tokio::time::Instant;
 const VERSION: &str = "2025-06-18";
 pub fn router(state: ToolsState) -> Router {
     crate::telemetry::http::instrument(
@@ -58,7 +62,16 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         let mut values = request.headers().get_all(name).iter();
         let value = values.next();
         if values.next().is_some()
-            || value.is_some_and(|value| value.to_str().ok() != Some(expected))
+            || value.is_some_and(|value| {
+                value.to_str().ok() != Some(expected)
+                    && !(name == "origin"
+                        && reqwest::Url::parse(&state.public_api_url)
+                            .ok()
+                            .is_some_and(|url| {
+                                value.to_str().ok()
+                                    == Some(url.origin().ascii_serialization().as_str())
+                            }))
+            })
         {
             return problem(
                 if name == "origin" {
@@ -144,12 +157,12 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
             {
                 return error(id, -32602, "protocolVersion is required", None);
             }
-            Ok(
+            Ok(ToolOutput::Envelope(
                 json!({"protocolVersion":VERSION,"serverInfo":{"name":"cmaeg","version":"1"},"capabilities":{"tools":{"listChanged":false}}}),
-            )
+            ))
         }
-        "ping" => Ok(json!({})),
-        "tools/list" => Ok(tools::list()),
+        "ping" => Ok(ToolOutput::Envelope(json!({}))),
+        "tools/list" => Ok(ToolOutput::Envelope(tools::list(state.media.is_some()))),
         "tools/call" => {
             let call: Call = match serde_json::from_value(rpc.params) {
                 Ok(call) => call,
@@ -160,7 +173,36 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         _ => return error(id, -32601, "Method not found", None),
     };
     match result {
-        Ok(value) => Json(json!({"jsonrpc":"2.0","id":id,"result":value})).into_response(),
+        Ok(ToolOutput::Envelope(value)) => {
+            Json(json!({"jsonrpc":"2.0","id":id,"result":value})).into_response()
+        }
+        Ok(ToolOutput::Content { result, permits }) => {
+            // Serialized exactly once: a result can carry over a megabyte of
+            // base64 images, and the body releases its budget at a deadline
+            // even if the client never reads it.
+            let response = json!({"jsonrpc":"2.0","id":id,"result":result});
+            match serde_json::to_vec(&response) {
+                Ok(bytes) => {
+                    let body =
+                        forward_bytes(bytes.into(), permits, Instant::now() + TOOL_BODY_DEADLINE);
+                    let mut response = body.into_response();
+                    response
+                        .headers_mut()
+                        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                    response
+                }
+                Err(_) => error(
+                    response["id"].clone(),
+                    -32000,
+                    "Tool operation refused",
+                    Some(Problem::new(
+                        ProblemCode::Internal,
+                        500,
+                        "tool response unavailable",
+                    )),
+                ),
+            }
+        }
         Err(problem) => error(id, -32000, "Tool operation refused", Some(problem)),
     }
 }

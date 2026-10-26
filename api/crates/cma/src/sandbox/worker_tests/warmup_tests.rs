@@ -185,6 +185,7 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     let mut home = layer2_core::sandbox::SandboxHome::reserve(
         &record.id,
         layer3_adapter::HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -193,6 +194,7 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     )
     .unwrap();
     home.bind(layer3_adapter::HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "warm-original".into(),
@@ -258,6 +260,29 @@ async fn persistent_warm_retirement_releases_capacity_with_historical_boot_ident
         let mut invalid = restored.clone();
         invalid.state = state;
         assert!(invalid.validate().is_err(), "{state:?}");
+    }
+}
+
+#[tokio::test]
+async fn legacy_cleanup_refuses_preparation_and_claimed_runtime_ownership() {
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let (adapter, record) = persistent_warm(&harness).await;
+    let before = adapter.runtime_inventory().await.unwrap();
+    for state in [
+        WarmSandboxState::Preparing,
+        WarmSandboxState::Installing,
+        WarmSandboxState::Ready,
+        WarmSandboxState::Claimed,
+    ] {
+        let mut invalid = record.clone();
+        invalid.state = state;
+        assert!(
+            crate::sandbox::warmup::retire_environment(adapter.as_ref(), &invalid)
+                .await
+                .is_err()
+        );
+        assert_eq!(adapter.runtime_inventory().await.unwrap(), before);
+        assert!(!invalid.home.as_ref().unwrap().released);
     }
 }
 

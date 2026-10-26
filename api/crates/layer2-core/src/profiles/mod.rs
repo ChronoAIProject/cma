@@ -30,6 +30,7 @@ pub use agent::{
 };
 pub use common::{
     AgentProfileRef, ProfileError, ProfileVisibility, SandboxProfileRef, WorkspaceProfileRef,
+    MAX_PROFILE_NAME_BYTES,
 };
 pub use digest::content_digest;
 pub use marketplace::{

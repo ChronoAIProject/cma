@@ -16,6 +16,8 @@ mod policy;
 mod sandbox_inventory;
 mod service;
 mod share;
+mod share_links;
+pub use share_links::{AgentShareAudience, AgentShareLink, CreateAgentShareLink};
 mod share_command;
 mod sharing_service;
 mod store;
@@ -44,5 +46,7 @@ pub use store::{
     ResourceAccessStoreError, ResourcePolicyFence, ResourcePolicyRecord, ResourceTarget,
 };
 
+#[cfg(test)]
+mod request_read_tests;
 #[cfg(test)]
 mod tests;

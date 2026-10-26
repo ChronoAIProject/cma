@@ -2,8 +2,7 @@ use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
-    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, Sandbox, SandboxImageRotationPhase,
-    SandboxLifecycleOperation, SandboxRevivePhase, SandboxStatus, WorkspaceStatus,
+    Agent, AgentStatus, AgentWorkStep, FirstMessageDelivery, SandboxStatus, WorkspaceStatus,
 };
 
 use super::startup_support::{live_target, registry_failure};
@@ -26,10 +25,29 @@ impl AgentWorker {
             Ok(target) => target,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        claimed_fence(&agent, &self.config.holder)?;
-        let attachment = match self.reattach(&agent, &context, &target).await {
-            Ok(attachment) => attachment,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        if let Err(failure) = super::startup::validated_open_request(&agent, &context) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        // The initial open has already negotiated this exact conversation. Keep
+        // that unpublished stream instead of opening it again. Settings replay
+        // and missing local state still require the full reconnect protocol.
+        let staged = if agent.conversation.settings.is_none() {
+            self.dependencies.registry.staged_attachment(&target, fence)
+        } else {
+            Ok(None)
+        };
+        let attachment = match staged {
+            Ok(Some(attachment)) => attachment,
+            Ok(None) => match self.reattach(&agent, &context, &target).await {
+                Ok(attachment) => attachment,
+                Err(failure) => return self.handle_failure(agent, failure, now).await,
+            },
+            Err(error) => {
+                return self
+                    .handle_failure(agent, registry_failure(error), now)
+                    .await;
+            }
         };
         if let Err(error) = self.dependencies.registry.publish_and_activate(&attachment) {
             self.dependencies.registry.rollback(&attachment);
@@ -37,7 +55,8 @@ impl AgentWorker {
                 .handle_failure(agent, registry_failure(error), now)
                 .await;
         }
-        self.finish_connection_publication(agent, now).await
+        self.finish_connection_publication(agent, &attachment, now)
+            .await
     }
 
     pub(super) async fn connection_context(
@@ -56,7 +75,7 @@ impl AgentWorker {
         }
         let context = self.context(agent).await?;
         if (context.sandbox.status != SandboxStatus::Active
-            && !restored_connection_is_ready(&context.sandbox, agent))
+            && !context.sandbox.restored_connection_is_ready(agent))
             || context.workspace.status != WorkspaceStatus::Ready
             || context.worktree.status != layer2_core::sandbox::WorktreeStatus::Ready
         {
@@ -68,28 +87,40 @@ impl AgentWorker {
         Ok(context)
     }
 
-    async fn finish_connection_publication(
+    pub(super) async fn try_finish_connection_publication(
         &self,
         mut agent: Agent,
+        attachment: &crate::sandbox::live_agents::LiveAgentAttachment,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
         for _ in 0..MAX_PUBLICATION_RETRIES {
-            let next = if agent
-                .conversation
-                .first_message
-                .as_ref()
-                .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
-            {
-                AgentWorkStep::DispatchFirstMessage
-            } else {
-                AgentWorkStep::None
-            };
+            let next =
+                if agent
+                    .conversation
+                    .first_message
+                    .as_ref()
+                    .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
+                {
+                    AgentWorkStep::DispatchFirstMessage
+                } else if agent.work.live_skills.last().is_some_and(|s| {
+                    s.status == layer2_core::sandbox::AgentSkillInstallStatus::Pending
+                }) {
+                    AgentWorkStep::InstallSkill
+                } else {
+                    AgentWorkStep::None
+                };
             match self
                 .progress(agent.clone(), next, now, None, Vec::new(), None, None)
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.dependencies
+                        .registry
+                        .recover_lost_publication(attachment)
+                        .await;
+                    return Ok(());
+                }
                 Err(SandboxStoreError::Conflict) => {
                     let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                         return Err(SandboxStoreError::NotFound);
@@ -108,49 +139,6 @@ impl AgentWorker {
                 Err(error) => return Err(error),
             }
         }
-        Err(SandboxStoreError::Unavailable(
-            "agent changed during every connection publication commit".into(),
-        ))
+        Err(SandboxStoreError::Conflict)
     }
-}
-
-fn restored_connection_is_ready(sandbox: &Sandbox, agent: &Agent) -> bool {
-    let Some(operation) = sandbox.lifecycle.operation.as_ref() else {
-        return false;
-    };
-    // Reconnection must settle before final activation, but grants no message admission.
-    agent.work.step == AgentWorkStep::PublishConnection
-        && sandbox.status == operation.expected_status()
-        && matches!(
-            operation,
-            SandboxLifecycleOperation::Revive {
-                phase: SandboxRevivePhase::QueuedMessageDelivery
-                    | SandboxRevivePhase::PublishActive,
-                ..
-            } | SandboxLifecycleOperation::ImageRotation {
-                phase: SandboxImageRotationPhase::QueuedMessageDelivery
-                    | SandboxImageRotationPhase::PublishActive,
-                ..
-            }
-        )
-        && sandbox.credential.delivered
-        && sandbox.runtime.as_ref().is_some_and(|runtime| {
-            runtime.provision_generation.is_some_and(|generation| {
-                generation > 0 && agent.conversation.runtime_generation == Some(generation)
-            })
-        })
-        && ((sandbox.retained_home_recovery().is_some() && sandbox.restores_agent(agent))
-            || sandbox
-                .lifecycle
-                .checkpoints
-                .latest
-                .as_ref()
-                .is_some_and(|checkpoint| {
-                    operation.checkpoint_epoch() == Some(checkpoint.epoch)
-                        && checkpoint.conversations.iter().any(|conversation| {
-                            conversation.agent_id == agent.id
-                                && agent.conversation.conversation_id.as_deref()
-                                    == Some(conversation.conversation_id.as_str())
-                        })
-                }))
 }

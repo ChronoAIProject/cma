@@ -1,0 +1,1492 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-models-owner",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "models": [
+            {
+              "id": "provider-model",
+              "label": "Provider model",
+              "available": true
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-unsupported",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "models": [
+            {
+              "id": "provider-model",
+              "label": "Provider model",
+              "available": false
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-stopped",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_stopped",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "models": [
+            {
+              "id": "provider-model",
+              "label": "Provider model",
+              "available": false
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-checkpoint",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_checkpoint",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "models": [
+            {
+              "id": "provider-model",
+              "label": "Provider model",
+              "available": false
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-anonymous",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-forbidden",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-foreign",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-unavailable",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-missing",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-owner",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "pending": false,
+          "can_install": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-unsupported",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "pending": false,
+          "can_install": false,
+          "unavailable_reason": "This Agent runtime does not support installing skills yet."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-stopped",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_stopped",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "pending": false,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-checkpoint",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_checkpoint",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "pending": false,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-anonymous",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-forbidden",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-foreign",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-unavailable",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-missing",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-models-catalog-unavailable",
+      "operation": "GET /api/v1/agents/{id}/models",
+      "scenario": "agent_customization_catalog_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/models",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-installed",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_installed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": false,
+          "can_install": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-failed",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "failed",
+              "error": "Skill archive could not be installed."
+            }
+          ],
+          "pending": false,
+          "can_install": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-anonymous",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-anonymous"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-forbidden",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-forbidden"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-foreign",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-foreign"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-unavailable",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-unavailable"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-unsupported",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-unsupported"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-stopped",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_stopped",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-stopped"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-checkpoint",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-checkpoint"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-setup",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_setup",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-setup"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-credential-setup-required",
+          "title": "sandbox credential setup required",
+          "status": 409,
+          "detail": "Sign in to CMA through /auth/login with this same account to authorize renewable Sandbox credentials. For keyed operations, retry this refused command with a new Idempotency-Key after sign-in succeeds.",
+          "code": "sandbox_credential_setup_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-connections",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_connections",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-connections"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/connections-required",
+          "title": "connections required",
+          "status": 409,
+          "detail": "Connect and verify the required services before opening this sandbox.",
+          "code": "connections_required",
+          "services": [
+            "api-github"
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-connection_unavailable",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_connection_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-connection_unavailable"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-missing",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-missing"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-invalid-id",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-invalid-id"
+        },
+        "body": {
+          "id": "../research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-invalid-version",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-invalid-version"
+        },
+        "body": {
+          "id": "research",
+          "version": "@latest"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-unknown-field",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-unknown-field"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0",
+          "owner": "other"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: owner: unknown field `owner`, expected `id` or `version` at line 1 column 40",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-missing-key",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": ""
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "idempotency-key": "skill-media"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-malformed-json",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-malformed-json"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-oversized-body",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_validation",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-oversized-body"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 413,
+          "detail": "Failed to buffer the request body: length limit exceeded",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-operation-pending",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agents_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-operation-pending"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-operation-recovery",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agents_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-operation-recovery"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-operation-unavailable",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agents_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-operation-unavailable"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-accepted",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "skill-admission"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "pending"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-replay",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "skill-admission"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "pending"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-key-reused",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "skill-admission"
+        },
+        "body": {
+          "id": "research",
+          "version": "2.0"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-read-pending",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_admission",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "pending"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-pending-refused",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_admission",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-pending-refused"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-already-installed",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_installed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-already-installed"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.0"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": false,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-install-version-conflict",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_installed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-version-conflict"
+        },
+        "body": {
+          "id": "research",
+          "version": "2.0"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

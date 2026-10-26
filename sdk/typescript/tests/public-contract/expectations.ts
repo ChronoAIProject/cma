@@ -3,10 +3,30 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['document-source-invalid', 'invalid_document_request'],
+  ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
+  ['filesystem-write-reject-malformed-json', 'invalid_file_request'],
+  ['admin-runtime-update-invalid-json', 'invalid_runtime_update'],
+  ['interruption-v2-invalid-revision', 'invalid_control_observation'],
+  ['interruption-v2-empty-text', 'invalid_interrupt_request'],
+  ['interruption-v2-whitespace-text', 'invalid_interrupt_request'],
+  ['interruption-v2-null-text', 'invalid_interrupt_request'],
+  ['interruption-v2-unknown-field', 'invalid_interrupt_request'],
+  ['attachment-invalid-name', 'invalid_attachment'],
+  ['agent-skills-install-invalid-id', 'invalid_agent_request'],
+  ['agent-skills-install-invalid-version', 'invalid_agent_request'],
+  ['agent-skills-install-unknown-field', 'invalid_json'],
+  ['settings-state-agent-invalid-input', 'invalid_agent_request'],
+  ['preferences-state-agent-invalid-input', 'invalid_agent_request'],
   ['gateway-connection-list-invalid-query', 'invalid_query'],
   ['gateway-connection-delete-invalid-query', 'invalid_query'],
   ['queued-cancellation-v2-invalid-revision', 'invalid_queued_cancellation_request'],
   ['queued-cancellation-v2-unknown-field', 'invalid_queued_cancellation_request'],
+  ['queued-input-v2-invalid-revision', 'invalid_queued_input_request'],
+  ['queued-input-v2-unknown-field', 'invalid_queued_input_request'],
+  ['queued-input-v2-empty-text', 'invalid_queued_input_request'],
+  ['queued-input-v2-whitespace-text', 'invalid_queued_input_request'],
+  ['queued-input-v2-null-text', 'invalid_queued_input_request'],
   ['agent-events-v2-snapshot-invalid', 'invalid_agent_cursor'],
   ['agent-events-v2-events-invalid', 'invalid_agent_cursor'],
   ['response-controls-v2-unknown-body', 'invalid_control_request'],
@@ -80,8 +100,16 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['filesystem-tree-reject-unknown-query', ['owner_access']],
+  ['filesystem-content-reject-unknown-query', ['owner_access']],
+  ['filesystem-download-reject-unknown-query', ['owner_access']],
+  ['filesystem-delete-reject-unknown-query', ['owner_access']],
+  ['interruption-v2-query', ['unexpected']],
   ['queued-cancellation-v2-query-observe', ['unexpected']],
   ['queued-cancellation-v2-query-submit', ['unexpected']],
+  ['queued-input-v2-query-list', ['unexpected']],
+  ['queued-input-v2-query-submit', ['unexpected']],
+  ['agent-events-v2-head-query', ['unknown']],
   ['agent-events-v2-snapshot-query', ['unknown']],
   ['agent-events-v2-events-query', ['unknown']],
   ['agent-events-v2-snapshot-duplicate', ['page_cursor']],
@@ -103,8 +131,23 @@ const protectedQueries = new Map([
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (fixture.id === 'filesystem-delete-reject-invalid-recursive') {
+    assert.equal(problemBody(fixture).code, 'invalid_file_request');
+    assert.equal(
+      new URL(fixture.request.path, 'https://contract.example').searchParams.get('recursive'),
+      'maybe',
+    );
+    return 'raw-wire-only';
+  }
   if (browserOperations.has(fixture.operation)) return 'browser-only';
   const body = problemBody(fixture);
+  if (fixture.id === 'agent-access-deny-invalid-json') {
+    assert.equal(fixture.operation, 'POST /api/v1/agents/{id}/access-requests/{request_id}/deny');
+    assert.equal(body.code, 'invalid_json');
+    assert.throws(() => JSON.parse(fixture.request.rawBody!));
+    // Denial exposes no body argument and always serializes the empty object.
+    return 'raw-wire-only';
+  }
   if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
     assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
     assert.equal(body.code, 'invalid_profile_authoring_query');
@@ -127,11 +170,18 @@ export function expectation(
     );
     return 'raw-wire-only';
   }
-  if (fixture.request.rawBody !== undefined) {
+  if (
+    fixture.request.rawBody !== undefined &&
+    fixture.operation !== 'POST /api/v1/agents/{id}/attachments'
+  ) {
     if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
       assert.equal(
         body.code,
-        ['authoring-resolve-body-too-large', 'sandbox-service-access-oversize'].includes(fixture.id)
+        [
+          'authoring-resolve-body-too-large',
+          'sandbox-service-access-oversize',
+          'agent-skills-install-oversized-body',
+        ].includes(fixture.id)
           ? 'invalid_json'
           : 'request_too_large',
       );

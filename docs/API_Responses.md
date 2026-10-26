@@ -12,6 +12,18 @@ v2 rules in this section.
 
 ## Responses v2
 
+An optional request `model` must match the Agent's current conversation settings;
+it does not override those settings. Once a command starts a turn, its response
+retains the model selected at that durable dispatch boundary. Later settings
+changes do not relabel earlier responses. Before dispatch, the retrieved response
+and `response.created` retain the immutable creation model as a hint, preserving
+their existing equivalence and replay cursors. That opening hint does not
+establish which model executed the turn. `response.in_progress`
+and the terminal response carry the selected model. `deployment-default` means
+the recorded turn delegated model selection to
+the runtime. Legacy turns without a retained model use the immutable creation
+model only when no settings edit preceded them; otherwise they report `unknown`.
+
 All v2 endpoints belong to the control plane. No Responses server runs inside
 an Agent Sandbox. Creation requires a current authenticated credential in CMA's
 durable custody. Browser requests retain their existing sign-in incarnation.
@@ -91,6 +103,7 @@ context does not consume metadata capacity or become prompt text.
 | `GET /api/v2/conversations/{conversation_id}/items` | Read standard user/assistant message items under current history authority |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: observe the bound response turn, Agent revision and runtime control support |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | CMA extension: durably request cancellation, steering or approval resolution for that exact turn |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | CMA extension: atomically cancel the selected turn and admit a distinct replacement message ahead of ordinary queued input |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: observe the exact unbound source command revision and cancellation eligibility under current operation authority |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | CMA extension: atomically cancel that unbound source and retain a completed cancellation receipt |
 | `GET /api/v2/commands/{command_id}` | CMA extension: poll a safe durable command receipt and delivery state |
@@ -252,6 +265,32 @@ preserve the original key and body for recovery. An observed unsupported runtime
 operation returns `422 capability_unsupported`. Capability loss during a later
 race remains a conflict or existing durable execution failure. Never silently
 issue a fresh key against a newer turn.
+
+To stop a turn and start a new message, POST to
+`/api/v2/agents/{agent_id}/responses/{response_id}/interrupt` with a retained
+`Idempotency-Key` and exactly `{ "turn_sequence": 42, "expected_agent_revision": 17,
+"text": "Start the new task" }`. This differs from native `steer`, which adds input
+to the existing turn. The `202` receipt has object `cma.response.interruption`,
+`control` (cancellation), `response` (a distinct new message), immutable `target`,
+and `expected_agent_revision`. Both commands are admitted in one transaction;
+no partial cancellation or replacement is committed on refusal. Their ledger
+orders are contiguous, with cancellation first. The new input dispatches only
+when the old turn ends and precedes ordinary queued messages; those other messages
+retain their identities, contents, attachments and relative order. A Stop-only
+button continues to use `cancel` without admitting a replacement message.
+
+`409 response_interrupt_not_admitted` proves the original pair was never admitted
+and its observation is permanently stale; only that definitive absence permits
+discarding the retained intent and forming a fresh request. Generic conflicts
+remain recoverable with the original identity.
+
+Preserve the original interruption body/key after an uncertain reply, including
+the original turn and revision. Retry returns the same paired receipts, even
+when delivery or the replacement has already completed. Poll each receipt through
+the public command endpoint and observe actual turn completion through Agent
+history/events. An acknowledged cancellation request is not a claim that the
+runtime has already stopped. Both SDKs expose this atomic operation through
+`interruptWithInput` (TypeScript) and `interrupt_with_input` (Rust).
 
 These are authenticated human/API controls, also exposed by both CMA SDKs.
 Verified platform-sender controls and web transport rollout have separate
@@ -435,7 +474,7 @@ message with text content.
 | `stream` | Required as literal `true` |
 | `metadata` | Honored; at most 16 string pairs, with bounded keys and values |
 | `previous_response_id` | Honored as the linear-thread predecessor fence |
-| `model` | Optional string, accepted but ignored; response uses the Agent Profile's pinned model |
+| `model` | Optional string, accepted but ignored; response retains the Agent conversation model selected when its turn started |
 | `store` | Omitted or `true`; `false` is refused because chat history is durable |
 | `instructions` | Refused by name |
 | `reasoning` | Refused by name |

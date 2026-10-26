@@ -2,6 +2,7 @@
 
 export { Cma, createClient } from './client.js';
 export * from './resource-access.js';
+export * from './agent-files.js';
 export * from './bots.js';
 export * from './bot-setups.js';
 export * from './agent-delegations.js';
@@ -32,9 +33,14 @@ export * from './agui/index.js';
 export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
+export type * from './agents/lifecycle.js';
+export type * from './agents/models.js';
+export type * from './agents/skills.js';
+export type * from './agents/access-requests.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
+export type * from './agents/attachments.js';
 export type * from './agents/channel-usage.js';
 export type * from './instances/shared.js';
 export type * from './agents/events.js';
@@ -101,3 +107,15 @@ export { Cmaeg, type CmaegConfig } from './cmaeg/index.js';
 export * as cmaeg from './cmaeg/index.js';
 
 export * from './event-worker-profiles.js';
+
+export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';
+
+export type {
+  MessageVote,
+  MessageFeedback,
+  MessageFeedbackPage,
+} from './agents/message-feedback.js';
+
+export * from './documents.js';
+
+export type { AgentPreferences, UpdateAgentPreferencesRequest } from './agents/preferences.js';

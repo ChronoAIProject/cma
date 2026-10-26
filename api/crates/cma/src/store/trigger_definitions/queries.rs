@@ -21,7 +21,7 @@ pub(super) async fn owned(
 ) -> Result<Option<StoredTrigger>, TriggerStoreError> {
     let document = store
         .definitions
-        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str() })
+        .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str(), "archived_at": Bson::Null })
         .await
         .map_err(|error| driver_error("read owned Trigger definition", error))?;
     let Some(document) = document else {
@@ -104,7 +104,7 @@ pub(super) async fn list_owner(
     page: &TriggerPageRequest,
 ) -> Result<TriggerPage<Trigger>, TriggerStoreError> {
     page.validate()?;
-    let mut filter = doc! { "owner": owner.as_str() };
+    let mut filter = doc! { "owner": owner.as_str(), "archived_at": Bson::Null };
     if let Some(cursor) = &page.cursor {
         filter.insert("_id", doc! { "$gt": cursor });
     }

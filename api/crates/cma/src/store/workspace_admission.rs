@@ -1,6 +1,7 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
 
-use std::time::Duration;
+mod retry;
+use retry::{exhausted, retry_delay};
 
 use layer2_core::ids::{SubjectId, WorkspaceId};
 use layer2_core::sandbox::store::{
@@ -23,7 +24,6 @@ use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 
 const TRANSACTION_ATTEMPTS: usize = 16;
-const RETRY_MAX_DELAY_MILLIS: u64 = 32;
 
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
@@ -242,6 +242,11 @@ async fn apply_admission(
                 "origin_type": "trigger",
                 "origin_launch_id": launch_id,
             },
+            WorkspaceOrigin::Lifecycle { operation_id } => doc! {
+                "sandbox_id": candidate.sandbox_id.as_str(),
+                "origin_type": "lifecycle",
+                "origin_operation_id": operation_id,
+            },
             WorkspaceOrigin::Manual => {
                 return Err(ApplyError::Domain(
                     SandboxStoreError::WorkspaceOriginConflict,
@@ -294,9 +299,16 @@ async fn apply_admission(
             },
         ));
     }
-    let prepared = super::warm_sandboxes::adopt_workspace(store, &sandbox, candidate, session)
-        .await
-        .map_err(ApplyError::Domain)?;
+    let prepared =
+        match super::native_prepared::adopt_workspace(store, &sandbox, candidate, session)
+            .await
+            .map_err(ApplyError::Domain)?
+        {
+            Some(prepared) => prepared,
+            None => super::warm_sandboxes::adopt_workspace(store, &sandbox, candidate, session)
+                .await
+                .map_err(ApplyError::Domain)?,
+        };
     let candidate = &prepared;
     let revival_event =
         if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
@@ -308,7 +320,11 @@ async fn apply_admission(
                 _ => SandboxReviveCause::WorkspaceCreation,
             };
             let revival = next
-                .record_creation_admission(cause, admission.event_at.clone())
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    store.managed_runtime_version.as_deref(),
+                    admission.event_at.clone(),
+                )
                 .map_err(|error| {
                     ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
                 })?;
@@ -394,6 +410,10 @@ fn validate_fresh(
         (&workspace.origin, kind),
         (WorkspaceOrigin::Manual, WorkspaceAdmissionKind::Manual)
             | (
+                WorkspaceOrigin::Lifecycle { .. },
+                WorkspaceAdmissionKind::Lifecycle
+            )
+            | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile
             )
@@ -470,23 +490,4 @@ async fn reconcile_workspace(
         .map(read_workspace)
         .transpose()?;
     Ok(stored.as_ref() == Some(expected))
-}
-
-async fn retry_delay(attempt: usize) {
-    if attempt == 0 {
-        return;
-    }
-    let exponent = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
-    let millis = 1_u64
-        .checked_shl(exponent)
-        .unwrap_or(u64::MAX)
-        .min(RETRY_MAX_DELAY_MILLIS);
-    tokio::time::sleep(Duration::from_millis(millis)).await;
-}
-
-fn exhausted(operation: &str, last: Option<String>) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(format!(
-        "{operation} exhausted its retry budget: {}",
-        last.unwrap_or_else(|| "no driver result".into())
-    ))
 }

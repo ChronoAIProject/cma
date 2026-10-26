@@ -25,7 +25,7 @@ import {
   triggerPlacement,
   triggerRevision,
   triggerStatistics,
-  type TriggerContent,
+  type TriggerContentInput,
   type TriggerDocument,
 } from './types.js';
 
@@ -53,24 +53,27 @@ export class TriggerAuthoring {
     return read(this.config, this.path(id), identity(triggerDocument, id), options);
   }
 
-  create(body: { readonly content: TriggerContent }, options: CommandOptions) {
+  create(body: { readonly content: TriggerContentInput }, options: CommandOptions) {
     return read(this.config, '/api/v1/triggers', triggerDocument, {
       ...command(options),
       method: 'POST',
-      body: input(createTriggerBody, body),
+      body: input<{ readonly content: TriggerContentInput }>(createTriggerBody, body),
       expectedStatus: 201,
     });
   }
 
   save(
     id: string,
-    body: { readonly content: TriggerContent; readonly draft_version: number },
+    body: { readonly content: TriggerContentInput; readonly draft_version: number },
     options: CommandOptions,
   ) {
     return read(this.config, this.path(id), identity(triggerDocument, id), {
       ...command(options),
       method: 'PUT',
-      body: input(saveTriggerBody, body),
+      body: input<{ readonly content: TriggerContentInput; readonly draft_version: number }>(
+        saveTriggerBody,
+        body,
+      ),
     });
   }
 

@@ -297,6 +297,12 @@ pub enum ProblemCode {
     /// Wire value `internal`.
     #[serde(rename = "internal")]
     Internal,
+    /// Wire value `attachment_not_found`.
+    #[serde(rename = "attachment_not_found")]
+    AttachmentNotFound,
+    /// Wire value `media_unavailable`.
+    #[serde(rename = "media_unavailable")]
+    MediaUnavailable,
 }
 
 /// CMAEG `ProviderSlug` wire shape.

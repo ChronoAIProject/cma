@@ -28,14 +28,27 @@ impl Drop for Native {
 }
 impl Native {
     pub async fn new(observer: Option<Arc<dyn PlatformReceiptObserver>>) -> Self {
+        Self::build(observer, false, false).await
+    }
+    /// A native channel served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn with_media() -> Self {
+        Self::build(None, true, false).await
+    }
+    async fn build(
+        observer: Option<Arc<dyn PlatformReceiptObserver>>,
+        media: bool,
+        bots: bool,
+    ) -> Self {
         let fixture=Fixture::new(|value|{
             value["sources"]=json!([{"type":"telegram","bot_id":"77","bot_username":"fixture_bot","admission":{"type":"all"}}]);
+            if bots {value["sources"][0]["admission"]=json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"all","bot_messages":"native_mentions"});}
             value["secrets"]["telegram_bot_token"]="77:fixture".into();
             value["secrets"]["provider_credential"]="provider-fixture".into();
             value["secrets"]["telegram_webhook_secret"]="native-webhook-fixture".into();
         },Default::default()).await;
         let mut state = fixture.state.clone();
         state.receipt_observer = observer;
+        state.media_enabled = media;
         let (base, task) = serve(state).await;
         Self {
             fixture,
@@ -99,7 +112,7 @@ impl PlatformReceiptObserver for Observer {
         activity: &'a Activity,
     ) -> BoxFuture<'a, Result<(), Problem>> {
         assert!(
-            matches!(&activity.kind,ActivityKind::Event{ce}if ce.r#type=="telegram.managed_bot_created")
+            matches!(&activity.kind,ActivityKind::Event{ce,..}if ce.r#type=="telegram.managed_bot_created")
         );
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
@@ -202,7 +215,7 @@ async fn authenticated_creation_receipt_has_safe_projection_and_observer_retry()
     app.accepted(&raw).await;
     let requests = app.fixture.recorder.requests.lock().unwrap();
     let activity = &requests[0].activity;
-    let ActivityKind::Event { ce } = &activity.kind else {
+    let ActivityKind::Event { ce, .. } = &activity.kind else {
         panic!("expected creation event")
     };
     assert_eq!(ce.source, "telegram:bot:77");
@@ -256,4 +269,83 @@ async fn forged_mixed_forwarded_group_and_bot_creation_updates_never_launch() {
         "accepted"
     );
     assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_control_character_in_the_sender_name_is_stripped_not_refused() {
+    let app = Native::new(None).await;
+    let mut raw = message();
+    raw["message"]["from"]["first_name"] = "Al\u{7}ice".into();
+    app.accepted(&raw).await;
+    let requests = app.fixture.recorder.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].activity.actor.display_name.as_deref(),
+        Some("Alice")
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_webhook_secret_is_counted_by_source_and_detail() {
+    let metrics = cmaeg::telemetry::install().unwrap();
+    let series =
+        "cmaeg_callback_invalid_total{source=\"telegram\",detail=\"telegram_webhook_secret\"}";
+    let count = || {
+        metrics
+            .render()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(series)?
+                    .strip_prefix(' ')?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(0)
+    };
+    let before = count();
+    let app = Native::new(None).await;
+    assert_eq!(app.send(&message(), "wrong-fixture").await.status(), 401);
+    assert_eq!(count(), before + 1);
+    assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn external_native_telegram_bot_mentions_use_the_same_strict_observer() {
+    use cmaeg_core::activity::ActorKind;
+    let app = Native::build(None, false, true).await;
+    let mut raw = message();
+    raw["message"]["chat"]["type"] = json!("supergroup");
+    raw["message"]["from"]["is_bot"] = json!(true);
+    raw["message"]["text"] = json!("😀 Receiver");
+    raw["message"]["entities"] =
+        json!([{"type":"text_mention","offset":3,"length":8,"user":{"id":77}}]);
+    app.accepted(&raw).await;
+    let activity = app.fixture.recorder.requests.lock().unwrap()[0]
+        .activity
+        .clone();
+    assert_eq!(activity.actor.kind, ActorKind::Bot);
+    assert!(matches!(
+        activity.kind,
+        ActivityKind::Message {
+            mentions_bot: true,
+            ..
+        }
+    ));
+    raw["update_id"] = json!(102);
+    raw["message"]["message_id"] = json!(6);
+    raw["message"]["entities"][0]["offset"] = json!(1);
+    // Malformed native evidence follows the authenticated verification-error
+    // contract; it must not launch another activity.
+    assert_eq!(app.send(&raw, "native-webhook-fixture").await.status(), 401);
+    raw["message"]["entities"] = json!([]);
+    let refusal: Value = app
+        .send(&raw, "native-webhook-fixture")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        refusal,
+        json!({"status":"refused","reason":"group_not_addressed"})
+    );
+    assert_eq!(app.fixture.recorder.requests.lock().unwrap().len(), 1);
 }

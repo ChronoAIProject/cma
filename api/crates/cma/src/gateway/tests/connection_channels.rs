@@ -84,7 +84,8 @@ async fn generic_channel_creation_and_updates_never_send_native_platform_or_rout
         reqwest::Client::new(),
         &GatewayConfig {
             base_url: base.clone(),
-            public_url: base,
+            public_url: base.clone(),
+            public_api_url: "https://bot.example/event-gateway".into(),
         },
         "https://identity.example".into(),
     )
@@ -125,6 +126,28 @@ async fn generic_channel_creation_and_updates_never_send_native_platform_or_rout
             "deny"
         );
     }
+    for allowed in [base.as_str(), "https://bot.example/event-gateway"] {
+        let callback = format!("{allowed}/v1/callbacks/native-channel");
+        let events = format!("{allowed}/v1/channels/native-channel/events");
+        peer.channel.lock().unwrap()["endpoints"] =
+            json!({"nyxid_callback_url":callback,"custom_event_url":events});
+        assert!(client.channel("owner-token", &bot).await.unwrap().is_some());
+        assert!(client.valid_callback("native-channel", &callback));
+        assert!(!client.valid_callback("other-channel", &callback));
+    }
+    for forbidden in [
+        "https://foreign.example/v1/callbacks/native-channel",
+        "https://bot.example/event-gateway/v1/callbacks/native-channel?extra=1",
+        "https://bot.example/event-gateway/v1/callbacks/native-channel/suffix",
+    ] {
+        assert!(!client.valid_callback("native-channel", forbidden));
+    }
+    peer.channel.lock().unwrap()["endpoints"]["nyxid_callback_url"] =
+        format!("{base}/v1/callbacks/native-channel").into();
+    assert!(matches!(
+        client.channel("owner-token", &bot).await,
+        Err(BotError::Unavailable)
+    ));
     peer.channel.lock().unwrap()["definition"]["connection_ref"] = "foreign-connection".into();
     assert!(matches!(
         client.channel("owner-token", &bot).await,

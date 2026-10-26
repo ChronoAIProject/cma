@@ -72,6 +72,20 @@ impl MongoSandboxStore {
         reuse_existing: bool,
         initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        let result = self
+            .commit_agent_admission(admission, reuse_existing, initiation)
+            .await?;
+        // No work or authority travels in this hint; the scheduler discovers and claims.
+        self.agent_admitted.notify_one();
+        Ok(result)
+    }
+
+    async fn commit_agent_admission(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
         let mut last_transient = None;
         let mut retries = retry::AdmissionRetries::new();
         while retries.next().await {
@@ -251,7 +265,7 @@ async fn apply_admission(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady))?;
-    if workspace.owner != admission.owner || workspace.status != WorkspaceStatus::Ready {
+    if workspace.owner != admission.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
     let sandbox = store
@@ -268,7 +282,11 @@ async fn apply_admission(
     if sandbox.owner != workspace.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
-    if !sandbox.accepts_creation_admission() {
+    let bootstrap = admission.admits_bootstrap(&workspace, &sandbox);
+    if !bootstrap && workspace.status != WorkspaceStatus::Ready {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
+    }
+    if !bootstrap && !sandbox.accepts_creation_admission() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
     if let Some(creation) = reuse_profile_agent(
@@ -304,9 +322,17 @@ async fn apply_admission(
     }
 
     let mut creation =
-        super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
+        match super::native_prepared::adopt_agent(store, &sandbox, &workspace, admission, session)
             .await
-            .map_err(ApplyError::Domain)?;
+            .map_err(ApplyError::Domain)?
+        {
+            Some(creation) => creation,
+            None => {
+                super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
+                    .await
+                    .map_err(ApplyError::Domain)?
+            }
+        };
     let provenance = super::agent_provenance::record_creation(
         store,
         admission,
@@ -337,14 +363,19 @@ async fn apply_admission(
         .checked_add(1)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let cause = match admission.origin {
-        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-            SandboxReviveCause::AgentCreation
-        }
+        AgentOrigin::Manual
+        | AgentOrigin::Lifecycle { .. }
+        | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
-    let revival = next_sandbox
-        .record_creation_admission(cause, admission.event_at.clone())
-        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    let revival = admission
+        .record_parent_admission(
+            &mut next_sandbox,
+            &workspace,
+            cause,
+            store.managed_runtime_version.as_deref(),
+        )
+        .map_err(ApplyError::Domain)?;
     advance_workspace(store, &workspace, &next_workspace, session).await?;
     advance_sandbox(store, &sandbox, &next_sandbox, session).await?;
 

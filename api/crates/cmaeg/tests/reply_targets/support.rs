@@ -17,7 +17,8 @@ use cmaeg::{
 use cmaeg_core::{
     activity::Activity,
     channel::ChannelDefinition,
-    ids::{ChannelId, ConversationId, IdempotencyKey},
+    channel::Secret,
+    ids::{ChannelId, ConsumerId, ConversationId, IdempotencyKey},
     seal::{seal_blob, ChannelPointer, EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
 use serde_json::{json, Value};
@@ -103,9 +104,13 @@ impl App {
             ),
             keys: keys.clone(),
             providers,
-            delivery,
+            delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
+            media: None,
+            downloads: Default::default(),
         };
         let engine = engine(receiver, &state, &relay);
         let (base, server) = serve(http::tools::router(state.clone())).await;
@@ -128,7 +133,7 @@ impl App {
         self.server.abort();
         self.engine.take();
         let (delivery, receiver) = mpsc::channel(16);
-        self.state.delivery = delivery;
+        self.state.delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         self.state.resolver = ChannelResolver::new(
             Arc::new(self.records.clone()),
             self.state.keys.clone(),
@@ -138,9 +143,34 @@ impl App {
         (self.base, self.server) = serve(http::tools::router(self.state.clone())).await;
     }
     pub async fn event(&self, actor: &str, name: &str) -> EventRef {
-        self.event_with_thread(actor, name, false).await
+        let key = self.definition.secrets.provider_credential.clone().unwrap();
+        self.event_for(actor, name, None, key).await
+    }
+    /// An event issued to `consumer` (`None` = default), whose context the
+    /// provider stores under that consumer's `credential`.
+    pub async fn event_for(
+        &self,
+        actor: &str,
+        name: &str,
+        consumer: Option<ConsumerId>,
+        credential: Secret,
+    ) -> EventRef {
+        self.event_for_with_thread(actor, name, consumer, credential, false)
+            .await
     }
     pub async fn event_with_thread(&self, actor: &str, name: &str, threaded: bool) -> EventRef {
+        let key = self.definition.secrets.provider_credential.clone().unwrap();
+        self.event_for_with_thread(actor, name, None, key, threaded)
+            .await
+    }
+    async fn event_for_with_thread(
+        &self,
+        actor: &str,
+        name: &str,
+        consumer: Option<ConsumerId>,
+        credential: Secret,
+        threaded: bool,
+    ) -> EventRef {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
@@ -166,11 +196,7 @@ impl App {
             });
         if let Some(bot_id) = &native {
             activity.source = cmaeg_core::activity::SourceKind::Telegram {
-                platform: if threaded {
-                    cmaeg_core::channel::Platform::Lark
-                } else {
-                    cmaeg_core::channel::Platform::Telegram
-                },
+                platform: cmaeg_core::channel::Platform::Telegram,
                 bot_id: bot_id.clone(),
             };
             activity.conversation.id = actor.into();
@@ -206,6 +232,8 @@ impl App {
                     reply_token_expires_at: now() + 600,
                 }
             },
+            consumer,
+            lineage: None,
         };
         let event_ref = EventRef::seal(&event, &self.state.keys).unwrap();
         let mut stream = self
@@ -219,7 +247,7 @@ impl App {
                     input: vec![],
                     metadata: Default::default(),
                     idempotency_key: IdempotencyKey::from_event(&event.event_id),
-                    agent_key: self.definition.secrets.provider_credential.clone().unwrap(),
+                    agent_key: credential,
                     event_context: Some(EventContextSnapshot {
                         schema_version: 1,
                         channel_id: self.id.clone(),

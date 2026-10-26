@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -79,7 +80,7 @@ describe('Trigger embed panel', () => {
     render(<EmbedPanel client={test.client} document={document} onManageSources={vi.fn()} />);
     await screen.findByRole('tab', { name: 'README or Markdown' });
     test.triggers.embed.mockImplementationOnce(() => new Promise(() => undefined));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Placement' }), 'plc_web');
+    await chooseOptionValue(user, screen.getByRole('button', { name: 'Placement' }), 'plc_web');
     expect(screen.getByText('Loading embed')).toBeInTheDocument();
     expect(screen.queryByLabelText('README or Markdown snippet')).not.toBeInTheDocument();
   });

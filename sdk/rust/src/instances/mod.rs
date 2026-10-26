@@ -11,7 +11,9 @@ mod commands;
 mod events;
 pub use commands::*;
 mod lifecycle;
+mod runtime_update;
 mod shared;
+pub use runtime_update::*;
 mod types;
 pub use events::*;
 pub use lifecycle::*;
@@ -172,6 +174,23 @@ pub struct Workspaces<'a> {
 }
 
 impl Workspaces<'_> {
+    /// Prepare a Workspace from an inline source; readiness is asynchronous.
+    pub async fn create_inline(
+        &self,
+        sandbox_id: &str,
+        body: &CreateInlineWorkspaceRequest,
+        key: &IdempotencyKey,
+    ) -> Result<Workspace> {
+        self.client
+            .command(
+                Method::POST,
+                &["sandboxes", sandbox_id, "workspaces", "inline"],
+                Some(body),
+                key,
+                StatusCode::CREATED,
+            )
+            .await
+    }
     /// List personal/shared summaries under current parent Sandbox access.
     pub async fn list_accessible(
         &self,

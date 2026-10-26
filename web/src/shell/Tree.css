@@ -157,6 +157,15 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* A person must act: the word takes the tone as well as the dot. */
+.tree-row__state[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.tree-row__state[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .tree-row__paused {
   display: inline-flex;
   width: 14px;
@@ -173,6 +182,79 @@
   to {
     opacity: 0.45;
   }
+}
+
+/* Agent cards do not reserve hierarchy indentation or disclosure space. */
+.agent-navigation .tree-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.agent-navigation .tree-row__disclosure {
+  display: none;
+}
+
+/*
+ * One-line rows (§10): a quiet list of titles. The signal slot is kept even
+ * when empty so titles line up with each other and with the action-row labels.
+ */
+.tree-row[data-layout='line'] {
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 4px 0 12px;
+}
+
+.tree-row[data-layout='line'] .tree-row__label {
+  gap: 8px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.tree-row[data-layout='line'] .tree-row__content {
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+
+.tree-row[data-layout='line'] .tree-row__name {
+  flex: 1;
+  min-width: 0;
+  line-height: 18px;
+}
+
+.tree-row[data-layout='line'] .tree-row__meta {
+  flex: none;
+  overflow: visible;
+}
+
+.tree-row[data-layout='line'] .tree-row__menu {
+  width: 24px;
+  height: 24px;
+}
+
+.tree-row__signal {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.tree-row__age {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Facts and the menu key wait for hover, focus or the current row. The menu
+ * keeps its place while hidden, so revealing it never shifts the title, and it
+ * stays visible while its portalled list is open.
+ */
+.tree-row[data-layout='line']:not(:hover, :focus-within, [aria-selected='true']) .tree-row__age {
+  display: none;
+}
+
+.tree-row[data-layout='line']:not(:hover, :focus-within, [aria-selected='true'])
+  .tree-row__menu:not([aria-expanded='true']) {
+  visibility: hidden;
 }
 
 .resource-tree__empty {
@@ -203,7 +285,13 @@
   .tree-row__disclosure,
   .tree-row__menu,
   .tree-row__label,
-  .resource-tree__heading {
+  .resource-tree__heading,
+  .tree-row[data-layout='line'],
+  .tree-row[data-layout='line'] .tree-row__label {
     min-height: 44px;
+  }
+
+  .tree-row[data-layout='line'] .tree-row__menu {
+    width: 44px;
   }
 }

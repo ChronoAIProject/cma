@@ -4,6 +4,9 @@ This is the public HTTP contract for CMA's Sandbox model. The served
 `GET /openapi.json` is OpenAPI 3.1 and supplies exact JSON schemas, parameters,
 security declarations and response media types. The operation inventory below
 is checked against that document, including its AG-UI and Responses projections.
+For the focused Agent lifecycle and Responses v2 workflow, use
+`GET /agent-manager/openapi.json` and [Agent Manager API](API_Agent_Manager.md).
+It preserves existing operations and removes unrelated paths and unreachable schemas.
 [CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
 [CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
 [CMAEG protocol](CMAEG_Protocol.md) defines channel ingress, provider bindings
@@ -13,6 +16,61 @@ There are no `/sessions`, `/chats`, environment-profile, contribution,
 sponsorship or terminal-attachment APIs in this release. Resource management
 uses Sandbox, Workspace, Worktree and Agent ids. A resource's readable name is
 not an id or a concurrency fence.
+
+## Inline Agent creation
+
+`POST /api/v1/agents` accepts a name, an optional Image Manager reference,
+optional GitHub repository, and inline Agent settings. The browser's Agent
+Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
+is required. A `202` receipt contains an **operation** ID; read
+`GET /api/v1/agent-lifecycle/{id}` until `status` is `succeeded` and then use its
+`agent_id` to open the Agent. A phase event marked `ready` does not complete the
+operation. Workspace/runtime readiness is reported only after Agent preparation.
+
+To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
+the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
+it rejects `image` and `repository` because those belong to the existing
+environment. Omitted or empty service selections inherit the parent's connected
+key scope, and requested services outside that scope are refused. The caller
+needs the existing Workspace's creation authority but does not need
+`CreateSandbox`. Admission and every resumed worker validate the current
+Workspace/Sandbox ownership, readiness and connection prerequisites before
+creating the inline Agent. The durable operation key also binds `workspace_id`;
+replaying it for another Workspace or for a new Sandbox conflicts.
+
+The permanent operation ledger binds a key to one owner's submitted request.
+Retries keep that exact body and key, including after a lost HTTP response.
+The originally resolved image digest and captured settings remain pinned even
+if the image catalogue advances. A different request under that key is refused.
+New operations also capture the configured CPU/memory allocation. Legacy
+operations retain their original minimum reservation and immutable limits.
+
+`waiting_for_connection` carries `connection.services` and `connection.target`
+for the connection wizard. After verifying the same owner's connections, repeat
+the original POST with the same body and key to resume that operation. Saved
+child identities are retained. This lifecycle ledger handles replay directly;
+the generic 24-hour HTTP response cache does not intercept resumption. The
+browser retains the pending request and receipt in owner-scoped session storage.
+
+Workers discover eligible operations every 10 seconds, process at most 16 per
+replica, and renew a 90-second claim every 20 seconds. Every status/event/child
+write checks the current claim token and expiry. Stage events are replay-safe.
+The Agent Manager's restricted database role includes `agent_lifecycle_operations`.
+
+Each operation also supplies the durable admission identity for its Sandbox and
+Agent. Concurrent workers and retries after an admission response is lost recover
+the same children, including when the owner's quota has since been exhausted.
+The original authenticated actor remains attached to Agent creation. Legacy
+records without a captured actor retain unknown attribution.
+
+Temporary dependency failures and readiness timeouts return the operation to
+`queued`, with durable retry delays of 5, 10, 20, 40 and then 60 seconds. Periodic
+discovery observes this delay. Child identities and completed stages survive
+each retry. Terminal resource conflicts remain `failed`.
+
+Image Manager authentication failures return `401 not_authenticated`; an image
+permission refusal returns `403 permission_denied`. These are distinct from a
+missing NyxID service connection and do not provide a connection-wizard target.
 
 ## Authentication And HTTP
 
@@ -98,7 +156,14 @@ response is exactly `{ email_signup, social_providers, invite_code_required,
 register_available }`. CMA reports registration availability but never creates
 NyxID users or roles. Anonymous preview/badge GETs and OAuth callbacks are inert.
 
-## Event Gateway Channel Records
+## Legacy Event Gateway storage protocol
+
+The three `/api/v1/gateway/*-records` namespaces below are retired from Agent
+Manager deployment and its OpenAPI. Event Gateway now owns its sealed storage in
+`eg_channel_records`, with an explicit legacy import command. These protocol
+descriptions and the SDK compatibility methods remain for older installations
+and migration tests; they are not endpoints on the current Agent Manager. Their
+eleven operations are classified `legacy_gateway` in the shared contract corpus.
 
 The `/api/v1/gateway/channel-records` routes store opaque, base64-encoded CMAEG
 channel-definition blobs for callers with the NyxID permission
@@ -281,7 +346,7 @@ Responses use `Cache-Control: no-store`. Named workflow failures are
 `400 invalid_setup`, `403 setup_authority_required`, `404 setup_not_found`,
 `409 setup_changed`, and `503 setup_unavailable`. Authentication failures are
 rejected before the handler. The gateway's independent event/reply integration
-protocol is hosted at https://bot-gateway.chrono-ai.fun/docs .
+protocol is hosted at https://bot.chrono-ai.fun/event-gateway/docs .
 
 ## Provider Bindings
 
@@ -555,6 +620,23 @@ admission reserves one dedicated branch/directory atomically; there is no
 independent Worktree-create route. Creation acceptance is not readiness or
 first-message completion. Follow the Agent, Sandbox events and recorded
 first-message state. Counts are enforced transactionally at admission.
+
+Owned Agent detail optionally includes `first_message.purpose` (`setup` or
+`task`) and `first_message.turn_sequence` once dispatch is fenced. Missing
+purpose means legacy unknown; an Agent's creation origin does not establish its
+message purpose, including when a Trigger reuses an untouched lifecycle Agent.
+
+Owned Agent detail, lists and hierarchy expose optional `runtime_metadata` with
+`working_directory`, `description`, `description_source` (`provider_title` or
+`prompt_preview`), and `description_is_setup_preview`. Missing source is unknown.
+The setup flag is true only with exact provider-input evidence linked to the
+recorded automatic setup message. Ignore a preview as a display title only when
+its source is `prompt_preview` and this flag is true; then use the configured
+Agent title. Explicit native titles remain authoritative, including text equal
+to a setup preview. This is title provenance, not a semantic title generator.
+`runtime_metadata_changed` replay events carry the same atomic metadata snapshot.
+Shared conversation reads retain their existing metadata redaction.
+
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
@@ -851,10 +933,130 @@ against current Agent policy and evidence lifetime after IO. TypeScript
 personal/shared unions. Existing `source` methods retain their personal types
 and reject a shared projection.
 
+`GET /api/v1/agents/{id}/settings` returns the owner's current `model`,
+`reasoning_effort`, `permission_mode`, and `pending`. Historical profiles that
+leave model selection to the runtime return an empty model until explicitly set.
+`PATCH` on the same path requires an `Idempotency-Key` and all three settings;
+reasoning effort is `minimal|low|medium|high|x_high`, and permission mode is
+`guarded|autonomous`. Updates require an idle Ready Agent and preserve its
+immutable profile and conversation identity. Desired settings are persisted
+before runtime dispatch and reapplied after reconnect; `pending: true` means
+runtime confirmation is outstanding and further input remains fenced. Retry
+network failures or ambiguous 503 replies with the original body and key.
+
+`GET /api/v1/agents/{id}/models` returns `{ models: [{ id, label, available }] }`
+from the Chrono LLM catalog using the owned Sandbox's existing scoped credential.
+It includes eligible text models and never expands service access. `available`
+requires the exact current runtime to advertise catalog-model support and the
+Agent and Sandbox to be in supported active states. Retained runtimes without
+that capability keep their existing settings and return disabled choices.
+Catalog failures return a sanitized `503`; responses use `Cache-Control: no-store`.
+See [Managed models](CMA_Managed_Models.md) for runtime selection validation.
+
+`GET /api/v1/agents/{id}/skills` returns `{ items, pending, can_install,
+unavailable_reason? }`. Each item includes its exact `id`, `version`, `source`,
+and `status` (`pending`, `installed`, or `failed`), with optional `name` and
+`error`. `POST` to the same path requires an `Idempotency-Key` and
+`{ "id": "<Ornn skill ID>", "version": "<exact version>" }`. It admits an
+additive installation only for an owned, idle Ready Agent on a supported
+runtime and returns `202 AgentSkillsView`. Poll the read route for runtime
+confirmation. Replaying the same request and key does not install twice;
+failed installations remain recorded and cannot be retried as a new install.
+Available choices come from the owner's existing profile-authoring skills
+catalog. See [Agent skills](CMA_Agent_Skills_Runtime.md) for installation and
+recovery semantics.
+
+`POST /api/v1/agents/{id}/attachments?name=<filename>` uploads raw file bytes
+into the owned Agent's persistent environment. It requires an `Idempotency-Key`;
+`Content-Type` supplies the file's media type and defaults to
+`application/octet-stream`. Send one file per request, at most 20 MiB, without
+`Content-Encoding`. The API validates the actual received length and sanitizes
+the name to a single non-hidden filename. The response is
+`201 AgentAttachmentView` with `id`, `agent_id`, `name`, `path`, `size_bytes`,
+`media_type` and `sha256`. Uploading does not submit a conversation message;
+the client may reference the returned path in a later explicit message.
+
+Uploads require current owner authority or an accepted, active typed share link
+with `view_write` permission, an active Sandbox and a retained runtime that
+advertises persistent attachment support. Legacy sharing and delegated
+conversation rights alone do not authorize file writes. Agent ancestry, runtime and
+home identity are rechecked across the upload. Invalid metadata or incomplete
+bytes return `invalid_attachment` (400); oversized files return
+`attachment_too_large` (413). Unavailable environments, unsupported retained
+runtimes and changed upload identity return a typed 409. Upload capacity returns
+`attachment_capacity` (429), a body that does not complete within 45 seconds
+returns `attachment_timeout` (408), and transient runtime failures return
+`attachment_unavailable` (503). Retry uncertain uploads with the original key,
+metadata and bytes. Responses use `Cache-Control: private, no-store` and
+`X-Content-Type-Options: nosniff`.
+
+`GET /api/v1/agents/{id}/access-requests` returns `{ items }` for the Agent owner.
+Each item retains its exact request and Agent IDs, `services`, `reason`, durable
+`status`, and optional safe `error`. Owner approval uses
+`POST /api/v1/agents/{id}/access-requests/{request_id}/approve` with
+`{ "services": ["service-id"] }`; denial uses the sibling `/deny` with `{}`.
+Both commands require an `Idempotency-Key` and return the current request with
+HTTP 200. Service selections contain 1–32 identifiers, each 1–128 ASCII letters,
+digits, hyphens or underscores. Bodies are limited to 8 KiB.
+
+Approval requires a verified caller context matching the authenticated owner
+and an outbound request credential; missing credentials are refused before
+any approval effect. The Core service owns durable decision replay and current
+owner checks. Reuse the exact decision body and key after an uncertain reply.
+Both `connecting` and `applying` responses include `connection.target` with
+`{ "type": "agent_access_request", "id": "request-id" }` for the owner's
+connection flow. Connections can be rechecked and restored throughout application
+without changing the approved services or admitting another approval.
+`applying` awaits runtime verification, and only `succeeded` confirms applied
+access. Poll the list after a connection return. `pending`,
+`denied` and `failed` preserve their durable meanings. All responses are private
+and non-cacheable. Typed refusals use `agent_access_invalid` (400),
+`agent_access_forbidden` (403), `agent_access_not_found` (404),
+`agent_access_conflict` (409), and `agent_access_unavailable` (503).
+
+`PUT /api/v1/agents/{id}/service-access` accepts
+`{ "services": ["chrono-llm-public", "ornn-api"], "expected_services": ["chrono-llm-public", "ornn-api", "api-github"] }`
+with an `Idempotency-Key` and returns HTTP 202 `AgentAccessRequestView`.
+The owner Save is consent to replace the complete service set shared by all
+Agents in that Sandbox. Optional services may be removed; the current platform
+baseline is mandatory. Both sets are bounded to 1–32 distinct service identifiers.
+`expected_services` must equal the currently effective set. A stale set or reuse
+of the same key with a different selection returns 409. Exact retries recover the
+original durable request even after its scope change has applied. A new owner
+Save starts `connecting`, without a separate pending approval.
+
+Before final Save or Approve, the browser connection flow can check
+`{ "type": "agent_service_access", "id": "agent-id", "services": ["selected-service-id"] }`.
+This owner-bound target resolves the selected scope and any model-access
+prerequisites without granting access or recording consent. Complete required
+connections before submitting final consent; the worker revalidates connections
+and retained owner authority before changing scope.
+
+New scope updates rotate the managed key in the existing live runtime. They do
+not pause or restart the Sandbox, replace its Pod, or replace Agent conversations.
+A paused Sandbox waits for an explicit owner resume. The scope revision,
+runtime identity and credential generation floor are durable; a concurrent
+lifecycle or later scope change cannot retarget an old update. Runtime delivery
+and old-key revocation must both complete before the callback. A busy Agent
+receives durable steering in its original active turn; a quiet Agent receives a
+normal message in its original conversation. `succeeded` requires confirmed
+callback delivery, independent of the time needed to finish the model response.
+Historical already-paused workflows retain their original recovery path.
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
 advancing cursors and combine transcript fallback without duplicating messages.
+
+Message feedback is private, durable metadata for the Agent owner.
+`GET /api/v1/agents/{id}/message-feedback` pages non-null votes using `after`
+and `limit` (1–200, default 200). `PUT
+/api/v1/agents/{id}/messages/{message_id}/feedback` sets or clears a vote with
+`{"vote":"up"}`, `{"vote":"down"}`, or `{"vote":null}`. The message ID must be
+`event:<sequence>` for a committed owner or assistant message. This idempotent
+metadata update requires no `Idempotency-Key` and never starts or interrupts
+Agent work. See [Agent Manager feedback](API_Agent_Manager.md#message-feedback)
+for ownership, pagination, persistence and concurrent-update behavior.
 
 Each transcript turn includes ordered `messages` with the durable `sequence`,
 `role` (`user` or `assistant`), `content` and `appended_at`. Steering remains a
@@ -908,6 +1110,29 @@ Settings replacement uses `{ expected_revision, settings }`; patch uses
 JSON Patch operations. Reset uses `{ expected_revision }`. Read the resulting
 revision after every successful change. Runtime inventory can fail unavailable
 without proving that a runtime is absent.
+
+Native warm-pool administration requires `ConfigurePlatform`:
+
+- `GET /api/v1/admin/warm-pools` returns durable targets, current provider
+  observations and the deployment's default image/CPU/memory. An unavailable
+  provider retains its target records with `available: false`; unobserved
+  readiness is `null`.
+- `POST /api/v1/admin/warm-pools` requires `Idempotency-Key` and accepts
+  `{ cpu_millis, memory_mib, target_replicas }`. The server supplies its pinned
+  system runtime image, initialized home seed and Pod policy. The `202` response
+  acknowledges a durable target, not ready capacity. Retry an uncertain create
+  with its exact original body and key.
+- `PUT /api/v1/admin/warm-pools/{id}` accepts
+  `{ expected_revision, target_replicas }` and returns `202`. Set the target to
+  zero to stop spare-capacity replenishment. Read current state after an
+  uncertain write or conflict before submitting a reviewed update.
+
+The reconciler saves the original pool/template UIDs before expanding capacity.
+Subsequent updates preserve those identities and their Pod policy; a missing or
+replaced resource causes reconciliation to report unavailable and retry, without
+creating replacement capacity. Target replicas are bounded to 0–1000. Active
+claimed Sandboxes continue their own retained-home lifecycle independently of
+spare-capacity changes.
 
 See [Operations](CMA_Operations.md) for settings meaning, deployment prerequisites,
 alerts, recovery, data-reset boundaries and production evidence. There is no
@@ -977,12 +1202,13 @@ returns 409, including changing an omitted default into an explicit reference.
 |---|---|
 | `POST /api/v1/bots` | Create a durable owner Bot with an Idempotency-Key; 201 returns creation progress. |
 | `GET /api/v1/bots` | List owned Bots with exclusive `after` and `limit` (1–200). |
-| `GET /api/v1/bots/nyxid-bots` | List the signed-in owner's active Telegram bots registered with NyxID. |
+| `GET /api/v1/bots/connections` | List the signed-in owner’s ready Gateway connections as `{connection_ref,label}`. |
+| `GET /api/v1/bots/nyxid-bots` | Compatibility inventory projection; new clients use `/connections`. |
 | `GET /api/v1/bots/{bot_id}` | Read owned Bot state, operation progress, channel endpoints and last synthetic test. |
 | `POST /api/v1/bots/{bot_id}/test` | Run a synthetic provider turn; does not send an external chat message. |
 | `POST /api/v1/bots/{bot_id}/disable` | 202 admits durable denial of all source events. |
 | `POST /api/v1/bots/{bot_id}/enable` | 202 admits restoration of the original source admission policy. |
-| `POST /api/v1/bots/{bot_id}/rotate-keys` | 202 admits rotation of both Bot credentials with recovery and cleanup. |
+| `POST /api/v1/bots/{bot_id}/rotate-keys` | 202 admits rotation of the consumer Agent credential (and the route credential for legacy consumers), with recovery and cleanup. |
 | `DELETE /api/v1/bots/{bot_id}` | 202 admits deletion; GET returns 404 after provider, channel, routes and keys are removed. |
 
 ### Resource access and share management
@@ -1030,12 +1256,24 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/triggers/pause` | - | - | 200 SettingsView |
 | `POST /api/v1/admin/triggers/resume` | - | - | 200 SettingsView |
+| `GET /api/v1/admin/warm-pools` | - | - | 200 WarmPoolList |
+| `POST /api/v1/admin/warm-pools` | ConfigureWarmPoolBody; key | - | 202 WarmPoolView |
+| `PUT /api/v1/admin/warm-pools/{id}` | ResizeWarmPoolBody | - | 202 WarmPoolView |
+
+Warm pool views include `config_sha256`, the immutable image/resources/home/Pod
+policy digest. Inventory includes `default_config_sha256` for the current default
+configuration (`null` when planning is unavailable). Select the deployment default
+by exact digest equality: old and new policies can share image and CPU/memory.
+A new policy requires a new creation key; replay and resize retain the original
+policy. New native pools use `fsGroupChangePolicy: OnRootMismatch`; historical
+pools and retained homes keep their admitted templates.
 
 ### Agent profiles
 
@@ -1055,17 +1293,70 @@ returns 409, including changing an omitted default into an explicit reference.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
+| `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
+| `GET /api/v1/agents/{id}/message-feedback` | - | after, limit | 200 MessageFeedbackPageView |
+| `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | SetMessageFeedbackRequest | - | 200 MessageFeedbackView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `PUT /api/v1/agents/{id}/service-access` | ReplaceAgentServiceAccess; key | - | 202 AgentAccessRequestView |
+| `POST /api/v1/agents/{id}/attachments` | Raw binary bytes; key | name* | 201 AgentAttachmentView |
+| `GET /api/v1/agents/{id}/access-requests` | - | - | 200 AgentAccessRequestList |
+| `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | ApproveAgentAccessRequest; key | - | 200 AgentAccessRequestView |
+| `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |
+| `GET /api/v1/agents/{id}/settings` | - | - | 200 AgentSettingsView |
+| `PATCH /api/v1/agents/{id}/settings` | UpdateAgentSettingsRequest; key | - | 200 AgentSettingsView |
+| `GET /api/v1/agents/{id}/models` | - | - | 200 AgentModelsView |
+| `GET /api/v1/agents/{id}/skills` | - | - | 200 AgentSkillsView |
+| `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
 | `GET /api/v1/agents/{id}/transcript` | - | - | 200 AgentTranscriptView |
 | `POST /api/v1/workspaces/{id}/agents` | CreateAgentRequest; key | - | 201 AgentView |
+
+### Agent home files
+
+Paths are relative to the runtime's persistent `/home/` directory. Reading
+requires current file-view authority; creating, editing and deleting require
+owner authority or an accepted, active typed `view_write` sharing link. Each
+operation rechecks access, and protected credential paths remain unavailable.
+Reads, downloads and writes are bounded to 32 MiB. A write's `expected_sha256`
+protects an edit against intervening changes; omit it when creating a new file.
+Directory creation uses `directory: true`. File operations do not require an
+`Idempotency-Key`.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/files/tree` | - | path | 200 FileListView |
+| `GET /api/v1/agents/{id}/files/content` | - | path*, max_bytes | 200 FileReadView |
+| `GET /api/v1/agents/{id}/files/download` | - | path* | 200 application/octet-stream |
+| `POST /api/v1/agents/{id}/files` | WriteFileRequest | - | 200 FileMutationView |
+| `DELETE /api/v1/agents/{id}/files` | - | path*, recursive | 200 FileMutationView |
+
+### Agent sharing links
+
+Only the Agent owner manages links and searches the recipient directory.
+Redemption requires an authenticated recipient, the link token, and membership
+in the configured audience. Public links still require authentication. Link
+creation accepts a 32-byte cryptographically random token encoded as 64
+lowercase hexadecimal characters; only its SHA-256 digest is retained. Keep the
+token in the browser URL fragment and send it in the redemption JSON body.
+Revocation is independent for each link and uses `expected_revision`. Links
+grant Agent access without granting Sandbox inventory or lifecycle rights.
+See [Agent sharing](Agent_Sharing.md) for audience and permission semantics.
+
+| Operation | Body / Key | Query | Response |
+|---|---|---|---|
+| `GET /api/v1/agents/{id}/share-links` | - | - | 200 ShareLinkList |
+| `POST /api/v1/agents/{id}/share-links` | CreateLinkBody; key | - | 200 ShareLinkView |
+| `DELETE /api/v1/agents/{id}/share-links/{share_id}` | -; key | expected_revision* | 200 ShareLinkView |
+| `GET /api/v1/agents/{id}/share-recipients` | - | q* | 200 RecipientList |
+| `POST /api/v1/agent-share-links/{share_id}/redeem` | RedeemLinkBody | - | 200 ShareLinkView |
 
 ### Agent operations
 
@@ -1121,6 +1412,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/conversations/{id}` | - | - | 200 Conversation |
 | `GET /api/v1/conversations/{id}/items` | - | after, limit | 200 ConversationItemList |
 | `GET /api/v2/ui/transport` | - | - | 200 UiTransportView |
+| `GET /api/v2/agents/{agent_id}/events/head` | - | - | 200 EventHead |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` | - | limit, page_cursor | 200 EventPage |
 | `GET /api/v2/agents/{agent_id}/events` | - | after_cursor, follow / Last-Event-ID | 200 Agent event SSE |
 | `GET /api/v2` | - | - | 200 JSON capabilities |
@@ -1132,6 +1424,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/controls` | V2ResponseControlRequest / required Idempotency-Key | - | 202 V2ResponseControl |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | V2InterruptRequest / required Idempotency-Key | - | 202 V2Interruption; atomic cancellation and distinct replacement response |
+| `GET /api/v2/agents/{agent_id}/queued-inputs` | - | after, limit (1–4; default 4) | 200 V2QueuedInputPage |
+| `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` | V2QueuedInputRequest / required Idempotency-Key | - | 200 V2QueuedInput |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | - | - | 200 V2QueuedCancellationObservation |
 | `POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | V2QueuedCancellationRequest / required Idempotency-Key | - | 200 V2QueuedCancellation |
 | `GET /api/v2/commands/{command_id}` | - | - | 200 V2CommandStatus |
@@ -1231,7 +1526,8 @@ buffering; revoked/expired access prevents later downloads. Download filenames
 in HTTP headers are generated from the content hash, with `nosniff` and
 `private, no-store`. SDK downloads return bytes; the web verifies size/hash and
 current permission before creating its local file. Previously downloaded copies
-cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
+cannot be recalled. Sandbox state is persisted by the attached Agent Sandbox
+volume; CMA does not expose a Sandbox snapshot archive endpoint.
 
 ### Sandboxes
 
@@ -1240,14 +1536,34 @@ cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
 | `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
-| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/commands` | SandboxCommandRequest; key | - | 202 SandboxCommandReceiptView |
 | `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+`runtime-update` accepts `{ "target_version": "<exact image reference>" }`
+with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
+`runtime_update.latest_version`, or its retained `target_version` when retrying a
+failed update. HTTP 202 records the request; follow `runtime_update.state` on
+Sandbox reads until completion. Busy Agents defer the update until idle, and
+eligible managed Sandboxes retain their original home and conversations. Stale
+or conflicting targets return 409; replay an uncertain request with its original
+body and key.
+
+Operators with `ControlAnySandbox` can queue the same update across owners using
+`POST /api/v1/admin/sandboxes/{id}/runtime-update` with that request body. This
+operator endpoint does not require an idempotency key: retrying the same pending
+target leaves the request unchanged. It validates the configured latest target
+or an already pinned retry target and audits the actual operator, Sandbox owner,
+and target. Queueing does not interrupt current work; the existing idle checks
+and transaction fencing retain the original PVC and conversation identities.
+Operator Sandbox detail exposes `runtime_update` with the pinned target, current
+state, and completion or failure metadata. The owner endpoint still hides
+other owners' Sandboxes, including from operators.
 
 Sandbox inventory is personal by default. `organization=<canonical ID>` selects
 current organization ownership and whole-Sandbox grants. `shared=true` selects the
@@ -1264,6 +1580,7 @@ SDKs expose this scope through their accessible Sandbox list method.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 AccessibleWorkspaceListView |
+| `POST /api/v1/sandboxes/{id}/workspaces/inline` | CreateInlineWorkspaceRequest; key | - | 201 WorkspaceView |
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
 | `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |
@@ -1291,6 +1608,11 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `POST /api/v1/triggers/{id}/retire` | -; key | - | 200 TriggerView |
 | `GET /api/v1/triggers/{id}/revisions` | - | - | 200 array<TriggerRevisionView> |
 | `GET /api/v1/triggers/{id}/stats` | - | - | 200 TriggerStatisticsView |
+
+Trigger deletion removes unpublished drafts and archives previously published
+Triggers. Archived records disappear from owner reads/listing and refuse new
+Launches; already-admitted Launches retain their frozen revisions and resources.
+The exact successful deletion command remains replayable with its original key.
 
 ### Trigger placements
 
@@ -1321,6 +1643,47 @@ SDKs expose this scope through their accessible Sandbox list method.
 |---|---|---|---|
 | `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
 | `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
+
+
+
+### Personal document Artifacts
+
+Persistent documents are independent of their originating Agent, Workspace and Sandbox. `/api/v1/documents` is an authenticated per-user registry backed by majority-durable Mongo metadata in `cma_document_artifacts`; immutable Markdown sources live in the configured S3-backed object service. Agent/Sandbox deletion does not delete documents. List/search reads bounded metadata projections and never reads source objects or history/receipt payloads.
+
+All writes require `Idempotency-Key`. Every metadata change increments `revision`; only title/source edits advance `source_revision` and add an immutable source revision. Owner title/source edits, grant/link changes and comment removal carry `expected_revision`. Stale revisions return 409; retries with the original key replay without repeating effects; different bodies under the same key return 409. Create replay returns current document metadata. Comments use a policy-fenced CAS with bounded retry and may anchor a specific source revision. Owner can remove any comment; a currently authorized commenter can remove their own.
+
+Owner may grant `read` or `comment` to explicit authenticated subjects, or create authenticated token links. The browser generates a CSPRNG 256-bit token (64 lowercase hex), retains it only in the URL fragment and submits it as `X-CMA-Document-Share-Token`; the backend retains only SHA-256. Authentication is required in addition to the token. Links do not make documents searchable. Revocation is checked again after bounded source download, before bytes are returned. Document responses use private,no-store; nosniff; no-referrer. Ordinary `origin_agent_id` is an informational label and grants no runtime publishing authority.
+
+Runtime MCP `publish_document` and `update_document` derive owner/Agent from confirmed runtime capability; no arbitrary owner field is accepted. Runtime update can change only verified runtime-authored documents for the current Agent/owner. The private runtime author field is separate from caller-supplied origin labels. Full runtime/conversation identity is checked again immediately before metadata commit after object upload, and replay requires current capability. Documents remain owner-accessible even if the originating runtime is removed.
+
+Limits: UTF8 Markdown 1 MiB, title 240 bytes, search 160 bytes, comments 8 KiB; page 1–50 (default 25); source revisions 256; direct grants 128; links 32; comments 256; retained receipts 1024; serialized metadata 12 MiB. Sources are content-addressed by server-derived owner/document/digest keys; callers never select storage locations. A failed metadata CAS may leave an unreachable immutable source object; no document metadata or source is lost. There is no document deletion endpoint in this increment.
+
+Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity;503 document_unavailable.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/documents` | List/search owned and explicitly shared documents. |
+| `POST /api/v1/documents` | Create owned Markdown document. |
+| `GET /api/v1/documents/{id}` | Read effective document metadata. |
+| `PATCH /api/v1/documents/{id}` | Owner source/title compare-and-swap. |
+| `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
+| `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
+| `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
+| `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
+| `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |
+| `POST /api/v1/documents/{id}/share-links` | Register authenticated token link. |
+| `DELETE /api/v1/documents/{id}/share-links/{link_id}` | Revoke authenticated token link. |
+| `GET /api/v1/documents/{id}/comments` | Page document comments. |
+| `POST /api/v1/documents/{id}/comments` | Add comment under current grant. |
+| `DELETE /api/v1/documents/{id}/comments/{comment_id}` | Owner or author comment removal. |
+
+SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. Full and focused AgentManager OpenAPI documents include all 15 operations.
+
+
+
+| `GET /api/v1/agents/{id}/preferences` | - | - | 200 AgentPreferencesView |
+| `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 <!-- openapi-operations:end -->
 

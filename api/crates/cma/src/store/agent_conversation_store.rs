@@ -29,6 +29,7 @@ mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
+mod contention;
 mod implementation;
 
 pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
@@ -61,9 +62,7 @@ async fn commit_conversation(
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+        contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
@@ -129,10 +128,7 @@ async fn commit_conversation(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "agent conversation transaction exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    Err(contention::exhausted(last_transient))
 }
 
 async fn apply_mutation(
@@ -148,6 +144,13 @@ async fn apply_mutation(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    // Command reservation also writes this Agent, so this transaction cannot
+    // miss a concurrently admitted message and then take its idle boundary.
+    if mutation.is_managed_context_admission() && store.agent_commands.find_one(doc! {
+        "agent_id": mutation.agent.id.as_str(), "status": {"$nin": ["completed", "failed", "cancelled"]}
+    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some() {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     super::trigger_first_messages::require_mutation(store, &current, mutation, session)
         .await
         .map_err(ApplyError::Domain)?;
@@ -242,7 +245,8 @@ fn immutable_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.creation_fingerprint != next.creation_fingerprint
         || current.profile != next.profile
         || current.capabilities != next.capabilities
-        || current.work != next.work
+        || (current.work != next.work
+            && !layer2_core::sandbox::agent_live_skills::is_install_admission(current, next))
         || current.failure != next.failure
         || current.title != next.title
         || current.created_at != next.created_at

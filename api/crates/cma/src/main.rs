@@ -1,12 +1,18 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
 
 mod activity;
+mod agent_access;
+mod agent_access_worker;
+mod agent_lifecycle;
+mod agent_models;
 mod auth;
 mod bot_setups;
 mod commands;
 mod composition;
 mod config;
 mod connections;
+mod document_artifacts;
+mod document_storage;
 mod gateway;
 mod health;
 mod permissions;
@@ -18,6 +24,7 @@ mod sandbox;
 mod shutdown;
 mod store;
 mod trigger;
+mod warm_pools;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -63,6 +70,21 @@ async fn main() {
         )
         .init();
 
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--print-runtime-role"] {
+        match std::env::var("CHRONO_MONGODB_DATABASE") {
+            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Err(_) => {
+                eprintln!("CHRONO_MONGODB_DATABASE is required");
+                std::process::exit(2)
+            }
+        }
+        return;
+    }
+    if !arguments.is_empty() {
+        eprintln!("usage: cma [--print-runtime-role]");
+        std::process::exit(2)
+    }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
@@ -75,6 +97,19 @@ async fn serve() -> Result<(), String> {
     let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
+
+    // Do not admit allocations against a newly promoted runtime until its
+    // exact default pool has ready capacity (unless an operator disabled it).
+    composition
+        .native_warm_pools
+        .ensure_default()
+        .await
+        .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    composition
+        .native_warm_pools
+        .await_default_ready()
+        .await
+        .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -107,6 +142,9 @@ async fn serve() -> Result<(), String> {
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
     );
+    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
+    shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     let http_signal = shutdown.subscribe();

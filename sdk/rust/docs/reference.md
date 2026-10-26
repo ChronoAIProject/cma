@@ -20,15 +20,15 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `sandboxes()` | `list`, `read`, `create`, `delete`, `pause`, `revive`, `events` |
 | `workspaces()` | `list`, `read`, `create`, `delete` |
 | `worktrees()` | `list`, `read` |
-| `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
+| `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
-| `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
+| `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `interrupt_with_input`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
-| `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
+| `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
 
@@ -119,7 +119,7 @@ than concatenating the owner/Agent summary fields.
 `unsupported().agent_card()` remains a compatibility alias and returns the same
 card; older servers' named refusals remain typed API errors.
 
-Encrypted gateway records are available through `client.gateway_records().put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
+Legacy encrypted Gateway storage methods remain for older installations and migration tooling. Current Agent Manager deployments retire channel/connection/interaction record endpoints; Event Gateway owns its own storage. The compatibility client exposes channel records through `client.gateway_records().put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
@@ -140,6 +140,31 @@ Reserve and retain the request's `record_id` for durable retries. Listing return
 one page; follow `next_after` even when `items` is empty. Channel creation/update
 includes optional `connection_ref` and `connection_admission`. Native Telegram
 source, credential and webhook endpoint fields are available in the wire types.
+
+Native bot mentions are an explicit source opt-in. Read
+`CapabilityView.source_features` and require `native_bot_mentions_v1` before
+selecting `BotMessageAdmission::NativeMentions`; the receiving identity and
+consumer's guest permissions and loop limits must also be configured. Older
+responses deserialize this field as an empty list, and scoped admission without
+`bot_messages` still defaults to denial and serializes without that field.
+When upgrading Rust code that constructs these public types directly, add
+`bot_messages: Default::default()` to existing `AdmissionPolicy::Scoped` values
+and `source_features: Vec::new()` to existing `CapabilityView` values. These are
+Rust source construction changes; existing JSON requests and responses remain
+compatible.
+
+A channel read with several consumers carries the read-only
+`definition.routing` (`RoutingPolicy`), with each consumer's public key hash and
+never a key; it is `None` on every other channel, and no request type sets it.
+A routed event's `Activity`, and the `PublicActivity` that `read_event_context`
+returns, carry `routing` (`ActivityRouting`): the source slot, how the targets
+were resolved, the targets with the primary consumer first and, on a hand-off,
+its `Causation`. It is `None` on every unrouted event. Keep an activity you
+persist as the JSON you received, so fields this SDK does not know survive.
+On a routed channel `ContextResponse.consumer` (`ConsumerSummary`) names the
+consumer whose agent key made the call, and `provider_binding_id` is that
+consumer's binding; it is `None` on every other channel. A hand-off event reports
+`capabilities.buttons` and `capabilities.cards` as `"none"`.
 
 ```rust
 use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
@@ -236,3 +261,20 @@ CMA callback continuation, local path/method, optional body/owner, and a require
 `idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
 before treating the inner operation as successful. These provider APIs require
 the configured Bot Father binding; they never accept or return user credentials.
+
+## Persistent documents
+
+`client.documents()` exposes `list`, `create`, `read`, `update`, `source`,
+`revisions`, `shares`, `grant`, `revoke`, `links`, `create_link`, `revoke_link`,
+`comments`, `comment`, and `remove_comment`. Types live in `cma_sdk::documents`.
+The registry is independent of Agent and Sandbox lifetimes. `DocumentListOptions`
+supports literal title `q`, `scope`, `cursor`, and page `limit` (1–50).
+
+All writes take `&IdempotencyKey`; preserve the original key when retrying an
+uncertain result. Versioned mutations take `expected_revision`; source reads
+may select an immutable revision. Recipient grants are `Read` or `Comment`.
+The optional token on read/comment calls goes only in
+`X-CMA-Document-Share-Token` and still requires user authentication.
+`create_link` accepts a caller-generated random 256-bit lowercase hex token;
+returned metadata never includes it. Keep share tokens out of logs and URL
+queries. Link access alone never exposes a user's registry inventory.

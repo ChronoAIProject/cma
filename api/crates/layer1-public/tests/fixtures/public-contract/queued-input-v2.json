@@ -1,0 +1,1077 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "queued-input-v2-owner-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.queued_inputs",
+          "agent_id": "agt_fixture",
+          "data": [
+            {
+              "response": {
+                "object": "cma.agent.command",
+                "receipt": {
+                  "command_id": "cmd_control_source",
+                  "agent_id": "agt_fixture",
+                  "response_id": "resp_control_source",
+                  "admitted_at": "2026-09-05T00:00:00Z",
+                  "agent_order": 1,
+                  "event_cursor": 2
+                },
+                "status": "queued",
+                "queue_deadline": "2030-09-05T00:00:00Z",
+                "turn_sequence": null,
+                "observed_cursor": null,
+                "delivery": null,
+                "failure": null
+              },
+              "command_revision": 1,
+              "text": "Private source input",
+              "editable": true
+            }
+          ],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-owner-edit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_input",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 1
+          },
+          "edit": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_input_edit",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 2,
+          "text": "Revised input\n<attachment>new</attachment>"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "queued_edit_at": "/edit/receipt/admitted_at",
+        "queued_edit_deadline": "/edit/queue_deadline",
+        "queued_edit_id": "/edit/receipt/command_id"
+      }
+    },
+    {
+      "id": "queued-input-v2-owner-replay",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_input",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 1
+          },
+          "edit": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_input_edit",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 2,
+          "text": "Revised input\n<attachment>new</attachment>"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-owner-after-edit",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.queued_inputs",
+          "agent_id": "agt_fixture",
+          "data": [
+            {
+              "response": {
+                "object": "cma.agent.command",
+                "receipt": {
+                  "command_id": "cmd_control_source",
+                  "agent_id": "agt_fixture",
+                  "response_id": "resp_control_source",
+                  "admitted_at": "2026-09-05T00:00:00Z",
+                  "agent_order": 1,
+                  "event_cursor": 2
+                },
+                "status": "queued",
+                "queue_deadline": "2030-09-05T00:00:00Z",
+                "turn_sequence": null,
+                "observed_cursor": null,
+                "delivery": null,
+                "failure": null
+              },
+              "command_revision": 2,
+              "text": "Revised input\n<attachment>new</attachment>",
+              "editable": true
+            }
+          ],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/$queued_edit_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.command",
+          "receipt": {
+            "command_id": "cmd_queued_input_edit",
+            "agent_id": "agt_fixture",
+            "response_id": null,
+            "admitted_at": "2026-09-15T00:00:00Z",
+            "agent_order": 2,
+            "event_cursor": 2
+          },
+          "status": "completed",
+          "queue_deadline": "2026-09-15T00:05:00Z",
+          "turn_sequence": null,
+          "observed_cursor": null,
+          "delivery": null,
+          "failure": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-changed-command",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_other",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-changed-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 2,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-changed-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Different input under the same key"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-stale-not-admitted",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "different-key"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "queued_input_not_admitted",
+            "message": "The original edit was not admitted and its source command revision is permanently stale. Observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-bound-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_bound",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.queued_inputs",
+          "agent_id": "agt_fixture",
+          "data": [],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-bound-conflict",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_bound",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 4,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "queued_input_conflict",
+            "message": "The source command or current authority changed. Recover an uncertain edit with the original key and body.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-anonymous-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-anonymous-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-foreign-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-foreign-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-query-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs?unexpected=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-query-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input?unexpected=true",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-missing-key",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_idempotency_key",
+            "message": "Supply exactly one retained idempotency key.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-invalid-revision",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 0,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-unknown-field",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "turn_sequence": 4,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-invalid-json",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json",
+            "message": "A JSON queued input request is required.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-later-edit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-later"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 2,
+          "text": "Latest input"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_input",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 2
+          },
+          "edit": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_input_later",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 3,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 3,
+          "text": "Latest input"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "queued_later_edit_at": "/edit/receipt/admitted_at",
+        "queued_later_edit_deadline": "/edit/queue_deadline",
+        "queued_later_edit_id": "/edit/receipt/command_id"
+      }
+    },
+    {
+      "id": "queued-input-v2-replay-original-after-later-edit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": "Revised input\n<attachment>new</attachment>"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.queued_input",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "source_command_id": "cmd_control_source",
+            "expected_command_revision": 1
+          },
+          "edit": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_queued_input_edit",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-15T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 2
+            },
+            "status": "completed",
+            "queue_deadline": "2026-09-15T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "command_revision": 2,
+          "text": "Revised input\n<attachment>new</attachment>"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-latest-list",
+      "operation": "GET /api/v2/agents/{agent_id}/queued-inputs",
+      "scenario": "queued_input_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/queued-inputs",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.queued_inputs",
+          "agent_id": "agt_fixture",
+          "data": [
+            {
+              "response": {
+                "object": "cma.agent.command",
+                "receipt": {
+                  "command_id": "cmd_control_source",
+                  "agent_id": "agt_fixture",
+                  "response_id": "resp_control_source",
+                  "admitted_at": "2026-09-05T00:00:00Z",
+                  "agent_order": 1,
+                  "event_cursor": 2
+                },
+                "status": "queued",
+                "queue_deadline": "2030-09-05T00:00:00Z",
+                "turn_sequence": null,
+                "observed_cursor": null,
+                "delivery": null,
+                "failure": null
+              },
+              "command_revision": 3,
+              "text": "Latest input",
+              "editable": true
+            }
+          ],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-empty-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": ""
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-whitespace-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": " "
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "queued-input-v2-null-text",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+      "scenario": "queued_input_v2_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/queued-input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "queued-edit-original"
+        },
+        "body": {
+          "source_command_id": "cmd_control_source",
+          "expected_command_revision": 1,
+          "text": null
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_queued_input_request",
+            "message": "Supply only the original source_command_id and positive expected_command_revision, and nonempty text.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

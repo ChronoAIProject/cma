@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ApiError, ProtocolError, ValidationError } from '../src/errors.js';
-import { TriggerAuthoring, type TriggerContent } from '../src/trigger-authoring/index.js';
+import {
+  TriggerAuthoring,
+  type TriggerContent,
+  type TriggerContentInput,
+} from '../src/trigger-authoring/index.js';
 import { command, transport } from './resource-fixtures.js';
 
 const content: TriggerContent = {
@@ -107,6 +111,37 @@ describe('Trigger authoring', () => {
     expect(test.calls.at(-1)?.url).toContain('/embed?placement_id=plc_readme');
   });
 
+  it('decodes inline targets with legacy profile sentinels', async () => {
+    const test = transport();
+    const inlineDocument = {
+      ...document,
+      draft: {
+        ...content,
+        target: {
+          sandbox_profile: { id: '', revision: 0 },
+          workspace_profile: { id: '', revision: 0 },
+          agent_profile: { id: '', revision: 0 },
+          inline: {
+            image: { id: 'private-codex', version: 'v3' },
+            agent: {
+              model: 'gpt-5-codex',
+              reasoning_effort: 'medium',
+              permission_mode: 'guarded',
+              skills: [],
+              system_prompt: 'Inspect the project.',
+              services: ['api-github'],
+            },
+          },
+        },
+      },
+    };
+    test.answer(inlineDocument);
+    const parsed = await new TriggerAuthoring(test.client.config).read(document.id);
+    expect(parsed.draft.target.inline?.image?.id).toBe('private-codex');
+    expect(parsed.draft.target.sandbox_profile).toEqual({ id: '', revision: 1 });
+    expect(parsed.draft.target.agent_profile).toEqual({ id: '', revision: 1 });
+  });
+
   it('rejects mismatched identities and invalid mutations before transport', async () => {
     const test = transport();
     const api = new TriggerAuthoring(test.client.config);
@@ -128,6 +163,54 @@ describe('Trigger authoring', () => {
     await expect(api.retirePlacement(document.id, 'plc_other', command)).rejects.toBeInstanceOf(
       ProtocolError,
     );
+  });
+
+  it('creates and saves an inline Agent without sending legacy profile references', async () => {
+    const test = transport();
+    const api = new TriggerAuthoring(test.client.config);
+    const inline: TriggerContentInput = {
+      ...content,
+      target: {
+        inline: {
+          agent: {
+            reasoning_effort: 'medium',
+            permission_mode: 'guarded',
+            skills: [],
+            system_prompt: 'Inspect the project.',
+            services: [],
+          },
+          workspace: { repository: { url: 'https://github.com/example/repo', reference: 'main' } },
+        },
+      },
+    };
+    test.answer({ ...document, draft: inline }, 201);
+    const created = await api.create({ content: inline }, command);
+    expect(created.draft.target.inline).toEqual(inline.target.inline);
+    expect(created.draft.target.agent_profile).toEqual({ id: '', revision: 1 });
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body))).toEqual({ content: inline });
+    test.answer({ ...document, draft: inline });
+    await api.save(document.id, { content: inline, draft_version: 1 }, command);
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body))).toEqual({
+      content: inline,
+      draft_version: 1,
+    });
+  });
+
+  it('rejects incomplete legacy targets and named profiles with zero revision', async () => {
+    const test = transport();
+    const api = new TriggerAuthoring(test.client.config);
+    for (const field of ['sandbox_profile', 'workspace_profile', 'agent_profile'] as const) {
+      const missing: Partial<TriggerContent['target']> = { ...content.target };
+      delete missing[field];
+      for (const target of [
+        missing,
+        { ...content.target, [field]: { id: '', revision: 0 } },
+        { ...content.target, [field]: { id: 'profile_one', revision: 0 } },
+      ]) {
+        test.answer({ ...document, draft: { ...content, target } });
+        await expect(api.read(document.id)).rejects.toBeInstanceOf(ProtocolError);
+      }
+    }
   });
 
   it('retains private-profile refusals and command keys for caller reconciliation', async () => {

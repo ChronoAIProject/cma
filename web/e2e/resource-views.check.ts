@@ -163,7 +163,8 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
     animations: 'disabled',
   });
   admin = true;
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   await page.getByRole('button', { name: 'Refresh access' }).click();
   await page.getByRole('button', { name: 'Close Agent details' }).click();
   await page
@@ -172,7 +173,8 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes).toEqual([{ text: 'Review from the current organization admin.' }]);
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   revoked = true;
   await page.getByRole('button', { name: 'Refresh access' }).click();
   await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();

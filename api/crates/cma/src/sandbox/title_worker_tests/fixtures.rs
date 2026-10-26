@@ -11,6 +11,7 @@ pub(super) fn sandbox() -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1000,
                 memory_mib: 2048,
                 nyxid_services: vec![ServiceId::new("chrono-llm")],
@@ -35,6 +36,7 @@ pub(super) fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("chrono-llm")],
             key_generation: 3,
             delivered: true,
@@ -93,6 +95,10 @@ pub(super) fn agent() -> Agent {
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: Some("conversation-title".into()),
             runtime_generation: Some(1),
             last_seq: 0,

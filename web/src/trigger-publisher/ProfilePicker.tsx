@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
@@ -103,52 +104,56 @@ export function ProfilePicker({
     <div className="trigger-field">
       <label htmlFor={id}>{kind} profile</label>
       <div className="trigger-picker__controls">
-        <select
-          aria-label={`${kind} profile source`}
+        <Picker
+          label={`${kind} profile source`}
           value={selectedSource}
           disabled={disabled}
-          onChange={(event) => {
-            setSource(event.target.value as typeof source);
+          onChange={(choice) => {
+            setSource(choice as typeof source);
             setChoices([]);
             setNext(undefined);
           }}
-        >
-          {kind === 'workspace' && references.length > 0 ? (
-            <option value="sandbox">From Sandbox profile</option>
-          ) : null}
-          <option value="own">My profiles</option>
-          <option value="public">Public profiles</option>
-        </select>
-        <select
+          options={[
+            ...(kind === 'workspace' && references.length > 0
+              ? [{ value: 'sandbox', label: 'From Sandbox profile' }]
+              : []),
+            { value: 'own', label: 'My profiles' },
+            { value: 'public', label: 'Public profiles' },
+          ]}
+        />
+        <Picker
           id={id}
           value={current}
           disabled={disabled || busy}
-          aria-describedby={`${id}-summary${error === undefined ? '' : ` ${id}-error`}`}
-          aria-invalid={error !== undefined}
-          onChange={(event) => {
-            const chosen = choices.find(
-              (item) => `${item.id}:${String(item.revision)}` === event.target.value,
-            );
+          describedBy={`${id}-summary${error === undefined ? '' : ` ${id}-error`}`}
+          invalid={error !== undefined}
+          onChange={(choice) => {
+            const chosen = choices.find((item) => `${item.id}:${String(item.revision)}` === choice);
             if (chosen !== undefined) onSelect(chosen);
           }}
-        >
-          <option value="">{busy ? 'Loading profiles' : 'Choose a published revision'}</option>
-          {value !== undefined &&
-          !choices.some((item) => item.id === value.id && item.revision === value.revision) ? (
-            <option value={current}>
-              {value.name} / Revision {value.revision}
-            </option>
-          ) : null}
-          {choices.map((choice) => (
-            <option
-              key={`${choice.id}:${String(choice.revision)}`}
-              value={`${choice.id}:${String(choice.revision)}`}
-            >
-              {choice.name} / Revision {choice.revision}
-              {choice.public ? '' : ' / Private'}
-            </option>
-          ))}
-        </select>
+          label={`${kind} profile`}
+          options={[
+            {
+              value: '',
+              label: busy ? 'Loading profiles' : 'Choose a published revision',
+              unavailable: 'Choose a published revision below.',
+            },
+            ...(value !== undefined &&
+            !choices.some((item) => item.id === value.id && item.revision === value.revision)
+              ? [
+                  {
+                    value: current,
+                    label: `${value.name} / Revision ${value.revision}`,
+                    unavailable: 'This revision is not in the current catalog.',
+                  },
+                ]
+              : []),
+            ...choices.map((choice) => ({
+              value: `${choice.id}:${String(choice.revision)}`,
+              label: `${choice.name} / Revision ${choice.revision}${choice.public ? '' : ' / Private'}`,
+            })),
+          ]}
+        />
       </div>
       {value === undefined ? null : (
         <p>

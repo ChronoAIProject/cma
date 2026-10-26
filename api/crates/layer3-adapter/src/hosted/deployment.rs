@@ -22,7 +22,7 @@ pub(super) const RUNTIME_IMAGE_METADATA: &str = "cma/image-sha256";
 pub(super) const RUNTIME_CONTRACT_METADATA: &str = "cma/runtime-contract";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct ProviderIdentity {
+pub(crate) struct ProviderIdentity {
     pub sandbox_id: String,
     pub generation: u64,
     pub image_sha256: String,
@@ -59,6 +59,28 @@ impl Default for HostedDeployment {
 }
 
 impl HostedDeployment {
+    pub(crate) fn render_adoption(
+        &self,
+        adoption: &crate::RuntimeAdoptionRequest,
+        generation: u64,
+    ) -> crate::Result<ProviderSandboxRequest> {
+        let mut retained = self.clone();
+        if let Some(image) = &adoption.expected_image {
+            retained.image.uri.clone_from(image);
+        }
+        let request = retained.render_runtime(&adoption.spec, generation)?;
+        if adoption
+            .expected_image
+            .as_ref()
+            .is_some_and(|image| image != &request.image.uri)
+        {
+            return Err(AdapterError::Rejected(
+                "persisted runtime image conflicts with its specification".into(),
+            ));
+        }
+        Ok(request)
+    }
+
     pub fn contract(&self) -> crate::Result<RuntimeContract> {
         RuntimeContract::admit(&self.image.uri, &self.image.labels)
     }
@@ -82,6 +104,13 @@ impl HostedDeployment {
     ) -> crate::Result<ProviderSandboxRequest> {
         self.contract()?;
         validate_spec(spec)?;
+        let image_uri = spec
+            .runtime_image
+            .as_deref()
+            .unwrap_or(self.image.uri.as_str());
+        if spec.runtime_image.is_some() {
+            validate_runtime_image(image_uri)?;
+        }
         if generation == 0 {
             return Err(AdapterError::Rejected(
                 "runtime generation must be non-zero".into(),
@@ -110,7 +139,11 @@ impl HostedDeployment {
                 if spec.own_credential {
                     String::new()
                 } else {
-                    self.scoped_model_base_url(spec)
+                    scoped_model_base_url(
+                        &self.upstream_base_url,
+                        &self.platform_base_url,
+                        &spec.reaches,
+                    )
                 },
             ),
             (
@@ -162,10 +195,7 @@ impl HostedDeployment {
                 RUNTIME_GENERATION_METADATA.to_string(),
                 generation.to_string(),
             ),
-            (
-                RUNTIME_IMAGE_METADATA.to_string(),
-                image_sha256(&self.image.uri),
-            ),
+            (RUNTIME_IMAGE_METADATA.to_string(), image_sha256(image_uri)),
             (
                 RUNTIME_CONTRACT_METADATA.to_string(),
                 RUNTIME_CONTRACT_VERSION.to_string(),
@@ -177,7 +207,7 @@ impl HostedDeployment {
 
         let mut request = ProviderSandboxRequest {
             image: ProviderImage {
-                uri: self.image.uri.clone(),
+                uri: image_uri.to_owned(),
             },
             entrypoint: vec![spec.supervisor_program.clone()],
             env,
@@ -199,43 +229,70 @@ impl HostedDeployment {
         );
         Ok(request)
     }
-
-    fn scoped_model_base_url(&self, spec: &SandboxSpec) -> String {
-        let configured = self.upstream_base_url.clone();
-        let (Ok(mut upstream), Ok(platform)) = (
-            reqwest::Url::parse(&configured),
-            reqwest::Url::parse(&self.platform_base_url),
-        ) else {
-            return configured;
-        };
-        if upstream.origin() != platform.origin()
-            || !matches!(
-                upstream.path(),
-                "/api/v1/proxy/s/chrono-llm" | "/api/v1/proxy/s/chrono-llm-public"
-            )
-        {
-            return configured;
-        }
-        // Service scope is pinned with a Sandbox's credential. Older homes
-        // must still revive with their original LLM route after the deployment
-        // default switches to the public service. Prefer public for new scopes.
-        let service = if spec
-            .reaches
-            .iter()
-            .any(|service| service == "chrono-llm-public")
-        {
-            "chrono-llm-public"
-        } else if spec.reaches.iter().any(|service| service == "chrono-llm") {
-            "chrono-llm"
-        } else {
-            return configured;
-        };
-        upstream.set_path(&format!("/api/v1/proxy/s/{service}"));
-        upstream.to_string()
-    }
 }
 
-pub(super) fn provider_request_fingerprint(
+pub(crate) fn scoped_model_base_url(
+    configured: &str,
+    platform: &str,
+    reaches: &[String],
+) -> String {
+    let (Ok(mut upstream), Ok(platform)) = (
+        reqwest::Url::parse(configured),
+        reqwest::Url::parse(platform),
+    ) else {
+        return configured.to_owned();
+    };
+    if upstream.origin() != platform.origin()
+        || !matches!(
+            upstream.path(),
+            "/api/v1/proxy/s/chrono-llm" | "/api/v1/proxy/s/chrono-llm-public"
+        )
+    {
+        return configured.to_owned();
+    }
+    // Service scope is pinned with a Sandbox's credential. Older homes
+    // must still revive with their original LLM route after the deployment
+    // default switches to the public service. Prefer public for new scopes.
+    let service = if reaches.iter().any(|service| service == "chrono-llm-public") {
+        "chrono-llm-public"
+    } else if reaches.iter().any(|service| service == "chrono-llm") {
+        "chrono-llm"
+    } else {
+        return configured.to_owned();
+    };
+    upstream.set_path(&format!("/api/v1/proxy/s/{service}"));
+    upstream.to_string()
+}
+
+pub(crate) fn validate_runtime_image(image: &str) -> crate::Result<()> {
+    let Some((name, digest)) = image.rsplit_once("@sha256:") else {
+        return Err(AdapterError::Rejected(
+            "runtime image must be pinned by digest".into(),
+        ));
+    };
+    if name.is_empty()
+        || name.len() > 2_048
+        || name.contains('@')
+        || name.contains("://")
+        || name.starts_with(['.', '-', '_', '/', ':'])
+        || name.ends_with(['.', '-', '_', '/', ':'])
+        || name.contains("//")
+        || !name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
+        })
+        || digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(AdapterError::Rejected(
+            "runtime image must be a valid immutable OCI reference".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn provider_request_fingerprint(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<String> {
     request.validate_volumes()?;
@@ -285,7 +342,7 @@ pub(super) fn provider_request_fingerprint(
     Ok(URL_SAFE_NO_PAD.encode(digest.finalize()))
 }
 
-pub(super) fn provider_request_identity(
+pub(crate) fn provider_request_identity(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<ProviderIdentity> {
     let identity = provider_metadata_identity(&request.metadata)?;
@@ -379,7 +436,7 @@ fn sha256_fingerprint(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-pub(super) fn image_sha256(uri: &str) -> String {
+pub(crate) fn image_sha256(uri: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(uri.as_bytes()))
 }
 

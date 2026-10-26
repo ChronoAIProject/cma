@@ -1,9 +1,63 @@
 use super::lifecycle_test_support::{agent, checkpoint, sandbox, NOW};
 use super::*;
+use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
 const HOLDER: &str = "lifecycle-worker";
 const LEASE_END: &str = "2026-09-05T01:00:00Z";
 const LATER: &str = "2026-09-05T00:31:00Z";
+
+#[test]
+fn retained_home_pause_skips_checkpoint_capture_and_keeps_pv_recovery_authority() {
+    let mut value = sandbox();
+    let mut home = SandboxHome::reserve(
+        &value.id,
+        HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "storage".into(),
+            capacity_gib: 64,
+            template_name: "empty".into(),
+            template_generation: "seed-v1".into(),
+        },
+    )
+    .unwrap();
+    home.bind(HomeVolumeReceipt {
+        native_authority: None,
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "sandbox-home".into(),
+        storage_generation: "pvc-generation".into(),
+    })
+    .unwrap();
+    value.lifecycle.home = Some(Box::new(home));
+    value.lifecycle.runtime_generation_high_water = 1;
+    value.runtime.as_mut().unwrap().provision_generation = Some(1);
+    value.validate().unwrap();
+
+    value.begin_pause(NOW.into(), None).unwrap();
+    assert!(value.retained_home_recovery().is_some());
+    claim(&mut value);
+    value
+        .complete_lifecycle_persistent_pause(HOLDER, fence(&value), LATER.into())
+        .unwrap();
+    assert_phase(&value, SandboxPausePhase::PauseAgents);
+    assert!(value.lifecycle.checkpoints.latest.is_none());
+
+    claim_and_complete(&mut value, |value, fence| {
+        value.complete_lifecycle_agent_pause(HOLDER, fence, LATER.into())
+    });
+    claim_and_complete(&mut value, |value, fence| {
+        value.complete_lifecycle_runtime_teardown(HOLDER, fence, LATER.into())
+    });
+    claim_and_complete(&mut value, |value, fence| {
+        value.publish_lifecycle_paused(HOLDER, fence, LATER.into())
+    });
+
+    assert_eq!(value.status, SandboxStatus::Paused);
+    assert!(value.runtime.is_none());
+    assert!(value.lifecycle.checkpoints.latest.is_none());
+    assert!(value.retained_home_recovery().is_some());
+    value.validate().unwrap();
+}
 
 #[test]
 fn pause_transitions_publish_one_revision_and_release_each_claim() {

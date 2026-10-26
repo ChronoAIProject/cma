@@ -1,6 +1,7 @@
 import type { Dispatch } from './context.js';
 
 export const botDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/bots/connections': ({ client }) => client.bots.connections(),
   'POST /api/v1/agent-delegations/identity': ({ client, body }) =>
     client.agentDelegations.identity(body),
   'POST /api/v1/agent-delegations/operations': ({ client, body }) =>

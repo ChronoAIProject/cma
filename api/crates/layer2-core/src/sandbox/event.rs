@@ -44,6 +44,10 @@ pub enum AgentLogKind {
         previous_generation: u64,
         runtime_generation: u64,
     },
+    SkillInstallationChanged {
+        skill_id: String,
+        status: super::AgentSkillInstallStatus,
+    },
     WorkStepCompleted {
         step: AgentWorkStep,
     },
@@ -53,6 +57,10 @@ pub enum AgentLogKind {
     },
     TurnStarted {
         turn_sequence: u64,
+        /// Exact owner-selected runtime model fenced with this turn. Absent on
+        /// legacy records; an empty value explicitly delegates to runtime default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin_key: Option<String>,
     },
@@ -112,6 +120,18 @@ pub enum AgentLogKind {
         context_used: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_window: Option<u64>,
+    },
+    RuntimeMetadataChanged {
+        metadata: super::AgentRuntimeMetadata,
+    },
+    UsageUpdated {
+        input_tokens: u64,
+        output_tokens: u64,
+        context_used: u64,
+        context_window: Option<u64>,
+        turn_sequence: Option<u64>,
+        turn_input_tokens: u64,
+        turn_output_tokens: u64,
     },
     ModeChanged {
         mode: String,
@@ -217,6 +237,9 @@ pub enum SandboxEventKind {
     },
     ServiceAccessGranted {
         grant: super::SandboxServiceGrant,
+    },
+    ServiceAccessRevised {
+        scope: Box<super::SandboxServiceScopeRevision>,
     },
     CheckpointSealed {
         object_reference: String,

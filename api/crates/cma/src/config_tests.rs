@@ -80,18 +80,6 @@ fn configured_with_removed_key(
 ) -> Result<Config, String> {
     let secret = TemporaryEntry::file(format!("\n  {TEST_API_KEY}\t\n").as_bytes());
     let mut values = HashMap::from([
-        (
-            "CHRONO_CHECKPOINT_BUCKET".to_owned(),
-            "cma-checkpoint-test".to_owned(),
-        ),
-        (
-            "CHRONO_STORAGE_CLIENT_ID".to_owned(),
-            "storage-test-client".to_owned(),
-        ),
-        (
-            "CHRONO_STORAGE_CLIENT_SECRET".to_owned(),
-            "storage-identity-material".to_owned(),
-        ),
         ("CHRONO_AUTH_MODE".to_owned(), "trusted".to_owned()),
         (
             "CHRONO_MONGODB_URI".to_owned(),
@@ -148,6 +136,8 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
+    assert_eq!(config.agent_manager_sandbox_capacity.cpu_millis, 2_000);
+    assert_eq!(config.agent_manager_sandbox_capacity.memory_mib, 8_192);
     assert_eq!(
         config
             .baseline_services
@@ -189,40 +179,18 @@ fn runtime_values_are_required_and_nonblank() {
 }
 
 #[test]
-fn checkpoint_storage_identity_and_bucket_are_required_and_redacted() {
-    for key in [
-        "CHRONO_CHECKPOINT_BUCKET",
-        "CHRONO_STORAGE_CLIENT_ID",
-        "CHRONO_STORAGE_CLIENT_SECRET",
-    ] {
-        assert!(configured_without(key).unwrap_err().contains(key));
-        assert!(configured(&[(key, " \t")]).unwrap_err().contains(key));
-    }
-    for bucket in [
-        "ab",
-        "Uppercase",
-        "-starts",
-        "ends-",
-        "with/slash",
-        "with.dot",
-        " padded",
-    ] {
-        assert!(configured(&[("CHRONO_CHECKPOINT_BUCKET", bucket)]).is_err());
-    }
-    for key in ["CHRONO_STORAGE_CLIENT_ID", "CHRONO_STORAGE_CLIENT_SECRET"] {
-        for value in [" padded", "padded ", "with\ncontrol"] {
-            let error = configured(&[(key, value)]).unwrap_err();
-            assert!(error.contains(key));
-            assert!(!error.contains(value));
-        }
-    }
-    assert!(configured(&[("CHRONO_CHECKPOINT_BUCKET", &"a".repeat(64))]).is_err());
-    assert!(configured(&[("CHRONO_STORAGE_CLIENT_ID", &"a".repeat(257))]).is_err());
-    assert!(configured(&[("CHRONO_STORAGE_CLIENT_SECRET", &"a".repeat(4097))]).is_err());
-    let config = configured(&[]).unwrap();
-    assert_eq!(config.checkpoint_storage.bucket, "cma-checkpoint-test");
-    assert!(!format!("{config:?}").contains("storage-identity-material"));
-    assert!(!format!("{:?}", config.checkpoint_storage).contains("storage-identity-material"));
+fn startup_does_not_require_or_read_retired_storage_credentials() {
+    configured(&[]).expect("startup without storage configuration");
+    // Stale deployment variables cannot restore archive access or expose the secret.
+    let config = configured(&[
+        ("CHRONO_CHECKPOINT_BUCKET", "invalid/retired-bucket"),
+        ("CHRONO_STORAGE_CLIENT_ID", " retired identity "),
+        ("CHRONO_STORAGE_CLIENT_SECRET", "retired-storage-secret"),
+    ])
+    .unwrap();
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("retired-storage-secret"));
+    assert!(!debug.contains("retired-bucket"));
 }
 
 #[test]
@@ -357,7 +325,7 @@ fn baseline_services_are_nonempty_valid_and_deduplicated() {
             .iter()
             .map(ServiceId::as_str)
             .collect::<Vec<_>>(),
-        ["api-github", "model"]
+        ["api-github", "chrono-llm-public", "model", "ornn-api"]
     );
     for value in ["", ",,", "service with spaces", "bad/service"] {
         assert!(configured(&[("CHRONO_BASELINE_SERVICES", value)]).is_err());
@@ -409,9 +377,11 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
+    assert!(!config.features.nyxid_resource_request);
     for key in [
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
+        "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
         assert_eq!(
@@ -421,6 +391,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         assert_eq!(
             config.features.trigger_command_admission,
             key == "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED"
+        );
+        assert_eq!(
+            config.features.nyxid_resource_request,
+            key == "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED"
         );
         assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),

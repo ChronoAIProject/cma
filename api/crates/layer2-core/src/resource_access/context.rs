@@ -131,6 +131,12 @@ pub enum CredentialSource {
     Binding,
     /// Exact independently presented credential; cannot borrow sign-in custody.
     Independent { expires_at: Option<SystemTime> },
+    /// A request admitted by the configured identity proxy. Its immutable
+    /// permission ceiling and owner credential incarnation are retained by the
+    /// authentication adapter, independently of browser-session authority.
+    IdentityProxy { grant_digest: [u8; 32] },
+    /// Authority for one exact read, with no renewable or durable credential custody.
+    RequestBoundRead { expires_at: SystemTime },
 }
 
 impl CredentialSource {
@@ -158,11 +164,12 @@ pub struct CallerContext {
 impl CallerContext {
     /// The credential may expire before a resource/membership proof does.
     pub fn credential_deadline(&self) -> Option<tokio::time::Instant> {
-        let CredentialSource::Independent {
-            expires_at: Some(expires_at),
-        } = self.credential_source
-        else {
-            return None;
+        let expires_at = match self.credential_source {
+            CredentialSource::Independent {
+                expires_at: Some(expiry),
+            }
+            | CredentialSource::RequestBoundRead { expires_at: expiry } => expiry,
+            _ => return None,
         };
         let now = tokio::time::Instant::now();
         Some(
@@ -178,7 +185,8 @@ impl CallerContext {
     /// Attribution is supplied by trusted authentication, including explicitly
     /// verified retained actor grants. Channel metadata alone is not a principal.
     pub fn validate_principal(&self) -> bool {
-        self.credential.validate().is_ok()
+        !matches!(self.credential_source, CredentialSource::RequestBoundRead { expires_at } if expires_at <= SystemTime::now())
+            && self.credential.validate().is_ok()
             && self.caller.subject == self.credential.subject
             && match &self.actor {
                 ResourceActor::Trigger { subject, .. } => subject == &self.caller.subject,

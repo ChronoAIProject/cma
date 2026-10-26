@@ -13,8 +13,10 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 | `ghcr.io/chronoaiproject/cma-api:vX.Y.Z`       | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
 | `ghcr.io/chronoaiproject/cma-web:vX.Y.Z`       | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
 | `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z`   | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
-| the same three at `:<short-sha>`               | GHCR, private                                                                | intended write-once under the same audited contract                     |
-| three OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload                             |
+| `ghcr.io/chronoaiproject/cma-cmaeg:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
+| `ghcr.io/chronoaiproject/cma-image-manager:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
+| the same five at `:<short-sha>`               | GHCR, private                                                                | intended write-once under the same audited contract                     |
+| five OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload                             |
 | closed D-09 runtime-boundary evidence          | the same Actions run, readable under repository artifact access              | exact release commit and runtime digest; retained for 90 days           |
 | annotated tag `vX.Y.Z`                         | this repository                                                              | write-protected after creation by the required active ruleset           |
 | GitHub release `vX.Y.Z`                        | this repository                                                              | notes editable                                                          |
@@ -103,6 +105,7 @@ Branch protection on `main` requires these contexts, and `enforce_admins` is on 
 ```
 Repository structure   Secret scanning   Backend   Frontend   Manifests
 Images (api)           Images (web)      Images (runtime)
+Images (cmaeg)         Images (image-manager)
 TypeScript SDK         Rust SDK          Source branch
 Release declaration    Commit hygiene    Trigger release contract
 Trigger provider smoke contract
@@ -128,6 +131,9 @@ is later absent or drifts.
 `Images (runtime)`, `TypeScript SDK`, and `Rust SDK` are required on both
 protected branches. The SDK jobs prove the repository-only packages build and
 work for source consumers; requiring them does not publish either SDK.
+The service split adds `Images (cmaeg)` and `Images (image-manager)` to the target
+required checks. Their remote branch-protection bindings and new package ACLs
+still need operator verification; this local change has not modified GitHub settings.
 
 ### Required release write fences
 
@@ -222,7 +228,7 @@ Then, on merge, `publish.yml`:
   fails if either appeared; this narrows the build-and-scan race window but is
   not a registry compare-and-swap, so it does not replace exclusive write
   access;
-- after all three images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
+- after all five images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
 - consumes the exact runtime transfer artifact, validates its complete metadata
   and archive checksum, pulls its immutable `sourceReference`, and runs the D-09
   runtime network-boundary campaign against the full release commit;
@@ -264,9 +270,9 @@ the gate.
 
 ## 3. Fetching what was released
 
-The release body lists the three GHCR references for direct consumers. When a deployment registry cannot authenticate to GHCR, use the OCI archives from the exact successful **Publish release** run. Each expires up to one day after its export upload, which can be earlier than the workflow's completion. Do not substitute `docker pull`, `docker tag`, `docker push`, or `docker save`: those paths do not prove that the destination kept the published root manifest and every platform manifest.
+The release body lists the five GHCR references for direct consumers. When a deployment registry cannot authenticate to GHCR, use the OCI archives from the exact successful **Publish release** run. Each expires up to one day after its export upload, which can be earlier than the workflow's completion. Do not substitute `docker pull`, `docker tag`, `docker push`, or `docker save`: those paths do not prove that the destination kept the published root manifest and every platform manifest.
 
-The transfer requires `gh`, `jq`, Docker, and OpenSSL. Run it from this repository's checkout, set the release version, and copy the numeric run ID from the successful run's Actions URL. The following checks that the run succeeded at the commit named by the release tag, derives the short revision from that commit, and downloads all three artifacts into fresh temporary directories:
+The transfer requires `gh`, `jq`, Docker, and OpenSSL. Run it from this repository's checkout, set the release version, and copy the numeric run ID from the successful run's Actions URL. The following checks that the run succeeded at the commit named by the release tag, derives the short revision from that commit, and downloads all five artifacts into fresh temporary directories:
 
 ```bash
 set -euo pipefail
@@ -286,7 +292,7 @@ HEAD_SHA="$(jq -r '.headSha' <<<"$run_json")"
 test "$HEAD_SHA" = "$(gh api "repos/$REPOSITORY/commits/$VERSION" --jq '.sha')"
 REVISION="${HEAD_SHA:0:7}"
 
-for component in api web runtime; do
+for component in api web runtime cmaeg image-manager; do
   mkdir "$TRANSFER_DIR/$component"
   gh run download "$RUN_ID" --repo "$REPOSITORY" \
     --name "cma-${component}-${VERSION}-${REVISION}-oci" \
@@ -297,7 +303,7 @@ done
 Inspect and validate the JSON instead of sourcing it as shell code. This checks every selected identity, including the full and short commit revisions, the archive name and checksum, the source references, and the intended platform set. The exporter writes these files only after the version and revision tags have the same raw root-manifest digest, every source and archive platform config carries the exact version/full-revision labels, and the archive reproduces the root digest. `sourceDigest` is the GHCR digest observed and reproduced by the exporter at export time; accept it as the release identity only after the exclusive-writer and package-history checks above rule out a preseed or stale-read overwrite. Neither `archiveSha256` nor the checksum GitHub shows for its enclosing Actions artifact is an image digest.
 
 ```bash
-for component in api web runtime; do
+for component in api web runtime cmaeg image-manager; do
   base="cma-${component}-${VERSION}-${REVISION}"
   metadata="$TRANSFER_DIR/$component/$base.json"
   archive="$TRANSFER_DIR/$component/$base.oci.tar"
@@ -447,14 +453,14 @@ rewrite an owner's checkpoints to make an older image appear compatible.
 ### App-origin route and health-policy adoption
 
 The release that adds network admission limits also changes two Gateway
-contracts. App-origin API, auth, and discovery traffic must reach `cma-api`
+contracts. App-origin API, auth, and discovery traffic must reach `cma-agent-manager`
 directly so the trusted GFE forwarding chain, rather than the web pod, supplies
 the client address used for anonymous and admission budgets. The load balancer
 must probe `/ready`, not `/livez`, so a process that has lost its session store
 is not externally routable merely because it is alive.
 
 The legacy web image still proxies `/api/` and `/auth/` through
-`Service/cma-api`, so the Service selector fence below covers both the legacy
+`Service/cma-agent-manager`, so the Service selector fence below covers both the legacy
 nginx path and the new direct Gateway path. That fallback is not an acceptable
 way to reopen the new API: its TCP peer is the untrusted web pod, which would
 collapse browser network budgets onto one key. Do not broaden
@@ -506,7 +512,7 @@ The URL-map/proxy projection must close redirects, default services, host/path
 rules, route rules, header actions, certificates, SSL policy, QUIC override, and
 proxy-header settings. The same revision must validate the exact shared Gateway
 specification, current-generation `Programmed` status and listener conditions,
-then use a closed `cma-api`/`cma-web` Service projection as the root of each NEG
+then use a closed `cma-agent-manager`/`cma-web` Service projection as the root of each NEG
 trace. That projection includes the desired `cloud.google.com/neg` annotation,
 the complete accepted `cloud.google.com/neg-status` shape, Service type, ports,
 traffic-policy/default fields, and the mode-specific selector: source selectors
@@ -745,8 +751,8 @@ ownership policy that categorically rejects any new or changed route overlapping
 `bot.chrono-ai.fun` or `bot-api.chrono-ai.fun` is the only acceptable substitute
 for that all-attachable-route freeze. During adoption or restore, no human,
 automation, or service may write directly to the three owned `HTTPRoute`s,
-`HealthCheckPolicy/cma-api`, the shared `gateway-infra/chronoai-gateway` Gateway,
-`Service/cma-api`, `Service/cma-web`, `GCPBackendPolicy/cma-api`,
+`HealthCheckPolicy/cma-agent-manager`, the shared `gateway-infra/chronoai-gateway` Gateway,
+`Service/cma-agent-manager`, `Service/cma-web`, `GCPBackendPolicy/cma-agent-manager`,
 `GCPBackendPolicy/cma-web`, or the generated Compute global address, forwarding
 rules, target HTTP/HTTPS proxies, URL maps, certificates, SSL policy, backend
 services, health checks, and network endpoint groups. Pause GitOps and other
@@ -904,7 +910,7 @@ Apply and verify the runtime ConfigMap before allowing the new API Deployment to
 
 ```sh
 kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot apply -f infra/api/configmap.yaml
-kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get configmap cma-api \
+kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get configmap cma-agent-manager \
   -o jsonpath='{.data.CHRONO_SANDBOX_IMAGE}{"\n"}'
 # Compare the printed value with the copied, digest-verified runtime reference.
 ```
@@ -954,7 +960,15 @@ rollout advances.
 
 ---
 
-## 5. First production MongoDB cutover
+## 5. Historical first production MongoDB cutover
+
+This legacy session-schema migration is not the three-service shared-schema
+deployment described in [deployment readiness](CMA_Deployment_Readiness.md).
+The canonical service rename introduces the `cma-api` compatibility Service in
+addition to `cma-agent-manager`. A single-Service fence below cannot prove a
+complete writer drain for that topology: any future use requires a separately
+reviewed fence that includes both Services and their callers. Do not run this
+historical migration for the shared `chrono-bot` service activation.
 
 The first production release containing these migrations needs **one continuous writer drain and two recovery units**. Capture A preserves the raw `sessions` and `session_events` collections for wholesale rollback to the old image. Capture B preserves verified, UUID-bound `sessions_v2` and `session_events_v2` before coordination can begin. Do not resume a database, object-storage, or provider writer between them.
 
@@ -963,7 +977,7 @@ Production must remain on `v0.7.0` until operators have proved Atlas backup/PITR
 Run this once for each existing production database:
 
 1. Confirm the old deployment is healthy. Verify directly that `sessions` and `session_events` are writable collections, record their UUIDs and document counts, and confirm `sessions_v2`, `sessions_v3`, `session_events_v2`, `session_coordination_receipts`, and `_cma_session_namespace_cutovers` are absent. If the source is not exactly raw legacy state, stop and investigate; do not adapt this procedure around it.
-2. Fence ordinary traffic, then stop every old CMA replica and prevent it from returning. Before this first production write, establish the full checked-routing-graph writer freeze defined in section 4 and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that real freeze in force through the fence proof and scale-down. This freeze must also block every Pod create/update path that could add `release.chrono-ai.fun/cutover-fence=mongodb-715`; reserve that selector through admission policy or an equivalently enforced deployment freeze. Invoke the reviewed `--fence` transaction rather than pasting a raw Service patch. It proves before, throughout, and after the drain that no Pod carries the reserved label, compare-and-replaces the Service's exact source selector with that label, and then requires the identical two-sweep pinned Service/EndpointSlice/all-zone NEG drain proof used by restoration. The JSON Patch `test` operation makes the selector change fail closed if the live value has drifted; investigate drift instead of editing the expected value during the release. A nonzero patch result is ambiguous rather than proof of failure: the transaction re-reads the live Service and succeeds only if the exact pinned fence plus the complete external drain are independently proved. Before its Service patch, the entrypoint prints the already committed durable receipt path and SHA-256. Persist that acknowledgement from the release terminal even when a later drain or projection step fails. If an ambiguous exit leaves the exact pinned fence in place, export that independently recorded digest and rerun the reviewed `--fence` entrypoint as shown in the second block below; never derive the digest from local custody and never patch back to source. Keep this Service fence unchanged through both captures, coordination activation, and the final unflagged restart. It covers both routing generations: the legacy app-origin path reaches `Service/cma-api` through the web image's nginx proxy, while the adopted app-origin and direct API Gateway rules target that Service themselves. Only the adopted direct route may be reopened for the new API.
+2. Fence ordinary traffic, then stop every old CMA replica and prevent it from returning. Before this first production write, establish the full checked-routing-graph writer freeze defined in section 4 and export `CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM=sole-spec-writer`; keep that real freeze in force through the fence proof and scale-down. This freeze must also block every Pod create/update path that could add `release.chrono-ai.fun/cutover-fence=mongodb-715`; reserve that selector through admission policy or an equivalently enforced deployment freeze. Invoke the reviewed `--fence` transaction rather than pasting a raw Service patch. It proves before, throughout, and after the drain that no Pod carries the reserved label, compare-and-replaces the Service's exact source selector with that label, and then requires the identical two-sweep pinned Service/EndpointSlice/all-zone NEG drain proof used by restoration. The JSON Patch `test` operation makes the selector change fail closed if the live value has drifted; investigate drift instead of editing the expected value during the release. A nonzero patch result is ambiguous rather than proof of failure: the transaction re-reads the live Service and succeeds only if the exact pinned fence plus the complete external drain are independently proved. Before its Service patch, the entrypoint prints the already committed durable receipt path and SHA-256. Persist that acknowledgement from the release terminal even when a later drain or projection step fails. If an ambiguous exit leaves the exact pinned fence in place, export that independently recorded digest and rerun the reviewed `--fence` entrypoint as shown in the second block below; never derive the digest from local custody and never patch back to source. Keep this Service fence unchanged through both captures, coordination activation, and the final unflagged restart. It covers both routing generations: the legacy app-origin path reaches `Service/cma-agent-manager` through the web image's nginx proxy, while the adopted app-origin and direct API Gateway rules target that Service themselves. Only the adopted direct route may be reopened for the new API.
 
    Run both blocks below in one dedicated shell and keep the writer freeze in force between them:
 
@@ -1018,9 +1032,9 @@ Run this once for each existing production database:
    [[ "${cma_gateway_release_tag_record}" =~ ^(v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))\|tag\|commit\|${CMA_GATEWAY_RELEASE_REVISION}$ ]]
    cma_gateway_release_tag="${BASH_REMATCH[1]}"
    unset cma_gateway_release_tag_record
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-agent-manager --replicas=0
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot wait --for=delete pod \
-     -l app.kubernetes.io/name=cma-api --timeout=120s
+     -l app.kubernetes.io/name=cma-agent-manager --timeout=120s
    CMA_GATEWAY_CONFIRM="prove-${cma_gateway_release_tag}-fence" \
    CMA_GATEWAY_RELEASE_REVISION="${CMA_GATEWAY_RELEASE_REVISION}" \
    CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM="${CMA_GATEWAY_EXCLUSIVE_CHANGE_CONFIRM}" \
@@ -1036,26 +1050,26 @@ Run this once for each existing production database:
      .github/scripts/cma-trigger-gateway-launch.sh traffic --prove-fence
    ```
 
-   The first transaction refuses to return until it has re-verified the clean release checkout, applied or independently observed the exact source-to-fence compare-and-swap, and performed the pinned Service/EndpointSlice/all-zone NEG proof. Its durable `fenced-pre-scale` projection records the exact `cma-api` Deployment UID and the pre-scale Pod name/UID set rooted in the pre-patch receipt. The second transaction authenticates that predecessor against the independently retained pre-scale digest and revalidates the independently authenticated fence receipt after scale-down, requires the same Deployment UID to be stably observed at zero desired, current, updated, ready, and available replicas, requires the label-selected Pod list to be empty, and independently reads every recorded predecessor Pod name with `--ignore-not-found` to prove deletion. Only then does it repeat the complete external drain proof and commit the successor `fenced-post-scale` projection required by step 10. Record the second transaction's printed projection path and SHA-256 outside the operator host as `CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256` before step 10; the restore process will not trust a digest recovered from the colocated projection receipt. Every advertised zonal NEG must be empty across two coherent sweeps under unchanged Service UID, resourceVersion, NEG identity, and EndpointSlice identities. A missing Compute permission, malformed provider response, identity drift, nonempty NEG, undeleted predecessor Pod, incomplete Deployment convergence, or deadline failure stops the cutover without emitting the post-scale artifact and with no automatic reopen. The zero-writer boundary is reached only after this external drain proof, the Deployment is at zero, every old API pod is confirmed deleted, and every outstanding MongoDB operation, object mutation, and external provider create, delete, or replacement call has finished. Rotate or revoke the old workload's database, storage, and provider credentials where the deployment permits that stronger fence. If any later step fails, leave the no-match Service selector in place until an explicit incident decision is complete. Do not install a shell trap or other automatic cleanup that could reopen traffic after a failed release.
+   The first transaction refuses to return until it has re-verified the clean release checkout, applied or independently observed the exact source-to-fence compare-and-swap, and performed the pinned Service/EndpointSlice/all-zone NEG proof. Its durable `fenced-pre-scale` projection records the exact `cma-agent-manager` Deployment UID and the pre-scale Pod name/UID set rooted in the pre-patch receipt. The second transaction authenticates that predecessor against the independently retained pre-scale digest and revalidates the independently authenticated fence receipt after scale-down, requires the same Deployment UID to be stably observed at zero desired, current, updated, ready, and available replicas, requires the label-selected Pod list to be empty, and independently reads every recorded predecessor Pod name with `--ignore-not-found` to prove deletion. Only then does it repeat the complete external drain proof and commit the successor `fenced-post-scale` projection required by step 10. Record the second transaction's printed projection path and SHA-256 outside the operator host as `CMA_GATEWAY_FENCED_POST_SCALE_PROJECTION_SHA256` before step 10; the restore process will not trust a digest recovered from the colocated projection receipt. Every advertised zonal NEG must be empty across two coherent sweeps under unchanged Service UID, resourceVersion, NEG identity, and EndpointSlice identities. A missing Compute permission, malformed provider response, identity drift, nonempty NEG, undeleted predecessor Pod, incomplete Deployment convergence, or deadline failure stops the cutover without emitting the post-scale artifact and with no automatic reopen. The zero-writer boundary is reached only after this external drain proof, the Deployment is at zero, every old API pod is confirmed deleted, and every outstanding MongoDB operation, object mutation, and external provider create, delete, or replacement call has finished. Rotate or revoke the old workload's database, storage, and provider credentials where the deployment permits that stronger fence. If any later step fails, leave the no-match Service selector in place until an explicit incident decision is complete. Do not install a shell trap or other automatic cleanup that could reopen traffic after a failed release.
 
 3. **Capture recovery unit A.** At this zero-writer boundary, take one transaction-consistent MongoDB backup or snapshot containing the raw collections and a version-retained recovery point for `CHRONO_CONTEXT_BUCKET`. Record both recovery identifiers and timestamps as one unit. If object storage is deliberately unconfigured, record that fact with the MongoDB recovery point. Prove the capture completed successfully before continuing.
 4. Select the explicit legacy maintenance stage in the live ConfigMap, then apply the new API Deployment. The tuple is exact: stage `legacy`, legacy acknowledgement `drained`, and an empty coordination acknowledgement. Applying the Deployment is safe only after capture A because its first new pod now has no normal-startup path. Run this in a dedicated shell that remains open through capture B so the exact pod identity selected here remains available to step 5.
 
    ```bash
    set -euo pipefail
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-api --type merge \
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-agent-manager --type merge \
      -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"legacy","CHRONO_MONGODB_LEGACY_CUTOVER":"drained","CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot apply -f infra/api/deployment.yaml
    cma_stage_pod_attempt=0
    while :; do
      cma_stage_pods_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get pod \
-       -l app.kubernetes.io/name=cma-api -o json)"
+       -l app.kubernetes.io/name=cma-agent-manager -o json)"
      cma_stage_pod_count="$(printf '%s' "${cma_stage_pods_json}" | jq -er '.items | length')"
      case "${cma_stage_pod_count}" in
        0)
          cma_stage_pod_attempt=$((cma_stage_pod_attempt + 1))
          if [ "${cma_stage_pod_attempt}" -ge 60 ]; then
-           echo "no cma-api stage pod appeared within two minutes; traffic remains fenced" >&2
+           echo "no cma-agent-manager stage pod appeared within two minutes; traffic remains fenced" >&2
            exit 1
          fi
          sleep 2
@@ -1066,7 +1080,7 @@ Run this once for each existing production database:
          break
          ;;
        *)
-         echo "more than one cma-api stage pod exists; traffic remains fenced" >&2
+         echo "more than one cma-agent-manager stage pod exists; traffic remains fenced" >&2
          exit 1
          ;;
      esac
@@ -1112,10 +1126,10 @@ Run this once for each existing production database:
      cma_stage_head_livez="$(curl --disable --noproxy '*' --head --show-error --silent --max-time 10 --output /dev/null --write-out '%{http_code}' \
        http://127.0.0.1:18080/livez)"
      test "${cma_stage_head_livez}" = '503'
-     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get service cma-api -o json | \
+     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get service cma-agent-manager -o json | \
        jq -e '.spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"}'
      kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get endpointslice \
-       -l kubernetes.io/service-name=cma-api -o json | \
+       -l kubernetes.io/service-name=cma-agent-manager -o json | \
        jq -e '[.items[].endpoints[]? | select(.conditions.ready != false)] | length == 0'
    )
    ```
@@ -1135,22 +1149,22 @@ Run this once for each existing production database:
 
    ```sh
    set -euo pipefail
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-api --type merge \
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-agent-manager --type merge \
      -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"","CHRONO_MONGODB_LEGACY_CUTOVER":"","CHRONO_MONGODB_COORDINATION_CUTOVER":"drained"}}'
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-agent-manager --replicas=0
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot wait --for=delete pod \
-     -l app.kubernetes.io/name=cma-api --timeout=120s
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=1
+     -l app.kubernetes.io/name=cma-agent-manager --timeout=120s
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-agent-manager --replicas=1
    cma_activation_pod_attempt=0
    while :; do
      cma_activation_pods_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get pod \
-       -l app.kubernetes.io/name=cma-api -o json)"
+       -l app.kubernetes.io/name=cma-agent-manager -o json)"
      cma_activation_pod_count="$(printf '%s' "${cma_activation_pods_json}" | jq -er '.items | length')"
      case "${cma_activation_pod_count}" in
        0)
          cma_activation_pod_attempt=$((cma_activation_pod_attempt + 1))
          if [ "${cma_activation_pod_attempt}" -ge 60 ]; then
-           echo "no cma-api activation pod appeared within two minutes; traffic remains fenced" >&2
+           echo "no cma-agent-manager activation pod appeared within two minutes; traffic remains fenced" >&2
            exit 1
          fi
          sleep 2
@@ -1161,7 +1175,7 @@ Run this once for each existing production database:
          break
          ;;
        *)
-         echo "more than one cma-api activation pod exists; traffic remains fenced" >&2
+         echo "more than one cma-agent-manager activation pod exists; traffic remains fenced" >&2
          exit 1
          ;;
      esac
@@ -1198,10 +1212,10 @@ Run this once for each existing production database:
      cma_activation_ready="$(curl --disable --noproxy '*' --fail --show-error --silent --max-time 10 --write-out '|%{http_code}' \
        http://127.0.0.1:18080/ready)"
      test "${cma_activation_ready}" = '{"status":"ready"}|200'
-     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get service cma-api -o json | \
+     kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get service cma-agent-manager -o json | \
        jq -e '.spec.selector == {"release.chrono-ai.fun/cutover-fence":"mongodb-715"}'
      kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get endpointslice \
-       -l kubernetes.io/service-name=cma-api -o json | \
+       -l kubernetes.io/service-name=cma-agent-manager -o json | \
        jq -e '[.items[].endpoints[]? | select(.conditions.ready != false)] | length == 0'
    )
    ```
@@ -1213,22 +1227,22 @@ Run this once for each existing production database:
    ```bash
    set -euo pipefail
    : "${CMA_EXPECTED_API_IMAGE_ID:?set the immutable registry imageID from the verified release-image evidence}"
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-api --type merge \
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot patch configmap cma-agent-manager --type merge \
      -p '{"data":{"CHRONO_MONGODB_CUTOVER_STAGE":"","CHRONO_MONGODB_LEGACY_CUTOVER":"","CHRONO_MONGODB_COORDINATION_CUTOVER":""}}'
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=0
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-agent-manager --replicas=0
    kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot wait --for=delete pod \
-     -l app.kubernetes.io/name=cma-api --timeout=120s
-   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-api --replicas=1
+     -l app.kubernetes.io/name=cma-agent-manager --timeout=120s
+   kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot scale deployment/cma-agent-manager --replicas=1
    cma_final_pod_attempt=0
    while :; do
      cma_final_pods_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get pod \
-       -l app.kubernetes.io/name=cma-api -o json)"
+       -l app.kubernetes.io/name=cma-agent-manager -o json)"
      cma_final_pod_count="$(printf '%s' "${cma_final_pods_json}" | jq -er '.items | length')"
      case "${cma_final_pod_count}" in
        0)
          cma_final_pod_attempt=$((cma_final_pod_attempt + 1))
          if [ "${cma_final_pod_attempt}" -ge 60 ]; then
-           echo "no final cma-api pod appeared within two minutes; traffic remains fenced" >&2
+           echo "no final cma-agent-manager pod appeared within two minutes; traffic remains fenced" >&2
            exit 1
          fi
          sleep 2
@@ -1239,7 +1253,7 @@ Run this once for each existing production database:
          break
          ;;
        *)
-         echo "more than one final cma-api pod exists; traffic remains fenced" >&2
+         echo "more than one final cma-agent-manager pod exists; traffic remains fenced" >&2
          exit 1
          ;;
      esac
@@ -1259,8 +1273,8 @@ Run this once for each existing production database:
    cma_final_replica_set_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get replicaset "${cma_final_replica_set}" -o json)"
    cma_final_deployment_uid="$(printf '%s' "${cma_final_replica_set_json}" | jq -er \
      --arg uid "${cma_final_replica_set_uid}" \
-     'if .metadata.uid == $uid and .metadata.ownerReferences == [(.metadata.ownerReferences[0])] and .metadata.ownerReferences[0].apiVersion == "apps/v1" and .metadata.ownerReferences[0].kind == "Deployment" and .metadata.ownerReferences[0].name == "cma-api" and .metadata.ownerReferences[0].controller == true and .metadata.ownerReferences[0].blockOwnerDeletion == true then .metadata.ownerReferences[0].uid else error("final ReplicaSet owner is not the exact cma-api Deployment") end')"
-   cma_final_deployment_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get deployment cma-api -o json)"
+     'if .metadata.uid == $uid and .metadata.ownerReferences == [(.metadata.ownerReferences[0])] and .metadata.ownerReferences[0].apiVersion == "apps/v1" and .metadata.ownerReferences[0].kind == "Deployment" and .metadata.ownerReferences[0].name == "cma-agent-manager" and .metadata.ownerReferences[0].controller == true and .metadata.ownerReferences[0].blockOwnerDeletion == true then .metadata.ownerReferences[0].uid else error("final ReplicaSet owner is not the exact cma-agent-manager Deployment") end')"
+   cma_final_deployment_json="$(kubectl --context gke_example-project-02_asia-northeast1_example-cluster-02 --namespace chrono-bot get deployment cma-agent-manager -o json)"
    test "${cma_final_pod_image_id}" = "${CMA_EXPECTED_API_IMAGE_ID}"
    [[ "${cma_final_pod_image_id}" =~ ^(docker-pullable://)?us-central1-docker\.pkg\.dev/example-project-01/example-registry-02/cma-api@sha256:[0-9a-f]{64}$ ]]
    printf '%s' "${cma_final_pod_json}" | \
@@ -1270,10 +1284,10 @@ Run this once for each existing production database:
      '.metadata.uid == $uid and .status.podIP == $ip and .metadata.ownerReferences == [{apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,kind:"ReplicaSet",name:$rs,uid:$rs_uid}] and (.status.containerStatuses // [] | map(select(.name == "api" and .image == $image and .imageID == $image_id and .ready == true and .started == true and .restartCount == 0)) | length) == 1 and (.status.conditions // [] | map(select(.type == "Ready" and .status == "True")) | length) == 1'
    printf '%s' "${cma_final_replica_set_json}" | jq -e \
      --arg uid "${cma_final_replica_set_uid}" --arg deployment_uid "${cma_final_deployment_uid}" \
-     '.metadata.uid == $uid and .metadata.ownerReferences == [{apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,kind:"Deployment",name:"cma-api",uid:$deployment_uid}] and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1'
+     '.metadata.uid == $uid and .metadata.ownerReferences == [{apiVersion:"apps/v1",blockOwnerDeletion:true,controller:true,kind:"Deployment",name:"cma-agent-manager",uid:$deployment_uid}] and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1'
    printf '%s' "${cma_final_deployment_json}" | jq -e \
      --arg uid "${cma_final_deployment_uid}" \
-     '.metadata.uid == $uid and .metadata.name == "cma-api" and .metadata.namespace == "chrono-bot" and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.updatedReplicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1 and (.status.unavailableReplicas // 0) == 0'
+     '.metadata.uid == $uid and .metadata.name == "cma-agent-manager" and .metadata.namespace == "chrono-bot" and .spec.replicas == 1 and .status.observedGeneration == .metadata.generation and .status.replicas == 1 and .status.updatedReplicas == 1 and .status.readyReplicas == 1 and .status.availableReplicas == 1 and (.status.unavailableReplicas // 0) == 0'
    (
      cma_workload_proof_dir="$(mktemp -d)"
      trap 'rm -rf "${cma_workload_proof_dir}"' EXIT HUP INT QUIT TERM
@@ -1323,7 +1337,7 @@ disables core dumps at process startup, before the inherited bearer can be
 handled or function definitions parsed. It also rejects a convergence proof that crosses its wall-clock deadline
 even when the last bounded provider call returned a matching object.
 
-The first coherent two-sweep fence proof pins the `cma-api` Service UID and
+The first coherent two-sweep fence proof pins the `cma-agent-manager` Service UID and
 its exact NEG name and zone set for the whole transaction. Selector reads,
 every re-fence, both reopen proofs, and the final projection must retain that
 root; deleting and recreating an exact-looking Service is a failure even when
@@ -1383,9 +1397,9 @@ fi
 unset cma_restore_status
 ```
 
-A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, while an unreadable or unknown selector is a critical manual-fence condition. Zero routable EndpointSlice entries alone are not accepted as an external fence. Every initial or repeated fence proof parses the exact `cma-api` NEG name and unique zones from the fenced Service, bounded-reads every advertised zonal membership with `compute.networkEndpointGroups.listNetworkEndpoints`, and requires every response to be an empty JSON array. It re-reads and binds the Service UID, `resourceVersion`, selector, port, NEG name and zones plus the complete EndpointSlice name/UID/resourceVersion set around each Compute sweep; any change makes the proof fail rather than mixing observations. Two consecutive all-empty sweeps under the same Service and EndpointSlice records are required. Only then may re-fencing report success or set `cma_traffic_open=0`.
+A nonzero response from the reopen patch is never interpreted as proof that traffic stayed fenced. The script reads the live selector: an observed source selector is immediately changed back with an exact source-to-fence patch, while an unreadable or unknown selector is a critical manual-fence condition. Zero routable EndpointSlice entries alone are not accepted as an external fence. Every initial or repeated fence proof parses the exact `cma-agent-manager` NEG name and unique zones from the fenced Service, bounded-reads every advertised zonal membership with `compute.networkEndpointGroups.listNetworkEndpoints`, and requires every response to be an empty JSON array. It re-reads and binds the Service UID, `resourceVersion`, selector, port, NEG name and zones plus the complete EndpointSlice name/UID/resourceVersion set around each Compute sweep; any change makes the proof fail rather than mixing observations. Two consecutive all-empty sweeps under the same Service and EndpointSlice records are required. Only then may re-fencing report success or set `cma_traffic_open=0`.
 
-Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. Before the selector changes, the program also proves the retained Pod has exactly one controlling ReplicaSet owner, that ReplicaSet has exactly one controlling `cma-api` Deployment owner, and all three UIDs equal the identities captured in step 9. The reviewed projection contract parses `infra/api/deployment.yaml`, applies only the closed Kubernetes defaults named by that contract, and then requires complete equality with the live Deployment spec and ReplicaSet template. It derives the Pod spec from that same template and permits only the exact scheduler fields, default NoExecute tolerations, and one standard `kube-api-access-*` projected service-account volume/mount used by this cluster. Command, args, environment, `envFrom`, service account, security context, probes, resources, affinity, volumes, mounts, container count, or any other same-image admission/spec drift therefore fails. The runtime container status image must equal the manifest image and its `imageID` must equal the externally verified immutable registry digest captured in step 9. Both the `fenced-pre-reopen` and `final-reopen` projections capture the full normalized Deployment, retained ReplicaSet, and retained Pod objects and seal their exact ownership chain, resource identities, spec SHA-256 values, Pod IP, manifest image, and immutable `imageID` in `graph.apiWorkload.verified`. Bash binds that sealed proof back to every retained step 9 value and reruns the full reviewed workload validator on the sealed objects. Each fenced and final-source validator returns the SHA-256 of the exact projection bytes that passed its lifecycle-ancestry, workload, and live-routing checks; every caller validates and acknowledges that returned digest without reopening the mutable projection path. An exact live workload recheck immediately before the Service reopen and another immediately after final projection validation bracket both capture windows, so a replacement workload cannot be transiently served or accepted as final success. The first successful endpoint call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, workload-owner drift, workload-spec drift, image drift, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the complete Deployment-to-ReplicaSet-to-Pod chain, full workload specs, immutable imageID, Pod IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, ownership drift, spec drift, or readiness drift also re-fences.
+Reopening uses the converse proof. The only routable EndpointSlice entry must have the exact one-element address array for the verified pod plus its Pod name, namespace, and UID. Across all advertised zones, the NEG population must contain exactly one endpoint with that same pod IP and port `8080`, under unchanged Service and EndpointSlice records. Before the selector changes, the program also proves the retained Pod has exactly one controlling ReplicaSet owner, that ReplicaSet has exactly one controlling `cma-agent-manager` Deployment owner, and all three UIDs equal the identities captured in step 9. The reviewed projection contract parses `infra/api/deployment.yaml`, applies only the closed Kubernetes defaults named by that contract, and then requires complete equality with the live Deployment spec and ReplicaSet template. It derives the Pod spec from that same template and permits only the exact scheduler fields, default NoExecute tolerations, and one standard `kube-api-access-*` projected service-account volume/mount used by this cluster. Command, args, environment, `envFrom`, service account, security context, probes, resources, affinity, volumes, mounts, container count, or any other same-image admission/spec drift therefore fails. The runtime container status image must equal the manifest image and its `imageID` must equal the externally verified immutable registry digest captured in step 9. Both the `fenced-pre-reopen` and `final-reopen` projections capture the full normalized Deployment, retained ReplicaSet, and retained Pod objects and seal their exact ownership chain, resource identities, spec SHA-256 values, Pod IP, manifest image, and immutable `imageID` in `graph.apiWorkload.verified`. Bash binds that sealed proof back to every retained step 9 value and reruns the full reviewed workload validator on the sealed objects. Each fenced and final-source validator returns the SHA-256 of the exact projection bytes that passed its lifecycle-ancestry, workload, and live-routing checks; every caller validates and acknowledges that returned digest without reopening the mutable projection path. An exact live workload recheck immediately before the Service reopen and another immediately after final projection validation bracket both capture windows, so a replacement workload cannot be transiently served or accepted as final success. The first successful endpoint call retains one normalized record containing the Service UID/resourceVersion/NEG identity, complete EndpointSlice identity and ready-endpoint projection, and full normalized NEG member object. The proof runs once before public traffic checks and again after the final route/policy check; the second result must be byte-identical to the first successful normalized Service, EndpointSlice, and NEG projection. Any extra address, workload-owner drift, workload-spec drift, image drift, Pod identity, NEG member, replacement UID, or intervening resource version triggers re-fencing. After that second proof, the program re-reads the complete Deployment-to-ReplicaSet-to-Pod chain, full workload specs, immutable imageID, Pod IP, readiness, started state, and zero restart count immediately before commit; deletion, restart, ownership drift, spec drift, or readiness drift also re-fences.
 
 Before reopening and again after the public checks, the script reasserts the clean reviewed checkout, its own reviewed executable blob, both reviewed helper blobs, the externally authenticated snapshot, all three generation-matched routes and the health policy with snapshot-bound UIDs and owned metadata, both effective 660-second backend services bound to the advertised NEGs, and the effective `/ready` health check; drift leaves or returns traffic fenced. After reopening, a command error, an unexpected routable endpoint, a timeout, a signal, or any public or authenticated verification failure takes the same fail-closed path. The `EXIT` trap passes the already captured status into its handler; the handler masks ordinary termination signals as its first command, closes the reserved credential descriptor, and only then reads that argument or changes any other state, so a repeated signal cannot interrupt re-fencing. The discovery check parses the CMA OpenAPI 3.1 document rather than accepting an arbitrary 2xx response from the legacy SPA fallback. Only the exact pod name, UID, and address recorded in step 9 can pass the EndpointSlice gate. After both authenticated reads and the final route/policy recheck succeed, the success path masks `HUP`, `INT`, `QUIT`, and `TERM`, erases the private bearer value and captured response bodies, and prints explicit success while the `EXIT` re-fence trap remains armed. An output failure therefore re-fences. Only after that acknowledgement succeeds does it mark restoration committed, disarm the `EXIT` trap, and restore the ordinary signal dispositions.
 

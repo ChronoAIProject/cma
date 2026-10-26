@@ -3,6 +3,7 @@ use crate::sandbox::{
     SandboxEventKind, Worktree,
 };
 
+use super::agent_work_prepared_pair::{paired_completion, paired_logs};
 use super::agent_work_transition_validation::PublicationKind;
 use super::agent_work_validation::stamp;
 use super::{AgentWorkMutation, SandboxStoreError};
@@ -93,6 +94,9 @@ pub(super) fn validate_advance_history(
     mutation: &AgentWorkMutation,
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
+    if paired_completion(current, next) {
+        return Ok(());
+    }
     let receipts = &next.work.receipts;
     if !receipts.starts_with(&current.work.receipts)
         || receipts.len() > current.work.receipts.len() + 1
@@ -233,14 +237,25 @@ pub(super) fn validate_evidence(
                     && code.as_ref().is_none_or(|value| valid_notice_text(value, 512))
                     && message.as_ref().is_none_or(|value| valid_notice_text(value, 4096))
         ),
-        PublicationKind::Retry => matches!(
-            mutation.agent_logs.as_slice(),
-            [AgentLogKind::WorkStepFailed { step, .. }] if *step == current.work.step
-        ),
-        PublicationKind::Advance => matches!(
-            mutation.agent_logs.as_slice(),
-            [AgentLogKind::WorkStepCompleted { step }] if *step == current.work.step
-        ),
+        PublicationKind::Retry => {
+            (current.work.step == AgentWorkStep::WaitForWorkspace
+                && current.has_no_runtime_effects()
+                && mutation.agent_logs.is_empty())
+                || matches!(
+                    mutation.agent_logs.as_slice(),
+                    [AgentLogKind::WorkStepFailed { step, .. }] if *step == current.work.step
+                )
+        }
+        PublicationKind::Advance => {
+            if paired_completion(current, next) {
+                paired_logs(mutation)
+            } else {
+                matches!(
+                    mutation.agent_logs.as_slice(),
+                    [AgentLogKind::WorkStepCompleted { step }] if *step == current.work.step
+                )
+            }
+        }
         PublicationKind::Ready => matches!(
             mutation.agent_logs.as_slice(),
             [

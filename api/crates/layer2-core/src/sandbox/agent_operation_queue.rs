@@ -174,6 +174,7 @@ impl AgentOperationService {
         let logs = vec![
             operation_log(&next_agent, operation_sequence)?,
             AgentLogKind::TurnStarted {
+                model: Some(current.settings().model),
                 turn_sequence,
                 origin_key: Some(queued_message_origin(queued_message_sequence)),
             },

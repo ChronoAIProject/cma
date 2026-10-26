@@ -16,6 +16,7 @@ pub mod capacity_bounds;
 pub mod clock;
 pub mod deployment_capacity;
 pub mod directory;
+pub mod document_artifacts;
 pub mod error;
 pub mod event;
 mod event_kinds;

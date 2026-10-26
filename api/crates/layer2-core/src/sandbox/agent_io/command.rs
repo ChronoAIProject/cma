@@ -19,6 +19,11 @@ pub enum AgentInputOrder {
     AfterTurn {
         turn_sequence: Option<u64>,
     },
+    /// Reserved atomically with cancellation of this turn. These messages
+    /// precede ordinary queued input without changing its admission order.
+    InterruptAfterTurn {
+        turn_sequence: u64,
+    },
 }
 
 /// Client-supplied intent only. No authority fields can be deserialized here.
@@ -81,6 +86,11 @@ impl AgentCommand {
                     }
                 ) {
                     return Err(invalid("previous turn sequence is invalid"));
+                }
+                if matches!(order, AgentInputOrder::InterruptAfterTurn { turn_sequence }
+                    if !(1..=i64::MAX as u64).contains(turn_sequence))
+                {
+                    return Err(invalid("interrupted turn sequence is invalid"));
                 }
                 Self::Message {
                     input: input.canonical()?,

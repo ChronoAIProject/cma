@@ -92,6 +92,8 @@ export const kinds = [
   { type: 'conversation_available' },
   { type: 'runtime_changed' },
   { type: 'work_completed', step: 'publish_ready' },
+  { type: 'work_completed', step: 'install_skill' },
+  { type: 'skill_installation_changed', skill_id: 'skill-1', status: 'installed' },
   {
     type: 'work_failed',
     step: 'open_conversation',

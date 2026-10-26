@@ -2,10 +2,11 @@
 
 <!-- nav: 4 Sandboxes -->
 
-`lifecycle.latest_snapshot` reports the latest completed snapshot's `epoch`,
-`saved_at`, and owner-authenticated `download_url`. Fetch the relative URL against
-the same CMA origin with the owner's credentials to download the whole-home
-archive. Old epoch URLs return 404 after replacement; snapshots are never public.
+Agent Sandbox persists a Sandbox on its attached persistent volume. CMA does not
+create, schedule, expose, download, or delete Sandbox snapshot archives. Pause,
+revive, and retirement delegate runtime and volume lifecycle to Agent Sandbox;
+the CMA lifecycle view reports only the current transition eligibility and safe
+operation progress.
 
 A Trigger can cancel a pause before agent parking and teardown are admitted.
 The `pause` operation reports `ResumeWriters` until the exact hold is released.
@@ -63,13 +64,53 @@ actions, not cleanup implied by a dropped stream or failed Launch.
 
 The optional `Sandbox.lifecycle` contains authoritative `pause` and `revive`
 eligibility for beginning a new transition. An active Sandbox can be busy with
-`checkpoint_in_progress` or `work_in_progress`. Recorded checkpoint progress
-contains the `capture` or `resume_writers` phase, request timestamp and epoch;
-the optional operation records a pause, revival or image rotation phase without
-worker or writer credentials. Missing lifecycle data from an older server means
-eligibility is unavailable, not that status alone authorizes an action. A race
-with new work can return HTTP 409 `sandbox_lifecycle_busy`; refresh before
-retrying. Existing command replay semantics are unchanged.
+`checkpoint_in_progress` or `work_in_progress`; these are transient admission
+signals while Agent Sandbox persists the attached volume. The optional operation
+records a pause, revival or image rotation phase without worker or writer
+credentials. Missing lifecycle data from an older server means eligibility is
+unavailable, not that status alone authorizes an action. A race with new work can
+return HTTP 409 `sandbox_lifecycle_busy`; refresh before retrying. Existing
+command replay semantics are unchanged.
+
+## Managed runtime updates
+
+Owner detail includes optional `Sandbox.runtime_update` information for managed
+native runtimes. `latest_version` is the server's formally released immutable
+image reference; publishing an image alone does not change it. The server checks
+for updates daily at 02:00 Asia/Singapore, and an owner-initiated revival from
+Paused admits the current managed version. Custom-image Sandboxes are excluded.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::instances::{SandboxRuntimeUpdateStatus, UpdateSandboxRuntimeRequest};
+# async fn update(client: &Client, id: &str, key: &IdempotencyKey) -> cma_sdk::Result<()> {
+let detail = client.sandboxes().read(id).await?;
+if let Some(update) = detail.summary.sandbox.runtime_update {
+    if update.can_update {
+        let target_version = if update.state == SandboxRuntimeUpdateStatus::Failed {
+            update.target_version.unwrap_or(update.latest_version)
+        } else {
+            update.latest_version
+        };
+        let request = UpdateSandboxRuntimeRequest { target_version };
+        let accepted = client.sandboxes().update_runtime(id, &request, key).await?;
+        println!("{:?}", accepted.runtime_update);
+    }
+}
+# Ok(())
+# }
+```
+
+HTTP 202 records the request; it does not mean replacement has completed. Keep
+the exact target and idempotency key across uncertain responses, and follow
+`runtime_update.state` until completion or a reported failure. Retry a failed
+request with its retained `target_version`, even if a later release changes
+`latest_version`.
+
+Manual and scheduled updates wait for admitted work, active turns and queued
+messages to settle before replacing the runtime. They retain the Sandbox,
+Workspaces, Agents, conversations and original persistent home. An initially
+paused Sandbox returns to Paused unless new owner work requests a revival.
 
 ## Shared hierarchy
 
@@ -94,9 +135,9 @@ match client.sandboxes().read_accessible(id).await? {
 
 A narrow Agent grant cannot reveal any parent or its counts. Whole-Sandbox or
 organization access is checked for each hierarchy request, including current
-policy after the read. Snapshot archive downloads remain personal-only. Default
-Sandbox inventory excludes explicit organization ownership before pagination;
-use `list_accessible` with an organization for explicit discovery.
+policy after the read. Default Sandbox inventory excludes explicit organization
+ownership before pagination; use `list_accessible` with an organization for
+explicit discovery.
 
 ## Organization and Shared with me inventory
 

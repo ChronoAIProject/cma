@@ -7,15 +7,32 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod console;
 mod delivery;
 mod ingress;
+mod media;
+mod routing;
 mod secrets;
+mod service;
 mod service_account;
+pub use service::*;
+mod stt;
+pub mod transformer;
 mod turns;
 pub use cache::*;
+pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
+pub use media::{
+    MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
+    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
+    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
+    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+};
+pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
+pub use stt::*;
+pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -26,6 +43,8 @@ pub const CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: &str = "CMAEG_PROVIDER_CONNECT_TIME
 pub const CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: &str = "CMAEG_PROVIDER_REQUEST_TIMEOUT_MS";
 pub const CMAEG_PROVIDER_MAX_INFLIGHT: &str = "CMAEG_PROVIDER_MAX_INFLIGHT";
 pub const CMAEG_PUBLIC_URL: &str = "CMAEG_PUBLIC_URL";
+pub const CMAEG_PUBLIC_API_URL: &str = "CMAEG_PUBLIC_API_URL";
+pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL";
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
@@ -51,6 +70,14 @@ pub enum ConfigError {
     InvalidMaxInflight { value: String },
     /// A management-plane origin, secret, or slug was invalid.
     InvalidManagement { detail: String },
+    /// An inbound media setting was invalid.
+    InvalidMedia { detail: String },
+    /// The configured media transformer failed its startup checks.
+    MediaTransformer { detail: String },
+    /// A console setting was invalid.
+    InvalidConsole { detail: String },
+    /// A multi-consumer routing setting was invalid.
+    Routing(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -78,6 +105,18 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidManagement { detail } => {
                 write!(formatter, "management configuration is invalid: {detail}")
             }
+            Self::InvalidMedia { detail } => {
+                write!(formatter, "media configuration is invalid: {detail}")
+            }
+            Self::MediaTransformer { detail } => {
+                write!(formatter, "media transformer unavailable: {detail}")
+            }
+            Self::InvalidConsole { detail } => {
+                write!(formatter, "console configuration is invalid: {detail}")
+            }
+            Self::Routing(detail) => {
+                write!(formatter, "routing configuration is invalid: {detail}")
+            }
         }
     }
 }
@@ -102,15 +141,28 @@ pub struct Config {
     pub management: ManagementConfig,
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
+    pub native_bot_mentions_writes_enabled: bool,
+    /// Allows new thread contracts only after every reader supports them.
+    pub thread_contract_writes_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
+    pub media: MediaConfig,
+    pub routing: RoutingConfig,
+    pub stt: SttConfig,
+    pub transformer: TransformerConfig,
+    pub console: ConsoleConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
 #[derive(Debug, Clone)]
 pub struct ManagementConfig {
+    /// Legacy browser console authority; remains an origin.
     pub public_url: String,
+    /// Canonical externally reachable API base, optionally with a path prefix.
+    pub public_api_url: String,
+    /// Disable only while old replicas still lack the canonical browser routes.
+    pub advertise_public_api_url: bool,
     pub master_keys: Arc<MasterKeyRing>,
     pub cma_base_url: String,
     pub cma_service_token: Secret,
@@ -135,6 +187,12 @@ impl Config {
         })?;
         let providers_json = env::var(CMAEG_PROVIDERS).unwrap_or_else(|_| "[]".to_owned());
         let providers = ProviderRegistry::parse(&providers_json)?;
+        // Validated against the registry, so it can only follow it.
+        let media = media::config_from_env(&providers)?;
+        let routing = routing::config_from_env(&providers)?;
+        let stt = stt::config_from_env()?;
+        let transformer = transformer::config_from_env()?;
+        transformer.check(&media, &stt)?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -147,6 +205,8 @@ impl Config {
                 value: env::var(CMAEG_PROVIDER_MAX_INFLIGHT).unwrap_or_else(|_| "256".to_owned()),
             })?;
         let management = ManagementConfig::from_env()?;
+        let turns = TurnConfig::from_env()?;
+        media.check_turn_timeout(turns.turn_timeout)?;
         Ok(Self {
             listen,
             metrics_listen,
@@ -157,9 +217,37 @@ impl Config {
             management,
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
+            native_bot_mentions_writes_enabled: match env::var(
+                "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
+            ) {
+                Err(env::VarError::NotPresent) => false,
+                Ok(value) if value == "false" => false,
+                Ok(value) if value == "true" => true,
+                _ => {
+                    return Err(ConfigError::InvalidManagement {
+                        detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
+                            .into(),
+                    })
+                }
+            },
+            thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
+                Err(env::VarError::NotPresent) => false,
+                Ok(value) if value == "false" => false,
+                Ok(value) if value == "true" => true,
+                _ => {
+                    return Err(ConfigError::InvalidManagement {
+                        detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
+                    })
+                }
+            },
             ingress: IngressConfig::from_env()?,
-            turns: TurnConfig::from_env()?,
+            turns,
             delivery: DeliveryConfig::from_env()?,
+            media,
+            routing,
+            stt,
+            transformer,
+            console: ConsoleConfig::from_env()?,
         })
     }
 }
@@ -167,6 +255,15 @@ impl Config {
 impl ManagementConfig {
     fn from_env() -> Result<Self, ConfigError> {
         let public_url = required_origin(CMAEG_PUBLIC_URL)?;
+        let public_api_url = env::var(CMAEG_PUBLIC_API_URL)
+            .map(|value| validate_public_api_url(&value))
+            .unwrap_or_else(|_| Ok(public_url.clone()))?;
+        let advertisement = env::var(CMAEG_ADVERTISE_PUBLIC_API_URL);
+        let advertise_public_api_url = parse_api_advertisement(match &advertisement {
+            Ok(value) => Some(value.as_str()),
+            Err(env::VarError::NotPresent) => None,
+            Err(_) => Some("invalid"),
+        })?;
         let cma_base_url = required_origin(CMAEG_CMA_BASE_URL)?;
         let nyxid_base_url = required_origin(CMAEG_NYXID_BASE_URL)?;
         let key_spec = secrets::read(CMAEG_MASTER_KEYS, CMAEG_MASTER_KEYS_FILE)?;
@@ -198,6 +295,8 @@ impl ManagementConfig {
         }
         Ok(Self {
             public_url,
+            public_api_url,
+            advertise_public_api_url,
             master_keys: Arc::new(master_keys),
             cma_base_url,
             cma_service_token: Secret::new(cma_service_token),
@@ -205,6 +304,49 @@ impl ManagementConfig {
             tools_nyxid_slug,
         })
     }
+}
+
+fn parse_api_advertisement(value: Option<&str>) -> Result<bool, ConfigError> {
+    match value {
+        None | Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_ADVERTISE_PUBLIC_API_URL} must be true or false"),
+        }),
+    }
+}
+
+/// A trusted base used for generated links and routing, never taken from Host.
+fn validate_public_api_url(value: &str) -> Result<String, ConfigError> {
+    let url = Url::parse(value).map_err(|_| ConfigError::InvalidManagement {
+        detail: format!("{CMAEG_PUBLIC_API_URL} must be a public API base URL"),
+    })?;
+    validate_origin(CMAEG_PUBLIC_URL, &url.origin().ascii_serialization())?;
+    let path = url.path();
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || value.ends_with('/')
+        || value.len() > 2048
+        || value != url.as_str().trim_end_matches('/')
+        || (path != "/"
+            && path
+                .strip_prefix('/')
+                .unwrap_or_default()
+                .split('/')
+                .any(|part| {
+                    part.is_empty()
+                        || !part
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                }))
+    {
+        return Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_PUBLIC_API_URL} must be a canonical HTTPS base with clean path segments and no credentials, query, fragment or trailing slash"),
+        });
+    }
+    Ok(value.to_owned())
 }
 
 fn required_origin(name: &'static str) -> Result<String, ConfigError> {
@@ -310,5 +452,42 @@ mod tests {
             validate_origin(CMAEG_CMA_BASE_URL, "https://CMA.EXAMPLE:443").unwrap(),
             "https://cma.example"
         );
+    }
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    use super::*;
+    #[test]
+    fn advertisement_is_enabled_by_default_and_explicitly_staged() {
+        assert!(parse_api_advertisement(None).unwrap());
+        assert!(parse_api_advertisement(Some("true")).unwrap());
+        assert!(!parse_api_advertisement(Some("false")).unwrap());
+        for value in ["", "1", "yes", "True", "FALSE", "false "] {
+            assert!(parse_api_advertisement(Some(value)).is_err());
+        }
+    }
+
+    #[test]
+    fn public_api_base_requires_a_clean_canonical_namespace() {
+        for valid in [
+            "https://bot.example/event-gateway",
+            "https://gateway.example",
+            "http://localhost:8090/event-gateway",
+        ] {
+            assert_eq!(validate_public_api_url(valid).unwrap(), valid);
+        }
+        for invalid in [
+            "https://bot.example/event-gateway/",
+            "https://bot.example/a/../event-gateway",
+            "https://bot.example//event-gateway",
+            "https://bot.example/%2e%2e/event-gateway",
+            "https://user@bot.example/event-gateway",
+            "https://bot.example/event-gateway?q=1",
+            "https://bot.example/event-gateway#fragment",
+            "http://bot.example/event-gateway",
+        ] {
+            assert!(validate_public_api_url(invalid).is_err(), "{invalid}");
+        }
     }
 }

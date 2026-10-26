@@ -159,12 +159,30 @@ impl BrowserConnections {
         caller: &Caller,
         request: CheckRequest,
     ) -> Result<ConnectionReport, ConnectionError> {
-        let services = self.targets.services(caller, &request.target).await?;
-        let requirements = self
-            .broker
-            .requirements(&caller.subject, &services)
-            .await
-            .map_err(|_| ConnectionError::Unavailable)?;
+        let started = std::time::Instant::now();
+        let services = self.targets.services(caller, &request.target).await;
+        check_timing("target_authorization", started, services.is_ok());
+        let services = services?;
+        // Both owner-bound reads use the already-authorized target services.
+        // Complete both, then retain requirements-first validation and errors.
+        let (requirements, metadata) = tokio::join!(
+            async {
+                let started = std::time::Instant::now();
+                let result = self.broker.requirements(&caller.subject, &services).await;
+                check_timing("requirements", started, result.is_ok());
+                result
+            },
+            async {
+                let started = std::time::Instant::now();
+                let result = self
+                    .broker
+                    .describe_services(&caller.subject, &services)
+                    .await;
+                check_timing("metadata", started, result.is_ok());
+                result
+            },
+        );
+        let requirements = requirements.map_err(|_| ConnectionError::Unavailable)?;
         if requirements.len() != services.len()
             || !services
                 .iter()
@@ -172,11 +190,7 @@ impl BrowserConnections {
         {
             return Err(ConnectionError::Unavailable);
         }
-        let metadata = self
-            .broker
-            .describe_services(&caller.subject, &services)
-            .await
-            .map_err(|_| ConnectionError::Unavailable)?;
+        let metadata = metadata.map_err(|_| ConnectionError::Unavailable)?;
         let mut seen = BTreeSet::new();
         if metadata
             .iter()
@@ -362,6 +376,15 @@ async fn cancel(
 
 fn no_store(body: impl Serialize) -> Response {
     ([(header::CACHE_CONTROL, "private, no-store")], Json(body)).into_response()
+}
+
+fn check_timing(phase: &'static str, started: std::time::Instant, success: bool) {
+    tracing::info!(
+        phase,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        success,
+        "Connection check phase completed"
+    );
 }
 
 #[cfg(test)]

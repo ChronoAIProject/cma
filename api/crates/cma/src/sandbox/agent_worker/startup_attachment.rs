@@ -19,27 +19,7 @@ impl AgentWorker {
                     "agent lifecycle lease is no longer held",
                 )
             })?;
-        let request = AgentOpenRequest::new(
-            format!("agent:{}:open:v1", agent.id),
-            runtime_options(agent, &context.sandbox, &context.worktree),
-            None,
-        );
-        if agent
-            .work
-            .receipts
-            .iter()
-            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
-            .filter(|receipt| {
-                receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256
-            })
-            .is_none()
-        {
-            return Err(WorkerFailure::terminal(
-                "agent_conversation_receipt_invalid",
-                "the durable conversation-open receipt does not match replay",
-            ));
-        }
+        let request = validated_open_request(agent, context)?;
         let recovered_prompt = agent.conversation.active_turn.map(|turn| {
             layer3_adapter::PromptIdentity::new(
                 &target.conversation_id,
@@ -55,6 +35,74 @@ impl AgentWorker {
                 (&target.conversation_id, recovered_prompt),
             )
             .await?;
+        let mut context_replayed = false;
+        if let Some((sequence, input)) = agent.pending_managed_context() {
+            let result = channel.input.send(input).await;
+            let refresh_target = layer2_core::sandbox::AgentRuntimeTarget {
+                agent_id: agent.id.clone(),
+                conversation_id: target.conversation_id.clone(),
+                runtime_generation: target.runtime_generation,
+            };
+            let authority = layer2_core::sandbox::AgentWorkAuthority {
+                holder: self.config.holder.clone(),
+                fence: connection_fence,
+            };
+            let confirmation = match result {
+                Ok(()) => {
+                    context_replayed = true;
+                    self.dependencies
+                        .operations
+                        .confirm_managed_context_replayed(&refresh_target, &authority, sequence)
+                        .await
+                }
+                Err(layer3_adapter::AdapterError::OperationIdentityConflict(_)) => {
+                    self.dependencies
+                        .operations
+                        .retire_managed_context_replayed(&refresh_target, &authority, sequence)
+                        .await
+                }
+                Err(error) => return Err(adapter_failure(error)),
+            };
+            confirmation.map_err(|error| {
+                WorkerFailure::retryable(
+                    "managed_context_confirmation_unavailable",
+                    error.to_string(),
+                )
+            })?;
+        }
+        if let Some(settings) = agent
+            .conversation
+            .settings
+            .as_ref()
+            .filter(|_| !context_replayed)
+        {
+            channel
+                .input
+                .send(settings.runtime_input())
+                .await
+                .map_err(adapter_failure)?;
+            self.dependencies
+                .operations
+                .confirm_settings_replayed(
+                    &layer2_core::sandbox::AgentRuntimeTarget {
+                        agent_id: agent.id.clone(),
+                        conversation_id: target.conversation_id.clone(),
+                        runtime_generation: target.runtime_generation,
+                    },
+                    &layer2_core::sandbox::AgentWorkAuthority {
+                        holder: self.config.holder.clone(),
+                        fence: connection_fence,
+                    },
+                    settings,
+                )
+                .await
+                .map_err(|error| {
+                    WorkerFailure::retryable(
+                        "agent_settings_confirmation_unavailable",
+                        error.to_string(),
+                    )
+                })?;
+        }
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
             return Err(WorkerFailure::terminal(
@@ -150,4 +198,33 @@ impl AgentWorker {
             )
             .map_err(registry_failure)
     }
+}
+
+// A retained local channel has the same replay authority as a reconnect.
+pub(in super::super) fn validated_open_request(
+    agent: &Agent,
+    context: &AgentContext,
+) -> Result<AgentOpenRequest, WorkerFailure> {
+    let request = AgentOpenRequest::new(
+        format!("agent:{}:open:v1", agent.id),
+        runtime_options(agent, &context.sandbox, &context.worktree),
+        None,
+    );
+    if agent
+        .work
+        .receipts
+        .iter()
+        .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+        .filter(|receipt| {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+        })
+        .is_none()
+    {
+        return Err(WorkerFailure::terminal(
+            "agent_conversation_receipt_invalid",
+            "the durable conversation-open receipt does not match replay",
+        ));
+    }
+    Ok(request)
 }

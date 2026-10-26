@@ -168,7 +168,7 @@ impl QueuedCancellationReservation {
     }
 }
 
-pub(super) fn validate_source(
+pub(in crate::sandbox::agent_io) fn validate_source(
     agent: &Agent,
     owner: &super::super::AgentOwner,
     response: &AdmittedAgentCommand,

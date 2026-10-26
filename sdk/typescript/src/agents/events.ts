@@ -4,6 +4,7 @@ import {
   dictionary,
   enumeration,
   integer,
+  nullable,
   object,
   optional,
   tagged,
@@ -11,15 +12,17 @@ import {
   variant,
   type Output,
 } from '../schema.js';
-import { firstMessageDelivery } from './types.js';
+import { firstMessageDelivery, agentRuntimeMetadata } from './types.js';
 
 export const agentWorkStep = enumeration(
+  'wait_for_workspace',
   'add_worktree',
   'materialize_home',
   'open_conversation',
   'publish_ready',
   'publish_connection',
   'dispatch_first_message',
+  'install_skill',
   'fence_interaction',
   'close_process',
   'publish_stopped',
@@ -35,6 +38,8 @@ export const agentOperationKind = enumeration(
   'steer',
   'interrupt',
   'answer_approval',
+  'update_settings',
+  'refresh_context',
 );
 export type AgentOperationKind = Output<typeof agentOperationKind>;
 export const agentOperationDelivery = enumeration(
@@ -59,6 +64,10 @@ export const agentEventKind = tagged({
   }),
   work_step_completed: variant('work_step_completed', { step: agentWorkStep }),
   work_step_failed: variant('work_step_failed', { step: agentWorkStep, failure }),
+  skill_installation_changed: variant('skill_installation_changed', {
+    skill_id: text,
+    status: enumeration('pending', 'installed', 'failed'),
+  }),
   turn_started: variant('turn_started', { turn_sequence: integer }),
   turn_metadata_set: variant('turn_metadata_set', {
     turn_sequence: integer,
@@ -96,6 +105,16 @@ export const agentEventKind = tagged({
     output_tokens: integer,
     context_used: integer,
     context_window: optional(integer),
+  }),
+  runtime_metadata_changed: variant('runtime_metadata_changed', { metadata: agentRuntimeMetadata }),
+  usage_updated: variant('usage_updated', {
+    input_tokens: integer,
+    output_tokens: integer,
+    context_used: integer,
+    context_window: nullable(integer),
+    turn_sequence: nullable(integer),
+    turn_input_tokens: integer,
+    turn_output_tokens: integer,
   }),
   mode_changed: variant('mode_changed', { mode: text }),
   plan_set: variant('plan_set', { entries: array(object({ title: text, status: text })) }),

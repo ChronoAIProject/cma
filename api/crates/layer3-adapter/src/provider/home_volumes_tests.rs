@@ -35,9 +35,11 @@ async fn home_allocation_scope_tracks_configured_authority_namespace_and_control
 
 pub(super) fn request() -> HomeVolumeRequest {
     HomeVolumeRequest {
+        scope: None,
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "standard-rwo".into(),
             capacity_gib: 64,
             template_name: "empty-home".into(),
@@ -345,4 +347,43 @@ async fn removal_uses_both_preconditions_and_preserves_a_replacement() {
         .await
         .is_err());
     assert_eq!(fixture.finish().await.len(), 1);
+}
+
+#[tokio::test]
+async fn foreign_allocation_scope_is_rejected_before_any_kubernetes_request() {
+    let fixture = serve(vec![]).await;
+    let mut home = request();
+    home.scope =
+        Some(crate::HomeVolumeScope::from_authority("kubernetes-pvc-v1", &["foreign"]).unwrap());
+    let attachment = crate::HomeVolumeAttachment {
+        receipt: crate::HomeVolumeReceipt {
+            native_authority: None,
+            volume_id: home.volume_id.clone(),
+            request_sha256: home.computed_sha256(),
+            storage_reference: "original-pvc".into(),
+            storage_generation: "original-uid".into(),
+        },
+        request: home.clone(),
+    };
+    assert!(matches!(
+        fixture.store.prepare(&home).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(matches!(
+        fixture.store.prepare_receipted(&home, "original").await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(matches!(
+        fixture.store.verify(&attachment).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(matches!(
+        fixture.store.remove_captures(&attachment).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(matches!(
+        fixture.store.remove(&home, None).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    assert!(fixture.finish().await.is_empty());
 }

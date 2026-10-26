@@ -27,6 +27,65 @@ impl AgentCommandExecution for UnavailableOnce {
 }
 
 #[tokio::test(start_paused = true)]
+async fn scheduled_retries_release_the_slot_without_caching_authority_or_claims() {
+    for status in [AgentStatus::Ready, AgentStatus::Paused] {
+        let (store, agent, parent) = fixture(status).await;
+        let admitted = admit(
+            &store,
+            &agent,
+            &parent,
+            "scheduled-retry",
+            AgentCommand::message("preserve this queued message"),
+        )
+        .await;
+        let (sender, inputs) = recording_sender(Ok(()));
+        let operations = AgentOperationService::new(
+            store.clone(),
+            TestRuntimeRegistry::new(full_capabilities(), sender),
+        );
+        let inner = Execution::new(store.clone(), operations.clone(), Behavior::Execute);
+        let execution: Arc<dyn AgentCommandExecution> = if status == AgentStatus::Ready {
+            Arc::new(UnavailableOnce {
+                inner,
+                checks: AtomicUsize::new(0),
+                entered: Notify::new(),
+            })
+        } else {
+            inner
+        };
+        let worker = AgentCommandWorker::new(store.clone(), execution, "scheduled".into()).unwrap();
+        let id = &admitted.receipt.envelope.command_id;
+        let started = tokio::time::Instant::now();
+        let cooldown = tokio::time::timeout(Duration::from_millis(1), worker.run_scheduled(id))
+            .await
+            .expect("retry pacing must not occupy the worker slot")
+            .unwrap();
+        assert_eq!(cooldown, Duration::from_secs(15));
+        assert_eq!(tokio::time::Instant::now(), started);
+        assert_eq!(store.get_command(id).await.unwrap(), Some(admitted.clone()));
+        assert!(inputs.lock().unwrap().is_empty());
+
+        // A later attempt obtains fresh authority even when no cooldown elapsed
+        // (for example, because the process restarted).
+        let revoked = Execution::new(store.clone(), operations, Behavior::Refuse);
+        assert_eq!(
+            revoked.worker("restart").run_scheduled(id).await.unwrap(),
+            Duration::ZERO
+        );
+        let current = store.get_command(id).await.unwrap().unwrap();
+        assert_eq!(current.receipt, admitted.receipt);
+        assert_eq!(current.queue_deadline, admitted.queue_deadline);
+        assert_eq!(
+            current.work.failure.unwrap().code,
+            CommandFailureCode::AuthorityRevoked
+        );
+        assert!(current.work.lease.is_none());
+        assert!(current.work.dispatch.is_none());
+        assert!(inputs.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn transient_authority_preserves_receipt_and_retries_after_bounded_pacing() {
     let (store, agent, parent) = fixture(AgentStatus::Ready).await;
     let admitted = admit(

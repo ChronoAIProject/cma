@@ -5,6 +5,12 @@ use std::{
 
 mod conversation_fixtures;
 mod creation_delegation;
+mod lifecycle;
+pub(super) mod message_feedback;
+mod models;
+mod settings;
+mod shared_settings;
+mod skills;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
@@ -43,6 +49,7 @@ use tower::ServiceExt;
 use super::agent_openapi_shapes::{AgentResourcesView, AgentUsageView};
 use super::agents::{agent_router, AgentRoutesState};
 use super::instance_problem::InstanceProblem;
+use super::{AgentHistoryExportError, AgentHistoryExporter};
 use crate::AuthenticatedSubject;
 
 const OWNER: &str = "owner-a";
@@ -138,9 +145,24 @@ impl AgentRuntimeRegistry for TestRegistry {
 
 pub(super) struct TestResources;
 
+struct TestHistoryExporter;
+
+#[async_trait]
+impl AgentHistoryExporter for TestHistoryExporter {
+    async fn export(
+        &self,
+        runtime_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<u8>, AgentHistoryExportError> {
+        assert_eq!(runtime_id, "runtime-route");
+        Ok(format!("{{\"agent_id\":\"{agent_id}\"}}\n").into_bytes())
+    }
+}
+
 #[test]
 fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
     let usage = serde_json::to_value(AgentUsageView {
+        current_turn: None,
         agent_id: "agt_shape".into(),
         through_seq: 0,
         input_tokens: 0,
@@ -278,6 +300,7 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
 
 pub(super) async fn publish_profile(store: &InMemoryProfileStore) {
     let profile = AgentProfile {
+        internal: false,
         id: AgentProfileId("agp_route".into()),
         owner: SubjectId::new(OWNER),
         name: "Proof agent".into(),
@@ -320,6 +343,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
             revision: 3,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("api-github")],
@@ -344,6 +368,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("api-github")],
             key_generation: 0,
             delivered: false,
@@ -427,6 +452,10 @@ pub(crate) fn seeded_agent(
         capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
             last_seq,
@@ -547,8 +576,10 @@ fn openapi_contains_every_agent_route() {
     let mut operation_ids = std::collections::HashSet::new();
     for path in [
         "/api/v1/workspaces/{id}/agents",
+        "/api/v1/agent-lifecycle/{id}",
         "/api/v1/agents",
         "/api/v1/agents/{id}",
+        "/api/v1/agents/{id}/settings",
         "/api/v1/agents/{id}/input",
         "/api/v1/agents/{id}/steer",
         "/api/v1/agents/{id}/interrupt",
@@ -564,15 +595,20 @@ fn openapi_contains_every_agent_route() {
             .paths
             .get(path)
             .unwrap_or_else(|| panic!("missing {path}"));
-        for operation in [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
-            .into_iter()
-            .flatten()
+        for operation in [
+            item.get.as_ref(),
+            item.post.as_ref(),
+            item.patch.as_ref(),
+            item.delete.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 13);
+    assert_eq!(operation_ids.len(), 17);
 
     let schemas = serde_json::to_value(document).unwrap();
     let item_ref =
@@ -834,6 +870,7 @@ async fn control_routes_require_operation_keys_before_runtime_resolution() {
         working.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },
@@ -879,6 +916,41 @@ async fn control_routes_require_operation_keys_before_runtime_resolution() {
 }
 
 #[tokio::test]
+async fn owner_history_download_uses_runtime_jsonl_and_safe_headers() {
+    let mut fixture = fixture().await;
+    let agent = seeded_agent("agt_history", AgentStatus::Ready, 2, None);
+    insert_agent(&fixture.store, agent, Vec::new()).await;
+    let state = fixture
+        .state
+        .clone()
+        .with_history_exporter(Arc::new(TestHistoryExporter));
+    fixture.router = agent_router(state);
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_history/history",
+            OWNER,
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/x-ndjson"
+    );
+    assert_eq!(
+        response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+        "attachment; filename=agent-history.jsonl"
+    );
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(&body[..], b"{\"agent_id\":\"agt_history\"}\n");
+}
+
+#[tokio::test]
 async fn approval_events_transcript_usage_and_resources_are_public_safe() {
     let fixture = fixture().await;
     let waiting = seeded_agent("agt_waiting", AgentStatus::WaitingApproval, 7, Some(3));
@@ -887,6 +959,7 @@ async fn approval_events_transcript_usage_and_resources_are_public_safe() {
         waiting.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin-key".into()),
             },

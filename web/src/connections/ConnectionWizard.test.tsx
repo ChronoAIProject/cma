@@ -64,6 +64,68 @@ function fixture() {
   return { client, connected, report };
 }
 
+it('verifies a connected session without opening a dialog or taking focus', async () => {
+  const { client, connected } = fixture();
+  services.forEach((service) => connected.add(service));
+  const ready = vi.fn();
+  render(
+    <>
+      <button autoFocus>Keep focus</button>
+      <ConnectionWizard target={target} client={client} presentation="dialog" onReady={ready} />
+    </>,
+  );
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await flush();
+  expect(ready).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Keep focus' })).toHaveFocus();
+  expect(window.open).not.toHaveBeenCalled();
+});
+
+it('puts missing connections in a modal and returns focus after verification', async () => {
+  const { client, connected } = fixture();
+  const ready = vi.fn();
+  render(
+    <>
+      <button autoFocus>Return here</button>
+      <ConnectionWizard target={target} client={client} presentation="dialog" onReady={ready} />
+    </>,
+  );
+  await flush();
+  expect(screen.getByRole('dialog', { name: 'Connect required services' })).toHaveAttribute(
+    'aria-modal',
+    'true',
+  );
+  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+  services.forEach((service) => connected.add(service));
+  await poll();
+  expect(ready).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Return here' })).toHaveFocus();
+});
+
+it('cancels the active server intent when the connection modal is dismissed', async () => {
+  const { client } = fixture();
+  const cancel = vi.fn();
+  render(
+    <ConnectionWizard
+      target={target}
+      client={client}
+      presentation="dialog"
+      onReady={vi.fn()}
+      onCancel={cancel}
+    />,
+  );
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await flush();
+  expect(client.cancel).toHaveBeenCalledOnce();
+  expect(popup.close).toHaveBeenCalledOnce();
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
 it('one Connect all action verifies every service in sequence before continuing once', async () => {
   const { client, connected } = fixture();
   const ready = vi.fn();
@@ -104,6 +166,46 @@ it('keeps checking after a popup is blocked and provides an explicit reopen acti
   services.forEach((service) => connected.add(service));
   await poll();
   expect(ready).toHaveBeenCalledOnce();
+});
+
+it('treats a completed callback as inert until the approved target is ready for the same owner', async () => {
+  const { client, connected, report } = fixture();
+  const accessTarget: ConnectionTarget = { type: 'agent_access_request', id: 'access-one' };
+  const ready = vi.fn();
+  render(
+    <ConnectionWizard
+      target={accessTarget}
+      expectedOwner="owner"
+      client={client}
+      onReady={ready}
+    />,
+  );
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+
+  // Callback query parameters and closing the window cannot prove a connection.
+  popup.location.href = '/connection-return?status=completed&connect_link_id=untrusted';
+  popup.closed = true;
+  await poll();
+  expect(ready).not.toHaveBeenCalled();
+  expect(client.check).toHaveBeenLastCalledWith(
+    accessTarget,
+    expect.objectContaining({ service_id: 'api-github', intent_id: expect.any(String) }),
+    expect.any(AbortSignal),
+  );
+
+  services.forEach((service) => connected.add(service));
+  vi.mocked(client.check).mockResolvedValue(report('different-owner'));
+  await poll();
+  expect(ready).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Your CMA account changed');
+
+  vi.mocked(client.check).mockResolvedValue(report());
+  await act(async () => vi.advanceTimersByTimeAsync(4000));
+  expect(ready).toHaveBeenCalledOnce();
+  expect(client.start).toHaveBeenCalledOnce();
+  expect(vi.mocked(client.start).mock.calls[0]?.[0]).toEqual(accessTarget);
 });
 
 it('checks the current account before restoring a saved handoff', async () => {
@@ -193,7 +295,9 @@ it('does not mistake an older usable subscription for completed forced re-login'
   render(<ConnectionWizard target={target} client={client} forceSubscription onReady={ready} />);
   await flush();
   expect(ready).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Re-login with Codex subscription' }));
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Sign in to your ChatGPT subscription again' }),
+  );
   await flush();
   await poll();
   expect(client.start).toHaveBeenCalledWith(
@@ -238,4 +342,15 @@ it('fences pending starts when the selected sandbox changes', async () => {
   expect(client.cancel).toHaveBeenCalledWith(target, started);
   expect(ready).not.toHaveBeenCalled();
   expect(screen.queryByText(/Waiting for sign-in/)).not.toBeInTheDocument();
+});
+
+it('names the subscription row and group without the agent provider', async () => {
+  const { client } = fixture();
+  render(<ConnectionWizard target={target} client={client} onReady={vi.fn()} />);
+  await flush();
+  expect(screen.getByRole('heading', { name: 'Model subscription' })).toBeInTheDocument();
+  expect(screen.getByText('Your ChatGPT subscription')).toBeInTheDocument();
+  // Other services keep the name their record gives them.
+  expect(screen.getByText('GitHub')).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/codex/i);
 });

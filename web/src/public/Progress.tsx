@@ -1,11 +1,13 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { SkeletonRows } from '../ui/Skeleton';
 import { IconCopyOutline16 } from '../ui/icons';
-import { BrandLoading, LandingCharacter } from '../landing/LandingCharacter';
-import { blockedStates, requestStates, stepStates } from '../vocabulary/states';
-import { progressDetail, stepNames, stepOrder } from '../vocabulary/steps';
+import type { StatusTone } from '../vocabulary/status';
+import { blockedStates, requestStates } from '../vocabulary/states';
 import { failureRemediation } from '../vocabulary/errors';
 import { publicCopy } from '../vocabulary/needs';
 import { type AppRouter } from '../routing/routes';
@@ -15,7 +17,7 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import type { ConnectionTarget } from '../connections/client';
 import { useRecordedProgress } from './useRecordedProgress';
 import { createIntent } from './intent';
-import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
+import { LaunchProgress } from './LaunchProgress';
 
 export function Progress({
   client,
@@ -40,8 +42,6 @@ export function Progress({
   const blocked = record?.blocked_reason;
   const agentId =
     record?.resolution.agent.state === 'pending' ? undefined : record?.resolution.agent.id;
-  const sandboxId =
-    record?.resolution.sandbox.state === 'pending' ? undefined : record?.resolution.sandbox.id;
   useEffect(() => {
     if ((record?.state === 'ready' || record?.state === 'completed') && agentId !== undefined)
       onNavigate({ kind: 'agent', agentId }, { replace: true });
@@ -81,18 +81,19 @@ export function Progress({
       <>
         <h1>{publicCopy.title}</h1>
         {progress.error === undefined ? (
-          <BrandLoading label={publicCopy.loading} />
+          <SkeletonRows label={publicCopy.loading} />
         ) : (
-          <>
-            <p className="public-error" role="alert">
-              {progress.error}
-            </p>
-            <Button onClick={progress.refresh}>{publicCopy.retry}</Button>
-          </>
+          <Alert
+            tone="error"
+            actions={<Button onClick={progress.refresh}>{publicCopy.retry}</Button>}
+          >
+            {progress.error}
+          </Alert>
         )}
       </>
     );
   const summary = blocked === undefined ? requestStates[record.state] : blockedStates[blocked.type];
+  const tone = summaryTone(record);
   const connectionTarget: ConnectionTarget = { type: 'launch', id: record.id };
   const copy = async () => {
     try {
@@ -105,56 +106,10 @@ export function Progress({
   return (
     <section className="public-progress">
       <h1>{publicCopy.title}</h1>
-      <p role="status" aria-live="polite">
+      <Badge tone={tone} live>
         {summary}
-      </p>
-      <ol className="public-timeline">
-        {stepOrder.map((key) => {
-          const step = record.steps.find((item) => item.key === key);
-          const state =
-            step?.status === 'blocked' && blocked?.type === 'sandbox_paused_reviving'
-              ? 'running'
-              : (step?.status ?? 'pending');
-          const label =
-            state === 'blocked' && blocked?.type === 'orchestration_paused'
-              ? blockedStates.orchestration_paused
-              : stepStates[state];
-          const detail = progressDetail(step?.safe_detail);
-          return (
-            <li
-              key={key}
-              className={`public-step${state === 'failed' ? ' public-step--failed' : ''}`}
-            >
-              <span className="public-step__icon" aria-hidden="true">
-                <LandingCharacter
-                  compact
-                  state={
-                    state === 'completed'
-                      ? 'completed'
-                      : state === 'failed'
-                        ? 'failed'
-                        : state === 'running'
-                          ? 'running'
-                          : 'pending'
-                  }
-                />
-              </span>
-              <div>
-                <div className="public-step__line">
-                  <h2>{stepNames[key]}</h2>
-                  <span>{label}</span>
-                </div>
-                {detail === undefined ? null : <p>{detail}</p>}
-                {key === 'sandbox' &&
-                record.state === 'sandbox_pending' &&
-                sandboxId !== undefined ? (
-                  <LaunchSandboxProgress key={sandboxId} sandboxId={sandboxId} />
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      </Badge>
+      <LaunchProgress record={record} />
       {progress.observedAt === undefined ? null : (
         <p className="public-observed">
           {progress.error === undefined
@@ -164,14 +119,19 @@ export function Progress({
       )}
       <Presence>
         {progress.error === undefined ? null : (
-          <div className="public-notice">
-            <p>{progress.error}</p>
-            <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+          <div className="public-alert">
+            <Alert
+              tone="warning"
+              actions={<Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>}
+            >
+              {progress.error}
+            </Alert>
           </div>
         )}
       </Presence>
       {blocked?.type === 'connection_required' ? (
         <ConnectionWizard
+          presentation="dialog"
           target={connectionTarget}
           onReady={progress.refresh}
           onCancel={() => back(record)}
@@ -179,22 +139,26 @@ export function Progress({
       ) : null}
       <Presence>
         {record.failure === undefined ? null : (
-          <div className="public-notice">
-            <p className="public-error" role="alert">
+          <div className="public-alert">
+            <Alert
+              tone="error"
+              actions={
+                <>
+                  <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
+                  {agentId === undefined ? null : (
+                    <Button onClick={() => onNavigate({ kind: 'agent', agentId })}>
+                      {publicCopy.continue}
+                    </Button>
+                  )}
+                  <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
+                  <Button icon={<IconCopyOutline16 />} onClick={() => void copy()}>
+                    {publicCopy.copySupport}
+                  </Button>
+                </>
+              }
+            >
               {failureRemediation(record.failure.code)}
-            </p>
-            <div className="public-actions">
-              <Button onClick={progress.refresh}>{publicCopy.checkAgain}</Button>
-              {agentId === undefined ? null : (
-                <Button onClick={() => onNavigate({ kind: 'agent', agentId })}>
-                  {publicCopy.continue}
-                </Button>
-              )}
-              <Button onClick={() => startOver(record)}>{publicCopy.startOver}</Button>
-              <Button icon={<IconCopyOutline16 />} onClick={() => void copy()}>
-                {publicCopy.copySupport}
-              </Button>
-            </div>
+            </Alert>
             <Presence>
               {copyStatus === undefined ? null : <p role="status">{copyStatus}</p>}
             </Presence>
@@ -222,4 +186,31 @@ export function Progress({
       </Presence>
     </section>
   );
+}
+
+const stateTones = {
+  draft: 'warning',
+  resolving: 'active',
+  sandbox_pending: 'active',
+  workspace_pending: 'active',
+  agent_pending: 'active',
+  message_pending: 'active',
+  ready: 'neutral',
+  completed: 'neutral',
+  failed_retryable: 'error',
+  failed_terminal: 'error',
+  cancelled: 'muted',
+} as const satisfies Record<Launch['state'], StatusTone>;
+
+const blockedTones = {
+  connection_required: 'warning',
+  orchestration_paused: 'muted',
+  sandbox_paused_reviving: 'active',
+  recovery_required: 'warning',
+} as const satisfies Record<NonNullable<Launch['blocked_reason']>['type'], StatusTone>;
+
+/** The overall state's tone, from the same record its word comes from. */
+function summaryTone(record: Launch): StatusTone {
+  const blocked = record.blocked_reason;
+  return blocked === undefined ? stateTones[record.state] : blockedTones[blocked.type];
 }

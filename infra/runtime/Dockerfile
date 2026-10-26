@@ -19,17 +19,19 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
-# Build the upstream GitHub release with its one vulnerable indirect module
-# refreshed. No CLI source or transport code is patched.
+# Build the upstream GitHub release with patched Go and indirect modules.
+# The toolchain includes the CVE-2026-111943 crypto/x509 fix.
+# No CLI source or transport code is patched.
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
 ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
-ARG GH_GO_VERSION=1.26.8
-ARG GH_GO_SHA256_AMD64=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
-ARG GH_GO_SHA256_ARM64=211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0
-ARG GH_X_MOD_VERSION=0.40.0
+ARG GH_GO_VERSION=1.26.10
+ARG GH_GO_SHA256_AMD64=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+ARG GH_GO_SHA256_ARM64=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797
+ARG GH_X_MOD_VERSION=0.41.0
+ARG GH_X_NET_VERSION=0.60.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -52,11 +54,14 @@ WORKDIR /source
 ENV GOTOOLCHAIN=local CGO_ENABLED=0
 RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,id=cma-gh-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
-    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" \
+    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" -require="golang.org/x/net@v${GH_X_NET_VERSION}" \
     && /usr/local/go/bin/go mod download golang.org/x/mod \
-    && /usr/local/go/bin/go mod download \
+    && /usr/local/go/bin/go mod download golang.org/x/net \
+    && /usr/local/go/bin/go mod download all \
     && /usr/local/go/bin/go mod verify \
     && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${GH_X_MOD_VERSION}" \
+    && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/net)" = "v${GH_X_NET_VERSION}" \
+    && mkdir -p /out \
     && /usr/local/go/bin/go build -mod=readonly -trimpath \
         -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION} -X github.com/cli/cli/v2/internal/build.Date=2026-09-09" \
         -o /out/gh ./cmd/gh
@@ -133,7 +138,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=d43c6cbda951f3f8f08a1ef1063803e703bf20c4167b2b2cd876c6f5a5a4cb0a
+ARG CODEX_ACP_SHA256=4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -252,8 +257,9 @@ RUN set -eux; \
     nyxid --version
 
 # Use the genuine upstream CLI. The supervisor supplies an inert GH_TOKEN and
-# its local Unix-socket transport only when api-github is in the Sandbox grant;
-# the scoped NyxID credential remains in the supervisor, outside the home.
+# its local Unix-socket transport to managed runtimes for live scope changes.
+# Requests require the current api-github grant; the scoped NyxID credential
+# remains in the supervisor, outside the home.
 COPY --from=github-build /out/gh /usr/local/bin/gh
 RUN gh --version
 
@@ -264,6 +270,9 @@ ARG NYXID_SKILL_COMMIT=0ac096837c7436b05b71b374207a42320776715d
 ARG NYXID_SKILL_ARCHIVE_SHA256=6559072f4d4ab35b466cdf64ae0ae86ee3fb89a36f67925ed1ba4eb781ee23b8
 ARG ORNN_SKILL_COMMIT=052024a6927306f2455843b850a948d77ac67f9d
 ARG ORNN_SKILL_ARCHIVE_SHA256=a5788101f78d364e14b57bfc2fa1755702833b239b280ed6ce60c5abd3a442c3
+# The pinned NyxID skill has two reviewed internal aliases. Fresh-volume
+# initialization accepts only regular files/directories, so materialize
+# these aliases in the immutable public seed while retaining the image home.
 RUN set -eux; \
     groupadd --gid 10001 cma; \
     useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma; \
@@ -291,9 +300,25 @@ RUN set -eux; \
     test -s /home/cma/.codex/skills/ornn-agent-manual-cli/SKILL.md; \
     test "$(find /home/cma/.codex/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)" = "nyxid,ornn-agent-manual-cli"; \
     chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer; \
+    test ! -e /home/cma/.codex/auth.json; \
+    test ! -e /home/cma/.nyxid/access_token; \
+    test ! -e /home/cma/.cma/provider/codex/auth.json; \
+    test "$(find /home/cma -type l -printf '%P\n' | sort | paste -sd, -)" = ".codex/skills/nyxid/POST_INSTALL.md,.codex/skills/nyxid/tools"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
+    cp -aL /home/cma /usr/share/cma-runtime-home; \
+    test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
+    chown -R root:root /usr/share/cma-runtime-home; \
+    chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# Native SandboxTemplates use this same image as a non-root init container:
+# --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
+# home mounts at /home, with separate persistent state/transfer directories.
+# --initialize-home retains the v1 home -> /home/cma layout. Both versions
+# reject the other's marker and preserve completed volumes across Pod recreation.
 
 # Persist untouched provider conversations before publishing an Agent as Ready.
 # These exact-source patches and restart proofs use synthetic credentials and
@@ -301,8 +326,14 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
+    && node /tmp/cma-codex-source/managed_model_catalog.cjs \
+    && node /tmp/cma-codex-source/runtime_observations.cjs \
+    && node /tmp/cma-codex-source/required_access_tool.cjs \
+    && node /tmp/cma-codex-source/session_commands.cjs \
+    && node /tmp/cma-codex-source/agent_instructions.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs \
+    && test ! -e /tmp/cma-checkpoints
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
@@ -346,6 +377,10 @@ const fallback = [
 fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
 NODE
 
+# Owner attachment uploads are admitted only when the supervisor proves the
+# complete /home mount. Files and immutable upload receipts live beneath
+# /home/attachments; retained runtimes advertise this capability explicitly.
+
 # Optional CHRONO_TOOL_PROXY_URL selects one external HTTP tool endpoint.
 # When absent no tool proxy binds. When present it listens only at 127.0.0.1:9093,
 # accepts POST /, and uses the current in-memory Sandbox credential on each call.
@@ -366,4 +401,6 @@ ARG CHRONO_BUILD=development
 LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
-      dev.chrono.cma.runtime-contract="3"
+      dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-bootstrap="1" \
+      dev.chrono.cma.home-layout="2"

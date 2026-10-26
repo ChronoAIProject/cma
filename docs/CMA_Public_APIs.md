@@ -1,10 +1,15 @@
 # CMA public API inventory
 
+The focused Agent Manager contract is served at `/agent-manager/openapi.json`;
+see [Agent Manager API](API_Agent_Manager.md) for one Agent lifecycle and Responses v2 flow.
+The full `/openapi.json` compatibility contract and existing API paths remain available.
+
 This inventory describes the implemented CMA control-plane surface after legacy
 Bridge retirement. `GET /openapi.json` is the authoritative machine-readable
 contract; [REST](API_REST.md), [AG-UI](API_AGUI.md), and the Responses documents
-provide request, replay and error semantics. CMAEG has a separate origin and
-[protocol](CMAEG_Protocol.md); its endpoints are not CMA endpoints.
+provide request, replay and error semantics. CMAEG remains a separate service,
+exposed under `/event-gateway` on the same origin with its own
+[protocol](CMAEG_Protocol.md) and `/event-gateway/openapi.json` contract.
 
 ## Interface families
 
@@ -17,14 +22,18 @@ provide request, replay and error semantics. CMAEG has a separate origin and
 | Sharing and organizations | List accessible resources and manage supported resource grants under current authority. |
 | Bots | Create and manage owner Bots through CMAEG, inspect progress, test, enable, disable, rotate credentials and delete. |
 | Triggers and Launches | Publish visitor entry points, placements and embeds; admit and observe visitor-owned work and service connections. |
-| Provider and gateway | Manage CMAEG bindings and encrypted records; admit provider turns and retrieve immutable full event context. |
+| Provider and gateway | Manage CMAEG provider bindings; admit provider turns and retrieve immutable full event context. |
 | Operations | Manage platform settings, defaults and authorized inventory; inspect activity and conformance. |
 | Auth and discovery | Browser sign-in/session/logout, OpenAPI, conformance and Agent-card discovery. |
 
 Authentication is required except for explicitly anonymous discovery, public
 marketplace and Trigger entry operations. Published does not mean anonymously
-writable. Provider management and gateway records require dedicated service
+writable. Provider management requires dedicated service
 capabilities; a personal bearer does not imply permission to call every route.
+
+The legacy Gateway channel/connection/interaction storage endpoints are retired
+from Agent Manager. Event Gateway owns that persistence directly; compatibility
+SDK methods and fixtures remain for migration testing.
 
 CMA PTY, MCP execution and A2A execution currently return typed unsupported
 responses. Their discovery/refusal routes are listed for completeness. CMAEG’s
@@ -32,7 +41,7 @@ native MCP event tools are implemented independently.
 
 ## Exact method and path inventory
 
-The generated OpenAPI document contains **176 operations across 139 paths**.
+The generated OpenAPI document defines the full operation and path inventory.
 Each row below names a public method and path; schemas, authentication schemes,
 request parameters and error contracts are in `GET /openapi.json`. Disabled
 features and typed unsupported operations are included because they remain part
@@ -42,14 +51,14 @@ of the public contract.
 | --- | ---: |
 | administration | 14 |
 | ag ui | 4 |
-| agent events v2 | 3 |
+| agent events v2 | 4 |
 | agent operations | 4 |
 | agent profiles | 9 |
 | agent usage | 2 |
 | agents | 17 |
 | bots | 9 |
 | discovery | 2 |
-| event gateway | 4 |
+| event gateway | 0 |
 | event worker profiles | 6 |
 | profile authoring | 4 |
 | profile marketplace | 3 |
@@ -60,7 +69,7 @@ of the public contract.
 | responses | 7 |
 | responses v2 | 7 |
 | sandbox profiles | 9 |
-| sandboxes | 11 |
+| sandboxes | 12 |
 | service connections | 2 |
 | trigger launches | 8 |
 | trigger placements | 4 |
@@ -102,6 +111,7 @@ of the public contract.
 | Method and path |
 | --- |
 | `GET /api/v2/agents/{agent_id}/events` |
+| `GET /api/v2/agents/{agent_id}/events/head` |
 | `GET /api/v2/agents/{agent_id}/events/snapshot` |
 | `GET /api/v2/ui/transport` |
 
@@ -163,6 +173,7 @@ of the public contract.
 | --- |
 | `GET /api/v1/bots` |
 | `POST /api/v1/bots` |
+| `GET /api/v1/bots/connections` |
 | `GET /api/v1/bots/nyxid-bots` |
 | `DELETE /api/v1/bots/{bot_id}` |
 | `GET /api/v1/bots/{bot_id}` |
@@ -182,14 +193,6 @@ of the public contract.
 
 | Method and path |
 | --- |
-| `GET /api/v1/gateway/channel-records` |
-| `DELETE /api/v1/gateway/channel-records/{record_id}` |
-| `GET /api/v1/gateway/channel-records/{record_id}` |
-| `PUT /api/v1/gateway/channel-records/{record_id}` |
-| `GET /api/v1/gateway/connection-records` |
-| `DELETE /api/v1/gateway/connection-records/{record_id}` |
-| `GET /api/v1/gateway/connection-records/{record_id}` |
-| `PUT /api/v1/gateway/connection-records/{record_id}` |
 
 ### event worker profiles
 
@@ -309,8 +312,8 @@ of the public contract.
 | `GET /api/v1/sandboxes/{id}/events` |
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
+| `POST /api/v1/sandboxes/{id}/runtime-update` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
-| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` |
 
 ### service connections
 
@@ -395,7 +398,7 @@ historical revisions. The complete configuration is returned in `profile`.
 
 ## Supplemental browser, discovery and operational routes
 
-These router surfaces supplement the 176 OpenAPI operations above. Browser
+These router surfaces supplement the 180 OpenAPI operations above. Browser
 identity and connection flows retain their cookie, redirect and same-origin
 requirements; they are not generic resource CRUD. `GET /auth/signup-options`
 and the public Trigger embed routes are already included in the OpenAPI table.
@@ -418,3 +421,78 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 
 CMAEG's supported native `POST /mcp` belongs to the gateway origin and is a
 separate interface from CMA's unsupported `/api/v1/mcp` route.
+
+## Agent model catalog
+
+`GET /api/v1/agents/{id}/models` (`list_agent_models`) returns
+`{"models":[{"id":"gpt-6","label":"gpt-6","available":true}]}` using the owned Agent’s
+current Sandbox key to query the Chrono LLM `/models` API. The portal uses the
+Agent Manager prefix `/api/agent-manager/v1/agents/{id}/models`. The response is
+`Cache-Control: no-store`; the list contains provider results without adding
+hardcoded choices. Labels prefer the provider's `display_name`, then `name`,
+then the model ID. The existing settings PATCH applies the selected model.
+
+Chrono's current `/models` response includes image-only models and does not
+provide modality or supported-endpoint metadata (`type` is `model` for every
+entry). The Agent catalog therefore admits only provider-returned IDs matching
+`^gpt-[0-9][A-Za-z0-9._-]*$` or exactly `codex-auto-review`, the same ID contract
+used by managed ACP model discovery. This excludes `gpt-image-*` and unknown
+model families. Each row's `available` flag additionally requires an active
+Agent and parent, no checkpoint capture, and a fresh status from the exact bound
+runtime reporting `agent_model_catalog: true`, ready installation and credential,
+and matching generation, home identity and boot ID. Missing capability, status
+failure, or a retained older runtime leaves rows visible with `available: false`.
+The portal disables those model choices with an explanation, preserves the saved
+model and still allows reasoning effort and permission changes. A missing flag
+from an older API also means unavailable. Catalog reads never upgrade, revive,
+or replace a running Agent or its conversation.
+
+Requests use an explicit `chrono-cma/<version>` User-Agent and
+`Accept: application/json`. Production verification on 2026-10-14 confirmed
+that the existing scoped Sandbox key can read `/models`: a Python-urllib
+User-Agent was denied by the upstream perimeter, while no User-Agent and a
+normal CMA client User-Agent returned the same 20 model IDs. The route does not
+need `/v1/models` (which returned 404), an owner-token fallback, or wider scope.
+
+The caller must own the Agent. Foreign or missing Agents return 404 before any
+upstream request. Missing, expired, or mismatched Sandbox credential custody,
+invalid provider responses, and upstream failures return 503 without exposing
+credentials or the upstream response body. Public Chrono LLM scope is preferred;
+retained Sandboxes with the legacy Chrono LLM scope use their original service.
+
+
+### Queued input revisions
+
+`GET /api/v2/agents/{agent_id}/queued-inputs` requires current Agent operation
+authority and returns `cma.agent.queued_inputs`, the Agent ID and at most four entries
+ordered by original admission order. Optional `limit` is 1 through 4 (default 4);
+optional `after` is an exclusive positive admission-order cursor. `next_after` is
+the final returned order when more entries exist, otherwise null. Each entry includes
+the safe command status, `command_revision`, complete `text` and current `editable`
+observation. Four maximum 256 KiB texts remain below the SDK's unchanged 8 MiB HTTP
+limit even with worst-case JSON escaping. The SDKs follow pages with strict cursor,
+identity and 64-entry traversal bounds. Each page observes current state; later
+refreshes reconcile concurrent edits. No entries are silently truncated.
+
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input` requires a
+retained `Idempotency-Key` and exactly `source_command_id`,
+`expected_command_revision` and `text`. Text obeys the existing nonempty 256 KiB
+input limit. The transaction retains the original admission envelope, command ID,
+response ID, metadata and queue position; it atomically invalidates any matching
+claim, records the replacement input and increments the source revision. A bound
+runtime dispatch is never editable, including ambiguous delivery. The independent
+terminal edit receipt allows exact recovery after a lost reply. Another key cannot
+reuse the old revision, and the same key cannot change target or text.
+
+The response is `cma.response.queued_input` with `edit`, current `response`, original
+`target`, applied `command_revision` and immutable replacement `text`.
+`queued_input_not_admitted` is a committed stale-intent refusal; clients may refresh
+and explicitly create a new edit. Existing queued cancellation removes an item.
+Queue changes before dispatch are ledger mutations, so visible clients refresh
+periodically as well as on local operations and focus.
+
+Pending edited command documents include a required revision marker that older
+strict readers reject. This prevents a rolled-back worker from silently executing
+original input. Drain or cancel edited pending inputs before rolling back to a
+release without queued input support. Forward recovery reads the retained revisions;
+active or completed dispatch records remain compatible after the marker is removed.

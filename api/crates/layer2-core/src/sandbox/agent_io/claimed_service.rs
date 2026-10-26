@@ -32,9 +32,11 @@ impl AgentOperationService {
             return Err(AgentOperationError::Conflict);
         }
         let service = Self {
+            settings_authority: None,
             command_claim: Some(claim.clone()),
             execution_authority: Some(authority.clone()),
             trigger_authority: None,
+            instruction_policy: self.instruction_policy.clone(),
             connections: self.connections.clone(),
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
@@ -43,7 +45,9 @@ impl AgentOperationService {
             .execute_command(
                 authority.caller(),
                 &command.receipt.envelope.agent_id,
-                command.receipt.envelope.command.clone(),
+                command
+                    .effective_command()
+                    .map_err(|_| AgentOperationError::Conflict)?,
             )
             .await
     }
@@ -83,15 +87,23 @@ impl AgentOperationService {
             return Err(AgentOperationError::Conflict);
         }
         let service = Self {
+            settings_authority: None,
             command_claim: Some(claim.clone()),
             execution_authority: None,
             trigger_authority: None,
+            instruction_policy: self.instruction_policy.clone(),
             connections: self.connections.clone(),
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
         };
         service
-            .execute_command(caller, &envelope.agent_id, envelope.command.clone())
+            .execute_command(
+                caller,
+                &envelope.agent_id,
+                command
+                    .effective_command()
+                    .map_err(|_| AgentOperationError::Conflict)?,
+            )
             .await
     }
 }

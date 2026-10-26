@@ -209,6 +209,27 @@ older discovery remains readable. Standard Responses cancellation and verified
 platform-sender controls are separate contracts. Cancellation before turn binding
 uses the dedicated methods below.
 
+## Interrupt with new input
+
+`interrupt_with_input` atomically admits cancellation of an observed active response
+and a distinct new user input. Pass the original Agent and response IDs, a
+`ResponseInterruptionRequest` containing `turn_sequence`, `expected_agent_revision`
+and `text`, and one retained idempotency key. Use `observe_controls` to obtain the
+current binding and revision before submission.
+
+HTTP 202 returns `control` and `response` command views plus the original
+`target` and `expected_agent_revision`. The control has no response ID; the new
+input has a different response ID from the interrupted response. Its queue
+priority places it before ordinary queued messages while preserving their
+identities and relative order. Admission does not prove cancellation or new-turn
+startup: observe the original response outcome and the new command separately.
+
+After a lost response, retry the exact original IDs, body and key. The SDK never
+retries or retargets automatically. Generic conflicts remain uncertain;
+`response_interrupt_not_admitted` is the definitive proof that the original pair
+was not admitted and its observed target became stale. Keep ordinary Stop on
+`submit_control` with a cancel command; it admits no replacement message.
+
 ## Queued response cancellation
 
 `observe_queued_cancellation(agent_id, response_id)` returns the source command,
@@ -331,3 +352,58 @@ Strict parsing refuses unrecognized/private fields, nonconsecutive chronology,
 invalid source bindings, and inconsistent pages. Changed incarnation requires
 rebuilding history for the new resource; verified response binding is still an
 observation rather than control authority.
+
+
+### Edit pending input in place
+
+The public queue lists every editable human/API message in its original admission
+order, including messages submitted from another tab. The server admits at most
+64 pending commands. HTTP pages contain at most four entries and a nullable
+`next_after` admission-order cursor, keeping worst-case JSON escaping within the
+SDK's unchanged 8 MiB response limit. The SDK reader follows these pages and
+returns the full bounded list; it rejects repeated cursors, duplicate commands or
+more than 64 accumulated entries. Pages observe current state independently;
+concurrent edits to earlier pages appear on the next refresh. Refresh after admission,
+edit, cancellation, observed conversation changes, and returning to the page.
+The ledger does not emit conversation events before dispatch; clients displaying
+an active queue should also refresh periodically to observe other tabs.
+
+An edit preserves the source command, response and queue position. It replaces
+the complete text, including packed attachment text, only before runtime dispatch.
+Persist the route, exact source revision, text and a new idempotency key before
+sending. A lost reply must be recovered with identical bytes and the same key.
+`queued_input_not_admitted` proves the original revision is stale; refresh the
+queue before creating another intent. The edit receipt returns its immutable
+replacement text and resulting revision, alongside the source's current status.
+Removal continues to use queued cancellation with a fresh observation.
+
+```rust
+use cma_sdk::Client;
+
+async fn edit_first_queued_input(
+    client: &Client, agent_id: &str, retained_edit_key: &str,
+) -> cma_sdk::Result<()> {
+    let queue = client.responses_v2().list_queued_inputs(agent_id).await?;
+    if let Some(item) = queue.data.first().filter(|item| item.editable) {
+        let input = cma_sdk::responses_v2::QueuedInputRequest {
+            source_command_id: item.response.receipt.command_id.clone(),
+            expected_command_revision: item.command_revision,
+            text: "Updated message, including any attachment text".into(),
+        };
+        client.responses_v2().edit_queued_input(
+            agent_id, item.response.receipt.response_id.as_deref().unwrap(),
+            &input, retained_edit_key,
+        ).await?;
+    }
+    Ok(())
+}
+```
+
+For a live conversation while older history loads, call
+`client.agent_events_v2().head(agent_id)`. The bounded result contains the
+server-issued `through_cursor` and the exact active turn-start row, including
+its response binding, or `null` when idle. Start a tail at that cursor and
+buffer new frames while rebuilding the complete historical snapshot separately.
+Rebase those frames onto the complete snapshot to avoid losing live text or
+restoring a turn that has already completed. The head is a live baseline; it
+does not represent delivery of older messages, tools, approvals or usage.

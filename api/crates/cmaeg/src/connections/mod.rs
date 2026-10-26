@@ -1,6 +1,8 @@
 //! Gateway-owned platform setup, independent of every agent provider's workflow.
 pub(crate) mod binding;
 mod completion;
+#[cfg(test)]
+mod consumer_tests;
 pub mod model;
 mod platform;
 #[cfg(test)]
@@ -18,6 +20,8 @@ pub use service::ConnectionService;
 pub enum Error {
     NotFound,
     Invalid(&'static str),
+    /// Refused by name, such as `consumer_not_supported`.
+    Forbidden(&'static str),
     Conflict,
     Unavailable,
 }
@@ -27,6 +31,7 @@ impl Error {
         let (code, status, detail) = match self {
             Self::NotFound => (ProblemCode::ChannelNotFound, 404, "connection not found"),
             Self::Invalid(message) => (ProblemCode::InvalidRequest, 400, message),
+            Self::Forbidden(detail) => (ProblemCode::Forbidden, 403, detail),
             Self::Conflict => (
                 ProblemCode::Conflict,
                 409,

@@ -13,6 +13,188 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("document-create-missing-key", Classification::Local),
+    ("document-create-invalid-key", Classification::Local),
+    ("document-create-malformed-json", Classification::RawJson),
+    (
+        "document-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-update-missing-key", Classification::Local),
+    ("document-update-invalid-key", Classification::Local),
+    ("document-update-malformed-json", Classification::RawJson),
+    (
+        "document-update-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-source-invalid", Classification::TypedShape),
+    ("document-grant-missing-key", Classification::Local),
+    ("document-grant-invalid-key", Classification::Local),
+    ("document-grant-malformed-json", Classification::RawJson),
+    (
+        "document-grant-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-revoke-missing-key", Classification::Local),
+    ("document-revoke-invalid-key", Classification::Local),
+    ("document-revoke-malformed-json", Classification::RawJson),
+    (
+        "document-revoke-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-link-missing-key", Classification::Local),
+    ("document-link-invalid-key", Classification::Local),
+    ("document-link-malformed-json", Classification::RawJson),
+    (
+        "document-link-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-unlink-missing-key", Classification::Local),
+    ("document-unlink-invalid-key", Classification::Local),
+    ("document-unlink-malformed-json", Classification::RawJson),
+    (
+        "document-unlink-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-comment-missing-key", Classification::Local),
+    ("document-comment-invalid-key", Classification::Local),
+    ("document-comment-malformed-json", Classification::RawJson),
+    (
+        "document-comment-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("document-uncomment-missing-key", Classification::Local),
+    ("document-uncomment-invalid-key", Classification::Local),
+    ("document-uncomment-malformed-json", Classification::RawJson),
+    (
+        "document-uncomment-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "filesystem-tree-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-content-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-download-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-delete-reject-unknown-query",
+        Classification::QueryShape,
+    ),
+    (
+        "filesystem-delete-reject-invalid-recursive",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-content-reject-invalid-max-bytes",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-write-reject-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "filesystem-write-reject-malformed-json",
+        Classification::RawJson,
+    ),
+    ("admin-runtime-update-invalid-json", Classification::RawJson),
+    ("attachment-invalid-name", Classification::Local),
+    ("attachment-missing-key", Classification::Local),
+    ("agent-skills-install-invalid-id", Classification::Local),
+    (
+        "agent-skills-install-invalid-version",
+        Classification::Local,
+    ),
+    ("agent-skills-install-missing-key", Classification::Local),
+    ("agent-skills-install-invalid-key", Classification::Local),
+    (
+        "agent-skills-install-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "agent-skills-install-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "agent-skills-install-malformed-json",
+        Classification::RawJson,
+    ),
+    (
+        "agent-skills-install-oversized-body",
+        Classification::BodySize,
+    ),
+    ("agent-access-approve-missing-key", Classification::Local),
+    ("agent-access-approve-invalid-key", Classification::Local),
+    ("agent-access-approve-invalid-json", Classification::RawJson),
+    (
+        "agent-access-approve-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("agent-access-deny-missing-key", Classification::Local),
+    ("agent-access-deny-invalid-key", Classification::Local),
+    ("agent-access-deny-invalid-json", Classification::RawJson),
+    (
+        "agent-access-deny-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("settings-state-agent-invalid-input", Classification::Local),
+    (
+        "preferences-state-agent-invalid-input",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-key",
+        Classification::Local,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-invalid-body-reused-key",
+        Classification::TypedShape,
+    ),
+    (
+        "preferences-agent-input-unavailable-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "preferences-malformed-post-api-v1-agents-id-input",
+        Classification::RawJson,
+    ),
+    (
+        "settings-agent-input-unavailable-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "settings-agent-input-unavailable-missing-key",
+        Classification::Local,
+    ),
+    (
+        "settings-agent-input-unavailable-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "settings-agent-input-unavailable-invalid-body-reused-key",
+        Classification::TypedShape,
+    ),
+    (
+        "settings-agent-input-unavailable-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "settings-malformed-post-api-v1-agents-id-input",
+        Classification::RawJson,
+    ),
     (
         "gateway-connection-list-invalid-query",
         Classification::TypedShape,
@@ -46,7 +228,25 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "queued-cancellation-v2-query-submit",
         Classification::QueryShape,
     ),
+    ("interruption-v2-missing-key", Classification::Local),
+    ("interruption-v2-invalid-revision", Classification::Local),
+    ("interruption-v2-empty-text", Classification::Local),
+    ("interruption-v2-whitespace-text", Classification::Local),
+    ("interruption-v2-null-text", Classification::TypedShape),
+    ("interruption-v2-unknown-field", Classification::TypedShape),
+    ("interruption-v2-invalid-json", Classification::RawJson),
+    ("interruption-v2-query", Classification::QueryShape),
+    ("queued-input-v2-missing-key", Classification::Local),
+    ("queued-input-v2-invalid-revision", Classification::Local),
+    ("queued-input-v2-empty-text", Classification::Local),
+    ("queued-input-v2-whitespace-text", Classification::Local),
+    ("queued-input-v2-null-text", Classification::TypedShape),
+    ("queued-input-v2-unknown-field", Classification::TypedShape),
+    ("queued-input-v2-invalid-json", Classification::RawJson),
+    ("queued-input-v2-query-list", Classification::QueryShape),
+    ("queued-input-v2-query-submit", Classification::QueryShape),
     ("agent-events-v2-snapshot-invalid", Classification::Local),
+    ("agent-events-v2-head-query", Classification::QueryShape),
     ("agent-events-v2-events-invalid", Classification::Local),
     ("agent-events-v2-snapshot-query", Classification::QueryShape),
     ("agent-events-v2-events-query", Classification::QueryShape),
@@ -102,6 +302,7 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "shared-sandbox-inventory-invalid-shared",
         Classification::TypedShape,
     ),
+    ("runtime-update-missing-key", Classification::Local),
     ("sandbox-command-missing-key", Classification::Local),
     ("sandbox-command-invalid-key", Classification::Local),
     ("sandbox-command-invalid-revision", Classification::Local),
@@ -139,6 +340,13 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
         "org-inventory-invalid-authority-injection",
         Classification::QueryShape,
+    ),
+    ("agent-service-access-missing-key", Classification::Local),
+    ("agent-service-access-invalid-key", Classification::Local),
+    ("agent-service-access-invalid-json", Classification::RawJson),
+    (
+        "agent-service-access-missing-media-type",
+        Classification::MediaType,
     ),
     ("sandbox-service-access-missing-key", Classification::Local),
     ("sandbox-service-access-invalid-key", Classification::Local),
@@ -902,8 +1110,14 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 return;
             }
             let allowed: &[&str] = match case.operation.as_str() {
+                "GET /api/v1/agents/{id}/files/tree"
+                | "GET /api/v1/agents/{id}/files/content"
+                | "GET /api/v1/agents/{id}/files/download"
+                | "DELETE /api/v1/agents/{id}/files" => &["path", "max_bytes", "recursive"],
                 "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
+                "GET /api/v2/agents/{agent_id}/events/head" => &[],
                 "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
+                "GET /api/v2/agents/{agent_id}/queued-inputs" => &["after", "limit"],
                 "GET /api/v1/bridge-connectors/capabilities"
                 | "GET /api/v1/bridge-creation-target" => &["organization"],
                 "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
@@ -935,9 +1149,9 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls"
                 | "GET /api/v2/commands/{command_id}"
                 | "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
-                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation" => {
-                    &[]
-                }
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input"
+                | "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt" => &[],
                 _ => panic!("unclassified query shape {}", case.id),
             };
             assert!(

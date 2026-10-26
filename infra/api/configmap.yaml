@@ -1,16 +1,51 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
+  CHRONO_RETAIN_OPENSANDBOX: "true"
+  CHRONO_AGENT_SANDBOX_ENABLED: "true"
+  # Explicitly enable 1 or 2 only after the matching native pool is ready.
+  # Prepared hierarchies hold native Claims/PVCs but receive no owner key or prompt.
+  CHRONO_NATIVE_PREPARED_TARGET: "0"
+  # Verified remote microvm path; exec reaches the guest's loopback runtime.
+  # Native Pod lifecycle and persistent homes remain controller-owned.
+  CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "kubernetes-exec"
+  CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE: "/var/run/cma-agent-sandbox/control-key"
+  # Remote example-registry-01 admission requires microvm or gvisor; use its existing class.
+  CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: "microvm"
+  # Existing remote runtime identity; Pod templates disable API token automount.
+  CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: "default"
+  CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS: ""
+  # Operator-reviewed ingress AND egress JSON for controller-managed Template policy.
+  # Empty preserves controller defaults; fill only after actual network canary proof.
+  CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY: ""
+  # Deployment env refs take the API and namespace from example-namespace-02.
+  # Metadata mode uses the annotated KSA's short-lived Google identity; the
+  # projected CA verifies the remote cluster, and no static token is mounted.
+  CHRONO_AGENT_SANDBOX_NAMESPACE: ""
+  CHRONO_AGENT_SANDBOX_API_SERVER: ""
+  CHRONO_AGENT_SANDBOX_AUTH_MODE: "google-metadata"
+  CHRONO_AGENT_SANDBOX_CA_FILE: "/etc/example-registry-01/ca.crt"
+  CHRONO_AGENT_SANDBOX_TOKEN_FILE: ""
+  # Native CRDs own empty VCT PVCs; the runtime image initializes their layout.
+  # Existing hyperdisk class supports the microvm pool's N4 nodes; keep 64 GiB.
+  # Empty-home RWOP allocation and same-PVC suspend/resume passed in production.
+  # Retained historical allocations keep their persisted policy and authority.
+  CHRONO_AGENT_SANDBOX_HOME_MODE: "native_vct_full_home_v2"
+  CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: "home-a"
+  CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: "64"
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: ""
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: ""
   # Preserve the active production Bridge gates recorded on 2026-09-22.
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
-  CHRONO_V2_UI_TRANSPORT_ENABLED: "false"
+  CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
@@ -24,10 +59,21 @@ data:
   CHRONO_AUTH_MODE: "provider"
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
+  # Existing NyxID signed service identity; enable the CMA catalog connection's
+  # jwt propagation with audience equal to CHRONO_SERVER_PUBLIC_URL.
+  CHRONO_NYXID_PROXY_ENABLED: "true"
+  CHRONO_NYXID_PROXY_ISSUER: "https://nyx-api.chrono-ai.fun"
+  CHRONO_NYXID_PROXY_JWKS_URL: "https://nyx-api.chrono-ai.fun/.well-known/jwks.json"
+  # Request-bound read proofs require coordinated NyxID issuance activation.
+  # Existing browser and ordinary API-key authentication do not use this flag.
+  CHRONO_NYXID_RESOURCE_REQUEST_ENABLED: "false"
   CHRONO_TRUSTED_SUBJECT: "local-developer"
   # Browser auth callbacks and host-only cookies use the app origin; the
   # Gateway routes API/auth/discovery paths directly to this control plane.
   CHRONO_SERVER_PUBLIC_URL: "https://bot.chrono-ai.fun"
+  # Agent Manager resolves selected immutable versions through the separate
+  # Image Manager service using the caller's delegated NyxID credential.
+  CHRONO_IMAGE_MANAGER_BASE_URL: "http://cma-image-manager"
   CHRONO_SERVER_CORS_ORIGIN: "https://bot.chrono-ai.fun"
   # Continuously refilled process-local budgets, also the maximum burst.
   # Admission protects authentication work; health has a separate budget.
@@ -49,22 +95,25 @@ data:
   CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS: "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
-  CHRONO_CMAEG_BASE_URL: "http://cmaeg"
+  CHRONO_CMAEG_BASE_URL: "http://cma-event-gateway"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  CHRONO_CMAEG_PUBLIC_API_URL: "https://bot.chrono-ai.fun/event-gateway"
   CHRONO_BOT_FATHER_BINDING_ID: "bnd_77fe02e529054f0086ce5d50a63bfe47"
   CHRONO_BOT_FATHER_TELEGRAM_USERNAME: "CMA_Trureturing_Bot"
   # Provider-issued OAuth client identifier, not a secret or a chosen name.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # Must match the database authorized by the Secret's connection URI.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
+  # Shared database deployment; each service retains its own schema and collections.
+  CHRONO_MONGODB_AUTHORITY_MODE: "shared-schema"
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
-  # Existing machine-owned external chrono-storage bucket. MongoDB stores
-  # archive manifests/fences, never archive bytes. CMA does not create buckets.
-  CHRONO_CHECKPOINT_BUCKET: "chrono-platform-bot"
-  CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
-  # Canonical platform origin for machine token minting and storage proxying.
+  # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  # Durable personal documents use the existing S3-backed storage service.
+  # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
+  CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm-public"
   CHRONO_UPSTREAM_WIRE_API: "responses"
@@ -77,19 +126,28 @@ data:
   CHRONO_SANDBOX_HOME_CAPACITY_GIB: "64"
   CHRONO_SANDBOX_HOME_TEMPLATE: "cma-home-seed-v1"
   CHRONO_SANDBOX_HOME_TEMPLATE_UID: "e50503f6-9498-4105-a81a-5d9c34ffa810"
-  # Default for new allocations. Existing live Sandboxes retain their recorded
-  # image across API upgrades and rollback; drift never admits rotation work.
-  # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime@sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
-  # Public Profile availability controls credential-free warm runtime counts
-  # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
-  # and install bounds; changed pins retire old unowned reservations before
-  # replacement. Owned live runtimes are adopted using their durable image pin.
+  # Single latest released runtime for new allocations, managed resume and
+  # manual/daily updates. Prewarm this exact image before release promotion.
+  # Active work finishes before an admitted update; deployment never rotates it.
+  # API/Web rollback retains this runtime pointer and the original user PVCs.
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime@sha256:2634b16afd512281de38961f481909df2c7d186788c918dfe39896178e4cf52e"
+  # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
+  # admission. The target is persisted by Agent Manager and reconciled through
+  # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
+  CHRONO_NATIVE_WARM_POOL_TARGET: "1"
+  # Native warm pools are managed by immutable image/resources/home policy.
+  # Agent Manager persists the default target before serving and reconciles it
+  # through SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs. Retained pools
+  # and claimed Sandboxes keep their original policy across image rollouts.
   # Seed system Profiles only while an operator-selected default still names one.
   # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
-  CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
+  # New Agent Manager environments and their native warm pool. Retained system
+  # Profiles above and existing Sandbox reservations keep their recorded values.
+  CHRONO_AGENT_MANAGER_SANDBOX_CPU: "2"
+  CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "8Gi"
+  CHRONO_DEFAULT_AGENT_MODEL: "gpt-6"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # Read-only Secret Manager projection, resolved once at startup.
   CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
@@ -98,4 +156,4 @@ data:
   CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
-  RUST_LOG: "info,cma::sandbox::checkpoint_maintenance=debug"
+  RUST_LOG: "info"

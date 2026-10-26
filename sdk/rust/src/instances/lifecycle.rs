@@ -66,18 +66,6 @@ pub struct SandboxBackgroundSave {
     pub epoch: u64,
 }
 
-/// Latest completed whole-home snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct SandboxCompletedSnapshot {
-    /// Monotonic checkpoint epoch.
-    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
-    pub epoch: u64,
-    /// Recorded completion time.
-    pub saved_at: String,
-    /// Owner-authenticated relative archive download URL.
-    pub download_url: String,
-}
-
 /// Safe projection of the currently admitted lifecycle operation.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "purpose", rename_all = "snake_case")]
@@ -105,9 +93,29 @@ pub enum SandboxLifecycleOperation {
     },
 }
 
+string_enum! { /// Confirmed cause or unknown cause of the latest interruption.
+    pub enum SandboxInterruptionCause {
+        OutOfMemory => "out_of_memory", RuntimeRestarted => "runtime_restarted",
+        RuntimeUnavailable => "runtime_unavailable"
+    }
+}
+
+/// Latest recorded unexpected runtime interruption, retained after recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct SandboxInterruption {
+    /// Only explicit provider evidence can identify memory exhaustion.
+    pub cause: SandboxInterruptionCause,
+    /// Time CMA admitted the corresponding recovery operation.
+    pub detected_at: String,
+    /// Original immutable workload memory limit in MiB.
+    pub memory_limit_mib: u32,
+}
+
 /// Authoritative transition eligibility and recorded lifecycle progress.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SandboxLifecycle {
+    /// Optional latest interruption; older servers may omit this field.
+    pub interruption: Option<SandboxInterruption>,
     /// Eligibility to begin a new pause.
     pub pause: SandboxLifecycleEligibility,
     /// Eligibility to begin a new revival.
@@ -116,8 +124,6 @@ pub struct SandboxLifecycle {
     pub checkpoint: Option<SandboxCheckpoint>,
     /// Offline export progress, independent of live writer availability.
     pub background_save: Option<SandboxBackgroundSave>,
-    /// Latest completed snapshot, absent before the first successful save.
-    pub latest_snapshot: Option<SandboxCompletedSnapshot>,
     /// Admitted lifecycle operation, when present.
     pub operation: Option<SandboxLifecycleOperation>,
 }

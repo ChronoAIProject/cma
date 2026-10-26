@@ -151,7 +151,9 @@ async function oneIndicator(page) {
 async function errorSurface(page, port) {
   const problems = [];
   await page.setViewport({ width: 1440, height: 900 });
-  await visit(page, port, 'domcontentloaded');
+  // The public home remains reachable without identity. Exercise a protected
+  // portal route so aborting its identity request renders the actual error.
+  await visit(page, port, 'domcontentloaded', '/agent-manager');
   await ready(page, '.app-error', { label: 'unreachable service surface' });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
@@ -276,7 +278,7 @@ async function main() {
     for (const problem of await oneIndicator(page)) problems.push(`signed out: ${problem}`);
 
     identity = 'authenticated';
-    await visit(page, PORT, 'domcontentloaded');
+    await visit(page, PORT, 'domcontentloaded', '/agent-manager');
     await ready(page, '.frame', { label: 'authenticated shell' });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     for (const problem of await fills(page)) problems.push(`authenticated ${problem}`);

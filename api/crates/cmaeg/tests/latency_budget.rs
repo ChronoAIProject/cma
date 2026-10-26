@@ -1,5 +1,7 @@
 #[path = "latency/app.rs"]
 mod app;
+#[path = "latency/batch_tests.rs"]
+mod batch_tests;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_provider.rs"]
@@ -23,9 +25,21 @@ use std::{
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "executes the warm/cold/socket and paced tool delivery budgets"]
 async fn latency_budget() {
+    run(App::new().await, "cmaeg-latency.txt").await;
+}
+
+/// The same budgets with `CMAEG_CONSOLE_ENABLED=true` and a warm owner
+/// index: every hot path reports to the console's observer, which must
+/// never make it wait or drop an observation (rollout step R1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "executes the latency budgets with the console's observers composed"]
+async fn latency_budget_with_console() {
+    run(App::with_console().await, "cmaeg-latency-console.txt").await;
+}
+
+async fn run(mut app: App, report_file: &str) {
     cmaeg::init_logging();
     let metrics = cmaeg::telemetry::install().unwrap();
-    let mut app = App::new().await;
     measure(app.callback("prime", 0).await, 202).await;
     app.quiet().await;
     let before_warm = app.cma.gets.load(Ordering::SeqCst);
@@ -57,21 +71,13 @@ async fn latency_budget() {
 
     let mut cold = Vec::new();
     for batch in 0..25 {
-        // Every member starts after invalidation, before any member is polled.
+        // Build and sign the full batch before invalidating the warm channel.
         // The eight simultaneous cold callers share the production restore flight.
-        let pending: Vec<_> = (0..8)
-            .map(|lane| {
-                app.state.resolver.invalidate(&app.channel);
-                let app = &app;
-                async move {
-                    measure(
-                        app.callback(&format!("cold-{batch}-{lane}"), lane).await,
-                        202,
-                    )
-                    .await
-                }
-            })
-            .collect();
+        let requests =
+            app.cold_callbacks((0..8).map(|lane| (format!("cold-{batch}-{lane}"), lane)));
+        let pending = requests
+            .into_iter()
+            .map(|request| async move { measure(request.send().await.unwrap(), 202).await });
         cold.extend(futures_util::future::join_all(pending).await);
     }
     app.quiet().await;
@@ -141,7 +147,7 @@ async fn latency_budget() {
         ("cold restore", values(&cold, "restore"), 800.0),
         ("tool deliver", values(&tools, "deliver"), 500.0),
     ];
-    let mut report = format!("CMAEG latency budget; milliseconds; fake CMA delay={} ms\n{:<16} {:>6} {:>10} {:>10} {:>10} {:>10}\n", app.restore_delay, "measurement", "count", "p50", "p90", "p99", "p99 limit");
+    let mut report = format!("CMAEG latency budget; console={}; milliseconds; fake CMA delay={} ms\n{:<16} {:>6} {:>10} {:>10} {:>10} {:>10}\n", app.console.is_some(), app.restore_delay, "measurement", "count", "p50", "p90", "p99", "p99 limit");
     for (name, values, budget) in &runs {
         report.push_str(&format!(
             "{name:<16} {:>6} {:>10.3} {:>10.3} {:>10.3} {budget:>10.0}\n",
@@ -153,7 +159,17 @@ async fn latency_budget() {
     }
     let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
     std::fs::create_dir_all(&target).unwrap();
-    std::fs::write(target.join("cmaeg-latency.txt"), &report).unwrap();
+    if let Some(console) = &app.console {
+        // Every admitted event reached the console's memory, and none was
+        // dropped on the way.
+        assert_eq!(console.observer.dropped(), 0, "observations were dropped");
+        let totals = console.memory.activity_totals();
+        report.push_str(&format!(
+            "console: observer drops 0, activity entries {}, activity bytes {}\n",
+            totals.entries, totals.bytes
+        ));
+    }
+    std::fs::write(target.join(report_file), &report).unwrap();
     println!("{report}");
     assert!(
         percentile(&runs[0].1, 50) < 50.0,

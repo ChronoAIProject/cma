@@ -112,7 +112,7 @@ async fn gateway_management_custom_events_and_tools_interoperate() {
     let context = tools.read_event_context(&reference_id).await.unwrap();
     let original = serde_json::to_value(&context).unwrap();
     assert!(
-        matches!(context.activity.kind,ActivityKind::Event { ce } if ce.data.as_ref().unwrap()["text"] == text)
+        matches!(context.activity.kind,ActivityKind::Event { ce, .. } if ce.data.as_ref().unwrap()["text"] == text)
     );
     let replaced = http
         .post(format!("{root}/restart"))

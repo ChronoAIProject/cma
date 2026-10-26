@@ -1,6 +1,7 @@
+use super::agent_work_identity::immutable_agent_fields_changed;
 use crate::sandbox::{
     Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
-    Worktree, WorktreeStatus,
+    Worktree,
 };
 use crate::seconds_from_rfc3339;
 
@@ -10,7 +11,46 @@ use super::agent_work_evidence_validation::{
 use super::agent_work_transition_validation::{
     classify_publication, validate_position, PublicationKind,
 };
-use super::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
+use super::agent_worktree_validation::validate_worktree_delta;
+use super::{agent_work_prepared_pair::paired_intent, AgentWorkMutation, SandboxStoreError};
+
+/// Stores must read and write-fence both parents in the same transaction as this publication.
+pub fn validate_agent_workspace_binding(
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+    sandbox: &Sandbox,
+    workspace: &crate::sandbox::Workspace,
+) -> Result<(), SandboxStoreError> {
+    if current.work.step != AgentWorkStep::WaitForWorkspace
+        || mutation.agent.work.step != AgentWorkStep::AddWorktree
+    {
+        return Ok(());
+    }
+    let exact_origin = matches!((&current.origin, &sandbox.origin),
+        (crate::sandbox::AgentOrigin::Lifecycle { operation_id: agent_op },
+        crate::sandbox::SandboxOrigin::Lifecycle { operation_id: parent_op }) if agent_op == parent_op);
+    if !exact_origin
+        || !current.has_no_runtime_effects()
+        || current.owner != sandbox.owner
+        || current.sandbox_id != sandbox.id
+        || current.workspace_id != workspace.id
+        || !crate::sandbox::lifecycle_bootstrap::bootstrap_workspace(sandbox, workspace)
+        || sandbox.status != SandboxStatus::Active
+        || !sandbox.credential.delivered
+        || sandbox.lifecycle.operation.is_some()
+        || sandbox.lifecycle.checkpoint_capture.is_some()
+        || workspace.status != crate::sandbox::WorkspaceStatus::Ready
+        || workspace.resolved_commit.as_ref().is_none_or(|commit| {
+            mutation
+                .worktree
+                .as_ref()
+                .is_none_or(|next| &next.worktree.base_commit != commit)
+        })
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
 
 /// Validate one fenced lifecycle publication against its complete durable snapshot.
 pub fn validate_agent_work_mutation(
@@ -57,6 +97,7 @@ pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bo
         && sandbox.status == SandboxStatus::Retired
         && sandbox.retired_at.is_some()
         && sandbox.runtime.is_none()
+        && sandbox.lifecycle.suspended_runtime.is_none()
         && sandbox.lifecycle.runtime_provision.is_none()
         && sandbox.lifecycle.operation.is_none()
         && sandbox.lifecycle.checkpoint_capture.is_none()
@@ -76,6 +117,7 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
         && sandbox.status == SandboxStatus::Retiring
         && sandbox.work.step == SandboxWorkStep::StopAgents
         && sandbox.runtime.is_none()
+        && sandbox.lifecycle.suspended_runtime.is_none()
         && sandbox.lifecycle.runtime_provision.is_none()
         && sandbox.lifecycle.operation.is_none()
         && sandbox.lifecycle.checkpoint_capture.is_none()
@@ -93,18 +135,23 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
                         .is_some_and(|ceiling| generation <= ceiling)
             })
         && sandbox.validate().is_ok()
-        && sandbox
+        && (sandbox
             .lifecycle
-            .checkpoints
-            .latest
+            .home
             .as_ref()
-            .is_some_and(|checkpoint| {
-                checkpoint.conversations.iter().any(|conversation| {
-                    conversation.agent_id == agent.id
-                        && Some(&conversation.conversation_id)
-                            == agent.conversation.conversation_id.as_ref()
-                })
-            })
+            .is_some_and(|home| !home.released && home.attachment().is_some())
+            || sandbox
+                .lifecycle
+                .checkpoints
+                .latest
+                .as_ref()
+                .is_some_and(|checkpoint| {
+                    checkpoint.conversations.iter().any(|conversation| {
+                        conversation.agent_id == agent.id
+                            && Some(&conversation.conversation_id)
+                                == agent.conversation.conversation_id.as_ref()
+                    })
+                }))
 }
 
 fn validate_mutation(
@@ -115,6 +162,16 @@ fn validate_mutation(
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
+    if current.work.step == AgentWorkStep::InstallSkill {
+        return crate::sandbox::agent_live_skills::validate_install_work(
+            current,
+            current_worktree,
+            mutation,
+        );
+    }
+    if current.work.live_skills != mutation.agent.work.live_skills {
+        return Err(SandboxStoreError::Conflict);
+    }
     validate_position(current, current_worktree)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;
@@ -130,7 +187,7 @@ fn validate_mutation(
     validate_evidence(current, current_worktree, mutation, kind)
 }
 
-fn validate_common(
+pub(super) fn validate_common(
     current: &Agent,
     worktree: &Worktree,
     actual_last_seq: u64,
@@ -177,21 +234,6 @@ fn validate_common(
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())
-}
-
-fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {
-    current.id != next.id
-        || current.worktree_id != next.worktree_id
-        || current.workspace_id != next.workspace_id
-        || current.sandbox_id != next.sandbox_id
-        || current.owner != next.owner
-        || current.creation_key != next.creation_key
-        || current.creation_fingerprint != next.creation_fingerprint
-        || current.profile != next.profile
-        || current.capabilities != next.capabilities
-        || current.title != next.title
-        || current.created_at != next.created_at
-        || current.origin != next.origin
 }
 
 fn worktree_matches_agent(worktree: &Worktree, agent: &Agent) -> bool {
@@ -261,13 +303,22 @@ fn validate_work_delta(
                 .attempts
                 .checked_add(1)
                 .ok_or(SandboxStoreError::Conflict)?;
+            // An effect-free parent wait already observed a bounded interval.
+            // It may remain due for a readiness wake, while failure retries
+            // still require a strictly later due time.
+            let expected_parent_wait = current.work.step == AgentWorkStep::WaitForWorkspace
+                && current.has_no_runtime_effects()
+                && mutation.agent_logs.is_empty()
+                && mutation.sandbox_event.is_none()
+                && next.work.ready_at == mutation.appended_at;
+            let retry_later = stamp(&next.work.ready_at)? > stamp(&mutation.appended_at)?;
             if next.work.step != current.work.step
                 || next.work.attempts != attempts
                 || next.work.lease.is_some()
                 || next.work.receipts != current.work.receipts
                 || next.work.cleanup_debt != current.work.cleanup_debt
                 || next.work.cleanup_not_before != current.work.cleanup_not_before
-                || stamp(&next.work.ready_at)? <= stamp(&mutation.appended_at)?
+                || !(retry_later || expected_parent_wait)
             {
                 return Err(SandboxStoreError::Conflict);
             }
@@ -298,6 +349,9 @@ fn validate_work_delta(
 }
 
 fn validate_intent_delta(current: &Agent, next: &Agent) -> Result<(), SandboxStoreError> {
+    if paired_intent(current, next) {
+        return Ok(());
+    }
     let debts = &next.work.cleanup_debt;
     let Some(debt) = debts.last() else {
         return Err(SandboxStoreError::Conflict);
@@ -423,61 +477,6 @@ fn validate_agent_delta(
         Ok(())
     } else {
         Err(SandboxStoreError::Conflict)
-    }
-}
-
-fn validate_worktree_delta(
-    current: &Worktree,
-    mutation: &AgentWorkMutation,
-    kind: PublicationKind,
-    step: AgentWorkStep,
-) -> Result<(), SandboxStoreError> {
-    let expected_status = match (kind, step, current.status) {
-        (PublicationKind::Ready, AgentWorkStep::PublishReady, WorktreeStatus::Creating) => {
-            Some(WorktreeStatus::Ready)
-        }
-        (PublicationKind::StartupFailure | PublicationKind::Stop, _, WorktreeStatus::Creating) => {
-            Some(WorktreeStatus::Failed)
-        }
-        (
-            PublicationKind::Advance,
-            AgentWorkStep::EnsureProcessClosed,
-            WorktreeStatus::Ready | WorktreeStatus::Failed,
-        ) => Some(WorktreeStatus::Removing),
-        (PublicationKind::Advance, AgentWorkStep::RemoveWorktree, WorktreeStatus::Removing) => {
-            Some(WorktreeStatus::Removed)
-        }
-        _ => None,
-    };
-    match (expected_status, mutation.worktree.as_ref()) {
-        (Some(status), Some(versioned)) => validate_versioned_worktree(current, versioned, status),
-        (None, None) => Ok(()),
-        _ => Err(SandboxStoreError::Conflict),
-    }
-}
-
-fn validate_versioned_worktree(
-    current: &Worktree,
-    versioned: &VersionedWorktree,
-    expected_status: WorktreeStatus,
-) -> Result<(), SandboxStoreError> {
-    let next = &versioned.worktree;
-    if versioned.expected_revision != current.revision
-        || next.revision != current.revision.checked_add(1).unwrap_or(0)
-        || next.status != expected_status
-        || next.id != current.id
-        || next.workspace_id != current.workspace_id
-        || next.sandbox_id != current.sandbox_id
-        || next.owner != current.owner
-        || next.name != current.name
-        || next.path != current.path
-        || next.branch != current.branch
-        || next.base_commit != current.base_commit
-        || next.agent_id != current.agent_id
-    {
-        Err(SandboxStoreError::Conflict)
-    } else {
-        Ok(())
     }
 }
 

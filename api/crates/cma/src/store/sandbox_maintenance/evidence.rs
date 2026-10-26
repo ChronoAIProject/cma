@@ -40,7 +40,20 @@ pub(super) async fn fence_live_agents(
     agents: &[Agent],
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    for agent in agents.iter().filter(|agent| agent.status.is_live()) {
+    let live: Vec<_> = agents
+        .iter()
+        .filter(|agent| agent.status.is_live())
+        .cloned()
+        .collect();
+    fence_agents(store, &live, session).await
+}
+
+pub(super) async fn fence_agents(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    for agent in agents {
         let locked = store
             .agents
             .update_one(
@@ -63,4 +76,46 @@ pub(super) async fn fence_live_agents(
         }
     }
     Ok(())
+}
+
+/// Read and write-fence the complete Workspace set before replacing its runtime.
+pub(super) async fn fence_idle_workspaces(
+    store: &MongoSandboxStore,
+    sandbox: &layer2_core::sandbox::Sandbox,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    use futures_util::TryStreamExt;
+    let mut cursor = store
+        .workspaces
+        .find(doc! { "sandbox_id": sandbox.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    let mut workspaces = Vec::new();
+    while let Some(document) = cursor
+        .stream(&mut *session)
+        .try_next()
+        .await
+        .map_err(ApplyError::Driver)?
+    {
+        let workspace =
+            super::super::workspaces::read_workspace(&document).map_err(ApplyError::Domain)?;
+        if workspace.sandbox_id != sandbox.id || workspace.owner != sandbox.owner {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        if workspace.work.step.is_pending() || workspace.work.lease.is_some() {
+            return Ok(false);
+        }
+        workspaces.push(workspace);
+    }
+    for workspace in workspaces {
+        let locked = store.workspaces.update_one(doc! {
+            "_id": workspace.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "sandbox_id": sandbox.id.as_str(), "revision": signed(workspace.revision, "maintenance Workspace revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        }, doc! { "$inc": { "sandbox_maintenance_fence": 1_i64 } }).session(&mut *session).await.map_err(ApplyError::Driver)?;
+        if locked.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+    }
+    Ok(true)
 }

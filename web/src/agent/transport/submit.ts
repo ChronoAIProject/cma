@@ -6,6 +6,8 @@ interface SubmissionOptions {
   readonly signal?: AbortSignal;
   readonly authorize?: () => Promise<void>;
   readonly onAccepted: (receipt: V2ResponseReceipt) => void;
+  /** Correlation only; identity and journal acceptance still follow separately. */
+  readonly onReceiptObserved?: (receipt: V2ResponseReceipt) => void;
 }
 
 /** Input transport only. Rich Agent replay independently owns rendered output. */
@@ -45,26 +47,58 @@ async function submit(
   const abort = () => request.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
   let acknowledged = false;
+  let receiptObserved = false;
   try {
-    await sdk.responsesV2.createForAgent(
-      journal.agentId,
-      { input: input.input, stream: true },
-      {
-        idempotencyKey: input.key,
-        signal: request.signal,
-        async onReceipt(receipt) {
-          await options.authorize?.();
-          options.signal?.throwIfAborted();
-          journal.accepted(input.key, receipt);
-          options.onAccepted(receipt);
-          acknowledged = true;
-          // Closing this reader does not cancel an admitted Agent turn. The
-          // independent Agent tail continues tools, approvals, text and Thinking.
-          request.abort();
+    const send = () =>
+      sdk.responsesV2.createForAgent(
+        journal.agentId,
+        { input: input.input, stream: true },
+        {
+          idempotencyKey: input.key,
+          signal: request.signal,
+          async onReceipt(receipt) {
+            receiptObserved = true;
+            options.onReceiptObserved?.(receipt);
+            await options.authorize?.();
+            options.signal?.throwIfAborted();
+            journal.accepted(input.key, receipt);
+            options.onAccepted(receipt);
+            acknowledged = true;
+            // Closing this reader does not cancel an admitted Agent turn. The
+            // independent Agent tail continues tools, approvals, text and Thinking.
+            request.abort();
+          },
+          onEvent() {},
         },
-        onEvent() {},
-      },
-    );
+      );
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await send();
+        break;
+      } catch (error) {
+        // This typed response confirms that this observation did not admit the
+        // command. Keep one durable intent through bounded contention retries;
+        // lost acknowledgements and any observed receipt require recovery.
+        if (
+          receiptObserved ||
+          attempt >= 3 ||
+          !(error instanceof ApiError) ||
+          error.status !== 409 ||
+          error.code !== 'agent_command_admission_conflict'
+        )
+          throw error;
+        await retryDelay(50 * 2 ** attempt, request.signal);
+        await options.authorize?.();
+        request.signal.throwIfAborted();
+        const retained = journal.read();
+        if (
+          retained?.state !== 'pending' ||
+          retained.key !== input.key ||
+          retained.input !== input.input
+        )
+          throw error;
+      }
+    }
   } catch (error) {
     if (!acknowledged) {
       if (
@@ -79,4 +113,20 @@ async function submit(
     options.signal?.removeEventListener('abort', abort);
     request.abort();
   }
+}
+
+function retryDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }

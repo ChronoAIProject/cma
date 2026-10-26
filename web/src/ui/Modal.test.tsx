@@ -149,16 +149,43 @@ describe('the dialog', () => {
 });
 
 describe('the dialog shell', () => {
-  it('is one card, and says so where a surface needs more', () => {
-    // A width chosen per call site is how two dialogs that ask the same kind
-    // of question end up different sizes. The two exceptions are named
-    // classes, which a reviewer can find, rather than a size prop anybody can
-    // reach for.
+  it('keeps every dialog centered inside the same 20% viewport margins', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
-    const widths = [...css.matchAll(/width: min\((\d+)px, 100%\)/g)].map((match) => match[1]);
-    expect(widths).toEqual(['440', '700', '1000']);
+    expect(css).toMatch(/\.modal\s*\{[^}]*align-items: center/);
+    expect(css).toMatch(/\.modal\s*\{[^}]*justify-content: center/);
+    expect(css).toMatch(/\.modal\s*\{[^}]*padding: 20vh 20vw/);
+    expect(css).toMatch(/\.modal\s*\{[^}]*padding-block: 20dvh/);
+    expect(css).toMatch(/\.modal__card\s*\{[^}]*box-sizing: border-box/);
+    expect(css).toMatch(/\.modal__card\s*\{[^}]*width: min\(700px, 60vw\)/);
+    expect(css).toMatch(/\.modal__card\s*\{[^}]*max-width: 60vw/);
+    expect(css).toMatch(/\.modal__card\s*\{[^}]*max-height: 60dvh/);
     expect(css).toMatch(/\.modal__card\s*\{[^}]*border-radius: 16px/);
+    expect(css).toMatch(/\.modal__body\s*\{[^}]*overflow: auto/);
+    expect(css).not.toMatch(/\.modal--wide(?:st)?\s*\{/);
   });
+
+  it('gives a phone the full width less a 16px gutter', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/Modal.css'), 'utf8');
+    const phone = css.slice(css.indexOf('@media (max-width: 480px) {'));
+    expect(phone).toMatch(/\.modal\s*\{[^}]*padding-inline: 16px/);
+    expect(phone).toMatch(/\.modal__card\s*\{[^}]*width: 100%[^}]*max-width: 100%/);
+  });
+
+  it.each([undefined, 'modal--wide', 'modal--widest'])(
+    'uses the shared card and scrolling content for legacy placement %s',
+    (placement) => {
+      render(
+        <Modal open title="Shared dialog" placement={placement} onClose={vi.fn()}>
+          <p>Long content remains within the shared body.</p>
+        </Modal>,
+      );
+      const dialog = screen.getByRole('dialog', { name: 'Shared dialog' });
+      expect(dialog).toHaveClass('modal__card');
+      expect(
+        screen.getByText('Long content remains within the shared body.').parentElement,
+      ).toHaveClass('modal__body');
+    },
+  );
 
   it('portals out of the page, and stops it scrolling underneath', () => {
     // An ancestor that establishes a stacking context leaves sticky page
