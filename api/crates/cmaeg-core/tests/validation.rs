@@ -63,6 +63,7 @@ fn rejects_structured_cloud_event_too_large() {
 #[test]
 fn rejects_empty_outbound_message() {
     assert!(OutboundMessage {
+        thread_reply: false,
         text: None,
         blocks: vec![],
         reply_to: None

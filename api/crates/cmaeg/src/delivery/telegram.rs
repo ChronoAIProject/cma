@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
-    channel::{Secret, Source},
+    channel::{ChannelDefinition, Platform, Secret, Source},
     ids::MessageRef,
     message::OutboundMessage,
     seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
@@ -372,5 +372,30 @@ fn outcome(error: Error) -> DeliveryOutcome {
         Error::Unconfirmed => DeliveryOutcome::Unknown {
             reason: "telegram_response_unconfirmed".into(),
         },
+    }
+}
+
+/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
+/// prepare cards, so the route's own relay must be a Telegram one. The message
+/// reference carries the relay route its card was sent on (`route_id`, copied
+/// from the sealed reply address when the card was bound), so no reply address
+/// is needed. With at most one relay the channel-level check is kept verbatim;
+/// the two agree on every legacy definition, whose only relay is the route's.
+pub(super) fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
+    let relays = definition
+        .sources
+        .iter()
+        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
+        .count();
+    if relays > 1 {
+        matches!(
+            definition.relay_source_for_route(route_id),
+            Some(Source::NyxidRelay {
+                platform: Platform::Telegram,
+                ..
+            })
+        )
+    } else {
+        definition.relay_platform() == Some(Platform::Telegram)
     }
 }

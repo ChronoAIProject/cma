@@ -102,6 +102,7 @@ fn reply_addresses() -> [(&'static str, ReplyAddress); 5] {
         (
             "event_ref_nyxid_relay",
             ReplyAddress::NyxidRelay {
+                thread_reply: false,
                 message_id: "message-1".into(),
                 route_id: "route-1".into(),
                 platform: Platform::Lark,

@@ -399,6 +399,7 @@ async fn ack_progress_and_intentional_replies_keep_their_own_requests() {
             &turn,
             TurnOutcome::Accepted {
                 response_id: "response-1".into(),
+                thread_reply: false,
             },
         )
         .await;

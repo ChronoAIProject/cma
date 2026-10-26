@@ -39,6 +39,7 @@ async fn answers_failures_and_tool_replies_report_their_step() {
     let mut app = App::observed(0, recording.clone()).await;
     app.outcome(TurnOutcome::Accepted {
         response_id: "response".into(),
+        thread_reply: false,
     })
     .await;
     app.outcome(TurnOutcome::MessageCommitted {

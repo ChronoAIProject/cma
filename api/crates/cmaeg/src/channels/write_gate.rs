@@ -27,6 +27,8 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 pub struct WriteFlags {
     /// Admits explicit native bot mention opt-ins after all readers support them.
     pub native_bot_mentions: bool,
+    /// Admits verified native thread contracts after every reader supports them.
+    pub thread_contract: bool,
     /// Admits routing to several consumers; wired by #998.
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
@@ -52,6 +54,15 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if next.reply.thread_contract.is_some()
+        && !flags.thread_contract
+        && !current.is_some_and(|old| old.reply.thread_contract == next.reply.thread_contract)
+    {
+        return Err(ValidationError::new(
+            "/reply/thread_contract",
+            "thread_contract_writes_disabled",
+        ));
+    }
     let bot_sources = |d: &ChannelDefinition| {
         d.sources
             .iter()

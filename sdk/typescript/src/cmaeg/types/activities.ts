@@ -155,6 +155,29 @@ export const SourceKindSchema = tagged(
 );
 export type SourceKind = Output<typeof SourceKindSchema>;
 
+export const ThreadKindSchema = enumeration('native');
+export type ThreadKind = Output<typeof ThreadKindSchema>;
+export const ThreadAddressSchema = enumeration(
+  'mention',
+  'reply_to_bot',
+  'not_addressed',
+  'unknown',
+);
+export type ThreadAddress = Output<typeof ThreadAddressSchema>;
+export const ThreadFactsSchema = object({
+  version: integer,
+  kind: ThreadKindSchema,
+  chat_id: text,
+  message_id: text,
+  root_id: optional(nullable(text)),
+  native_thread_id: optional(nullable(text)),
+  parent_message_id: optional(nullable(text)),
+  sender_kind: ActorKindSchema,
+  address: ThreadAddressSchema,
+  mentions_others: optional(boolean),
+});
+export type ThreadFacts = Output<typeof ThreadFactsSchema>;
+
 export const RouteResolutionSchema = enumeration(
   'default',
   'rule',
@@ -200,6 +223,7 @@ export const ActivityRoutingSchema = object({
 export type ActivityRouting = Output<typeof ActivityRoutingSchema>;
 
 export const ActivitySchema = object({
+  thread: optional(nullable(ThreadFactsSchema)),
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
   event_id: EventIdSchema,

@@ -20,6 +20,7 @@ use std::{sync::Arc, time::Duration};
 
 fn address() -> ReplyAddress {
     ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: "inbound-1".into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,

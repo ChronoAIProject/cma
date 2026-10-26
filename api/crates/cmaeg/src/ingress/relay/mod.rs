@@ -6,7 +6,7 @@ pub mod facts;
 mod generic;
 pub mod jwks;
 mod jwt;
-mod lark;
+pub(crate) mod lark;
 mod lark_media;
 mod lark_post;
 pub mod payload;

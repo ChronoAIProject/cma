@@ -16,6 +16,9 @@ pub const MAX_BLOCKS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Request the verified source thread; never fall back when unavailable.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub thread_reply: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default)]

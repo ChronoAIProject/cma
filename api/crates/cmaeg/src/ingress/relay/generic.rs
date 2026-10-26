@@ -32,6 +32,7 @@ pub fn observe(payload: &CallbackPayload) -> Result<Observation, VerificationErr
     // Bot senders cannot be told apart, so the actor kind stays unknown, and there
     // is no addressing or thread evidence for group admission or thread partitions.
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: None,
         conversation,

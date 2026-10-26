@@ -47,6 +47,7 @@ pub async fn create(
                 ConformanceLevel::L1,
                 super::write_gate::WriteFlags {
                     native_bot_mentions: state.native_bot_mentions_writes_enabled,
+                    thread_contract: state.thread_contract_writes_enabled,
                     ..Default::default()
                 },
             )

@@ -30,6 +30,7 @@ const GOLDEN: &str = concat!(
 fn accepted() -> TurnOutcome {
     TurnOutcome::Accepted {
         response_id: "response-1".into(),
+        thread_reply: false,
     }
 }
 fn committed(text: &str) -> TurnOutcome {

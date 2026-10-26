@@ -142,6 +142,8 @@ pub struct Config {
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub native_bot_mentions_writes_enabled: bool,
+    /// Allows new thread contracts only after every reader supports them.
+    pub thread_contract_writes_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
@@ -225,6 +227,16 @@ impl Config {
                     return Err(ConfigError::InvalidManagement {
                         detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
                             .into(),
+                    })
+                }
+            },
+            thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
+                Err(env::VarError::NotPresent) => false,
+                Ok(value) if value == "false" => false,
+                Ok(value) if value == "true" => true,
+                _ => {
+                    return Err(ConfigError::InvalidManagement {
+                        detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
                     })
                 }
             },

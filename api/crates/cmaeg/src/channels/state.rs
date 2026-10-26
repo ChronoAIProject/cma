@@ -30,6 +30,8 @@ pub struct ManagementState {
     /// Allows new native bot mention opt-ins once every reader and consumer
     /// supports the policy. Does not disable execution of retained opt-ins.
     pub native_bot_mentions_writes_enabled: bool,
+    /// Allows new thread contracts only after every reader supports them.
+    pub thread_contract_writes_enabled: bool,
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
@@ -103,6 +105,7 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             native_bot_mentions_writes_enabled: false,
+            thread_contract_writes_enabled: false,
             media_enabled: false,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
