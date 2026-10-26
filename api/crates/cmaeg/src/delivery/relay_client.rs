@@ -1,4 +1,5 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+mod initiated;
 mod media;
 pub use media::supported as native_media_supported;
 mod edit;

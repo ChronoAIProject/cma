@@ -3239,6 +3239,65 @@
         },
         "type": "object"
       },
+      "OutboundReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryOutcome",
+                "description": "Committed without a recorded receipt is unknown; never retry its send."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Last instant at which a prepared operation may commit.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "rendering": {
+            "$ref": "#/components/schemas/RenderingReport"
+          },
+          "retained_until": {
+            "description": "The idempotency key cannot be reused before this instant.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "route_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutboundStatus"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "source_id",
+          "route_id",
+          "status",
+          "expires_at",
+          "retained_until",
+          "rendering"
+        ],
+        "type": "object"
+      },
+      "OutboundStatus": {
+        "enum": [
+          "prepared",
+          "committed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "PartitionKey": {
         "enum": [
           "conversation_and_sender",
@@ -3341,6 +3400,27 @@
           "label",
           "connection_methods",
           "optional_capabilities"
+        ],
+        "type": "object"
+      },
+      "PrepareOutboundMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage"
+          },
+          "route_id": {
+            "description": "Exact NyxID conversation UUID already configured on this source.",
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          }
+        },
+        "required": [
+          "source_id",
+          "route_id",
+          "message"
         ],
         "type": "object"
       },
@@ -3822,6 +3902,12 @@
           },
           "native_bot_mentions_writes_enabled": {
             "type": "boolean"
+          },
+          "outbound_messages_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "platforms": {
             "items": {
@@ -6031,6 +6117,236 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages": {
+      "post": {
+        "operationId": "prepareOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareOutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}": {
+      "delete": {
+        "operationId": "cancelOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      },
+      "get": {
+        "operationId": "getOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}/send": {
+      "post": {
+        "operationId": "commitOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
         ]
       }
     },
