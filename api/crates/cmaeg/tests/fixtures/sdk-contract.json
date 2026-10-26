@@ -95,6 +95,177 @@
       }
     }
   ],
+  "ActivityConsumer": [
+    {
+      "consumer_id": "default",
+      "state": "received",
+      "deliveries": []
+    },
+    {
+      "consumer_id": "default",
+      "state": "completed",
+      "display_name": "Fixture Agent",
+      "provider": "cma",
+      "agent_id": "agt_0123456789abcdef0123456789abcdef",
+      "conversation_id": "fixture-conversation",
+      "response_id": "fixture-response",
+      "dispatched_at": "2026-10-27T03:00:01Z",
+      "accepted_at": "2026-10-27T03:00:02Z",
+      "produced_at": "2026-10-27T03:00:04Z",
+      "completed_at": "2026-10-27T03:00:05Z",
+      "deliveries": [
+        {
+          "step": "reply",
+          "destination": "custom_stream",
+          "outcome": "buffered",
+          "observed_at": "2026-10-27T03:00:04Z",
+          "recipients": [
+            {
+              "kind": "custom",
+              "id": "fixture-recipient",
+              "thread_id": "fixture-thread"
+            }
+          ]
+        },
+        {
+          "step": "reply",
+          "destination": "custom_webhook",
+          "outcome": "delivered",
+          "observed_at": "2026-10-27T03:00:05Z",
+          "confirmed_at": "2026-10-27T03:00:05Z",
+          "platform_message_id": "fixture-reply",
+          "recipients": [
+            {
+              "kind": "custom",
+              "id": "fixture-recipient",
+              "thread_id": "fixture-thread"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "ActivityDelivery": [
+    {
+      "step": "reply",
+      "destination": "custom_stream",
+      "outcome": "buffered",
+      "observed_at": "2026-10-27T03:00:04Z",
+      "recipients": [
+        {
+          "kind": "custom",
+          "id": "fixture-recipient",
+          "thread_id": "fixture-thread"
+        }
+      ]
+    },
+    {
+      "step": "reply",
+      "destination": "custom_webhook",
+      "outcome": "delivered",
+      "observed_at": "2026-10-27T03:00:05Z",
+      "confirmed_at": "2026-10-27T03:00:05Z",
+      "platform_message_id": "fixture-reply",
+      "recipients": [
+        {
+          "kind": "custom",
+          "id": "fixture-recipient",
+          "thread_id": "fixture-thread"
+        }
+      ]
+    }
+  ],
+  "ActivityPage": [
+    {
+      "items": [],
+      "cursor": "fixture-empty-cursor",
+      "retention_days": 7,
+      "limit": 50,
+      "has_more": false
+    },
+    {
+      "items": [
+        {
+          "event_id": "fixture-event",
+          "source": {
+            "type": "custom"
+          },
+          "actor": {
+            "kind": "human",
+            "id": "fixture-actor",
+            "display_name": "Fixture User"
+          },
+          "conversation": {
+            "id": "fixture-conversation",
+            "kind": "private",
+            "thread_id": "fixture-thread"
+          },
+          "occurred_at": "2026-10-27T03:00:00Z",
+          "received_at": "2026-10-27T03:00:01Z",
+          "consumers": [
+            {
+              "consumer_id": "default",
+              "state": "completed",
+              "display_name": "Fixture Agent",
+              "provider": "cma",
+              "agent_id": "agt_0123456789abcdef0123456789abcdef",
+              "conversation_id": "fixture-conversation",
+              "response_id": "fixture-response",
+              "dispatched_at": "2026-10-27T03:00:01Z",
+              "accepted_at": "2026-10-27T03:00:02Z",
+              "produced_at": "2026-10-27T03:00:04Z",
+              "completed_at": "2026-10-27T03:00:05Z",
+              "deliveries": [
+                {
+                  "step": "reply",
+                  "destination": "custom_stream",
+                  "outcome": "buffered",
+                  "observed_at": "2026-10-27T03:00:04Z",
+                  "recipients": [
+                    {
+                      "kind": "custom",
+                      "id": "fixture-recipient",
+                      "thread_id": "fixture-thread"
+                    }
+                  ]
+                },
+                {
+                  "step": "reply",
+                  "destination": "custom_webhook",
+                  "outcome": "delivered",
+                  "observed_at": "2026-10-27T03:00:05Z",
+                  "confirmed_at": "2026-10-27T03:00:05Z",
+                  "platform_message_id": "fixture-reply",
+                  "recipients": [
+                    {
+                      "kind": "custom",
+                      "id": "fixture-recipient",
+                      "thread_id": "fixture-thread"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "cursor": "fixture-completed-cursor",
+      "retention_days": 7,
+      "limit": 50,
+      "has_more": true
+    }
+  ],
+  "ActivityRecipient": [
+    {
+      "kind": "custom",
+      "id": "fixture-recipient"
+    },
+    {
+      "kind": "custom",
+      "id": "fixture-recipient",
+      "thread_id": "fixture-thread"
+    }
+  ],
   "ActivityConversation": [
     {
       "id": "fixture",
@@ -756,6 +927,71 @@
       "channel_id": "fixture",
       "fingerprint": "fixture",
       "ready": true
+    }
+  ],
+  "ChannelActivity": [
+    {
+      "event_id": "fixture-event",
+      "source": {
+        "type": "custom"
+      },
+      "actor": {
+        "kind": "human",
+        "id": "fixture-actor",
+        "display_name": "Fixture User"
+      },
+      "conversation": {
+        "id": "fixture-conversation",
+        "kind": "private",
+        "thread_id": "fixture-thread"
+      },
+      "occurred_at": "2026-10-27T03:00:00Z",
+      "received_at": "2026-10-27T03:00:01Z",
+      "consumers": [
+        {
+          "consumer_id": "default",
+          "state": "completed",
+          "display_name": "Fixture Agent",
+          "provider": "cma",
+          "agent_id": "agt_0123456789abcdef0123456789abcdef",
+          "conversation_id": "fixture-conversation",
+          "response_id": "fixture-response",
+          "dispatched_at": "2026-10-27T03:00:01Z",
+          "accepted_at": "2026-10-27T03:00:02Z",
+          "produced_at": "2026-10-27T03:00:04Z",
+          "completed_at": "2026-10-27T03:00:05Z",
+          "deliveries": [
+            {
+              "step": "reply",
+              "destination": "custom_stream",
+              "outcome": "buffered",
+              "observed_at": "2026-10-27T03:00:04Z",
+              "recipients": [
+                {
+                  "kind": "custom",
+                  "id": "fixture-recipient",
+                  "thread_id": "fixture-thread"
+                }
+              ]
+            },
+            {
+              "step": "reply",
+              "destination": "custom_webhook",
+              "outcome": "delivered",
+              "observed_at": "2026-10-27T03:00:05Z",
+              "confirmed_at": "2026-10-27T03:00:05Z",
+              "platform_message_id": "fixture-reply",
+              "recipients": [
+                {
+                  "kind": "custom",
+                  "id": "fixture-recipient",
+                  "thread_id": "fixture-thread"
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "ChannelId": [
@@ -4433,6 +4669,17 @@
       "created_at": "fixture"
     }
   ],
+  "ConsumerState": [
+    "received",
+    "queued",
+    "dispatching",
+    "accepted",
+    "produced",
+    "completed",
+    "refused",
+    "failed",
+    "unknown"
+  ],
   "ConsumerId": [
     "default",
     "csm_00000000000a"
@@ -5675,7 +5922,7 @@
       "is_big": false,
       "reaction": [
         {
-          "emoji": "👍",
+          "emoji": "\ud83d\udc4d",
           "type": "emoji"
         }
       ]
@@ -5687,7 +5934,7 @@
   ],
   "TelegramReaction": [
     {
-      "emoji": "👍",
+      "emoji": "\ud83d\udc4d",
       "type": "emoji"
     },
     {
