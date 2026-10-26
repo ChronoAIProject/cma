@@ -2,6 +2,47 @@ use super::*;
 use futures_util::StreamExt;
 use std::convert::Infallible;
 
+#[test]
+fn node_configuration_and_delivery_controls_use_only_their_exact_public_operations() {
+    for (path, methods) in [
+        ("/v1/channel-capabilities", vec![Method::GET]),
+        ("/v1/channel-connections", vec![Method::GET]),
+        ("/v1/channels/channel/routing", vec![Method::PUT]),
+        ("/v1/channels/channel/outbound-messages", vec![Method::POST]),
+        (
+            "/v1/channels/channel/outbound-messages/delivery",
+            vec![Method::GET, Method::DELETE],
+        ),
+        (
+            "/v1/channels/channel/outbound-messages/delivery/send",
+            vec![Method::POST],
+        ),
+    ] {
+        for method in [
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ] {
+            assert_eq!(
+                allowed(&method, path),
+                methods.contains(&method),
+                "{method} {path}"
+            );
+            assert!(!allowed(&method, &format!("{path}/private/unlisted")));
+        }
+    }
+    assert!(!allowed(
+        &Method::POST,
+        "/v1/channels/channel/outbound-messages/../send"
+    ));
+    assert!(!allowed(
+        &Method::POST,
+        "/v1/channel-connections/connection/test"
+    ));
+}
+
 pub(super) fn routes(auth: cma_service_auth::NyxIdAuth) -> Router<Arc<Control>> {
     Router::new().route(
         "/v1/channels/channel/activity/stream",

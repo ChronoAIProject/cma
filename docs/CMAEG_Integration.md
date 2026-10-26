@@ -30,6 +30,12 @@ bridge remains at `/api/event-gateway`. External REST and MCP clients use bearer
 or channel credentials directly; the browser-cookie bridge is not a general API
 proxy. The public OpenAPI document advertises the full canonical `/v1` base.
 
+The browser bridge also permits the editor's exact capability/connection list
+reads, routing update, and outbound-message preparation, status, cancellation
+and send operations. These retain the same origin check for mutations and the
+Gateway's owner and operation permission checks; arbitrary service routes and
+connection creation are not exposed by that bridge.
+
 Owner-authorized Channel Activity uses `GET /v1/channels/{channel_id}/activity`
 and its `/stream` SSE companion. The browser bridge allows those exact read
 routes and forwards SSE immediately, including `Last-Event-ID` on reconnect.
