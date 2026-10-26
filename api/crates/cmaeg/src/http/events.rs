@@ -142,6 +142,14 @@ pub async fn receive_event(
             }
             response
         }
+        LaunchOutcome::Admitted {
+            sync_waiter_attached: false,
+            ..
+        } if waiter.is_some() => {
+            // Durable acceptance is replayable; the original process-local
+            // stream is not. Dropping this unbound waiter also releases capacity.
+            (StatusCode::ACCEPTED, Json(accepted)).into_response()
+        }
         _ => match waiter {
             Some(waiter) => Sse::new(waiter.stream())
                 .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))

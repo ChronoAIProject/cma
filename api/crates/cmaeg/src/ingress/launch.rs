@@ -29,6 +29,9 @@ pub enum LaunchOutcome {
     Admitted {
         admission_id: String,
         conversation_id: ConversationId,
+        /// Only this request's exact waiter is retained by the primary target.
+        /// Duplicate HTTP streams must not attach to a different/new waiter.
+        sync_waiter_attached: bool,
     },
     Accepted {
         response_id: String,

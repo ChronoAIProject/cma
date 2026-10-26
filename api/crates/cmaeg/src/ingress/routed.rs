@@ -157,6 +157,15 @@ impl RoutedIngress {
         let primary = committed.targets.first().ok_or_else(|| {
             Problem::new(ProblemCode::Internal, 503, "routed_admission_unavailable")
         })?;
+        // Admission can restore a previous winner, including a concurrent
+        // request with another local waiter. Never promise an unattached SSE
+        // stream or rewrite the winning plan to the retry's ephemeral waiter.
+        let sync_waiter_attached = request.event_ref.open(&self.keys, (self.clock)())
+            .ok().is_some_and(|opened| matches!(
+                (&opened.payload.reply, &primary.launch.event.reply),
+                (cmaeg_core::seal::ReplyAddress::Sync { waiter: incoming },
+                 cmaeg_core::seal::ReplyAddress::Sync { waiter: retained }) if incoming == retained
+            ));
         observer.admitted(&committed.identity.record_id, &committed.activity);
         for target in &committed.targets {
             observer.launched(
@@ -172,6 +181,7 @@ impl RoutedIngress {
         Ok(Some(LaunchOutcome::Admitted {
             admission_id: committed.admission_id,
             conversation_id: primary.launch.event.conversation_id.clone(),
+            sync_waiter_attached,
         }))
     }
 }

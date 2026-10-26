@@ -1304,6 +1304,14 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
+On the durable routed lane, repeating an already-admitted event with
+`?mode=stream` returns the normal 202 accepted JSON body when the current request
+does not own the original primary waiter. This includes concurrent duplicate
+requests and retrying an event first submitted asynchronously. It does not
+start another provider turn, replace the original waiter, or promise replay.
+Only the request whose waiter was retained by the winning admission receives
+the live 200 SSE response.
+
 A `{type:"result_webhook",url,hmac_key_id}` sink receives structured CloudEvents
 of type `cmaeg.response.message`, `cmaeg.response.completed` or
 `cmaeg.response.failed`, with `specversion:"1.0"`, generated `id`, UTC `time`,

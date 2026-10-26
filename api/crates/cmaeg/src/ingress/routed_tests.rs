@@ -91,9 +91,113 @@ fn admitted(value: LaunchOutcome) -> (String, cmaeg_core::ids::ConversationId) {
         LaunchOutcome::Admitted {
             admission_id,
             conversation_id,
+            ..
         } => (admission_id, conversation_id),
         other => panic!("expected durable admission: {other:?}"),
     }
+}
+
+fn sync_request(waiter: Option<&str>) -> LaunchRequest {
+    let mut request = fixture::request(fixture::targets, fixture::custom(None));
+    fixture::rewrite_ref(&mut request, |event| {
+        event.reply = waiter.map_or(cmaeg_core::seal::ReplyAddress::None, |id| {
+            cmaeg_core::seal::ReplyAddress::Sync { waiter: id.into() }
+        });
+    });
+    request
+}
+
+#[tokio::test]
+async fn restored_admission_attaches_only_the_original_primary_waiter() {
+    for original_waiter in [None, Some("original-waiter")] {
+        let original = sync_request(original_waiter);
+        let setup = Setup::new(&original, true).await;
+        let candidate = Candidate::prepare(
+            &original,
+            &fixture::routed(&original),
+            b"wire",
+            &fixture::keys(),
+            fixture::NOW,
+        )
+        .unwrap();
+        setup.server.store().admit(&candidate).await.unwrap();
+        let writes = setup.server.memory.writes.load(Ordering::SeqCst);
+        if original_waiter.is_some() {
+            assert!(matches!(
+                setup.launch(original, b"wire", true).await,
+                LaunchOutcome::Admitted {
+                    sync_waiter_attached: true,
+                    ..
+                }
+            ));
+        }
+        assert!(matches!(
+            setup
+                .launch(sync_request(Some("retry-waiter")), b"wire", true)
+                .await,
+            LaunchOutcome::Admitted {
+                sync_waiter_attached: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            setup.launch(sync_request(None), b"wire", true).await,
+            LaunchOutcome::Admitted {
+                sync_waiter_attached: false,
+                ..
+            }
+        ));
+        assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
+        assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn concurrent_stream_candidates_keep_one_attached_waiter() {
+    let left = sync_request(Some("left-waiter"));
+    let right = sync_request(Some("right-waiter"));
+    let setup = Setup::new(&left, true).await;
+    let left_candidate = Candidate::prepare(
+        &left,
+        &fixture::routed(&left),
+        b"wire",
+        &fixture::keys(),
+        fixture::NOW,
+    )
+    .unwrap();
+    let right_candidate = Candidate::prepare(
+        &right,
+        &fixture::routed(&right),
+        b"wire",
+        &fixture::keys(),
+        fixture::NOW,
+    )
+    .unwrap();
+    let store = setup.server.store();
+    let (left_plan, right_plan) =
+        tokio::join!(store.admit(&left_candidate), store.admit(&right_candidate));
+    assert_eq!(
+        left_plan.unwrap().targets[0].launch.event.reply,
+        right_plan.unwrap().targets[0].launch.event.reply
+    );
+    let (left, right) = tokio::join!(
+        setup.launch(left, b"wire", true),
+        setup.launch(right, b"wire", true)
+    );
+    let attached = [left, right]
+        .into_iter()
+        .filter(|outcome| {
+            matches!(
+                outcome,
+                LaunchOutcome::Admitted {
+                    sync_waiter_attached: true,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(attached, 1);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
