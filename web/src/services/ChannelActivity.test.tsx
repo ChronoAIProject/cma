@@ -85,6 +85,9 @@ it('preserves records on disconnect, explicitly reconnects, and ignores old chan
   act(() => first.onerror?.());
   expect(first.closed).toBe(true);
   expect(screen.getByText('Response produced', { selector: 'span' })).toBeVisible();
+  act(() => first.snapshot(snapshot()));
+  expect(screen.queryByText('Queued')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Reconnect activity' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Reconnect activity' }));
   expect(Feed.instances).toHaveLength(2);
   rerender(<ChannelActivity owner="another-owner" channelId="first" active />);
@@ -114,7 +117,7 @@ it('preserves records on disconnect, explicitly reconnects, and ignores old chan
   unmount();
   expect(Feed.instances[2]?.closed).toBe(true);
 });
-it('does not subscribe while the retained configuration dialog is closed', () => {
+it('does not subscribe while its owning channel view is inactive', () => {
   vi.stubGlobal('EventSource', Feed);
   const { rerender } = render(<ChannelActivity owner="owner" channelId="channel" active={false} />);
   expect(Feed.instances).toHaveLength(0);
@@ -135,6 +138,29 @@ it('retains the last authoritative evidence and offers retry for malformed snaps
   expect(feed.closed).toBe(true);
   expect(screen.getByText('Queued')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Reconnect activity' })).toBeVisible();
+  act(() => feed.snapshot(snapshot('produced')));
+  act(() => feed.onerror?.());
+  expect(screen.getByText('Queued')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Reconnect activity' })).toBeVisible();
+});
+
+it('keeps native recoverable reconnects alive beyond five errors and accepts the next snapshot', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const feed = Feed.instances[0]!;
+  act(() => feed.snapshot(snapshot()));
+  feed.readyState = 0;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    act(() => feed.onerror?.());
+    expect(feed.closed).toBe(false);
+    expect(screen.getByText('Reconnecting live activity…')).toBeVisible();
+  }
+  expect(screen.getByText('Queued')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Reconnect activity' })).not.toBeInTheDocument();
+  act(() => feed.snapshot(snapshot('produced')));
+  expect(screen.getByText('Live activity')).toBeVisible();
+  expect(screen.getByText('Response produced', { selector: 'span' })).toBeVisible();
+  expect(Feed.instances).toHaveLength(1);
 });
 
 it('distinguishes local buffering from confirmed recipient delivery', () => {

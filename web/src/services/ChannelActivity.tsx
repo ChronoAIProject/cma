@@ -1,33 +1,12 @@
-import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import './ChannelActivity.css';
-import { useChannelActivity, type ActivityConsumer } from './useChannelActivity';
+import { useChannelActivity, type ChannelActivityFeed } from './useChannelActivity';
+import {
+  ActivityConnection,
+  ActivityTimestamp,
+  activityStateLabels,
+} from './ChannelActivityStatus';
 
-function Timestamp({ value }: { readonly value?: string | null }) {
-  if (!value || !Number.isFinite(Date.parse(value))) return <span>Not reported</span>;
-  return (
-    <time dateTime={value} title={new Date(value).toLocaleString()}>
-      {new Date(value).toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })}
-    </time>
-  );
-}
-const labels: Record<ActivityConsumer['state'], string> = {
-  received: 'Received',
-  queued: 'Queued',
-  dispatching: 'Dispatching to provider',
-  accepted: 'Accepted by agent',
-  produced: 'Response produced',
-  completed: 'Agent completed',
-  refused: 'Refused',
-  failed: 'Agent response failed',
-  unknown: 'Outcome unknown',
-};
 export function ChannelActivity({
   channelId,
   owner,
@@ -37,25 +16,15 @@ export function ChannelActivity({
   readonly owner: string;
   readonly active: boolean;
 }) {
-  const { page, connection, retry } = useChannelActivity(channelId, owner, active);
+  const feed = useChannelActivity(channelId, owner, active);
+  return <ChannelActivityView feed={feed} />;
+}
+
+export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFeed }) {
+  const { page, connection, retry } = feed;
   return (
     <div className="channel-activity">
-      <div className="channel-activity__connection">
-        <span role="status">
-          {connection === 'live'
-            ? 'Live activity'
-            : connection === 'connecting'
-              ? 'Connecting to live activity…'
-              : connection === 'reconnecting'
-                ? 'Reconnecting live activity…'
-                : 'Live activity disconnected'}
-        </span>
-        {connection === 'disconnected' ? (
-          <Button size="sm" onClick={retry}>
-            Reconnect activity
-          </Button>
-        ) : null}
-      </div>
+      <ActivityConnection connection={connection} retry={retry} />
       {page?.items.length === 0 ? (
         <p>No events recorded in the last {page.retention_days} days.</p>
       ) : null}
@@ -67,7 +36,7 @@ export function ChannelActivity({
                 <header>
                   <strong>{event.source.platform ?? event.source.type}</strong>
                   <span>
-                    Received <Timestamp value={event.received_at} />
+                    Received <ActivityTimestamp value={event.received_at} />
                   </span>
                 </header>
                 <p>
@@ -77,7 +46,7 @@ export function ChannelActivity({
                   <div>
                     <dt>Event time</dt>
                     <dd>
-                      <Timestamp value={event.occurred_at} />
+                      <ActivityTimestamp value={event.occurred_at} />
                     </dd>
                   </div>
                   <div>
@@ -89,19 +58,19 @@ export function ChannelActivity({
                   <section key={consumer.consumer_id} className="channel-activity__consumer">
                     <header>
                       <strong>{consumer.display_name ?? consumer.consumer_id}</strong>
-                      <span>{labels[consumer.state] ?? consumer.state}</span>
+                      <span>{activityStateLabels[consumer.state] ?? consumer.state}</span>
                     </header>
                     <dl>
                       <div>
                         <dt>Dispatch started</dt>
                         <dd>
-                          <Timestamp value={consumer.dispatched_at} />
+                          <ActivityTimestamp value={consumer.dispatched_at} />
                         </dd>
                       </div>
                       <div>
                         <dt>Accepted by agent</dt>
                         <dd>
-                          <Timestamp value={consumer.accepted_at} />
+                          <ActivityTimestamp value={consumer.accepted_at} />
                         </dd>
                       </div>
                       <div>
@@ -123,7 +92,7 @@ export function ChannelActivity({
                       <div>
                         <dt>Response produced</dt>
                         <dd>
-                          <Timestamp value={consumer.produced_at} />
+                          <ActivityTimestamp value={consumer.produced_at} />
                         </dd>
                       </div>
                     </dl>
@@ -153,7 +122,7 @@ export function ChannelActivity({
                                     ? 'Delivery unavailable'
                                     : delivery.outcome.replaceAll('_', ' ')}
                             </strong>
-                            <Timestamp
+                            <ActivityTimestamp
                               value={
                                 delivery.outcome === 'confirmed'
                                   ? delivery.confirmed_at
