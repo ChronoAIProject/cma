@@ -550,3 +550,20 @@ terminal SSE/webhook outcomes, wrong-key rejection and context retrieval after a
 replica restart. `POST /channels/{channel_id}/test` runs a real provider turn; use
 a dedicated channel. Channel updates and deletes require the current
 `expected_version`; see the protocol for their exact request shapes.
+
+### Native Telegram outbound attachment verification
+
+Native Telegram context now advertises the existing `native_media` capability
+for explicit `native_attachments`, independently of the NyxID relay media flag.
+The four kinds map to Bot API `sendPhoto`, `sendDocument`, `sendAudio` and
+`sendVideo`; sources remain public HTTPS or bounded canonical base64. Legacy
+attachment blocks still render as links. No new deployment configuration,
+connection, native file-ID reuse or media-edit authority is introduced.
+
+Local HTTP fixtures exercise actual multipart transport for every method,
+filename/MIME/caption and forum-topic preservation, URL and inline bytes,
+preparation-before-write, aggregate byte limits, unsafe URL rejection,
+wrong destination receipts, 429/5xx, response loss/truncation and partial delivery.
+Existing text and effect tests remain the regression boundary. A confirmed
+local fixture is not live Telegram acceptance; an authorized platform smoke
+test is still required for an operational rollout claim.

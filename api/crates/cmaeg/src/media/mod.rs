@@ -5,8 +5,9 @@
 //! that turn fetched bytes into what an agent can consume, and the sandboxed
 //! FFmpeg jobs behind keyframes and audio transcoding.
 //!
-//! Nothing here runs unless a later caller composes it, and every caller is
-//! gated on `CMAEG_MEDIA_ENABLED`. Errors are classifications only: no URL,
+//! Inbound retrieval runs only when composed behind `CMAEG_MEDIA_ENABLED`.
+//! Explicit native outbound uploads reuse the separate bounded materializer.
+//! Errors are classifications only: no URL,
 //! header or upstream body can travel in a [`FetchError`].
 pub mod body;
 pub mod budget;
@@ -15,6 +16,7 @@ pub mod derive;
 pub mod forward;
 pub mod image;
 pub mod jobs;
+pub(crate) mod outbound;
 pub mod prepare;
 pub mod service;
 pub mod sniff;

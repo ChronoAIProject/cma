@@ -921,7 +921,7 @@ supports a platform before any source for it is enabled.
 | Edit | Confirmed gateway interactive cards; gated ordinary relay text edits with an enriched reference | Gated ordinary single-part relay text edits | Gated ordinary single-part Discord relay text edits; Slack/WhatsApp unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
 | Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Raw-verified WhatsApp: gated reply buttons / single-choice lists with durable authority; Discord/Slack unsupported |
-| Attachments | Inbound media with relay or Bot API locators while enabled; native outbound media through the NyxID relay when enabled, otherwise links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
+| Attachments | Inbound media with relay or Bot API locators while enabled; explicit native Bot API media, or NyxID relay media when enabled; legacy attachment blocks remain links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
 
 Ordinary replies go through NyxID's generic `/api/v1/channel-relay/reply`;
 explicit native thread replies use the dedicated thread endpoint below. NyxID
@@ -2796,11 +2796,13 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. The capability is absent while
-`CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, on native Telegram sources and custom
-events, and on relay platforms outside Telegram, Lark/Feishu, Discord and WhatsApp.
-Disabled or unsupported delivery returns `delivery.outcome: "unsupported"`
-before any network send. The field does not enable a new native connection.
+before using native attachments. Native Telegram and native Discord advertise
+this capability independently of the NyxID-specific relay gate. For relay
+sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
+always absent on custom events and relay platforms outside Telegram,
+Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
+`delivery.outcome: "unsupported"` before any platform send. The field does not
+enable a new native connection.
 
 Platform presentation remains adapter-specific. NyxID's Lark/Feishu adapter
 uploads images as image messages and the other kinds, including audio and video,
@@ -2827,26 +2829,52 @@ are accepted. Sources are public HTTPS URLs up to 8192 bytes, or
 `{"type":"base64","data":"aGVsbG8="}` with standard padded base64. The total
 decoded inline data is at most 65536 bytes across the request. The existing
 128 KiB tool request limit still applies to text, blocks, media and JSON together.
-URL downloads use NyxID's configured byte limit; clients must not assume that
-every deployment permits the maximum. Filename and MIME type are optional and
+Relay URL downloads use NyxID's configured byte limit; clients must not assume
+that every deployment permits the maximum. Native Telegram and Discord prepare
+all attachments under a shared 30-second deadline and an aggregate 8 MiB cap;
+inline bytes count toward that cap. Filename and MIME type are optional and
 at most 255 bytes; filenames are a single component, MIME types have no parameters.
 Captions are optional and at most 1024 bytes. Controls in these metadata fields
 are rejected. Media-only replies are valid and do not manufacture placeholder text.
 
-The gateway validates the source before claiming the single-use reply token.
-Userinfo, fragments and private IP literals are rejected. NyxID revalidates and
-pins public DNS addresses at fetch time with no proxy or redirects. A caller's
+The gateway validates relay media sources before claiming the single-use reply
+token. Userinfo, fragments and private IP literals are rejected. NyxID revalidates
+and pins public DNS addresses at fetch time with no proxy or redirects. Native
+Telegram and Discord use CMAEG's bounded materializer with the same public-DNS,
+pinned-address, no-proxy and no-redirect policy, and send no platform credentials
+to the media origin. Platform file IDs and cross-platform resource locators are
+not accepted outbound sources; they must not be copied from inbound locators. A caller's
 URL or bytes never become a destination override: the original sealed event or
 durable reply target still determines the conversation, route, consumer and
 optional native thread. Explicit native thread sends use the dedicated endpoint.
 
-One logical media reply, including its text, is sent in one request even when
-legacy ordinary-text chunking remains enabled. The overall exchange is bounded
+One logical relay media reply, including its text, is sent in one NyxID request
+even when legacy ordinary-text chunking remains enabled. The overall exchange is bounded
 at 60 seconds and the tool waits at most 65 seconds. A 429, timeout, partial
 delivery, missing platform receipt or invalid receipt is not evidence that
 nothing was sent; CMA does not retry it automatically or downgrade it to a link.
 For retryable client requests, use the durable reply-target API with the same
 idempotency key. An uncertain claim remains uncertain and is never resent.
+
+Native Telegram first prepares every attachment and multipart body before any
+platform write, then sends rendered text parts followed by the attachments in
+request order. Image, file, audio and video use `sendPhoto`, `sendDocument`,
+`sendAudio` and `sendVideo` respectively. Each file keeps its filename, MIME and
+plain caption; media-only requests do not send placeholder text. The current
+native source, bot credential and the token's bot-ID prefix must match the sealed
+bot. Each effect independently passes the delivery gate and route pacing, and
+uses only the sealed chat and forum topic. A successful response must identify
+the exact chat, topic and a positive message ID. The whole native media batch is
+bounded at 60 seconds, including preparation and pacing; existing transport
+request timeouts and the routed delivery authority window can end it earlier.
+This capability does not widen a routed lease or send window. Native media calls
+are not automatically retried: an explicit first-call 429 is typed rate-limited,
+while a lost or malformed response is unknown. Any failure after a confirmed
+part is `unknown`/`partial_delivery`; a batch is not atomic. Confirmed media
+batches return a platform message ID but no editable/effect-bearing message
+reference. The existing native text, interactive and effect paths are unchanged.
+These adapter semantics are tested against local HTTP fixtures; this is not an
+assertion of live Telegram acceptance or deployment.
 
 Native attachments cannot be combined with interactive controls in this
 contract, and message updates reject attachments before any edit. Existing text,

@@ -1394,7 +1394,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NativeMediaCapabilities",
-                "description": "Explicit native attachments, absent until the relay deployment is verified."
+                "description": "Explicit native attachments; relay sources require deployment attestation."
               },
               {
                 "type": "null"

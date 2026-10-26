@@ -102,6 +102,11 @@ impl Sender {
         if matches!(event.reply, ReplyAddress::Discord { .. }) {
             return self.discord_reply(ctx, event, message).await;
         }
+        if !message.native_attachments.is_empty()
+            && matches!(event.reply, ReplyAddress::Telegram { .. })
+        {
+            return self.native_media_reply(ctx, event, message).await;
+        }
         if message.whatsapp_template.is_some() {
             if !self.relay.whatsapp_templates_enabled()
                 || message.validate().is_err()

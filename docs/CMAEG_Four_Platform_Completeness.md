@@ -8,7 +8,7 @@ No NyxID code, deployment or external messages are changed by this audit.
 
 | Platform | Implemented ordinary ingress | Implemented replies and controls | Remaining boundary |
 | --- | --- | --- | --- |
-| Telegram | Native webhook and authenticated NyxID relay; private/group text, raw sender/addressing checks, image/file/audio/video/sticker facts and media retrieval; album identity | Native and relay text; native buttons and single/multiple choices; gated native reaction/delete effects; gated relay native image/file/audio/video sends | Direct native Bot API outbound attachments are not implemented. Relay attachments require the native-media rollout gate and compatible NyxID replicas. Relay effects do not inherit native Bot API authority. |
+| Telegram | Native webhook and authenticated NyxID relay; private/group text, raw sender/addressing checks, image/file/audio/video/sticker facts and media retrieval; album identity | Native and relay text; native buttons and single/multiple choices; gated native reaction/delete effects; native Bot API image/file/audio/video uploads; gated relay native media | Native media is locally verified, not live-platform verified. Relay attachments require the native-media rollout gate and compatible NyxID replicas. Relay effects do not inherit native Bot API authority. |
 | WhatsApp | Opted-in raw Cloud API verification for private messages; text, image/file/audio/video, voice/stickers, locations/contacts, context correlation | Text; gated native media, reply buttons, single-choice lists and approved template replies | The legacy normalized source is text-only. Enable raw verification through its write gate first. No editing or group support is claimed; the Cloud API does not prove that the sending account is a human. |
 | Lark / Feishu | Verified private/group text; raw rich-post flattening; standalone image/file/audio/video retrieval; thread contracts | Text; gated native media, JSON 2.0 cards and text edits | Embedded post image/video remains a visible placeholder: NyxID stores `embedded_attachments`, but its external relay callback and indexed attachment contract expose only `inbound.attachments`. Stickers remain refused. Thread behavior needs the declared thread contract and exact current source authority. |
 | Discord | Raw verifier for signed relay slash commands and Gateway-shaped `MESSAGE_CREATE`; correlated image/file/audio/video attachments and explicit mention/reply evidence | Relay text; gated native media and ordinary text edits | A parser is not live Gateway intake. Pinned NyxID accepts signed Interactions HTTP webhooks and has no Discord Gateway WebSocket receiver; CMA previously had none either. Native Gateway intake can be owned by CMA. Discord interactive consent is not ready: pinned NyxID treats type 4 as a component, whereas Discord components are type 3 and type 4 is autocomplete. CMA correctly refuses type 4. |
@@ -149,3 +149,23 @@ Startup source supervision and durable inbox scheduling into routed execution
 remain separate composition work. The source write gate remains off; this slice
 performs no live bot activation or external messaging. The earlier sections
 record the preceding slices and their then-open integration boundaries.
+
+## Native Telegram outbound media follow-up
+
+The native Telegram path now accepts the existing explicit `native_attachments`
+contract and sends actual Bot API multipart `sendPhoto`, `sendDocument`,
+`sendAudio` and `sendVideo` calls. It shares Discord's unchanged bounded public
+HTTPS/base64 materializer, prepares every attachment before any text or media
+write, and retains the sealed bot/chat/topic, current source credential,
+per-effect gate and pacing. Native capability discovery is independent of the
+NyxID-only relay media gate; no configuration default or deployment is changed.
+
+Local HTTP fixtures verify upload bytes, captions, filenames and MIME types for
+all four methods, inline and fetched content, unsafe URLs and byte limits, bot
+custody, topic-bound receipts, partial writes, rate limits and response loss.
+Incomplete batches stay unknown and are never automatically resent. Media sends
+issue no editable or effect-bearing message reference; ordinary text, interactive
+cards and existing effects retain their previous code path. Outbound platform
+file IDs/cross-platform locators are explicitly unsupported. Existing routed
+lease/send windows remain in force and can end a media batch before its 60-second
+outer ceiling. No live Telegram send, activation or deployment was performed.

@@ -38,13 +38,7 @@ pub struct DiscordRest {
     cooldowns: Cooldowns,
     identities: Arc<Mutex<HashMap<String, (String, Instant)>>>,
 }
-/// Bytes are prepared before delivery commits; credentials never enter file parts.
-pub struct PreparedFile {
-    pub bytes: Vec<u8>,
-    pub filename: String,
-    pub mime: String,
-    pub caption: Option<String>,
-}
+pub use crate::media::outbound::PreparedFile;
 impl DiscordRest {
     pub fn new() -> Result<Self, crate::ConfigError> {
         let error = || crate::ConfigError::InvalidManagement {
