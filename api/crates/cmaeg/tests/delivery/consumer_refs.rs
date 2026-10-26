@@ -59,3 +59,41 @@ async fn reply_message_refs_name_the_events_consumer() {
         }
     }
 }
+
+#[tokio::test]
+async fn named_native_controls_are_refused_before_any_send_when_gate_is_off() {
+    let mut recording = Recording::start_with(
+        FakeHttp::platforms(),
+        Hooks::answering([]),
+        DeliveryConfig::default(),
+        None,
+        false,
+    );
+    let channel = native_channel();
+    let activity = activity(
+        SourceKind::Telegram {
+            platform: Platform::Telegram,
+            bot_id: "77".into(),
+        },
+        "native-1",
+    );
+    let mut event = event(
+        &channel,
+        &activity,
+        1,
+        ReplyAddress::Telegram {
+            bot_id: "77".into(),
+            chat_id: "42".into(),
+            message_id: "5".into(),
+            thread_id: None,
+        },
+    );
+    event.consumer = Some(ConsumerId::parse("csm_00000000000a").unwrap());
+    let receipt = recording.reply(&channel, &event, json!({"text":"Choose","blocks":[{"type":"buttons","id":"choice","options":[{"id":"yes","label":"Yes"}]}]}), ReplySource::Tool).await;
+    assert!(matches!(
+        receipt.delivery,
+        cmaeg::delivery::intents::DeliveryOutcome::Unsupported
+    ));
+    assert!(recording.http.sent().is_empty());
+    recording.finish().await;
+}

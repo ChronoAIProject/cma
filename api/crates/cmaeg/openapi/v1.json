@@ -3239,6 +3239,65 @@
         },
         "type": "object"
       },
+      "OutboundReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DeliveryOutcome",
+                "description": "Committed without a recorded receipt is unknown; never retry its send."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Last instant at which a prepared operation may commit.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "rendering": {
+            "$ref": "#/components/schemas/RenderingReport"
+          },
+          "retained_until": {
+            "description": "The idempotency key cannot be reused before this instant.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "route_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OutboundStatus"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "source_id",
+          "route_id",
+          "status",
+          "expires_at",
+          "retained_until",
+          "rendering"
+        ],
+        "type": "object"
+      },
+      "OutboundStatus": {
+        "enum": [
+          "prepared",
+          "committed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "PartitionKey": {
         "enum": [
           "conversation_and_sender",
@@ -3341,6 +3400,27 @@
           "label",
           "connection_methods",
           "optional_capabilities"
+        ],
+        "type": "object"
+      },
+      "PrepareOutboundMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage"
+          },
+          "route_id": {
+            "description": "Exact NyxID conversation UUID already configured on this source.",
+            "type": "string"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId"
+          }
+        },
+        "required": [
+          "source_id",
+          "route_id",
+          "message"
         ],
         "type": "object"
       },
@@ -3822,6 +3902,19 @@
           },
           "native_bot_mentions_writes_enabled": {
             "type": "boolean"
+          },
+          "native_media_writes_enabled": {
+            "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "outbound_messages_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "platforms": {
             "items": {
@@ -4932,7 +5025,7 @@
         "type": "string"
       },
       "WhatsappTemplateComponent": {
-        "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+        "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
         "oneOf": [
           {
             "properties": {
@@ -5007,6 +5100,83 @@
           }
         ]
       },
+      "WhatsappTemplateCurrency": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_1000": {
+            "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "code": {
+            "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+            "maxLength": 3,
+            "minLength": 3,
+            "pattern": "^[A-Z]{3}$",
+            "type": "string"
+          },
+          "fallback_value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "fallback_value",
+          "code",
+          "amount_1000"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateDateTime": {
+        "additionalProperties": false,
+        "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+        "properties": {
+          "fallback_value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "fallback_value"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateDocument": {
+        "additionalProperties": false,
+        "description": "Header document reference, with an optional displayed filename.",
+        "properties": {
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "WhatsappTemplateLanguage": {
         "additionalProperties": false,
         "properties": {
@@ -5018,6 +5188,30 @@
         "required": [
           "code"
         ],
+        "type": "object"
+      },
+      "WhatsappTemplateMedia": {
+        "additionalProperties": false,
+        "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+        "properties": {
+          "id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[0-9]+$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "link": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "WhatsappTemplateParameter": {
@@ -5036,6 +5230,96 @@
             },
             "required": [
               "text",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "currency": {
+                "$ref": "#/components/schemas/WhatsappTemplateCurrency"
+              },
+              "type": {
+                "enum": [
+                  "currency"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "currency",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "date_time": {
+                "$ref": "#/components/schemas/WhatsappTemplateDateTime"
+              },
+              "type": {
+                "enum": [
+                  "date_time"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "date_time",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "image": {
+                "$ref": "#/components/schemas/WhatsappTemplateMedia"
+              },
+              "type": {
+                "enum": [
+                  "image"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "image",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "video"
+                ],
+                "type": "string"
+              },
+              "video": {
+                "$ref": "#/components/schemas/WhatsappTemplateMedia"
+              }
+            },
+            "required": [
+              "video",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "document": {
+                "$ref": "#/components/schemas/WhatsappTemplateDocument"
+              },
+              "type": {
+                "enum": [
+                  "document"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "document",
               "type"
             ],
             "type": "object"
@@ -6031,6 +6315,236 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages": {
+      "post": {
+        "operationId": "prepareOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareOutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}": {
+      "delete": {
+        "operationId": "cancelOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      },
+      "get": {
+        "operationId": "getOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
+        ]
+      }
+    },
+    "/channels/{channel_id}/outbound-messages/{delivery_id}/send": {
+      "post": {
+        "operationId": "commitOutboundMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "outbound messages"
         ]
       }
     },

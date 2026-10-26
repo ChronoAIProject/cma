@@ -199,6 +199,8 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         public_api_url: "https://gateway.example".into(),
         advertise_public_api_url: true,
         whatsapp_templates_enabled: false,
+        whatsapp_interactions_enabled: false,
+        consumer_interactions_enabled: false,
         native_media_enabled: false,
         relay_text_edits_enabled: false,
         media: None,
