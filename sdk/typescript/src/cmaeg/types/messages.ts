@@ -1,3 +1,4 @@
+import { WhatsappTemplateSchema } from './whatsapp-template.js';
 import {
   AttachmentKindSchema,
   MessageRefSchema,
@@ -150,6 +151,7 @@ export const NativeMediaCapabilitiesSchema = object({
 export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
 
 export const OutboundMessageSchema = object({
+  whatsapp_template: optional(nullable(WhatsappTemplateSchema)),
   native_attachments: optional(array(NativeAttachmentSchema)),
   thread_reply: optional(boolean),
   blocks: optional(array(BlockSchema)),

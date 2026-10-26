@@ -73,6 +73,8 @@ data:
   CMAEG_RELAY_TEXT_EDITS_ENABLED: "false"
   # Enable new Lark/Feishu cards only after every interaction reader is upgraded.
   CMAEG_LARK_CARDS_ENABLED: "false"
+  # Enable only after typed WhatsApp template replies are verified against NyxID.
+  CMAEG_WHATSAPP_TEMPLATES_ENABLED: "false"
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."

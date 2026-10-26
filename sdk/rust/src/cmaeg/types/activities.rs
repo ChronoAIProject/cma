@@ -303,6 +303,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Approved template replies, absent until verified for this WhatsApp relay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_templates: Option<bool>,
     /// Absent until native relay media has been verified for this deployment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media: Option<super::NativeMediaCapabilities>,

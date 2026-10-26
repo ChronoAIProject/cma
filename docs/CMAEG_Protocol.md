@@ -2808,3 +2808,56 @@ paths. Merely disabling the flag is **not** a downgrade migration:
 until no enriched reference remains usable; an event-reference TTL does not
 establish that condition. The flag is independent of the native-media and
 complete-reply gates, and neither of those gates enables text edit issuance.
+
+
+## Approved WhatsApp template replies
+
+`OutboundMessage.whatsapp_template` is an optional typed object. It is accepted
+only for a NyxID WhatsApp relay event when
+`CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`; `readEventContext` then includes
+`capabilities.whatsapp_templates: true`. It is absent for other destinations and
+while disabled. The template must already be approved in the destination
+WhatsApp Business account. Meta validates approval, the language variant and
+placeholder compatibility; the gateway does not create or approve templates.
+
+```json
+{
+  "whatsapp_template": {
+    "name": "order_update",
+    "language": { "code": "en_US" },
+    "components": [
+      { "type": "body", "parameters": [{ "type": "text", "text": "Order 42" }] },
+      { "type": "button", "sub_type": "url", "index": "0", "parameters": [{ "type": "text", "text": "42" }] }
+    ]
+  }
+}
+```
+
+Names contain 1–512 lowercase ASCII letters, digits or underscores. Language
+codes contain two or three lowercase ASCII letters and an optional underscore
+plus two uppercase region letters, such as `en`, `en_US` or `zh_CN`.
+`components` defaults to an empty array for parameterless templates. At most
+five components and twenty text parameters in total are accepted: one `header`
+with exactly one parameter, one `body` with one to twenty parameters, and unique
+URL `button` indices `"0"`, `"1"`, `"2"` with exactly one parameter each. Every
+parameter is `{"type":"text","text":"..."}`, 1–1024 UTF-8 bytes without control
+characters. Image, currency, date/time, quick-reply and arbitrary parameter types
+are refused. URL button parameters substitute approved URL suffixes; they do not
+introduce gateway callbacks or change the delivery destination.
+
+Templates cannot be combined with `text`, nonempty `blocks`,
+`native_attachments`, `thread_reply:true` or `reply_to`. Unknown fields, arbitrary
+metadata, recipient and route overrides are rejected. The sealed event or
+reply-target reference remains the sole delivery destination and authority;
+this is not an initiated-send API. Unsupported destinations, disabled delivery
+and template edits return an unsupported receipt without dispatch. Invalid
+shapes return `invalid_request` before admission. Template message references
+never advertise edit authority.
+
+Delivery uses the existing consumer authorization, pacing, route admission,
+commit gate and single-use reply credential path. The gateway serializes the
+exact bounded template into NyxID `reply.metadata.template` before entering the
+gate. One logical reply makes one relay request. A missing platform receipt,
+transport failure or 429 is `unknown` and is never automatically retried: the
+platform may have accepted the message. Ordinary messages that omit the field
+retain their existing serialized form and behavior.

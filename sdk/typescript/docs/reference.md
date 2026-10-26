@@ -598,3 +598,14 @@ replacement after the click. Disabled, threaded and non-default-consumer context
 retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
+
+Approved WhatsApp templates use the optional `whatsapp_template` field on
+`OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
+before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the bounded
+name/language and positional text parameters. Templates are exclusive of ordinary
+text, blocks, native attachments and thread/reply targets. They reuse the event's
+authorized recipient, cannot be edited, and do not enable interactive callbacks
+or initiated sends. Templates must already be approved in the WhatsApp account;
+see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
+ordinary message behavior. An unknown receipt must not be retried automatically.

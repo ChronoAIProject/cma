@@ -1,0 +1,41 @@
+//! Explicit WhatsApp templates use the existing authenticated relay reply route.
+use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_MAX_BYTES};
+use cmaeg_core::{channel::Platform, message::WhatsappTemplate};
+
+impl RelayClient {
+    pub(in crate::delivery) fn prepare_whatsapp_template(
+        address: &ReplyAddress,
+        template: &WhatsappTemplate,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
+        let rejected = |reason: &str| DeliveryOutcome::Rejected {
+            reason: reason.into(),
+        };
+        let ReplyAddress::NyxidRelay {
+            platform: Platform::Whatsapp,
+            message_id,
+            thread_reply: false,
+            ..
+        } = address
+        else {
+            return Err(rejected("whatsapp_template_destination_unsupported"));
+        };
+        template
+            .validate()
+            .map_err(|_| rejected("whatsapp_template_invalid"))?;
+        // No caller-controlled recipient, route, credential or arbitrary metadata.
+        let body = serde_json::to_vec(&serde_json::json!({
+            "message_id": message_id,
+            "reply": {"text": null, "metadata": {"template": template}}
+        }))
+        .map_err(|_| rejected("relay_request_invalid"))?;
+        if body.len() > REQUEST_MAX_BYTES {
+            return Err(rejected("relay_request_too_large"));
+        }
+        Ok(PreparedReply {
+            body,
+            message_id: message_id.clone(),
+            thread_reply: false,
+            native_media: false,
+        })
+    }
+}

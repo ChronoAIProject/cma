@@ -146,6 +146,7 @@ mod tests {
             channel: Arc::new(channel),
             event,
             message: OutboundMessage {
+                whatsapp_template: None,
                 native_attachments: Vec::new(),
                 thread_reply: false,
                 text: Some(text.into()),

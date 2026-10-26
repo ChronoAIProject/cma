@@ -85,7 +85,10 @@ fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, 
         });
     }
     (
-        if sections.is_empty() && message.native_attachments.is_empty() {
+        if sections.is_empty()
+            && message.native_attachments.is_empty()
+            && message.whatsapp_template.is_none()
+        {
             "Choose an option".into()
         } else {
             sections.join("\n\n")

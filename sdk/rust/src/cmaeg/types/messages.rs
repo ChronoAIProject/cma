@@ -214,6 +214,9 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    /// Approved WhatsApp template, exclusive of other message content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template: Option<super::WhatsappTemplate>,
     /// Explicit native media; omitted preserves link-only attachment blocks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_attachments: Option<Vec<NativeAttachment>>,
