@@ -184,6 +184,8 @@ pub struct TargetState {
     pub retained_until: i64,
     pub event_expires_at: i64,
     pub phase: Phase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<super::delivery_state::DeliveryCheckpoint>,
     pub(super) body: Option<BodyReference>,
     pub(super) ownership: Ownership,
     #[serde(skip)]

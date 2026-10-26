@@ -18,6 +18,7 @@ pub enum ReplySource {
 }
 #[derive(Debug)]
 pub enum DeliveryCommand {
+    DurableReply(Box<super::durable::DurableReply>),
     Reply {
         trace: tracing::Span,
         channel: Arc<ResolvedChannel>,
@@ -47,6 +48,7 @@ pub enum DeliveryCommand {
 impl DeliveryCommand {
     pub(crate) fn trace(&self) -> tracing::Span {
         match self {
+            Self::DurableReply(reply) => reply.trace.clone(),
             Self::Reply { trace, .. } | Self::Update { trace, .. } | Self::Typing { trace, .. } => {
                 trace.clone()
             }

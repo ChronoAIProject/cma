@@ -204,3 +204,64 @@ pub fn event(body: &FrozenTurn) -> cmaeg_core::seal::EventRefPayload {
         .unwrap()
         .payload
 }
+
+/// Exercise the actual receipt checkpoint for frames whose projection has no send.
+pub async fn acknowledge_no_effect(
+    setup: &Setup,
+    lease: &mut Lease,
+    response: &str,
+    cursor: u64,
+    terminal: bool,
+) {
+    use crate::delivery::{durable::DeliveryCoordinator, router::ShardedScheduler};
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    let delivery = RoutedDelivery::new(
+        setup.server.store(),
+        setup.journal().clone(),
+        setup.current.clone(),
+        DeliveryCoordinator::new(Arc::new(ShardedScheduler::new(tx))),
+    );
+    let start = match lease.state().phase {
+        Phase::Accepted { durable_cursor, .. } => durable_cursor.map_or(0, |v| v + 1),
+        _ => panic!("accepted"),
+    };
+    for sequence in start..=cursor {
+        let frame = recovery_frame(response, sequence, terminal && sequence == cursor);
+        assert!(matches!(
+            delivery
+                .deliver_frame(
+                    &setup.plan.identity,
+                    &setup.target().id,
+                    lease,
+                    &frame,
+                    ReplayEffect::NoEffect
+                )
+                .await
+                .unwrap(),
+            FrameDelivery::Settled { .. }
+        ));
+    }
+}
+pub fn recovery_frame(
+    response: &str,
+    sequence: u64,
+    terminal: bool,
+) -> crate::providers::RecoveryEvent {
+    use crate::providers::{RecoveryEvent, ResponsesEvent};
+    RecoveryEvent {
+        response_id: response.into(),
+        sequence_number: sequence,
+        event: if terminal {
+            ResponsesEvent::Completed {
+                response: json!({"id":response}),
+            }
+        } else {
+            ResponsesEvent::InProgress
+        },
+        raw: if terminal {
+            json!({"type":"response.completed", "response_id":response, "sequence_number":sequence, "response":{"id":response}})
+        } else {
+            json!({"type":"response.in_progress", "response_id":response, "sequence_number":sequence})
+        },
+    }
+}

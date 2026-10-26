@@ -30,6 +30,7 @@ pub struct Fault {
     pub id: String,
     pub store: bool,
     pub lose_read: bool,
+    pub skip: usize,
 }
 pub struct Memory {
     pub rows: Mutex<BTreeMap<String, Row>>,
@@ -86,10 +87,14 @@ impl Server {
         store
     }
     pub fn fault(&self, id: String, store: bool, lose_read: bool) {
+        self.fault_after(id, store, lose_read, 0);
+    }
+    pub fn fault_after(&self, id: String, store: bool, lose_read: bool, skip: usize) {
         *self.memory.fault.lock().unwrap() = Some(Fault {
             id,
             store,
             lose_read,
+            skip,
         });
     }
     pub fn change(&self, id: &str, mutate: impl FnOnce(&mut serde_json::Value)) {
@@ -127,7 +132,13 @@ async fn write(
     }
     let fault = {
         let mut faults = state.fault.lock().unwrap();
-        if faults.as_ref().is_some_and(|fault| fault.id == id) {
+        if faults
+            .as_ref()
+            .is_some_and(|fault| fault.id == id && fault.skip > 0)
+        {
+            faults.as_mut().unwrap().skip -= 1;
+            None
+        } else if faults.as_ref().is_some_and(|fault| fault.id == id) {
             faults.take()
         } else {
             None
