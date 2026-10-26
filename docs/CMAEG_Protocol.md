@@ -479,6 +479,12 @@ client treats it: every reference stays opaque and at most 4,096 characters, and
 a reference issued for the `default` consumer is exactly the reference a channel
 without consumers has always been issued.
 
+The reference's recipient field omits `default`; a hand-off lineage's publisher
+path explicitly includes `default` when it published a hop. These are different
+roles. Each publisher, including `default`, can appear only once in the path;
+the path has exactly one publisher per hop, with at most four hops. Accepting
+this shape does not authorize a publish or widen the reference's recipient.
+
 ## 5. Management API
 
 All management operations return `Cache-Control: no-store`. Except rekey, they use
@@ -660,6 +666,10 @@ public SHA-256 hashes, exactly as for `default`.
   `default_reply`. `publish` (`{enabled,targets}`) allows hand-off events to
   other consumers. A `pending` consumer is stored before its provider binding
   exists and never receives events.
+- A profile-backed `default` consumer may publish when its policy enables it,
+  using the same channel, target and chain constraints as a named publisher.
+  It cannot target itself or an unknown consumer. This policy and sealed-lineage
+  support does not supply a `publishEvent` execution endpoint.
 - Agent key hashes are unique across all consumers, `default` included, and an
   existing agent target serves at most one consumer. An existing agent
   requires automatic finalization and cannot publish.

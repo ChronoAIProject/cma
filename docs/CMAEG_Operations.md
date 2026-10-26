@@ -2438,6 +2438,23 @@ refused until CMA persists and validates that original authority through the
 publish path. This is a CMA implementation gap, not a NyxID limitation; never
 substitute the publishing agent's identity for the original human audience.
 
+The default-publisher lineage correction only makes the sealed reader consistent
+with the channel policy: `default` may appear once as a publisher in a bounded
+path. It does not change the recipient encoding (`consumer` stays absent for
+`default`), tool authentication, channel/record binding or expiry checks. Deploy
+compatible readers everywhere before any future writer emits default-publisher
+lineage; older readers reject it. Existing references require no migration.
+
+There is still no `publishEvent` REST/MCP execution handler. The pure routing
+resolver's `published` input resolves targets but does not authorize publication.
+Before that input can be used in production, a CMA executor must authenticate
+the exact channel consumer against its unexpired parent reference, check current
+`publish.enabled` and allowed targets, preserve the original reply audience,
+extend the authenticated lineage without revisits, and enforce the channel's
+hop limit, per-root budget, rate limits and idempotency. Target resolution alone
+does not provide these checks. Do not expose the tool or enable hand-off controls
+until that executor and its delivery path are implemented and verified.
+
 ## Typed WhatsApp template rollout
 
 WhatsApp template expansion retains the default-off template gate. Before enabling,
