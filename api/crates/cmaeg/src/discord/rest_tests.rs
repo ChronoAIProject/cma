@@ -145,3 +145,51 @@ async fn outbound_inline_media_validation_preserves_bytes_and_refuses_unsafe_nam
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn rotated_token_is_bound_to_the_exact_bot_before_any_message_write() {
+    let f = Fixture::new().await;
+    let original = Secret::new("native-original-fixture");
+    f.api
+        .send(&original, "77", "99", None, "one", &[])
+        .await
+        .unwrap();
+    f.api
+        .send(&original, "77", "99", None, "two", &[])
+        .await
+        .unwrap();
+    assert_eq!(f.memory.identities.lock().unwrap().len(), 1);
+    assert_eq!(f.memory.identities.lock().unwrap()[0].method, "GET");
+    *f.memory.bot.lock().unwrap() = json!({"id":"88","bot":true});
+    let rotated = Secret::new("native-rotated-fixture");
+    assert_eq!(
+        f.api
+            .send(&rotated, "77", "99", None, "wrong bot", &[])
+            .await,
+        Err(RestError::Rejected)
+    );
+    assert_eq!(f.memory.calls.lock().unwrap().len(), 2);
+    assert_eq!(f.memory.identities.lock().unwrap().len(), 2);
+    assert_eq!(
+        f.api
+            .send(&rotated, "77", "99", None, "still wrong", &[])
+            .await,
+        Err(RestError::Rejected)
+    );
+    assert_eq!(f.memory.identities.lock().unwrap().len(), 2);
+    *f.memory.bot.lock().unwrap() = json!({"id":"77","bot":false});
+    assert_eq!(
+        f.api
+            .send(
+                &Secret::new("native-user-fixture"),
+                "77",
+                "99",
+                None,
+                "not a bot",
+                &[]
+            )
+            .await,
+        Err(RestError::Rejected)
+    );
+    assert_eq!(f.memory.calls.lock().unwrap().len(), 2);
+}

@@ -36,6 +36,7 @@ pub struct DiscordRest {
     client: Client,
     origin: Url,
     cooldowns: Cooldowns,
+    identities: Arc<Mutex<HashMap<String, (String, Instant)>>>,
 }
 /// Bytes are prepared before delivery commits; credentials never enter file parts.
 pub struct PreparedFile {
@@ -59,7 +60,55 @@ impl DiscordRest {
                 .map_err(|_| error())?,
             origin: Url::parse("https://discord.com/api/v10/").map_err(|_| error())?,
             cooldowns: shared_cooldowns(),
+            identities: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+    /// Bind every token revision to its actual bot before a native write or read.
+    /// Only a hash and the public bot ID are cached, bounded to five minutes.
+    pub(crate) async fn verify_bot(&self, token: &Secret, expected: &str) -> Result<(), RestError> {
+        if !valid_id(expected) {
+            return Err(RestError::Rejected);
+        }
+        let key = crate::channels::definition::hash_secret(token.as_str());
+        {
+            let mut identities = self.identities.lock().unwrap();
+            identities.retain(|_, (_, until)| *until > Instant::now());
+            if let Some((bot, _)) = identities.get(&key) {
+                return if bot == expected {
+                    Ok(())
+                } else {
+                    Err(RestError::Rejected)
+                };
+            }
+            if identities.len() >= 512 {
+                return Err(RestError::Unavailable);
+            }
+        }
+        self.ready(token)?;
+        let response = self
+            .client
+            .get(self.url("users/@me")?)
+            .header("Authorization", format!("Bot {}", token.as_str()))
+            .send()
+            .await
+            .map_err(|_| RestError::Unavailable)?;
+        let body = self.decode(response, token, false).await?;
+        let bot = body["id"]
+            .as_str()
+            .filter(|id| valid_id(id))
+            .ok_or(RestError::Rejected)?;
+        if body["bot"].as_bool() != Some(true) {
+            return Err(RestError::Rejected);
+        }
+        let mut identities = self.identities.lock().unwrap();
+        if identities.len() < 512 {
+            identities.insert(key, (bot.into(), Instant::now() + Duration::from_secs(300)));
+        }
+        if bot == expected {
+            Ok(())
+        } else {
+            Err(RestError::Rejected)
+        }
     }
     pub async fn message(
         &self,
@@ -103,6 +152,8 @@ impl DiscordRest {
         {
             return Err(RestError::Rejected);
         }
+        self.ready(token)?;
+        self.verify_bot(token, bot).await?;
         self.ready(token)?;
         let mut payload =
             json!({"content":text,"allowed_mentions":{"parse":[],"replied_user":false}});
