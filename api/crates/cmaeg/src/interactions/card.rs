@@ -30,6 +30,10 @@ pub struct Card {
     /// names a consumer is sealed under kind `ic`, never `in`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumer: Option<ConsumerId>,
+    /// Absent for default and historical cards. New named cards keep the exact
+    /// serving identity and original conversation through retries and restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_owner: Option<super::owner::CallbackOwner>,
     /// Absent on all legacy/Telegram records. New issuance is rollout-gated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lark: Option<LarkIdentity>,

@@ -79,6 +79,8 @@ data:
   CMAEG_WHATSAPP_TEMPLATES_ENABLED: "false"
   # Reader-first rollout for actor-bound WhatsApp buttons and lists.
   CMAEG_WHATSAPP_INTERACTIONS_ENABLED: "false"
+  # Enable named-card issuance only after all callback readers are upgraded.
+  CMAEG_CONSUMER_INTERACTIONS_ENABLED: "false"
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."

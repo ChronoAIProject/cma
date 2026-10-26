@@ -23,6 +23,9 @@ impl Sender {
         let mut effects = SendEffects {
             first_send_done: ctx.first_send_done,
         };
+        if event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
+            return (unsupported(), effects);
+        }
         let lark = matches!(event.reply, ReplyAddress::NyxidRelay { platform, .. }
             if crate::interactions::lark::supported(platform));
         let whatsapp = matches!(

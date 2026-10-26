@@ -176,10 +176,11 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
-| `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private default-consumer events. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
+| `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
+| `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
-| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. No threaded or named-consumer cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2217,9 +2218,9 @@ those controls. Existing Telegram record bytes and callback IDs are unchanged.
 
 Cards are limited to 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
-cannot combine native media or a native thread reply. Thread contexts and named
-consumers are refused because the existing callback contract does not retain
-thread evidence or route non-default consumer clicks. Native forms are not
+cannot combine native media or a native thread reply. Thread contexts are refused because the existing callback contract does not retain
+thread evidence. Named consumers require the separate consumer-interaction gate
+and retain their original provider binding and conversation. Native forms are not
 advertised; their fields stay plain text. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
 handles. A malformed/lost edit receipt stays unknown, and an old revision remains
@@ -2309,8 +2310,8 @@ No reader, platform or destination authority is weakened by disabling issuance.
 Keep `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=false` until every gateway reader is
 upgraded. A source must have `verify_raw_event:true`; trusted normalized messages
 cannot issue these controls. Existing text, templates, other platforms and
-unrelated WhatsApp buttons keep their previous behavior. Only default-consumer,
-private, unthreaded events qualify. Cloud API does not identify a human versus
+unrelated WhatsApp buttons keep their previous behavior. Only private, unthreaded
+events qualify; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Cloud API does not identify a human versus
 an automated account; CMA binds a choice to the exact authenticated numeric
 sender and private destination without inventing a human classification.
 
@@ -2373,3 +2374,40 @@ prepared operations require explicit commit. Never retry an unknown send under a
 new key. Operation records use the existing encrypted interaction collection and
 immutable seven-day TTL; no database migration or additional credentials are needed.
 
+
+## Named-consumer callback rollout
+
+Keep `CMAEG_CONSUMER_INTERACTIONS_ENABLED=false` until all gateway readers support
+`callback_owner` in encrypted `ic` interaction records. The flag controls new
+named Telegram, Lark/Feishu and WhatsApp controls, including replacement controls;
+it does not disable callbacks for retained issued cards. Platform gates and all
+existing sender/chat/source admission checks still apply. Plain replacement text
+can retire a consumed card while new control issuance is disabled.
+
+A new named card persists its exact consumer ID, provider binding, original
+conversation ID, partition key, source and single-consumer routing snapshot.
+Consumption verifies the current consumer still exists, is not pending and has
+a credential for that same provider binding. Rotating the credential is allowed;
+replacing the binding is not. The exact callback actor, chat/thread, route,
+platform message and revision/action must still match. Current ACL refusal does
+not consume the card. A durable CAS stores the chosen action and first timestamp;
+retries reuse that result and consumer-scoped idempotency key, even after restart
+or a display-name change. A callback never fans out or falls back to `default`.
+Default cards omit the new field and retain their existing bytes and dispatch.
+Legacy named records without an owner snapshot remain non-executable.
+
+Before activation, verify a named consumer's card across restart, credential
+rotation, duplicate delivery, current ACL revocation, removal/pending state and
+provider-binding replacement in authorized test chats. Confirm the callback
+reaches only the original consumer conversation. Keep compatible readers and
+keys until all issued cards expire; disabling issuance alone is not permission
+to remove the retained callback reader. Local fake-transport tests establish the
+CMA contract; live platform verification is still required before claiming it.
+
+Remaining CMA dependencies: ordinary named-consumer ingress routing/fan-out and
+`publishEvent` execution are not supplied by this callback change. Hand-off
+lineage currently persists root/hop/path/reply policy, but not the original human
+actor, conversation and callback audience. Hand-off controls therefore remain
+refused until CMA persists and validates that original authority through the
+publish path. This is a CMA implementation gap, not a NyxID limitation; never
+substitute the publishing agent's identity for the original human audience.

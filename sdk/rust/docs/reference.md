@@ -314,8 +314,9 @@ enables native Lark cards, eligible contexts return `buttons: "native_card"` and
 `cards: "native_card"`; the SDK uses the existing button/choice/card/link message
 shapes. Button callbacks return the stored option IDs and selected set, never
 arbitrary client callback data. Retain the returned message reference for a
-replacement after the click. Disabled, threaded and non-default-consumer contexts
-retain their advertised fallback capabilities. Native forms and media mixed with
+replacement after the click. Named consumers require the operator's separate
+consumer-interaction gate and preserve their original binding and conversation.
+Disabled or threaded contexts retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
@@ -383,3 +384,15 @@ any other mutation retries automatically. A committed unknown result never cause
 another send. Keep the original message with the original key for recovery;
 preparations expire in 24 hours and idempotency is retained for seven days.
 
+
+### Named-consumer interactive callbacks
+
+Named Telegram, Lark/Feishu and WhatsApp controls use the same SDK message shapes.
+Discover capabilities: issuance needs the platform gate and the separate named
+consumer gate. A callback returns to exactly the consumer conversation that
+issued the card, including across gateway restart or consumer rename. Current
+ACLs and consumer readiness still apply. Credential rotation is supported;
+consumer removal or provider rebinding invalidates the old card's authority.
+Disabling issuance preserves already-issued callbacks. There is no callback
+fan-out or default fallback. Hand-off controls remain unavailable because CMA
+has not yet persisted the original human callback audience through hand-offs.

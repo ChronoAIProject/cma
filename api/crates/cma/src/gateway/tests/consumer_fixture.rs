@@ -109,6 +109,7 @@ impl ConsumerGateway {
             lark_cards_enabled: false,
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             resolver: state.resolver.clone(),

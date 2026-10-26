@@ -989,8 +989,8 @@ trusted platforms still refuse attachments.
 `buttons`, single/multi `choice`, `card` and `link` blocks. Eligible verified human
 contexts advertise `buttons:"native_card"`, `cards:"native_card"`, `edit:true`.
 The default is off, preserving numbered-text delivery. This does not enable
-threaded or named-consumer contexts, native forms, or cards mixed with native
-attachments. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
+threaded contexts, native forms, or cards mixed with native attachments.
+Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
 `behaviors` callback/open_url
 objects; display text uses `plain_text` and cannot inject mentions or card JSON.
 Multi-choice clicks return the selected set computed from the stored message;
@@ -1963,8 +1963,17 @@ references name that consumer, so only its agent key can update the card. A
 replacement keeps the card's consumer. Before a click is recorded, the gateway
 also checks that the click may reach the card's consumer; a click it refuses is
 answered as `interaction_expired_or_invalid` and leaves the card clickable.
-Until clicks are routed per consumer, only the default consumer's cards admit
-clicks.
+With `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`, new named cards also retain
+an encrypted `callback_owner` snapshot: consumer, exact provider binding,
+conversation, partition, source and single-consumer routing decision. A callback
+restores that original consumer conversation and consumer-scoped idempotency key;
+it cannot fan out or fall back to default. The current consumer must still exist,
+not be pending, and retain that same binding; credential rotation is allowed.
+Retries keep the first timestamp, values and routing snapshot across restart or
+rename. Disabling issuance does not disable retained callbacks. Default records
+omit the field; legacy named records without this authority remain refused.
+Hand-off controls remain blocked by CMA's missing persisted original human
+callback audience, independently of NyxID transport support.
 
 ```mermaid
 sequenceDiagram
@@ -2929,8 +2938,10 @@ text form the body; all other block combinations are refused without sending.
 CMA limits body text to 1,024 characters, reply-button labels to 20, and list-row
 labels to 24. Labels must be unique, nonempty and without control characters.
 There is no silent label truncation. A non-default style or selected appearance
-is a declared `plain_option_style` degradation. Native media, threaded replies,
-named consumers and hand-offs cannot use this interaction contract.
+is a declared `plain_option_style` degradation. Native media, threaded replies
+and hand-offs cannot use this interaction contract. Named consumers require the
+separate consumer-interaction gate and the persisted owner snapshot described
+above; callbacks continue in the original named consumer conversation.
 
 ```json
 {
