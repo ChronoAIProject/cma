@@ -58,6 +58,7 @@ pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPaylo
             bot_id: "77".into(),
             channel_id: "99".into(),
             message_id: "700".into(),
+            thread_id: None,
         },
         consumer: None,
         lineage: None,

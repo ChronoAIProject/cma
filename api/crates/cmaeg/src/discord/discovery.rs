@@ -24,6 +24,7 @@ pub struct DiscordApi {
     client: Client,
     origin: Url,
     limits: DiscordRest,
+    pub(super) thread_metadata: bool,
 }
 impl DiscordApi {
     pub fn new() -> Result<Self, GatewayError> {
@@ -38,7 +39,12 @@ impl DiscordApi {
             origin: Url::parse("https://discord.com/api/v10/")
                 .map_err(|_| GatewayError::InvalidConfiguration)?,
             limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
+            thread_metadata: false,
         })
+    }
+    pub(super) fn with_thread_metadata(mut self, enabled: bool) -> Self {
+        self.thread_metadata = enabled;
+        self
     }
     pub(super) fn retry_after(&self, token: &Secret) -> Duration {
         match self.limits.ready(token) {
@@ -77,7 +83,7 @@ impl DiscordApi {
         }
         Ok(discovery)
     }
-    async fn get<T: serde::de::DeserializeOwned>(
+    pub(super) async fn get<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         token: &Secret,

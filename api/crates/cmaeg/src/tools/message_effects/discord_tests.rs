@@ -120,6 +120,7 @@ impl App {
             conversation_id: "conversation-1".parse().unwrap(),
             expires_at: now() + 600,
             reply: ReplyAddress::Discord {
+                thread_id: None,
                 bot_id: "77".into(),
                 channel_id: "99".into(),
                 message_id: "700".into(),

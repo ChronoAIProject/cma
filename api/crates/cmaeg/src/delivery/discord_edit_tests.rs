@@ -132,6 +132,80 @@ async fn native_send_seals_exact_destination_and_patch_retains_reference_after_i
 }
 
 #[tokio::test]
+async fn verified_thread_reply_and_edit_use_exact_thread_channel_and_never_parent() {
+    let f = Fixture::new().await;
+    let (mut sender, channel, mut event) = setup(&f);
+    sender.relay = sender.relay.with_native_discord_edits(true);
+    let cmaeg_core::seal::ReplyAddress::Discord {
+        channel_id,
+        thread_id,
+        ..
+    } = &mut event.reply
+    else {
+        panic!()
+    };
+    *channel_id = "100".into();
+    *thread_id = Some("100".into());
+    f.respond(
+        StatusCode::OK,
+        json!({"id":"800","channel_id":"100","author":{"id":"77"}}),
+    );
+    let threaded: OutboundMessage =
+        serde_json::from_value(json!({"text":"thread reply","thread_reply":true})).unwrap();
+    let receipt = send(&sender, &channel, &event, &threaded).await;
+    assert!(matches!(
+        receipt.delivery,
+        DeliveryOutcome::Confirmed { .. }
+    ));
+    let reference = receipt
+        .message_ref
+        .unwrap()
+        .open(&sender.keys)
+        .unwrap()
+        .payload;
+    assert_eq!(
+        reference.discord_message.as_ref().unwrap().channel_id,
+        "100"
+    );
+    // A reference pins its original thread. An edit cannot add routing fields.
+    assert!(matches!(
+        edit(&sender, &channel, &reference, &threaded, true)
+            .await
+            .delivery,
+        DeliveryOutcome::Unsupported
+    ));
+    f.respond(
+        StatusCode::OK,
+        json!({"id":"800","channel_id":"100","author":{"id":"77"},"content":"updated"}),
+    );
+    assert!(matches!(
+        edit(&sender, &channel, &reference, &message("updated"), true)
+            .await
+            .delivery,
+        DeliveryOutcome::Confirmed { .. }
+    ));
+    {
+        let calls = f.memory.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].path, "/api/v10/channels/100/messages");
+        let sent: Value = serde_json::from_slice(&calls[0].body).unwrap();
+        assert_eq!(sent["message_reference"]["message_id"], "700");
+        assert_eq!(calls[1].path, "/api/v10/channels/100/messages/800");
+    }
+    for proof in [None, Some("99".into())] {
+        let cmaeg_core::seal::ReplyAddress::Discord { thread_id, .. } = &mut event.reply else {
+            panic!()
+        };
+        *thread_id = proof;
+        assert!(matches!(
+            send(&sender, &channel, &event, &threaded).await.delivery,
+            DeliveryOutcome::Unsupported
+        ));
+    }
+    assert_eq!(f.memory.calls.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn native_edit_authority_refuses_revoked_source_owner_consumer_key_or_record_before_io() {
     let f = Fixture::new().await;
     let (sender, channel, reference) = issued(&f).await;

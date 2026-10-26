@@ -13,6 +13,7 @@ impl DurableJournal {
         authority: &Authority,
         event: &Dispatch,
     ) -> Result<(), GatewayError> {
+        let received_at = (self.store.clock)() / 1000;
         let message = event.message_id().ok_or(GatewayError::Protocol)?;
         // Discord IDs embed their creation time. Once the seven-day dedup
         // window expires, old replays are refused instead of launching twice.
@@ -35,10 +36,22 @@ impl DurableJournal {
             let bytes = self.verify_inbox(&existing, authority, message).await?;
             return self.observe_inbox(&existing, authority, &bytes).await;
         }
-        let bytes = serde_json::to_vec(
-            &json!({"dispatch":event.data,"channel":authority.public_definition}),
-        )
-        .map_err(|_| GatewayError::Protocol)?;
+        let mut body = json!({"dispatch":event.data,"channel":authority.public_definition});
+        if self.api.thread_metadata
+            && super::thread_context::candidate(
+                &event.data,
+                &authority.admission,
+                &authority.bot_id,
+            )
+        {
+            body["native_channel"] = serde_json::to_value(
+                self.api
+                    .channel_evidence(&authority.token, &event.data)
+                    .await,
+            )
+            .map_err(|_| GatewayError::Protocol)?;
+        }
+        let bytes = serde_json::to_vec(&body).map_err(|_| GatewayError::Protocol)?;
         if bytes.len() > 2 * 1024 * 1024 {
             return Err(GatewayError::Protocol);
         }
@@ -71,7 +84,7 @@ impl DurableJournal {
             source_revision: authority.revision.clone(),
             payload_hash,
             parts,
-            received_at: (self.store.clock)() / 1000,
+            received_at,
             retained_until: expiry,
         };
         match self

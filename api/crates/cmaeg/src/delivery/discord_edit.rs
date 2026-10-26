@@ -17,12 +17,10 @@ use sha2::{Digest, Sha256};
 
 /// Only text/link blocks are editable. Native media, cards and degraded controls
 /// must never accidentally grant authority over one part of a richer message.
-pub(super) fn editable(message: &OutboundMessage) -> bool {
+pub(super) fn editable_content(message: &OutboundMessage) -> bool {
     message.validate().is_ok()
         && message.native_attachments.is_empty()
         && message.whatsapp_template.is_none()
-        && !message.thread_reply
-        && message.reply_to.is_none()
         && message
             .blocks
             .iter()
@@ -112,7 +110,9 @@ impl Sender {
             return unsupported();
         };
         if reference.validate().is_err()
-            || !editable(message)
+            || !editable_content(message)
+            || message.thread_reply
+            || message.reply_to.is_some()
             || reference.channel_id != ctx.channel.id
             || authority(
                 ctx.channel,

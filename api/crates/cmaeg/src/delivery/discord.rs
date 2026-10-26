@@ -29,13 +29,14 @@ impl Sender {
             bot_id,
             channel_id,
             message_id,
+            thread_id,
         } = &event.reply
         else {
             return (unsupported(), effects);
         };
         if message.validate().is_err()
             || message.whatsapp_template.is_some()
-            || message.thread_reply
+            || (message.thread_reply && thread_id.as_ref() != Some(channel_id))
             || message.reply_to.is_some()
         {
             return (unsupported(), effects);
@@ -138,7 +139,7 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
-        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable(message) {
+        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable_content(message) {
             if let DeliveryOutcome::Confirmed {
                 platform_message_id: Some(id),
             } = &receipt.delivery

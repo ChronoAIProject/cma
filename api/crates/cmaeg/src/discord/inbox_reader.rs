@@ -39,6 +39,8 @@ pub struct InboxReader {
 pub(super) struct Body {
     pub dispatch: serde_json::Value,
     pub channel: ChannelDefinition,
+    #[serde(default)]
+    pub native_channel: Option<super::thread_context::ChannelEvidence>,
 }
 impl InboxReader {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
@@ -207,6 +209,7 @@ impl InboxReader {
                     bot_id: inbox.bot_id,
                     channel_id: activity.conversation.id.clone(),
                     message_id: inbox.message_id,
+                    thread_id: activity.conversation.thread_id.clone(),
                 },
                 consumer: None,
                 lineage: None,
@@ -254,10 +257,15 @@ impl Body {
         else {
             unreachable!()
         };
-        let activity = normalize(&self.dispatch, bot, admission)?;
-        if let Normalized::Activity(activity) = &activity {
-            if self.channel.partition.key_for(&activity.source)
-                == cmaeg_core::channel::PartitionKey::Thread
+        let mut activity = normalize(&self.dispatch, bot, admission)?;
+        if let Normalized::Activity(activity) = &mut activity {
+            let proven = self
+                .native_channel
+                .as_ref()
+                .is_some_and(|evidence| evidence.apply(&self.dispatch, activity));
+            if !proven
+                && self.channel.partition.key_for(&activity.source)
+                    == cmaeg_core::channel::PartitionKey::Thread
             {
                 return Ok(Normalized::Refused(Refusal::ThreadEvidenceUnavailable));
             }

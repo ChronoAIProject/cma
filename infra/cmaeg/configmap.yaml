@@ -95,6 +95,8 @@ data:
   # Issue native Discord edit references only after every gateway reader is upgraded.
   CMAEG_NATIVE_DISCORD_EDITS_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: "false"
+  # Persist verified native thread metadata only after compatible readers are deployed.
+  CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: "false"
   # Enable new Lark/Feishu cards only after every interaction reader is upgraded.
   CMAEG_LARK_CARDS_ENABLED: "false"
   # Enable only after typed WhatsApp template replies are verified against NyxID.

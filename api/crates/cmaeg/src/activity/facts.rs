@@ -28,8 +28,12 @@ pub fn delivery(
             ReplyAddress::Telegram {
                 chat_id, thread_id, ..
             } => vec![recipient("telegram_chat", chat_id, thread_id.clone())],
-            ReplyAddress::Discord { channel_id, .. } => {
-                vec![recipient("discord_channel", channel_id, None)]
+            ReplyAddress::Discord {
+                channel_id,
+                thread_id,
+                ..
+            } => {
+                vec![recipient("discord_channel", channel_id, thread_id.clone())]
             }
             ReplyAddress::NyxidRelay { route_id, .. } => {
                 vec![recipient("relay_route", route_id, None)]

@@ -3396,6 +3396,63 @@ scheduling and routed recovery must be composed before enabling native messaging
 The source write flag stays off in the deployment manifest. Relay Discord
 behavior and retained serialization remain compatible.
 
+### Native Discord thread metadata and replies
+
+`CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` defaults to `false`. After every
+serving and rollback reader understands the optional `native_channel` evidence
+in native inbox bodies and optional `reply.thread_id` inside sealed event
+references, operators may enable new metadata writes. The existing source and
+runtime activation gates remain independent. Disabling metadata writes preserves
+replay and reply authority already issued; reverting to an incompatible reader
+is unsafe while the new inbox bodies remain retained.
+
+For each new admitted native message, the journal calls authenticated Discord
+`GET /channels/{channel_id}` at the fixed official API v10 origin. The already
+verified bot credential stays at that origin. This read uses the existing four
+second request deadline, 64 KiB response cap, no redirects and conservative REST
+rate-limit cooldown; it has no automatic retry or per-channel metadata cache.
+The exact returned ID must match the original Gateway `channel_id`. Thread types
+10, 11 and 12 additionally require a canonical non-self `parent_id` and a
+`guild_id` matching the original message. The Gateway message's optional `thread`
+object is never membership evidence: it can describe a thread started *from*
+an ordinary parent-channel message.
+
+The immutable inbox stores either verified channel facts or unavailable
+evidence beside the original dispatch and source/routing snapshot. Receipt time
+is captured before metadata I/O and retained across retries. Activity receipt is
+visible before provider execution and before launch capacity is acquired.
+Duplicate intake restores the original evidence and does not read metadata
+again. Changes to channel metadata, routing, partition policy or rollout gates
+cannot repartition an accepted message. Current source/credential revocation
+still refuses replay under the existing authority rules.
+
+Verified current threads set Activity `conversation.thread_id` to that thread's
+own channel ID; `conversation.id` also remains the original channel ID. Two
+threads under one parent therefore have distinct partitions. A verified ordinary
+parent channel has no current thread and retains its own partition, including
+when its message contains a newly started `thread` object. Missing, unavailable,
+malformed or mismatched evidence explicitly refuses a requested thread partition;
+it never silently falls back to another conversation. Ordinary non-thread
+partitioning retains its existing behavior when metadata is unavailable.
+
+The sealed Discord reply address gains `thread_id` only for a verified current
+thread, and that value must equal its existing `channel_id`. An explicit
+`thread_reply=true` is accepted only with this evidence. Both ordinary and
+explicit thread replies send to the exact original thread channel; `parent_id`
+is never an outbound destination. Single-part editable text/link replies retain
+their normal exact-channel edit authority. Updates cannot add routing fields.
+Old reply references serialize identically when thread evidence is absent.
+
+This supports replying inside an existing verified thread and isolating its
+conversation. It does not create, archive, reopen, join, follow or list threads,
+or fetch their message history. Those operations are not advertised as available.
+Local authenticated HTTP, inbox, admission and delivery fixtures verify the
+contract without sending to an external Discord user.
+
+Official channel types and read contract:
+https://discord.com/developers/docs/resources/channel#channel-object and
+https://discord.com/developers/docs/resources/channel#get-channel.
+
 ### Native Discord text edits
 
 `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` defaults to false. After every serving and
