@@ -7,6 +7,35 @@ use cmaeg_core::channel::Secret;
 use std::collections::BTreeSet;
 
 #[tokio::test]
+async fn delayed_native_admission_uses_the_same_clock_as_its_record_service() {
+    let f = Setup::new(true).await;
+    // Wall time advances while the fixture's durable source clock stays fixed.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    f.message(|_| {}).await;
+    let page = f.sweep(f.now()).await;
+    assert_eq!(page.pending, 0);
+    assert_eq!(page.acknowledged, 1);
+    let plans = f.plans.recover_all_page(None, 32).await.unwrap().plans;
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].admitted_at, f.now());
+    assert_eq!(plans[0].retained_until, f.now() + 7 * 86400);
+    assert_eq!(f.direct_calls(), 0);
+
+    // Explicit fixture time travel must advance both admission clocks as well.
+    f.fixture.advance(60_000);
+    f.message(|_| {}).await;
+    let page = f.sweep(f.now()).await;
+    assert_eq!(page.pending, 0);
+    assert_eq!(page.acknowledged, 2);
+    let plans = f.plans.recover_all_page(None, 32).await.unwrap().plans;
+    assert_eq!(plans.len(), 2);
+    assert!(plans
+        .iter()
+        .any(|plan| plan.admitted_at == f.now() && plan.retained_until == f.now() + 7 * 86400));
+    assert_eq!(f.direct_calls(), 0);
+}
+
+#[tokio::test]
 async fn native_inbox_commits_one_plan_and_reuses_it_after_lost_ack_response() {
     let f = Setup::new(true).await;
     f.message(|_| {}).await;

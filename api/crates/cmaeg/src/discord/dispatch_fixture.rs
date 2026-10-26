@@ -76,7 +76,10 @@ impl Setup {
         fixture.replace(&channel);
         let journal = fixture.acquire().await.unwrap();
         let keys = fixture.store.keys.clone();
-        let plans = PlanStore::new(fixture.store.channels.clone(), keys.clone());
+        let source_clock = fixture.store.clock.clone();
+        let clock: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || source_clock() / 1000);
+        let plans =
+            PlanStore::new(fixture.store.channels.clone(), keys.clone()).with_clock(clock.clone());
         let (scheduler, handle) = Scheduler::new(
             Arc::new(plans.clone()),
             Arc::new(Executor),
@@ -91,7 +94,8 @@ impl Setup {
             selected.clone(),
             BTreeSet::new(),
             BTreeSet::from([channel.provider.slug.to_string()]),
-        );
+        )
+        .with_clock(clock);
         let trap = Arc::new(Trap(AtomicUsize::new(0)));
         let state = IngressState::new(
             ChannelResolver::new(
