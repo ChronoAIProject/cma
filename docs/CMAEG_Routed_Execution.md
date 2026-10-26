@@ -29,8 +29,14 @@ callbacks continue through their existing exact-consumer path.
 
 The adapter checks for an already committed identity before evaluating mutable
 routing. Exact retries restore its original targets; changed bytes under the same
-identity conflict. New plans require explicit provider replay support before any
-write. Binary custom-event attributes authenticated only by a body HMAC do not
+identity conflict. New plans require explicit provider replay support and a
+supported delivery destination before any write. An unavailable default reply
+address or unsupported synchronous waiter receives 422
+`routed_delivery_unsupported`; no plan or provider call is created. Committed
+retries keep their frozen delivery policy even when current authoring changes.
+The production preparation builder captures the exact default destination
+before creating a provider conversation. Binary custom-event attributes
+authenticated only by a body HMAC do not
 gain routing authority from unsigned headers. Missing bytes, unavailable storage
 and incomplete commits cannot fall back to the live launcher. A 202 admission is
 returned only after the immutable plan commits, with its actual primary

@@ -281,6 +281,39 @@ async fn unproved_provider_replay_is_refused_before_durable_admission() {
 }
 
 #[tokio::test]
+async fn unsupported_delivery_never_commits_or_launches_but_retries_keep_original_plan() {
+    let mut sync = request();
+    fixture::rewrite_ref(&mut sync, |event| {
+        event.reply = cmaeg_core::seal::ReplyAddress::Sync {
+            waiter: "ephemeral-waiter".into(),
+        };
+    });
+    let setup = Setup::new(&sync, true).await;
+    assert!(matches!(
+        setup.launch(sync, b"wire", true).await,
+        LaunchOutcome::Refused(Problem { status: 422, .. })
+    ));
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+
+    let first = admitted(setup.launch(request(), b"wire", true).await);
+    let writes = setup.server.memory.writes.load(Ordering::SeqCst);
+    let mut changed = request();
+    Arc::get_mut(&mut changed.channel)
+        .unwrap()
+        .definition
+        .routing
+        .as_mut()
+        .unwrap()
+        .consumers[0]
+        .reply
+        .destination = cmaeg_core::channel::ReplyChoice::Default;
+    assert_eq!(admitted(setup.launch(changed, b"wire", true).await), first);
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn pausing_admission_keeps_committed_retries_and_refuses_new_work_before_writes() {
     let mut setup = Setup::new(&request(), true).await;
     let first = admitted(setup.launch(request(), b"wire", true).await);

@@ -95,7 +95,8 @@ fn native_source_credentials_and_gate_preserve_legacy_bytes() {
         .is_none());
 }
 fn native_update(definition: &cmaeg_core::channel::ChannelDefinition) -> serde_json::Value {
-    json!({"schema_version":1,"name":definition.name,"profile":definition.profile,"provider":{"slug":definition.provider.slug},"sources":definition.sources,"partition":definition.partition,"reply":definition.reply,"expected_version":1})
+    let consumer = definition.consumer(None).unwrap();
+    json!({"schema_version":1,"name":definition.name,"profile":consumer.profile,"provider":{"slug":consumer.provider.slug},"sources":definition.sources,"partition":definition.partition,"reply":definition.reply,"expected_version":1})
 }
 
 #[tokio::test]

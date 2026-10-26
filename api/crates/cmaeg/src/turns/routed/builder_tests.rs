@@ -128,6 +128,40 @@ async fn existing_conversation_is_reused_and_frozen_targets_do_not_prepare_again
 }
 
 #[tokio::test]
+async fn default_address_is_pinned_before_provider_conversation_preparation() {
+    let setup = Setup::with_request(
+        supported(),
+        fixture::request(
+            |value| {
+                fixture::targets(value);
+                value["routing"]["consumers"][0]["reply"] =
+                    serde_json::json!({"destination":"default"});
+                value["routing"]["default_reply"] = serde_json::json!({
+                    "type":"telegram_chat","source_id":"telegram",
+                    "chat_id":"-200","thread_id":"7"
+                });
+            },
+            fixture::message("hello"),
+        ),
+    )
+    .await;
+    let http = HttpServer::start().await;
+    let builder = builder(&http);
+    let body = prepare(&setup, &builder, setup.target()).await.unwrap();
+    assert!(matches!(body.delivery.default_destination,
+        Some(DefaultDestination::Telegram { chat_id, thread_id, .. })
+        if chat_id == "-200" && thread_id.as_deref() == Some("7")));
+    let mut current = (**setup.current.channel.lock().unwrap()).clone();
+    current.definition.routing.as_mut().unwrap().default_reply = None;
+    assert!(builder
+        .prepare(&setup.plan, setup.target(), &current)
+        .await
+        .is_err());
+    assert_eq!(http.seen().len(), 1);
+    assert_eq!(http.seen()[0].method, "PUT");
+}
+
+#[tokio::test]
 async fn rich_media_reuses_real_preparation_and_keeps_locators_out_of_input() {
     let mut activity = fixture::message("review the attached notes");
     if let ActivityKind::Message {

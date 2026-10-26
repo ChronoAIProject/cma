@@ -5,10 +5,10 @@ mod complete_tests;
 pub mod custom;
 mod default_reply;
 pub mod destination;
-pub mod durable;
 mod discord;
 #[cfg(test)]
 mod discord_tests;
+pub mod durable;
 mod edit;
 pub mod engine;
 mod event;

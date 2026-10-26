@@ -8,7 +8,7 @@ use super::{
 };
 use crate::turns::{
     observer::{ActivityObserver, LaunchClass},
-    routed::scheduler::ScheduleHandle,
+    routed::{scheduler::ScheduleHandle, validate_routed_delivery},
 };
 use cmaeg_core::{
     activity::ActivityKind,
@@ -119,6 +119,13 @@ impl RoutedIngress {
                         "routed_provider_replay_unavailable",
                     ));
                 }
+                validate_routed_delivery(&request.channel, &plan).map_err(|_| {
+                    Problem::new(
+                        ProblemCode::AdmissionRefused,
+                        422,
+                        "routed_delivery_unsupported",
+                    )
+                })?;
                 let candidate =
                     Candidate::prepare(request, &plan, &source.body, &self.keys, (self.clock)())
                         .map_err(admission_problem)?;
