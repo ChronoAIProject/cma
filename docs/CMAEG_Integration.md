@@ -30,6 +30,15 @@ bridge remains at `/api/event-gateway`. External REST and MCP clients use bearer
 or channel credentials directly; the browser-cookie bridge is not a general API
 proxy. The public OpenAPI document advertises the full canonical `/v1` base.
 
+Owner-authorized Channel Activity uses `GET /v1/channels/{channel_id}/activity`
+and its `/stream` SSE companion. The browser bridge allows those exact read
+routes and forwards SSE immediately, including `Last-Event-ID` on reconnect.
+It never buffers the feed until completion. It checks the retained browser
+credential before releasing each chunk, strips cookies and identity headers,
+and bounds each connection by the existing 125-second transport lifetime.
+Clients reconnect and atomically apply the server's latest activity snapshot;
+no periodic history polling is needed.
+
 Existing `https://bot-gateway.chrono-ai.fun` API, webhook and setup URLs continue
 to work. Keep retained callback URLs and signatures unchanged during migration;
 an installed Telegram webhook on the old host is preserved. Newly generated

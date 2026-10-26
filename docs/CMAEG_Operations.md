@@ -33,9 +33,11 @@ channel ownership and credential-specific gateway checks remain authoritative.
 The canonical `cma-event-gateway` deployment retains the Console and inbound
 media behavior from live source `976e877379038cec7c76ab185f5b99d2f099dba1`.
 Console OAuth continues to use `client_secret_post`, its own session cookie,
-owner checks and CSRF forms. The shared web portal uses the independent
-Event Gateway OAuth client and Mongo-backed browser session; a Console cookie
-does not authorize the portal API. Media remains enabled with the 2 GiB
+owner checks and CSRF forms. The shared web portal uses the existing Agent
+Manager browser login through its credential-custody bridge; a Console cookie
+does not authorize the portal API. Channel Activity's exact read routes also
+use that bridge, with immediate SSE forwarding and fresh authentication on
+reconnect. Media remains enabled with the 2 GiB
 memory request/limit and 32 MiB media volume. The empty speech-to-text URL and
 FFmpeg directory keep transcription and transformation disabled, as in the
 live configuration.

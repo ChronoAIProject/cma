@@ -13,6 +13,7 @@ use axum::{
 use std::{sync::Arc, time::Duration};
 
 mod credentials;
+mod streaming;
 #[cfg(test)]
 mod tests;
 
@@ -77,6 +78,12 @@ fn allowed(method: &Method, path: &str) -> bool {
             matches!(*method, Method::GET | Method::PUT | Method::DELETE)
         }
         ["", "v1", "channels", value, "test"] if id(value) => method == Method::POST,
+        ["", "v1", "channels", value, "activity"]
+        | ["", "v1", "channels", value, "activity", "stream"]
+            if id(value) =>
+        {
+            method == Method::GET
+        }
         ["", "v1", "channel-records", value] if id(value) => method == Method::GET,
         _ => false,
     }
@@ -98,6 +105,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
     if !allowed(request.method(), path) {
         return Err(StatusCode::NOT_FOUND);
     }
+    let activity_stream = path.ends_with("/activity/stream");
     let mutation = request.method() != Method::GET;
     if mutation
         && (request.headers().get_all(header::ORIGIN).iter().count() != 1
@@ -140,6 +148,18 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
             outgoing = outgoing.header(name, value);
         }
     }
+    if activity_stream {
+        let cursor = header::HeaderName::from_static("last-event-id");
+        if request.headers().get_all(&cursor).iter().count() > 1 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if let Some(value) = request.headers().get(&cursor) {
+            if value.len() > 1024 || value.to_str().is_err() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            outgoing = outgoing.header(cursor, value);
+        }
+    }
     let body = to_bytes(request.into_body(), BODY_LIMIT)
         .await
         .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
@@ -166,6 +186,9 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         if let Some(value) = upstream.headers().get(&name) {
             headers.insert(name, value.clone());
         }
+    }
+    if activity_stream && status == StatusCode::OK {
+        return streaming::response(upstream, headers, portal.auth.clone(), custody).await;
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = upstream
