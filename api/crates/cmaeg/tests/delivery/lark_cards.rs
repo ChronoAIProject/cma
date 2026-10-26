@@ -34,6 +34,12 @@ struct Setup {
 }
 impl Setup {
     async fn new(platform: Platform) -> Self {
+        Self::with_activity(platform, |_| {}).await
+    }
+    async fn with_activity(
+        platform: Platform,
+        adjust: impl FnOnce(&mut cmaeg_core::activity::Activity),
+    ) -> Self {
         let provider = FakeProvider::start(Default::default()).await;
         let backend = FakeCma::start(false).await;
         let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http",
@@ -63,6 +69,7 @@ impl Setup {
         activity.actor.id = "ou_sender".into();
         activity.conversation.id = "oc_chat".into();
         activity.conversation.thread_id = None;
+        adjust(&mut activity);
         let mut address = relay_reply();
         let ReplyAddress::NyxidRelay {
             platform: current, ..
@@ -111,6 +118,67 @@ impl Setup {
         )
     }
 }
+
+#[tokio::test]
+async fn native_gate_keeps_legacy_lark_text_for_threaded_and_nonhuman_events() {
+    for platform in [Platform::Lark, Platform::Feishu] {
+        for case in 0..3 {
+            let mut setup = Setup::with_activity(platform, |activity| {
+                if case != 0 {
+                    activity.conversation.thread_id = Some("thread-1".into());
+                } else {
+                    activity.actor.kind = cmaeg_core::activity::ActorKind::Bot;
+                }
+            })
+            .await;
+            if case == 2 {
+                let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut setup.event.reply else {
+                    panic!()
+                };
+                *thread_reply = true;
+            }
+            let mut legacy = setup.recording(false, false);
+            let before = legacy
+                .reply(&setup.channel, &setup.event, choice(), ReplySource::Tool)
+                .await;
+            assert!(matches!(before.delivery, DeliveryOutcome::Confirmed { .. }));
+            let expected = legacy.http.sent()[0].json();
+            legacy.finish().await;
+            let mut enabled = setup.recording(true, false);
+            let after = enabled
+                .reply(&setup.channel, &setup.event, choice(), ReplySource::Tool)
+                .await;
+            assert!(matches!(after.delivery, DeliveryOutcome::Confirmed { .. }));
+            assert_eq!(enabled.http.sent().len(), 1);
+            assert_eq!(enabled.http.sent()[0].json(), expected);
+            assert!(setup.backend.records().is_empty());
+            enabled.finish().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn invalid_or_unavailable_native_context_never_falls_back_or_writes_a_card() {
+    for unavailable in [false, true] {
+        let mut setup = Setup::new(Platform::Lark).await;
+        if unavailable {
+            setup.event.event_id = "missing-context".parse().unwrap();
+        } else {
+            setup.event.activity_sha256 = Some("0".repeat(64));
+        }
+        let mut recording = setup.recording(true, false);
+        let result = recording
+            .reply(&setup.channel, &setup.event, choice(), ReplySource::Tool)
+            .await;
+        assert!(!matches!(
+            result.delivery,
+            DeliveryOutcome::Confirmed { .. }
+        ));
+        assert!(recording.http.sent().is_empty());
+        assert!(setup.backend.records().is_empty());
+        recording.finish().await;
+    }
+}
 fn choice() -> Value {
     json!({"text":"Approve?","blocks":[{"type":"buttons","id":"decision","options":[{"id":"yes","label":"Yes"}]}]})
 }
@@ -151,6 +219,16 @@ async fn gated_lark_and_feishu_cards_send_native_metadata_and_edit_after_issuanc
         assert!(body["reply"]["text"].is_null());
         assert_eq!(body["reply"]["metadata"]["card"]["schema"], "2.0");
         assert!(body["reply"]["metadata"].get("reply_markup").is_none());
+        assert_eq!(
+            setup
+                .provider
+                .log()
+                .iter()
+                .filter(|request| request.method == "GET")
+                .count(),
+            1,
+            "native preflight and preparation must share one context read"
+        );
         let mut click = setup.activity.clone();
         click.event_id = "click-1".parse().unwrap();
         setup

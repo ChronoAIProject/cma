@@ -2200,8 +2200,7 @@ existing numbered-text replies and does not alter Telegram cards. Enable it only
 after every gateway reader supports the optional `lark` identity in sealed
 interaction records and the deployed NyxID relay accepts `metadata.card` for
 sends/edits and authenticated `card.action.trigger` callbacks. The upstream
-adapter contract is present in production NyxID `d102570afaab`; the same source
-blobs are present in fetched main `2ab239cecbda8`. Source compatibility does not
+adapter contract is present in pinned NyxID main `2ab239cecbda8`. Source compatibility does not
 prove a real bot's event subscription, scopes or actual platform rendering.
 
 Before activation, use an explicitly authorized test chat to verify a choice,
@@ -2220,8 +2219,12 @@ those controls. Existing Telegram record bytes and callback IDs are unchanged.
 
 Cards are limited to 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
-cannot combine native media or a native thread reply. Thread contexts are refused because the existing callback contract does not retain
-thread evidence. Named consumers require the separate consumer-interaction gate
+cannot combine native media or a native thread reply. Structured replies in
+threaded or nonhuman contexts keep their existing text rendering because the
+callback contract does not retain the required audience. The same text behavior
+is retained for named consumers while their interaction gate is off. This choice
+is made before any durable card write or platform send; invalid context proofs
+and failures during a native send never trigger a second text send. Named consumers require the separate consumer-interaction gate
 and retain their original provider binding and conversation. Native forms are not
 advertised; their fields stay plain text. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
@@ -2312,7 +2315,12 @@ No reader, platform or destination authority is weakened by disabling issuance.
 Keep `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=false` until every gateway reader is
 upgraded. A source must have `verify_raw_event:true`; trusted normalized messages
 cannot issue these controls. Existing text, templates, other platforms and
-unrelated WhatsApp buttons keep their previous behavior. Only private, unthreaded
+unrelated WhatsApp buttons keep their previous behavior. Structured replies on
+trusted-normalized sources, or for named consumers while their interaction gate
+is off, retain their existing numbered-text rendering without a provider context
+lookup. Other valid contexts that cannot host native controls also keep the text
+path. Invalid context proofs and native-send failures never fall back or resend.
+Only private, unthreaded
 events qualify; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Cloud API does not identify a human versus
 an automated account; CMA binds a choice to the exact authenticated numeric
 sender and private destination without inventing a human classification.
