@@ -5,6 +5,7 @@
 //! otherwise it retains Unknown. Platform delivery remains a separate effect.
 mod adapter;
 mod body;
+mod builder;
 mod dispatcher;
 mod journal;
 mod model;
@@ -12,6 +13,7 @@ pub mod scheduler;
 mod storage;
 
 pub use adapter::{FrozenTurnBuilder, HttpExecutionPort, ReattachError, ReattachedResponse};
+pub use builder::ProductionFrozenTurnBuilder;
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
 pub use journal::Journal;
 pub use model::{
@@ -30,3 +32,8 @@ mod scheduler_tests;
 mod test_support;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod builder_test_media;
+#[cfg(test)]
+mod builder_tests;

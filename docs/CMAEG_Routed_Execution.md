@@ -3,9 +3,9 @@
 This is a disabled execution foundation, following
 `docs/CMAEG_Routed_Admission.md`. It does not connect ordinary ingress to routing,
 install a scheduler, configure a provider capability, or activate production
-fan-out. The concrete HTTP execution adapter is implemented, but an injected
-prepare-only builder, a scheduler and a durable platform delivery journal remain
-required before activation. Existing ingress and default launch behavior are
+fan-out. The concrete HTTP execution adapter and production preparation
+builder are implemented; a scheduler and a durable platform delivery journal
+remain required before activation. Existing ingress and default launch behavior are
 unchanged.
 
 `Dispatcher::dispatch` accepts an original event identity and one target ID. It
@@ -88,8 +88,9 @@ transport. Its `dispatcher()` factory shares the exact plan store, execution
 journal and fresh authority resolver used by `reattach()`. `FrozenTurnBuilder`
 is an injected preparation boundary; it must render and resolve input without
 starting a provider turn. It is called only for a pending target, before the
-journal commits the frozen body. No production builder or ingress installation
-is included in this slice.
+journal commits the frozen body. `ProductionFrozenTurnBuilder` implements this
+boundary with the same preparation/rendering helpers used by `TurnRunner`.
+No ingress installation is included in this slice.
 
 Submission sends `FrozenTurn::provider_body()` bytes directly through the
 existing bounded provider transport, with the current credential supplied
@@ -130,8 +131,8 @@ restart with GET-only recovery, absent versus zero cursor, uncertain responses,
 cancelled acceptance, malformed acceptance, revoked authority between GETs,
 lease expiry during snapshot, and foreign target/native Agent substitution.
 They complement the record/CAS tests and provider recovery protocol fixtures.
-Before activation, the preparation adapter, fenced delivery worker, scheduler,
-per-platform receipts and replay behavior need integration evidence. Rollout
+Before activation, the fenced delivery worker, scheduler, per-platform receipts
+and complete replay behavior need integration evidence. Rollout
 must select only explicitly enabled channels; existing channels retain their
 current execution path while the new path is verified.
 
@@ -164,3 +165,50 @@ drains running tasks for the configured budget (600 seconds by default). A
 forced abort is counted and leaves the durable effect journal authoritative.
 The new scheduler does not alter production ingress or start workers until its
 bootstrap and concrete replay/delivery executor are integrated and enabled.
+
+## Production preparation and composition seam
+
+Construct `ProductionFrozenTurnBuilder::new(providers, keys)` and configure it
+with the same `with_media(media, prepare_config)` and
+`with_media_tool_providers(tool_providers)` values as the live runner. Inject it
+into `HttpExecutionPort`; the builder is not itself a launcher. It verifies the
+exact stored target, current owner/source/consumer/provider and explicit replay
+support before external preparation. The target's conversation, binding,
+idempotency key and consumer are never recomputed from current routing. A new
+sealed reference retains the admitted reference's payload, expiry and lineage,
+including the secondary-target synchronous-waiter restriction. Partition
+metadata comes from the admitted partition even if current channel partition
+settings have changed.
+
+The only provider preparation effect is one directly awaited idempotent
+`ensure_conversation` PUT. CMA's current API returns an existing binding
+conversation without replacing its Agent and uses a durable CAS create for a
+missing conversation. Source-user affinity is acknowledged without allocating
+an Agent. Preparation never probes with or submits a Responses POST and never
+creates a detached provider task. Failure/cancellation therefore cannot start a
+turn. An uncertain PUT may have created its durable conversation; a subsequent
+pending preparation safely uses the same get-or-create identity.
+
+Input rendering and media preparation are shared with the existing runner.
+Plain text, addressed messages, reply context, custom templates and bounded
+attachment blocks keep the same semantics. Eager transcripts/excerpts use the
+existing media service; pending results, failures and background cache warm-up
+retain that service's existing bounds and behavior. Provider tool instructions
+are advertised only to the same eligible profile bindings as before. The
+rendered nonce, attachment text, metadata and full EventRef are then frozen by
+the journal. Accepted/prepared retries use that stored body and never repeat
+rendering or conversation preparation. Credentials remain separate.
+
+Preparation is bounded by 20 seconds and the original event/retention expiry;
+media work also obeys its configured preparation budget. After the frozen body
+is authenticated, the dispatcher renews its still-owned lease before committing
+`Starting`, leaving the full lease interval for bounded POST acceptance. A
+failed renewal prevents the POST. Current authority and event expiry are checked
+again at the start boundary.
+
+The next composition seam is a bounded scheduler that loads committed target
+IDs, calls `HttpExecutionPort::dispatcher`, and hands accepted leases to a
+fenced replay/delivery worker. The worker must settle durable downstream
+receipts before journal acknowledgement. Existing `TurnRunner` launch,
+sequencing, acceptance, retries and delivery are not rerouted by the builder;
+its extraction only shares preparation and rendering functions.
