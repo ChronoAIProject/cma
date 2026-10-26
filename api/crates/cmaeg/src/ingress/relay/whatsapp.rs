@@ -1,6 +1,6 @@
 //! Opt-in WhatsApp Cloud API observer. NyxID relays each raw message separately.
 use super::{
-    facts::{Observation, RelayFacts},
+    facts::{CallbackFacts, Observation, RelayFacts},
     payload::{identifier, CallbackPayload},
     verified_media::{self, numeric_id, Identity},
     VerificationError,
@@ -99,9 +99,10 @@ pub(super) fn observe(
         }
         Vec::new()
     };
+    let callback = callback(raw, payload, message_id, parent)?;
     Ok(Observation::Message(RelayFacts {
         thread: None,
-        callback: None,
+        callback,
         event: None,
         conversation: ConversationKind::Private,
         thread_id: None,
@@ -116,7 +117,49 @@ pub(super) fn observe(
     }))
 }
 
-/// Match NyxID's normalization; controls are content, never CMA action authority.
+/// Only our issued locators become candidates for durable authorization. Foreign
+/// controls remain ordinary text; callback titles never supply action values.
+fn callback(
+    raw: &Value,
+    payload: &CallbackPayload,
+    message_id: &str,
+    parent: Option<&str>,
+) -> Result<Option<CallbackFacts>, VerificationError> {
+    if raw["type"] != "interactive" {
+        return Ok(None);
+    }
+    let interactive = &raw["interactive"];
+    let selection = interactive
+        .get("button_reply")
+        .or_else(|| interactive.get("list_reply"));
+    let Some(data) = selection
+        .and_then(|value| value["id"].as_str())
+        .filter(|s| s.starts_with("cw1b:") || s.starts_with("cw1l:"))
+    else {
+        return Ok(None);
+    };
+    let expected = if data.starts_with("cw1b:") {
+        "button_reply"
+    } else {
+        "list_reply"
+    };
+    if data.len() > 64
+        || interactive["type"] != expected
+        || interactive.get(expected).is_none()
+        || (interactive.get("button_reply").is_some() && interactive.get("list_reply").is_some())
+        || payload.thread_id.is_some()
+    {
+        return Err(INVALID);
+    }
+    let parent = parent.filter(|id| identifier(id)).ok_or(INVALID)?;
+    Ok(Some(CallbackFacts {
+        id: message_id.into(),
+        data: data.into(),
+        message_id: parent.into(),
+    }))
+}
+
+/// Match NyxID's text normalization, independently of callback authority.
 fn text(message: &Value, kind: &str) -> Option<String> {
     let value = &message[kind];
     match kind {

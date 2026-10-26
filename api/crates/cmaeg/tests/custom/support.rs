@@ -120,6 +120,7 @@ impl App {
         .with_media_enabled(media_enabled);
         let tools = ToolsState {
             whatsapp_templates_enabled: false,
+            whatsapp_interactions_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             lark_cards_enabled: false,

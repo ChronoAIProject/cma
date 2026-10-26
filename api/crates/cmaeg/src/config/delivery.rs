@@ -4,6 +4,7 @@ pub const CMAEG_NYXID_REPLY_TIMEOUT_MS: &str = "CMAEG_NYXID_REPLY_TIMEOUT_MS";
 pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
 pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
 pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
+pub const CMAEG_WHATSAPP_INTERACTIONS_ENABLED: &str = "CMAEG_WHATSAPP_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
 pub const CMAEG_ACK_TEXT: &str = "CMAEG_ACK_TEXT";
@@ -47,6 +48,19 @@ pub(crate) fn nyxid_native_media_from_env() -> Result<bool, ConfigError> {
 
 pub(crate) fn relay_text_edits_from_env() -> Result<bool, ConfigError> {
     relay_text_edits(env::var(CMAEG_RELAY_TEXT_EDITS_ENABLED))
+}
+
+pub(crate) fn whatsapp_interactions_from_env() -> Result<bool, ConfigError> {
+    whatsapp_interactions(env::var(CMAEG_WHATSAPP_INTERACTIONS_ENABLED))
+}
+fn whatsapp_interactions(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
+    match value.as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(env::VarError::NotPresent) => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_WHATSAPP_INTERACTIONS_ENABLED} must be true or false"),
+        }),
+    }
 }
 
 pub(crate) fn whatsapp_templates_from_env() -> Result<bool, ConfigError> {
@@ -118,6 +132,16 @@ fn text(name: &'static str, default: String) -> Result<String, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whatsapp_interactions_require_explicit_reader_rollout() {
+        assert!(!whatsapp_interactions(Err(env::VarError::NotPresent)).unwrap());
+        assert!(!whatsapp_interactions(Ok("false".into())).unwrap());
+        assert!(whatsapp_interactions(Ok("true".into())).unwrap());
+        for value in ["", "TRUE", "1", " true "] {
+            assert!(whatsapp_interactions(Ok(value.into())).is_err());
+        }
+    }
 
     #[test]
     fn templates_require_explicit_relay_attestation() {

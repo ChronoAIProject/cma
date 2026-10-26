@@ -94,6 +94,9 @@ impl App {
         let fixture = Fixture::on(
             platform,
             |value| {
+                if platform == "whatsapp" {
+                    value["sources"][0]["verify_raw_event"] = true.into();
+                }
                 value["secrets"]["agent_key_hash"] =
                     format!("sha256:{:x}", Sha256::digest(key.as_bytes())).into();
                 value["secrets"]["provider_credential"] = key.clone().into();
@@ -105,6 +108,11 @@ impl App {
         )
         .await;
         let mut envelope = Envelope::on(platform);
+        if platform == "whatsapp" {
+            envelope.payload["conversation"]["platform_id"] = "7".into();
+            envelope.payload["raw_platform_data"] =
+                json!({"id":"wamid.initial","from":"7","type":"text","text":{"body":"hello"}});
+        }
         if !private {
             envelope.group();
         }
@@ -203,6 +211,7 @@ impl App {
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
             whatsapp_templates_enabled: false,
+            whatsapp_interactions_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             lark_cards_enabled: false,

@@ -110,6 +110,7 @@ pub struct RelayClient {
     text_edits: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
+    whatsapp_interactions: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -119,6 +120,15 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Gate new WhatsApp controls until all readers support durable callbacks.
+    pub fn with_whatsapp_interactions(mut self, enabled: bool) -> Self {
+        self.whatsapp_interactions = enabled;
+        self
+    }
+    pub(super) fn whatsapp_interactions_enabled(&self) -> bool {
+        self.whatsapp_interactions
+    }
+
     /// Enable only after the deployed relay preserves approved template metadata.
     pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
         self.whatsapp_templates = enabled;
@@ -197,6 +207,7 @@ impl RelayClient {
             text_edits: false,
             lark_cards: false,
             whatsapp_templates: false,
+            whatsapp_interactions: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })
