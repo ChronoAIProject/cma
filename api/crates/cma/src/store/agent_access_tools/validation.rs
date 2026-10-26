@@ -20,7 +20,8 @@ pub(super) fn scope(snapshot: &AgentProvenanceSnapshot, runtime: &RuntimeHandle)
                 agent.work.step,
                 AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
             ));
-    if !agent.status.is_live()
+    if !sandbox.credential.source.is_managed()
+        || !agent.status.is_live()
         || agent.requested_stop_reason.is_some()
         || agent.stopped_at.is_some()
         || agent.deleted_at.is_some()
