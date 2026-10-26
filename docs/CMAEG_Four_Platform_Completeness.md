@@ -1,8 +1,7 @@
 # Four-platform messaging status
 
-Reviewed 2026-10-27 against the integrated CMA source through `d98a74cb9`.
-The native Discord self-service, edit, verified-thread and message-effect paths
-below are integrated. Native controls are still pending integration and evidence.
+Reviewed 2026-10-27 against the integrated CMA source, including native Discord
+self-service, edits, verified threads, message effects and component controls.
 This document replaces the historical transport-only descriptions; it does not
 claim complete four-platform support or that every implemented feature is live.
 
@@ -23,7 +22,7 @@ external platform send is authorized by this review.
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits through sealed exact-message references; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
-| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Native buttons/selects and verified callbacks are pending integration. Relay controls remain blocked by the pinned upstream contract |
+| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
 Native Discord thread creation, archive/reopen, join/follow, listing and history
@@ -53,6 +52,15 @@ manually adding each new native source to a canary list, and it does not broaden
 ordinary HTTP/custom ingress selection. Partial index reads cannot revoke a
 worker by treating an unseen record as absent.
 
+Native component callbacks retain one original consumer, provider binding,
+conversation and partition. Opaque control IDs resolve options from the saved
+card; callback-provided business values cannot change that authority. A sanitized
+durable inbox and Activity receipt precede one type-6 acknowledgement attempt
+within 2.5 seconds of the interaction's creation time. Uncertain acknowledgements
+are not retried. Exact consumed callbacks can recover their inbox after that
+deadline; new late clicks cannot consume a card. Controls in threads, multi-select,
+controls with native media and interactive card edits are not implemented.
+
 Native receipt is persisted and observed before provider execution. Immutable
 inbox snapshots preserve routing and receipt time across replay. Verified thread
 metadata comes from exact authenticated `GET /channels/{channel_id}`, with bounded
@@ -75,7 +83,7 @@ Source anchors: `discord/lifecycle.rs`, `source_discovery.rs`, `journal.rs`,
 
 The checked-in `infra/cmaeg/configmap.yaml` enables outbound-message authoring,
 raw relay verification, thread-contract authoring and inbound media. It leaves
-native Discord authoring/runtime/discovery, thread metadata, edits and effects
+native Discord authoring/runtime/discovery, thread metadata, edits, effects and controls
 disabled. Routed recovery/admission, multi-consumer and dynamic-source authoring
 are also disabled and the explicit record lists are empty. Relay native uploads,
 complete-reply attestation, relay text edits, Lark cards, WhatsApp
@@ -98,7 +106,9 @@ Activation therefore needs an explicit rollout decision:
 4. Verify each enabled feature against a specifically authorized test source and
    the actual provider contract. Local fixtures and code flags are not permission
    to send messages to external recipients. No external sends are authorized in
-   the current work; native controls remain pending rather than assumed ready.
+   the current work. Native control issuance separately requires
+   `CMAEG_DISCORD_INTERACTIONS_ENABLED`; named-consumer controls also require
+   `CMAEG_CONSUMER_INTERACTIONS_ENABLED`.
 
 Exact settings and contracts are maintained in [Operations](CMAEG_Operations.md)
 and the [protocol](CMAEG_Protocol.md).
@@ -128,7 +138,9 @@ uncertain writes. Native ordinary and verified-thread fixtures execute the real
 routed pipeline through a local provider HTTP server and Discord REST server;
 repeated inbox scans and a lost acknowledgement produce one provider POST and
 one reply. These are local adapter/contract results, not connected-platform tests.
-Controls drafts have no integrated acceptance evidence in this snapshot.
+The controls loopback fixture exercises a real provider POST and a reply to the
+original card: one acknowledgement, one provider turn and one reply, with Activity
+visible first and the interaction token absent from retained/provider bytes.
 
 The latest deployed Activity sample, recorded in
 [Deployment readiness](CMA_Deployment_Readiness.md#live-channel-activity-and-flow-workspace-publication-from-pr-1122-2026-10-27),
@@ -141,8 +153,8 @@ completion in one API/SSE sample; it is not a percentile, authenticated producti
 browser measurement or Telegram/WhatsApp/Lark/Discord delivery result. Browser
 journeys were checked locally. No external platform messages were sent.
 
-Remaining acceptance is explicit: integrate and verify native Discord controls,
-then obtain authorization for controlled platform ingress, media, reply,
+Remaining acceptance is explicit: complete the combined release checks and
+controlled Custom Channel verification, then obtain authorization for platform ingress, media, reply,
 thread/edit/effect and callback tests under each actual bot's permissions. Record
 live gates and source/provider revisions separately from this source audit.
 Overall four-platform support remains incomplete until those gaps and external
