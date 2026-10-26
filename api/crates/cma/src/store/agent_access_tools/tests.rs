@@ -272,25 +272,22 @@ fn scope_revision_capabilities_require_managed_credentials_even_with_a_forged_ex
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_agent_access_tools_skip_issuer_owned_keys_without_enrolling_a_capability() {
-    let (client, database, store, state) = persisted().await;
-    let source =
-        MongoAgentAccessToolSource::new(store.clone(), "https://control.example.test", &key(9))
-            .unwrap();
-    let runtime = RuntimeHandle("access-runtime".into());
-    let open = request(&state);
-    let sandbox_id = state.resource.lineage.sandbox.id.clone();
-    let mut sandbox = store.get_sandbox(&sandbox_id).await.unwrap().unwrap();
+    let mut state = snapshot();
+    let sandbox = &mut state.resource.lineage.sandbox;
     sandbox.credential.source = SandboxCredentialSource::Provided {
         key_sha256: "a".repeat(64),
     };
     let current = sandbox.credential.current.as_mut().unwrap();
     current.provider_key_id = format!("provided-{}", "a".repeat(64));
     current.expires_at.clear();
-    sandbox.revision += 1;
-    store
-        .save_sandbox(sandbox.revision - 1, sandbox)
-        .await
-        .unwrap();
+    // Credential source is immutable after creation; persist its real initial
+    // authority rather than rewriting an existing managed sandbox.
+    let (client, database, store, state) = persist_snapshot(state).await;
+    let source =
+        MongoAgentAccessToolSource::new(store.clone(), "https://control.example.test", &key(9))
+            .unwrap();
+    let runtime = RuntimeHandle("access-runtime".into());
+    let open = request(&state);
     assert!(source.resolve(&runtime, &open, 1).await.unwrap().is_none());
     assert_eq!(
         store
@@ -309,6 +306,17 @@ pub(in crate::store) async fn persisted() -> (
     Arc<MongoSandboxStore>,
     AgentProvenanceSnapshot,
 ) {
+    persist_snapshot(snapshot()).await
+}
+
+async fn persist_snapshot(
+    state: AgentProvenanceSnapshot,
+) -> (
+    mongodb::Client,
+    String,
+    Arc<MongoSandboxStore>,
+    AgentProvenanceSnapshot,
+) {
     let client = mongodb::Client::with_uri_str(
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required"),
     )
@@ -316,7 +324,6 @@ pub(in crate::store) async fn persisted() -> (
     .unwrap();
     let database = format!("cma_access_tools_{}", uuid::Uuid::new_v4().simple());
     let store = Arc::new(MongoSandboxStore::open(&client, &database).await.unwrap());
-    let state = snapshot();
     store
         .create_sandbox(state.resource.lineage.sandbox.clone())
         .await
