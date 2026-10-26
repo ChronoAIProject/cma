@@ -178,7 +178,7 @@ impl RecoveryIdentity {
         validate_metadata(&self.metadata)
     }
 
-    fn snapshot(&self, response: Value) -> Result<RecoverySnapshot, ProviderError> {
+    pub(super) fn snapshot(&self, response: Value) -> Result<RecoverySnapshot, ProviderError> {
         if response["id"].as_str() != Some(self.response_id.as_str())
             || response["object"] != "response"
             || !matches!(
@@ -249,7 +249,9 @@ async fn bounded_body(
     Ok(bytes)
 }
 
-async fn checked(response: reqwest::Response) -> Result<reqwest::Response, ProviderError> {
+pub(super) async fn checked(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, ProviderError> {
     let status = response.status();
     if status == reqwest::StatusCode::OK {
         return Ok(response);

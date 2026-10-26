@@ -150,29 +150,7 @@ impl Dispatcher {
         plan: &AdmittedPlan,
         target: &StoredTarget,
     ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
-        let current = self.authority.current(&plan.identity).await?;
-        let consumer = current
-            .definition
-            .consumer(Some(&target.launch.consumer))
-            .ok_or(ExecutionError::AuthorityChanged)?;
-        if current.id != plan.identity.channel_id
-            || current.pointer.record_id != plan.identity.record_id
-            || current.definition.record_id != plan.identity.record_id
-            || current.definition.owner.subject != plan.identity.owner
-            || current.definition.routing.is_none()
-            || current.definition.source_of(&plan.activity.source) != Some(&plan.source)
-            || current
-                .definition
-                .creation
-                .as_ref()
-                .is_some_and(|creation| !creation.ready)
-            || consumer.pending
-            || consumer.credential.is_none()
-            || consumer.provider != &target.launch.provider
-        {
-            return Err(ExecutionError::AuthorityChanged);
-        }
-        Ok(current)
+        current_target(self.authority.as_ref(), plan, target).await
     }
     async fn run(
         &self,
@@ -304,11 +282,41 @@ fn validate_delivery(
     }
     Ok(())
 }
-fn admission_error(error: AdmissionError) -> ExecutionError {
+pub(super) fn admission_error(error: AdmissionError) -> ExecutionError {
     match error {
         AdmissionError::Expired => ExecutionError::Expired,
         AdmissionError::Unavailable => ExecutionError::Unavailable,
         AdmissionError::Uncertain => ExecutionError::Uncertain,
         _ => ExecutionError::Corrupt,
     }
+}
+
+pub(super) async fn current_target(
+    authority: &dyn Authority,
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+) -> Result<Arc<ResolvedChannel>, ExecutionError> {
+    let current = authority.current(&plan.identity).await?;
+    let consumer = current
+        .definition
+        .consumer(Some(&target.launch.consumer))
+        .ok_or(ExecutionError::AuthorityChanged)?;
+    if current.id != plan.identity.channel_id
+        || current.pointer.record_id != plan.identity.record_id
+        || current.definition.record_id != plan.identity.record_id
+        || current.definition.owner.subject != plan.identity.owner
+        || current.definition.routing.is_none()
+        || current.definition.source_of(&plan.activity.source) != Some(&plan.source)
+        || current
+            .definition
+            .creation
+            .as_ref()
+            .is_some_and(|creation| !creation.ready)
+        || consumer.pending
+        || consumer.credential.is_none()
+        || consumer.provider != &target.launch.provider
+    {
+        return Err(ExecutionError::AuthorityChanged);
+    }
+    Ok(current)
 }

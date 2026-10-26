@@ -51,7 +51,9 @@ pub(super) async fn forward(
         });
         tokio::select! {
             _ = sender.closed() => return,
-            _ = tokio::time::sleep_until(deadline) => return,
+            // A wire timeout and this deadline can become ready together. Do
+            // not silently close an empty channel when the deadline wins.
+            _ = tokio::time::sleep_until(deadline) => { let _ = sender.try_send(Err(timeout_error())); return; },
             result = sender.send(event) => if result.is_err() { return; },
         }
         if terminal {

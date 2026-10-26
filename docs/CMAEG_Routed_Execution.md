@@ -3,7 +3,8 @@
 This is a disabled execution foundation, following
 `docs/CMAEG_Routed_Admission.md`. It does not connect ordinary ingress to routing,
 install a scheduler, configure a provider capability, or activate production
-fan-out. A concrete provider adapter and durable platform delivery journal remain
+fan-out. The concrete HTTP execution adapter is implemented, but an injected
+prepare-only builder, a scheduler and a durable platform delivery journal remain
 required before activation. Existing ingress and default launch behavior are
 unchanged.
 
@@ -79,3 +80,57 @@ credential rotation, corruption, authority changes, event expiry, unknown-start
 recovery, accepted replay, cursor fencing and synchronous waiter ownership.
 These tests do not replace a real database concurrency test or evidence for a
 concrete provider's idempotency and replay contract.
+
+## Concrete HTTP adapter and remaining activation work
+
+`HttpExecutionPort` composes the journal with the opt-in Responses v2 provider
+transport. Its `dispatcher()` factory shares the exact plan store, execution
+journal and fresh authority resolver used by `reattach()`. `FrozenTurnBuilder`
+is an injected preparation boundary; it must render and resolve input without
+starting a provider turn. It is called only for a pending target, before the
+journal commits the frozen body. No production builder or ingress installation
+is included in this slice.
+
+Submission sends `FrozenTurn::provider_body()` bytes directly through the
+existing bounded provider transport, with the current credential supplied
+separately. It does not call the legacy `start_turn`, spawn a background start,
+retry automatically or reconstruct a stored request. Provider concurrency is
+held through acceptance. The acceptance wait is limited to the configured
+request timeout or 20 seconds, whichever is smaller, and at most 1 MiB of wire
+input. A successful acceptance requires one exact response identity header and
+an SSE `response.created` event at numeric ID and sequence zero, with queued
+status and the frozen metadata. Invalid or absent proof remains `Unknown`.
+
+A local provider-slot refusal proves no request was sent. CMA v2's explicit
+`400 invalid_json` occurs before command admission and is a terminal refusal.
+Other HTTP results, including 409, 429 and 503, are conservatively unknown:
+CMA's submit handler can durably admit a command before stream authorization or
+snapshot opening fails. This adapter therefore keeps exact-body idempotency
+capability false. It will not repeat an uncertain POST.
+
+Reattachment reloads the committed plan, verifies the supplied opaque lease
+belongs to that precise target, and authenticates the stored body. It obtains
+the response ID and optional cursor only from the accepted journal record.
+It revalidates owner, source, consumer, provider and lease immediately before
+the snapshot GET, then checks them again with a freshly resolved credential
+before the replay GET. The snapshot must match the accepted response and frozen
+metadata. Its native CMA Agent ID is pinned for replay and checked against an
+optional already-known native Agent ID; it is not compared to the gateway's
+conversation alias. There is no POST in this recovery path.
+
+The adapter returns observations and never advances a cursor simply because it
+read an event. The later delivery worker must renew and guard its lease, enforce
+current delivery authority and original reply expiry, record platform effects
+and durable receipts, and acknowledge events only after those effects are
+settled. Snapshot/replay failures must remain observation failures and must not
+turn an accepted execution into a command failure or trigger a fresh start.
+
+The new local HTTP tests cover exact frozen bytes, credential rotation, a
+restart with GET-only recovery, absent versus zero cursor, uncertain responses,
+cancelled acceptance, malformed acceptance, revoked authority between GETs,
+lease expiry during snapshot, and foreign target/native Agent substitution.
+They complement the record/CAS tests and provider recovery protocol fixtures.
+Before activation, the preparation adapter, fenced delivery worker, scheduler,
+per-platform receipts and replay behavior need integration evidence. Rollout
+must select only explicitly enabled channels; existing channels retain their
+current execution path while the new path is verified.
