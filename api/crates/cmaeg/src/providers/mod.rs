@@ -5,6 +5,7 @@ mod client_types;
 mod context;
 mod management_auth;
 mod probe;
+mod recovery;
 mod registry;
 mod responses;
 mod sse;
@@ -18,8 +19,10 @@ pub use client_types::{
 };
 pub use context::EventContextSnapshot;
 pub use probe::AgentCardProbe;
+pub use recovery::{RecoveryEvent, RecoveryIdentity, RecoverySnapshot, RecoveryStream};
 pub use registry::{
     ProviderEntry, ProviderKind, ProviderPath, ProviderPaths, ProviderRegistry, ProviderUrlError,
+    RecoveryPaths,
 };
 pub use responses::{
     parse_event, response_id_from_frame, OutputItem, ResponseError, ResponseObject, ResponsesEvent,
