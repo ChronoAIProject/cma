@@ -194,8 +194,10 @@ impl App {
         )
         .unwrap();
         let tools = ToolsState {
+            whatsapp_templates_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,

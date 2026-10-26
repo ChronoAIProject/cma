@@ -30,7 +30,8 @@ pub(crate) fn launch_request(
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
         format!(
-            "telegram-callback:{:x}",
+            "{}-callback:{:x}",
+            platform.as_str(),
             Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
         )
     } else {

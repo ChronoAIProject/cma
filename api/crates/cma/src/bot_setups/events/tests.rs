@@ -184,6 +184,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let records = Arc::new(RecordClient::new(backend, "service-fixture").unwrap());
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
+        lark_cards_enabled: false,
         resolver: ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default()),
         keys,
         providers: Arc::new(
@@ -197,6 +198,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         public_origin: "https://gateway.example".into(),
         public_api_url: "https://gateway.example".into(),
         advertise_public_api_url: true,
+        whatsapp_templates_enabled: false,
         native_media_enabled: false,
         relay_text_edits_enabled: false,
         media: None,

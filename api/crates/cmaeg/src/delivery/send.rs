@@ -86,6 +86,21 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.whatsapp_template.is_some() {
+            if !self.relay.whatsapp_templates_enabled()
+                || message.validate().is_err()
+                || !matches!(
+                    event.reply,
+                    ReplyAddress::NyxidRelay {
+                        platform: Platform::Whatsapp,
+                        ..
+                    }
+                )
+            {
+                return (unsupported(), SendEffects::default());
+            }
+            return self.complete_reply(ctx, event, message, false).await;
+        }
         if !message.native_attachments.is_empty()
             && (!self.relay.native_media_enabled()
                 || !matches!(
@@ -128,8 +143,12 @@ impl Sender {
                 .await;
             return (result, SendEffects::default());
         };
-        // Native controls and their updates are proven only for Telegram; every
-        // other platform receives text through NyxID's generic relay reply.
+        if self.relay.lark_cards_enabled()
+            && crate::interactions::lark::supported(*platform)
+            && crate::interactions::lark::requested(message)
+        {
+            return self.interactive_reply(ctx, event, message).await;
+        }
         let interactive = *platform == Platform::Telegram && self.relay.interactions.is_some();
         if interactive && crate::interactions::has_controls(message) {
             return self.interactive_reply(ctx, event, message).await;
@@ -344,7 +363,22 @@ impl Sender {
         let mut effects = SendEffects {
             first_send_done: ctx.first_send_done,
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
+        let lark = matches!(event.reply, ReplyAddress::NyxidRelay { platform, .. }
+            if crate::interactions::lark::supported(platform));
+        let capabilities = if lark {
+            crate::interactions::lark::capabilities()
+        } else {
+            Capabilities::telegram()
+        };
+        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        if lark {
+            let Ok((_, report)) =
+                crate::interactions::lark::render(message, "00000000000000000000000000000000", 1)
+            else {
+                return (unsupported(), effects);
+            };
+            rendering = report;
+        }
         let rejected = |reason: &str| IntentReceipt {
             message_ref: None,
             rendering: rendering.clone(),
@@ -352,7 +386,7 @@ impl Sender {
                 reason: reason.into(),
             },
         };
-        if parts.len() != 1 {
+        if !lark && parts.len() != 1 {
             return (rejected("interactive_message_must_fit_one_part"), effects);
         }
         let Some(key) = ctx.channel.definition.secrets.channel_key.as_ref() else {
@@ -385,15 +419,20 @@ impl Sender {
             Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
         effects.first_send_done = true;
-        let (delivery, outbound) = self
-            .relay
-            .send_rich(
-                &event.reply,
-                Credential::ChannelKey(key),
-                &parts[0].text,
-                Some(&prepared.markup),
-            )
-            .await;
+        let (delivery, outbound) = if lark {
+            self.relay
+                .send_lark_card(&event.reply, key, &prepared.markup)
+                .await
+        } else {
+            self.relay
+                .send_rich(
+                    &event.reply,
+                    Credential::ChannelKey(key),
+                    &parts[0].text,
+                    Some(&prepared.markup),
+                )
+                .await
+        };
         let mut result = IntentReceipt {
             message_ref: None,
             rendering,

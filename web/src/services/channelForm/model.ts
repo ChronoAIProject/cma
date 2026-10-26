@@ -102,7 +102,14 @@ export function channelRequest(
   channel?: Channel,
   record?: string,
 ): Fields {
-  const patch = credentialsPatch(credentials, !channel);
+  if (!channel && draft.connection_ref !== undefined && !text(draft.connection_ref))
+    throw new Error('Choose a ready CMA-managed Telegram connection.');
+  const patch = credentialsPatch(
+    !channel && draft.connection_ref
+      ? without(credentials, ['channel_key', 'telegram_bot_token', 'telegram_webhook_secret'])
+      : credentials,
+    !channel,
+  );
   return {
     ...draft,
     ...(patch ? { credentials: patch } : {}),

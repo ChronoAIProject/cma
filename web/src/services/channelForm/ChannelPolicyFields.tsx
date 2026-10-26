@@ -1,3 +1,4 @@
+import { useRelayCapabilities } from '../RelayCapabilities';
 import { Button } from '../../ui/Button';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, NumberField, Section, StringList, TextField, Toggle } from './Fields';
@@ -13,10 +14,14 @@ const partitionKeys = [
 export function ChannelPolicyFields({
   value,
   onChange,
+  hideConnection = false,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
+  hideConnection?: boolean;
 }) {
+  const discovery = useRelayCapabilities();
+  const threadWritesDisabled = discovery.authoring?.thread_contract_writes_enabled === false;
   const partition = object(value.partition),
     reply = object(value.reply),
     sinks = records(reply.sinks),
@@ -32,23 +37,29 @@ export function ChannelPolicyFields({
           onChange={(v) => set('name', v)}
           required
         />
-        <TextField
-          label="Connection reference"
-          value={value.connection_ref}
-          onChange={(v) => set('connection_ref', v || undefined)}
-          hint="Existing NyxID connection reference. Leave unchanged to keep the current connection."
-        />
-        <Toggle
-          label="Override connection admission"
-          value={value.connection_admission != null}
-          onChange={(enabled) => set('connection_admission', enabled ? { type: 'all' } : undefined)}
-        />
-        {value.connection_admission != null ? (
-          <AdmissionFields
-            label="Connection admission"
-            value={value.connection_admission}
-            onChange={(v) => set('connection_admission', v)}
-          />
+        {!hideConnection ? (
+          <>
+            <TextField
+              label="Connection reference"
+              value={value.connection_ref}
+              onChange={(v) => set('connection_ref', v || undefined)}
+              hint="CMA-managed Telegram connection reference, not a NyxID route or bot ID. Leave unchanged to keep the current connection."
+            />
+            <Toggle
+              label="Override connection admission"
+              value={value.connection_admission != null}
+              onChange={(enabled) =>
+                set('connection_admission', enabled ? { type: 'all' } : undefined)
+              }
+            />
+            {value.connection_admission != null ? (
+              <AdmissionFields
+                label="Connection admission"
+                value={value.connection_admission}
+                onChange={(v) => set('connection_admission', v)}
+              />
+            ) : null}
+          </>
         ) : null}
       </Section>
       <Section title="Conversation grouping">
@@ -150,11 +161,15 @@ export function ChannelPolicyFields({
         <Toggle
           label="Enable verified thread following"
           value={reply.thread_contract != null}
+          disabled={threadWritesDisabled && reply.thread_contract == null}
           onChange={(enabled) =>
             setReply('thread_contract', enabled ? { version: 1, follow_chat_ids: [] } : undefined)
           }
         />
         <p className="channel-field-hint">
+          {threadWritesDisabled
+            ? 'New thread-following writes are disabled on this gateway. Existing settings are retained. '
+            : null}
           Available for a single verified Lark or Feishu producer with a bot ID.
         </p>
         {reply.thread_contract != null ? (

@@ -37,6 +37,7 @@ pub struct ManagementState {
     pub media_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
+    pub relay_raw_verification_writes_enabled: bool,
     /// Receives every record head management writes or deletes; a no-op
     /// unless the console is on.
     pub index: Arc<dyn super::observer::ChannelIndexObserver>,
@@ -58,6 +59,7 @@ impl ManagementState {
             thread_contract: self.thread_contract_writes_enabled,
             multi_consumer: self.multi_consumer_writes_enabled,
             dynamic_sources: self.dynamic_sources_writes_enabled,
+            relay_raw_verification: self.relay_raw_verification_writes_enabled,
         }
     }
 
@@ -120,6 +122,7 @@ impl ManagementState {
             media_enabled: false,
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
+            relay_raw_verification_writes_enabled: false,
             index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),

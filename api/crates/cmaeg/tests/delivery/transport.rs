@@ -117,6 +117,7 @@ async fn closed_receipt_skips_queued_tool_send_and_drain_deadline_cancels_slow_w
             channel: app.turn.channel.clone(),
             event: app.event.clone(),
             message: OutboundMessage {
+                whatsapp_template: None,
                 native_attachments: Vec::new(),
                 thread_reply: false,
                 text: Some("cancelled".into()),

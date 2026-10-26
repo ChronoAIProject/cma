@@ -16,6 +16,8 @@ pub mod fake_nyxid_reply;
 pub mod fake_provider;
 #[path = "delivery/integration.rs"]
 mod integration;
+#[path = "delivery/lark_cards.rs"]
+mod lark_cards;
 #[path = "delivery/multi_relay_cards.rs"]
 mod multi_relay_cards;
 #[path = "delivery/native_media.rs"]

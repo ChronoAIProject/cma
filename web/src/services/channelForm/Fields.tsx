@@ -95,7 +95,7 @@ export function Choice({
 }: {
   label: string;
   value: unknown;
-  options: readonly (string | { value: string; label: string })[];
+  options: readonly (string | { value: string; label: string; unavailable?: string })[];
   onChange: (v: string) => void;
 }) {
   const id = useId();
@@ -116,16 +116,19 @@ export function Toggle({
   label,
   value,
   onChange,
+  disabled,
 }: {
   label: string;
   value: unknown;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="channel-form-row">
       <input
         type="checkbox"
         checked={value === true}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
       {label}
