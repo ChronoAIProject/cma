@@ -171,7 +171,7 @@ impl RelayClient {
         self.native_media = enabled;
         self
     }
-    pub(super) fn native_media_enabled(&self) -> bool {
+    pub(crate) fn native_media_enabled(&self) -> bool {
         self.native_media
     }
     /// Select complete ordinary replies in the delivery engine. Enabling this

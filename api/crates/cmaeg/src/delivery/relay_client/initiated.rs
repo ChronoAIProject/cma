@@ -13,6 +13,11 @@ use cmaeg_core::{
 };
 use reqwest::StatusCode;
 
+pub(crate) struct PreparedInitiated {
+    body: Vec<u8>,
+    native_media: bool,
+}
+
 impl RelayClient {
     pub(crate) fn prepare_initiated(
         &self,
@@ -20,7 +25,7 @@ impl RelayClient {
         route_id: &str,
         key: &str,
         message: &OutboundMessage,
-    ) -> Result<(Vec<u8>, RenderingReport), Problem> {
+    ) -> Result<(PreparedInitiated, RenderingReport), Problem> {
         let invalid = |detail| Problem::new(ProblemCode::InvalidRequest, 400, detail);
         message
             .validate()
@@ -75,10 +80,20 @@ impl RelayClient {
         if body.len() > REQUEST_MAX_BYTES {
             return Err(invalid("relay_request_too_large"));
         }
-        Ok((body, rendering))
+        Ok((
+            PreparedInitiated {
+                body,
+                native_media: !message.native_attachments.is_empty(),
+            },
+            rendering,
+        ))
     }
     /// One exchange only. Even a 429 can follow partial upstream acceptance.
-    pub(crate) async fn send_initiated(&self, secret: &Secret, body: Vec<u8>) -> DeliveryOutcome {
+    pub(crate) async fn send_initiated(
+        &self,
+        secret: &Secret,
+        prepared: PreparedInitiated,
+    ) -> DeliveryOutcome {
         let Some(headers) = headers(secret) else {
             return DeliveryOutcome::Rejected {
                 reason: "no_credential".into(),
@@ -86,9 +101,15 @@ impl RelayClient {
         };
         let mut endpoint = self.endpoint.clone();
         endpoint.set_path("/api/v1/channel-relay/send");
+        let timeout = if prepared.native_media {
+            std::time::Duration::from_secs(60)
+        } else {
+            self.timeout
+        };
         let result = tokio::time::timeout(
-            self.timeout,
-            self.transport.post(endpoint, headers, body, self.timeout),
+            timeout,
+            self.transport
+                .post(endpoint, headers, prepared.body, timeout),
         )
         .await;
         let Ok(Ok(reply)) = result else {
@@ -107,6 +128,7 @@ impl RelayClient {
             return unknown("receipt_invalid");
         };
         if !valid_id(&receipt.message_id)
+            || (prepared.native_media && receipt.platform_message_id.is_none())
             || receipt
                 .platform_message_id
                 .as_deref()

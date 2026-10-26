@@ -21,6 +21,48 @@ async fn outbound_native_media_and_whatsapp_templates_preserve_typed_contract() 
         "shipment_update"
     );
     assert!(sent.iter().all(|v| v.get("recipient").is_none()));
+    assert_eq!(
+        *f.probe.timeouts.lock().unwrap(),
+        vec![Duration::from_secs(60), Duration::from_secs(1)]
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn outbound_media_requires_platform_receipt_and_never_resends_uncertain_delivery() {
+    let f = Fixture::new(Platform::Lark).await;
+    f.probe.omit_platform_receipt.store(true, Ordering::SeqCst);
+    let request = PrepareOutboundMessage {
+        source_id: SourceId::parse("relay_lark").unwrap(),
+        route_id: ROUTE.into(),
+        message: serde_json::from_value(json!({
+            "native_attachments": [{
+                "kind": "file",
+                "source": {"type": "url", "url": "https://files.example/report.pdf"},
+                "filename": "report.pdf"
+            }]
+        }))
+        .unwrap(),
+    };
+    let prepared = outbound::prepare(&f.state, &owner(), &f.channel, "receipt", request.clone())
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        let receipt = outbound::commit(
+            &f.state,
+            &owner(),
+            &f.channel,
+            &prepared.delivery_id,
+            request.message.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(receipt.delivery).unwrap(),
+            json!({"outcome": "unknown", "reason": "receipt_invalid"})
+        );
+    }
+    assert_eq!(f.probe.calls.load(Ordering::SeqCst), 1);
     f.close().await;
 }
 

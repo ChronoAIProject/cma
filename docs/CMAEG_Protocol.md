@@ -2448,6 +2448,10 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `PUT /v1/channels/{channel_id}` | `updateChannel` |
+| `POST /v1/channels/{channel_id}/outbound-messages` | `prepareOutboundMessage` |
+| `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `getOutboundMessage` |
+| `DELETE /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `cancelOutboundMessage` |
+| `POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send` | `commitOutboundMessage` |
 | `POST /v1/channels/{channel_id}/events` | `receiveCustomEvent` |
 | `POST /v1/channels/{channel_id}/rekey` | `rekeyChannel` |
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
@@ -2985,6 +2989,14 @@ reference is not fabricated. The deployment must enable
 `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED`; capability discovery exposes the current
 value as optional `relay_authoring.outbound_messages_writes_enabled`.
 
+The independent optional `relay_authoring.native_media_writes_enabled` reports
+whether the configured relay accepts native attachments. A missing field means
+unconfirmed availability, not permission to send media. This flag does not
+establish platform health or waive platform-specific media limits. Native media
+commit uses one bounded 60-second relay exchange and requires a platform message
+ID before confirming delivery. Missing receipts remain unknown and never trigger
+an automatic resend. Plain text retains its configured reply timeout.
+
 1. `POST /v1/channels/{channel_id}/outbound-messages`, with a required 1–128 visible
    ASCII byte `Idempotency-Key`, accepts `{source_id, route_id, message}`. `message`
    is the existing `OutboundMessage`. It returns 201 `OutboundReceipt`, initially
@@ -3046,4 +3058,3 @@ automatically. Unreadable/unwritable storage blocks new effects; changing accoun
 resets visible state without erasing another owner's unsettled request. SDK/API
 callers can use the full shared message type. SDK convenience helpers prepare once and commit once; an
 ambiguous commit carries the delivery reference for a read, never a hidden resend.
-

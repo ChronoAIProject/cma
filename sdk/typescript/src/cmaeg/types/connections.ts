@@ -41,6 +41,7 @@ export const RelayAuthoringCapabilitiesSchema = object({
   dynamic_sources_writes_enabled: boolean,
   relay_raw_verification_writes_enabled: boolean,
   outbound_messages_writes_enabled: optional(nullable(boolean)),
+  native_media_writes_enabled: optional(nullable(boolean)),
   multi_consumer_writes_enabled: boolean,
   native_bot_mentions_writes_enabled: boolean,
   thread_contract_writes_enabled: boolean,
