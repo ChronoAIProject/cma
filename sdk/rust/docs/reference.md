@@ -410,3 +410,13 @@ Template header media uses exactly one non-null `id` (1–32 Meta digits) or
 `date_time` carries `fallback_value` only. The gateway validates placement,
 lengths and destination authority; Meta validates approval and media ownership.
 The SDK exposes these exact typed fields; it does not infer callback recipients.
+
+### Native Telegram message effects
+
+Native Telegram message effects use `read_message_capabilities`, `delete_message`, and `set_message_reaction`. Pass the existing confirmed
+CMA `message_ref`; raw chat or message IDs are not accepted. Delete and reaction
+require a stable caller-chosen idempotency key. Reactions accept zero entries to
+clear the bot reaction or one emoji/custom-emoji entry. Legacy references and
+relay transports report unsupported. An unknown receipt remains unknown and is
+never retried automatically. Capability support remains subject to Telegram's
+message-age, administrator-rights and reaction rules.

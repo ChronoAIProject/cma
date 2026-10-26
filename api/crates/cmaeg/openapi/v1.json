@@ -1352,6 +1352,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "message_effects": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MessageEffectsCapabilities",
+                "description": "New exact-message effects; absent until compatible readers are deployed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "native_media": {
             "oneOf": [
               {
@@ -2517,6 +2528,10 @@
           }
         ]
       },
+      "EmptyEffectRequest": {
+        "additionalProperties": false,
+        "type": "object"
+      },
       "EndpointResponse": {
         "properties": {
           "custom_event_url": {
@@ -3001,6 +3016,72 @@
           "embedded"
         ],
         "type": "string"
+      },
+      "MessageEffectReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryOutcome"
+          }
+        },
+        "required": [
+          "delivery"
+        ],
+        "type": "object"
+      },
+      "MessageEffectsCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "delete": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_reactions": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reaction": {
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "Only an exact confirmed native bot message; never arbitrary chat/message IDs.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delete",
+          "reaction",
+          "scope",
+          "max_reactions"
+        ],
+        "type": "object"
+      },
+      "MessageReactionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "is_big": {
+            "type": "boolean"
+          },
+          "reaction": {
+            "description": "Empty clears the bot's reaction; Telegram bots may set at most one.",
+            "items": {
+              "$ref": "#/components/schemas/TelegramReaction"
+            },
+            "maxItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "reaction"
+        ],
+        "type": "object"
       },
       "MessageRef": {
         "type": "string"
@@ -4844,6 +4925,46 @@
           "expired"
         ],
         "type": "string"
+      },
+      "TelegramReaction": {
+        "oneOf": [
+          {
+            "properties": {
+              "emoji": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "emoji"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "emoji",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "custom_emoji_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "custom_emoji"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "custom_emoji_id",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TestChannelResponse": {
         "properties": {
@@ -7125,6 +7246,177 @@
         ],
         "tags": [
           "media"
+        ]
+      }
+    },
+    "/messages/{message_ref}/capabilities": {
+      "get": {
+        "operationId": "readMessageCapabilities",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectsCapabilities"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/messages/{message_ref}/delete": {
+      "post": {
+        "operationId": "deleteMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyEffectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/messages/{message_ref}/reaction": {
+      "post": {
+        "operationId": "setMessageReaction",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageReactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageEffectReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },

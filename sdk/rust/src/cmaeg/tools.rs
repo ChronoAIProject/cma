@@ -3,6 +3,46 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode, header};
 
 impl Cmaeg {
+    /// Discover exact-message effects without assuming transport or bot permissions.
+    pub async fn read_message_capabilities(
+        &self,
+        message_ref: &str,
+    ) -> Result<MessageEffectsCapabilities> {
+        let segments = ["v1", "messages", message_ref, "capabilities"];
+        let mut request = Request::get(&segments);
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Delete one confirmed native bot message once. Unknown outcomes are never retried automatically.
+    pub async fn delete_message(
+        &self,
+        message_ref: &str,
+        idempotency_key: &str,
+    ) -> Result<MessageEffectReceipt> {
+        let segments = ["v1", "messages", message_ref, "delete"];
+        let mut request = Request::operation(
+            Method::POST,
+            &segments,
+            Some(&EmptyEffectRequest {}),
+            StatusCode::OK,
+        )?
+        .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Set zero or one bot reaction using a stable idempotency key; zero clears it.
+    pub async fn set_message_reaction(
+        &self,
+        message_ref: &str,
+        idempotency_key: &str,
+        body: &MessageReactionRequest,
+    ) -> Result<MessageEffectReceipt> {
+        let segments = ["v1", "messages", message_ref, "reaction"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Create bounded delayed-reply authority while the original event is valid.
     pub async fn create_reply_target(&self, event_ref: &str) -> Result<ReplyTargetResponse> {
         let segments = ["v1", "events", event_ref, "reply-target"];

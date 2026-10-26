@@ -2467,6 +2467,9 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
+| `GET /v1/messages/{message_ref}/capabilities` | `readMessageCapabilities` |
+| `POST /v1/messages/{message_ref}/delete` | `deleteMessage` |
+| `POST /v1/messages/{message_ref}/reaction` | `setMessageReaction` |
 | `GET /v1/permissions` | `getPermissions` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
@@ -3106,3 +3109,42 @@ NyxID's existing WhatsApp adapter uses Graph API v25.0 and preserves
 verify that both CMA reply and initiated-send envelopes preserve these typed
 objects; actual Meta approval, placeholder compatibility and delivery remain
 upstream checks. No live platform send is implied by these fixture tests.
+
+## Scoped native Telegram message effects
+
+New confirmed native Telegram bot sends can carry additional authority inside the
+existing opaque `message_ref`; no extra target-mint step is required. The operator
+must complete reader rollout and enable `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED`.
+Legacy references retain edit behavior and explicitly do not grant new effects.
+
+- `GET /v1/messages/{message_ref}/capabilities` (`readMessageCapabilities`) returns
+  `delete`, `reaction`, `scope=confirmed_native_bot_message`, `max_reactions` and an
+  optional `expires_at`. Support describes the transport and reference; Telegram
+  still checks message age, chat permissions and available reactions.
+- `POST /v1/messages/{message_ref}/delete` (`deleteMessage`) accepts `{}` and one
+  printable 1–128 byte `Idempotency-Key` header.
+- `POST /v1/messages/{message_ref}/reaction` (`setMessageReaction`) accepts
+  `{"reaction":[{"type":"emoji","emoji":"👍"}],"is_big":false}` and the same
+  idempotency header. `reaction: []` clears the bot's reaction; at most one reaction
+  is supported. Custom emoji use `{"type":"custom_emoji","custom_emoji_id":"123"}`.
+  Paid reactions are not accepted. Custom emoji availability is checked by Telegram.
+
+Both mutation responses contain `delivery` with the existing confirmed/rejected/
+rate_limited/unknown/unsupported outcome vocabulary. Callers must preserve unknown
+outcomes and must not resend them automatically under a fresh key. These operations
+accept no raw chat or platform message IDs. REST, MCP and both SDKs share this scope;
+MCP uses `message_ref`, `idempotency_key`, and for reaction a `request` object.
+`readEventContext.capabilities.message_effects` is absent while issuance is disabled;
+when enabled it explicitly reports false for relay and unproved events.
+
+Telegram `deleteMessage` requires a message younger than 48 hours; certain service
+messages cannot be deleted and private-chat dice require age over 24 hours. Bot
+permissions differ for channels/groups. CMA only issues authority for its own
+confirmed outbound text/card messages and bounds it to 24 hours. It does not expose
+moderation of arbitrary inbound messages. `setMessageReaction` changes only the
+bot's reaction; bots have at most one, cannot use paid reactions, and some service
+messages are unsupported. Telegram applies reactions on media groups to the first
+non-deleted member. CMA's current direct sends are text/card messages.
+
+Official contracts: https://core.telegram.org/bots/api#deletemessage and
+https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).

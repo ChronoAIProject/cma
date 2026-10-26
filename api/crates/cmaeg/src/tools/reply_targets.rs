@@ -1,5 +1,5 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
-mod receipts;
+pub(super) mod receipts;
 use super::{
     context,
     state::{owner, validate},

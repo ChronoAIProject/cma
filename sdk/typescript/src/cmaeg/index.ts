@@ -18,6 +18,7 @@ import type {
   CreateConnection,
   OutboundMessage,
   RoutingUpdateRequest,
+  MessageReactionRequest,
 } from './types.js';
 
 /** Independent gateway deployment configuration; baseUrl names the origin, without /v1. */
@@ -142,6 +143,20 @@ export class Cmaeg {
   }
   updateMessage(ref: string, message: OutboundMessage, options?: OperationOptions) {
     return this.#tools.updateMessage(ref, message, options);
+  }
+  readMessageCapabilities(ref: string, options?: OperationOptions) {
+    return this.#tools.readMessageCapabilities(ref, options);
+  }
+  deleteMessage(ref: string, idempotencyKey: string, options?: OperationOptions) {
+    return this.#tools.deleteMessage(ref, idempotencyKey, options);
+  }
+  setMessageReaction(
+    ref: string,
+    idempotencyKey: string,
+    request: MessageReactionRequest,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.setMessageReaction(ref, idempotencyKey, request, options);
   }
   sendTyping(ref: string, options?: OperationOptions) {
     return this.#tools.sendTyping(ref, options);

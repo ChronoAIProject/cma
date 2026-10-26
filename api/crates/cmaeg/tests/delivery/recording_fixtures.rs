@@ -120,6 +120,7 @@ pub fn event(
     reply: ReplyAddress,
 ) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some(activity_digest(activity)),
         channel_id: channel.id.clone(),

@@ -1,4 +1,5 @@
 import { NativeMediaCapabilitiesSchema } from './messages.js';
+import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
 import {
   AcceptedStatusSchema,
   ActorKindSchema,
@@ -237,6 +238,7 @@ export const ActivitySchema = object({
 export type Activity = Output<typeof ActivitySchema>;
 
 export const CapabilitiesSchema = object({
+  message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
   whatsapp_templates: optional(nullable(boolean)),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,

@@ -163,6 +163,7 @@ async fn replace_unknown(sources: Value, route: &str) -> DeliveryOutcome {
         false,
     );
     let reference = MessageRefPayload {
+        telegram_effect: None,
         channel_id: channel.id.clone(),
         event_id: EventId::new("msg-1").unwrap(),
         platform_message_id: "100".into(),
