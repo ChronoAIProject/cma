@@ -216,3 +216,50 @@ replay/projection worker. The worker must persist its projection state and use
 acknowledgement. Existing `TurnRunner` launch,
 sequencing, acceptance, retries and delivery are not rerouted by the builder;
 its extraction only shares preparation and rendering functions.
+
+## Accepted-response replay executor
+
+`RoutedTargetExecutor::new(port, delivery, tracker, delivery_config)` implements
+`TargetExecutor`. Its port uses the production frozen builder above and an
+explicitly configured provider replay capability. The executor dispatches once,
+then reconnects accepted responses with GET only. It never converts an
+observation error, disconnect, timeout or uncertain platform send into another
+provider POST. Terminal completion requires the journal's settled terminal
+receipt and acknowledged cursor.
+
+Cumulative projection uses the same bounded message/tool assembly as the live
+runner. Text deltas accumulate; committed messages send once; completion uses
+snapshot text or the accumulated fallback only when no answer was already
+attempted. Generic failure text follows the existing failure convention. Tool
+arguments, reasoning, unknown output items and media locators are not converted
+into public text. Explicit tool media/card delivery remains its own receipt
+path. Ephemeral acknowledgement/heartbeat notifications are not replayed.
+
+Before any effect or no-effect acknowledgement, the executor persists the
+resulting projection, native Agent ID pin, frame hash, exact chosen effect and
+terminal flag. The encrypted snapshot is bounded to 1 MiB, split into 24 KiB
+chunks in two reusable slots (at most 86 records per target). Only the inactive
+slot is overwritten with exact per-chunk CAS versions; a target-record CAS
+publishes the complete new reference. The previous slot remains valid if a
+worker stops before publication. Chunk identities and sealed contents bind the
+original target, admission, request, response, slot, index and retention expiry.
+Readers verify every version, identity, length and aggregate hash. This avoids
+unbounded persisted delta history; it does not avoid per-frame storage costs.
+
+A snapshot may be at the acknowledged cursor or exactly one frame ahead. The
+latter is an interrupted pending effect: replay must match its exact frame hash
+and reuse its stored effect without projecting again. Existing settled delivery
+receipts reconcile a lost acknowledgement without resending. Pending/unknown
+sends cannot advance. A terminal snapshot already acknowledged can complete
+without reconnecting. A cursor without its projection, a foreign native Agent,
+or a changed pending frame fails closed.
+
+The executor renews its 30-second lease before observation and frame work and
+at ten-second idle intervals. Each combined snapshot/replay attachment is
+bounded to 15 seconds. One invocation observes at most 4,096 frames, makes at
+most three attachments, and yields after about 60 seconds (bounded in-flight
+operations may finish later). It releases ownership on normal exit; cancellation
+leaves the durable lease and effect journal authoritative. A later scheduler
+invocation continues from the retained cursor. These bounds limit worker and
+provider use; they are not a latency promise or an exactly-once external-delivery
+claim. This component alone does not enable production ingress.

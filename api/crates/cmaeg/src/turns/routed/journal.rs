@@ -57,6 +57,7 @@ impl Journal {
                 event_expires_at: target.launch.event.expires_at,
                 phase: Phase::Pending,
                 delivery: None,
+                projection: None,
                 body: None,
                 ownership: Ownership {
                     worker: worker.into(),

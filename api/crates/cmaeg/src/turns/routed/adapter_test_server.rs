@@ -16,6 +16,9 @@ use std::{
 
 #[derive(Clone)]
 pub struct Config {
+    pub replay_frames: Option<Vec<Value>>,
+    pub replay_idle: bool,
+    pub replay_tail: String,
     pub post_status: u16,
     pub post_idle: bool,
     pub native_agent: String,
@@ -30,6 +33,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            replay_frames: None,
+            replay_idle: false,
+            replay_tail: String::new(),
             post_status: 200,
             post_idle: false,
             native_agent: "agt_native".into(),
@@ -207,7 +213,20 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
                 break;
             }
         }
-        if post {
+        if !post {
+            if let Some(events) = config.replay_frames {
+                frames.clear();
+                for event in events {
+                    let sequence = event["sequence_number"].as_u64().unwrap();
+                    if after.is_some_and(|after| sequence <= after) {
+                        continue;
+                    }
+                    frames.push_str(&format!("id: {sequence}\ndata: {event}\n\n"));
+                }
+            }
+            frames.push_str(&config.replay_tail);
+        }
+        if post || config.replay_idle {
             Body::from_stream(
                 stream::once(async move { Ok::<_, Infallible>(frames) }).chain(stream::pending()),
             )

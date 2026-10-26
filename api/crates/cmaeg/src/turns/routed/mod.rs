@@ -10,8 +10,11 @@ mod delivery;
 mod delivery_gate;
 mod delivery_state;
 mod dispatcher;
+mod executor;
 mod journal;
 mod model;
+mod projection_store;
+mod replay_projection;
 pub mod scheduler;
 mod storage;
 
@@ -20,6 +23,7 @@ pub use builder::ProductionFrozenTurnBuilder;
 pub use delivery::{FrameDelivery, ReplayEffect, RoutedDelivery};
 pub use delivery_state::{DeliveryCheckpoint, DeliveryStatus};
 pub use dispatcher::{Authority, DispatchOutcome, Dispatcher, ExecutionPort, StartResult};
+pub use executor::RoutedTargetExecutor;
 pub use journal::Journal;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
@@ -46,3 +50,8 @@ mod tests;
 mod builder_test_media;
 #[cfg(test)]
 mod builder_tests;
+
+#[cfg(test)]
+mod executor_tests;
+#[cfg(test)]
+mod projection_store_tests;
