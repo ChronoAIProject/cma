@@ -156,7 +156,11 @@ async fn native_edit_authority_refuses_revoked_source_owner_consumer_key_or_reco
                     *intents ^= 1;
                 }
             }
-            _ => current.definition.provider.binding_id = "other-binding".parse().unwrap(),
+            _ => {
+                let mut definition = current.definition.to_blob_json();
+                definition["provider"]["binding_id"] = "other-binding".into();
+                current.definition = serde_json::from_value(definition).unwrap();
+            }
         }
         let result = edit(&sender, &current, &reference, &message("replacement"), true).await;
         assert!(
