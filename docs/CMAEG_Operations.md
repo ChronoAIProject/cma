@@ -2372,8 +2372,9 @@ The existing public option-label bound of 64 UTF-8 bytes also applies.
 
 ## Owner-initiated delivery rollout
 
-Owner-initiated delivery is disabled by default with
-`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED=false`. Enable only after all gateway
+Owner-initiated delivery has a process default of
+`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED=false`. The production manifest enables
+it after the compatible-reader rollout. Enable only after all gateway
 readers include the owner outbound operation kind and deployed NyxID supports
 `POST /api/v1/channel-relay/send` with its assigned-key, allow-initiation and
 addressable-conversation checks. This does not create or broaden upstream routes.
@@ -2383,6 +2384,21 @@ pre-commit cancellation stay available. There is no background outbound schedule
 prepared operations require explicit commit. Never retry an unknown send under a
 new key. Operation records use the existing encrypted interaction collection and
 immutable seven-day TTL; no database migration or additional credentials are needed.
+
+The production authoring configuration also enables
+`CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` independently of dynamic sources
+and multi-consumer routing. Owners can select the already implemented raw-event
+verifiers for Discord and WhatsApp. This does not subscribe a Discord Gateway
+WebSocket or change an existing source's trust mode. Native media, cards,
+templates, interactions and multi-consumer writers retain their separate gates.
+
+After activation, verify public capability discovery and an owner-scoped
+prepare/read/cancel lifecycle with the existing saved destination. Repeating the
+same preparation must return its original operation; a changed payload under
+that key must conflict. Cancel before commit and confirm a subsequent read
+retains cancellation. These checks exercise the production record store without
+sending a platform message. They do not establish real-platform delivery; that
+requires an authorized explicit commit and a platform receipt.
 
 
 ## Named-consumer callback rollout
