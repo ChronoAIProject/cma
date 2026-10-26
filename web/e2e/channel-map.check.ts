@@ -11,6 +11,8 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
     channel_id: 'channel-local',
     record_id: 'record-local',
     version: 3,
+    created_at: '2026-10-27T01:00:00Z',
+    owner: { subject: 'local-owner', display_name: 'Local owner' },
     provider: { slug: 'cma_codex', level: 'l2' },
     definition: {
       name: 'Team workspace',
@@ -59,34 +61,117 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
           expires_at: 9999999999,
         },
       });
+    if (path.endsWith('/v1/channel-capabilities'))
+      return route.fulfill({
+        json: {
+          relay_authoring: {
+            dynamic_sources_writes_enabled: true,
+            relay_raw_verification_writes_enabled: true,
+            outbound_messages_writes_enabled: true,
+            native_media_writes_enabled: true,
+            multi_consumer_writes_enabled: true,
+            native_bot_mentions_writes_enabled: true,
+            thread_contract_writes_enabled: true,
+            platforms: ['telegram', 'whatsapp', 'lark', 'discord'].map((id) => ({
+              id,
+              label: id,
+              verification_modes: [
+                { id: 'raw_event', writes_enabled: true },
+                { id: 'nyxid_normalized', writes_enabled: true },
+              ],
+            })),
+          },
+        },
+      });
+    if (path.endsWith('/v1/connections')) return route.fulfill({ json: { items: [] } });
+    if (path.endsWith('/activity/stream'))
+      return route.fulfill({
+        contentType: 'text/event-stream',
+        body: `id: activity-fixture\nevent: activity\ndata: ${JSON.stringify({
+          cursor: 'activity-fixture',
+          retention_days: 7,
+          limit: 50,
+          has_more: false,
+          items: [
+            {
+              event_id: 'event-fixture',
+              source: { type: 'nyxid_relay', platform: 'telegram' },
+              actor: { id: 'producer-fixture', display_name: 'Project updates', kind: 'service' },
+              conversation: { id: 'team-chat', kind: 'group' },
+              occurred_at: '2026-10-27T01:30:00Z',
+              received_at: '2026-10-27T01:30:01Z',
+              consumers: [
+                {
+                  consumer_id: 'reviewer',
+                  display_name: 'Nyxbot reviewer',
+                  agent_id: 'agent-reviewer',
+                  provider: 'nyxbot',
+                  conversation_id: 'review-conversation',
+                  state: 'completed',
+                  dispatched_at: '2026-10-27T01:30:02Z',
+                  accepted_at: '2026-10-27T01:30:03Z',
+                  produced_at: '2026-10-27T01:30:04Z',
+                  completed_at: '2026-10-27T01:30:05Z',
+                  response_id: 'response-fixture',
+                  deliveries: [
+                    {
+                      step: 'answer',
+                      destination: 'origin',
+                      outcome: 'confirmed',
+                      observed_at: '2026-10-27T01:30:05Z',
+                      confirmed_at: '2026-10-27T01:30:05Z',
+                      platform_message_id: 'message-fixture',
+                      recipients: [{ kind: 'telegram_chat', id: 'team-chat', thread_id: null }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        })}\n\n`,
+      });
     if (path.endsWith('/v1/channels'))
       return route.fulfill({ json: { items: [channel], next_cursor: null } });
     return route.fulfill({ status: 404, json: { detail: 'Unexpected local request' } });
   });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/event-gateway');
+  await expect(page.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
+  await expect(
+    page.getByLabel('Illustrative event journey').locator('.channel-map__node'),
+  ).toHaveCount(4);
+  await page.screenshot({
+    path: info.outputPath('channel-welcome-light-1600.png'),
+    animations: 'disabled',
+  });
   await page
-    .getByRole('table', { name: 'Your channels' })
-    .getByRole('button', { name: 'Team workspace' })
+    .getByRole('region', { name: 'Channels' })
+    .getByRole('button', { name: /^Team workspace/ })
     .click();
   const map = page.getByRole('region', { name: 'Delivery map' });
-  await expect(map.getByRole('button')).toHaveCount(8);
+  await expect(map.getByRole('button', { name: /^(Producer|Channel|Consumer):/ })).toHaveCount(7);
+  await map.getByRole('button', { name: /Channel: Team workspace/ }).click();
   const editor = page.locator('.channel-node-editor');
   const retained = await editor.elementHandle();
   await page.getByLabel('Channel name', { exact: true }).fill('Keep this channel draft');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
   await expect(page.getByLabel('NyxID issuer', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await page.getByLabel('Bot username', { exact: true }).fill('retained_bot');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await map.getByRole('button', { name: 'Consumer: Nyxbot reviewer (nyxbot)' }).click();
   await expect(page.getByLabel('NyxID issuer', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await map.getByRole('button', { name: /Channel: Team workspace/ }).click();
   await expect(page.getByLabel('Channel name', { exact: true })).toHaveValue(
     'Keep this channel draft',
   );
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   expect(await editor.evaluate((element, previous) => element === previous, retained)).toBe(true);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   for (const theme of ['light', 'dark']) {
     await page.evaluate(
       (value) => document.body.toggleAttribute('data-ds-dark-theme', value === 'dark'),
@@ -107,12 +192,31 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
         )
         .toBe(true);
       await map.scrollIntoViewIfNeeded();
+      await expect
+        .poll(() =>
+          map.locator('.delivery-flow').evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            const cards = [...element.querySelectorAll('.channel-map__node')].map((card) =>
+              card.getBoundingClientRect(),
+            );
+            const left = Math.min(...cards.map((card) => card.left));
+            const right = Math.max(...cards.map((card) => card.right));
+            return Math.abs((left + right) / 2 - (bounds.left + bounds.right) / 2);
+          }),
+        )
+        .toBeLessThan(3);
       await page.screenshot({
         path: info.outputPath(`channel-map-${theme}-${width}.png`),
         fullPage: true,
         animations: 'disabled',
       });
+      await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
       const inspector = page.locator('.channel-inspector');
+      const bounds = await page.getByRole('dialog').boundingBox();
+      expect(bounds!.width).toBeLessThanOrEqual(width * 0.6 + 1);
+      expect(bounds!.height).toBeLessThanOrEqual(601);
+      expect(bounds!.x).toBeGreaterThanOrEqual(width * 0.2 - 1);
+      expect(bounds!.y).toBeGreaterThanOrEqual(199);
       await inspector.scrollIntoViewIfNeeded();
       await expect
         .poll(() =>
@@ -133,8 +237,29 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
         fullPage: true,
         animations: 'disabled',
       });
+      await page.getByRole('button', { name: 'Close', exact: true }).click();
     }
   }
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await map.getByRole('button', { name: 'Activity', exact: true }).click();
+  await expect(page.getByText('Delivery confirmed')).toBeVisible();
+  await expect(page.getByText('telegram_chat: team-chat', { exact: false })).toBeVisible();
+  await expect(page.getByText('agent-reviewer', { exact: true })).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page.getByRole('region', { name: 'Activity', exact: true }).evaluate((element) => {
+        const container = element.closest('.channel-inspector')!;
+        return Math.abs(
+          element.getBoundingClientRect().top - container.getBoundingClientRect().top,
+        );
+      }),
+    )
+    .toBeLessThan(32);
+  await page.screenshot({
+    path: info.outputPath('channel-activity-dark-1600.png'),
+    animations: 'disabled',
+  });
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.emulateMedia({ reducedMotion: 'reduce' });
   expect(
     await map
