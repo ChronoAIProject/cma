@@ -25,7 +25,7 @@ pub struct DurableJournal {
     pub(super) activity: Arc<dyn ActivityObserver>,
     worker: String,
     epoch: u64,
-    api: DiscordApi,
+    pub(super) api: DiscordApi,
     serial: Mutex<()>,
 }
 impl DurableJournal {

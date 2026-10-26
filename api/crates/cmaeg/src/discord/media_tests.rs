@@ -106,6 +106,7 @@ async fn native_media_refreshes_exact_metadata_keeps_token_off_cdn_and_honors_re
             bot_id: "77".into(),
             channel_id: "99".into(),
             message_id: "700".into(),
+            thread_id: None,
         },
         consumer: None,
         lineage: None,

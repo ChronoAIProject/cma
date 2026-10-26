@@ -21,6 +21,7 @@ pub(crate) async fn serve(
     relay_text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
+    native_discord_threads: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
@@ -223,6 +224,7 @@ pub(crate) async fn serve(
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
         state.native_discord.clone(),
+        native_discord_threads,
         (*state.records).clone(),
         state.master_keys.clone(),
         ingress.clone(),

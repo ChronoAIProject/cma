@@ -42,6 +42,7 @@ async fn native_edit_capability_requires_issuance_gate_and_does_not_change_relay
         bot_id: "77".into(),
         channel_id: "99".into(),
         message_id: "700".into(),
+        thread_id: None,
     };
     event.activity_sha256 = Some(activity_digest(&activity));
     let reference = EventRef::seal(&event, &app.state.keys).unwrap();

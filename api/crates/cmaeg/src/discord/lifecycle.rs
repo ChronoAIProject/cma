@@ -113,6 +113,7 @@ impl Worker {
     pub fn start(
         config: &NativeDiscordConfig,
         selection: super::selection::Selection,
+        thread_metadata: bool,
         records: RecordClient,
         keys: Arc<MasterKeyRing>,
         ingress: IngressState,
@@ -137,7 +138,7 @@ impl Worker {
             records: records.clone(),
             keys: keys.clone(),
             resolver: ingress.resolver.clone(),
-            api: DiscordApi::new()?,
+            api: DiscordApi::new()?.with_thread_metadata(thread_metadata),
             activity: ingress.activity.clone(),
         });
         let dispatcher = InboxDispatcher::with_selection(records, keys, ingress, selection.clone());
@@ -267,6 +268,7 @@ mod tests {
             assert!(Worker::start(
                 &config,
                 super::super::selection::Selection::new(&config),
+                false,
                 RecordClient::new("http://127.0.0.1:1", "no-network-fixture").unwrap(),
                 f.fixture.store.keys.clone(),
                 f.state.clone(),

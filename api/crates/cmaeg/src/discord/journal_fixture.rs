@@ -38,6 +38,10 @@ pub struct Memory {
     pub user_rate_limited: AtomicBool,
     pub user_calls: AtomicUsize,
     pub gateway: Mutex<Value>,
+    pub discord_channels: Mutex<BTreeMap<String, Value>>,
+    pub channel_calls: Mutex<Vec<String>>,
+    pub channel_status: Mutex<StatusCode>,
+    pub channel_elapsed_ms: AtomicI64,
     pub fault: Mutex<Option<(String, bool)>>,
 }
 pub struct Fixture {
@@ -77,6 +81,10 @@ impl Fixture {
                 json!({"url":"wss://gateway.discord.gg/","shards":1,"session_start_limit":{"total":10,"remaining":10,"reset_after":86_400_000,"max_concurrency":1}}),
             ),
             fault: Mutex::new(None),
+            discord_channels: Mutex::default(),
+            channel_calls: Mutex::default(),
+            channel_status: Mutex::new(StatusCode::OK),
+            channel_elapsed_ms: AtomicI64::new(0),
         });
         let app = Router::new()
             .route("/api/v1/gateway/channel-records/{id}", get(channel))
@@ -91,6 +99,7 @@ impl Fixture {
             .route("/api/v1/gateway/interaction-records", get(list))
             .route("/api/v10/users/@me", get(user))
             .route("/api/v10/gateway/bot", get(gateway))
+            .route("/api/v10/channels/{id}", get(discord_channel))
             .with_state(memory.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -170,6 +179,33 @@ async fn user(State(state): State<Arc<Memory>>, headers: HeaderMap) -> Response 
 }
 async fn gateway(State(state): State<Arc<Memory>>) -> Response {
     Json(state.gateway.lock().unwrap().clone()).into_response()
+}
+async fn discord_channel(
+    State(state): State<Arc<Memory>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&format!("Bot {TOKEN}")) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    state.channel_calls.lock().unwrap().push(id.clone());
+    state.now.fetch_add(
+        state.channel_elapsed_ms.load(Ordering::SeqCst),
+        Ordering::SeqCst,
+    );
+    let status = *state.channel_status.lock().unwrap();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return (
+            status,
+            [("retry-after", "120")],
+            Json(json!({"retry_after":120})),
+        )
+            .into_response();
+    }
+    match state.discord_channels.lock().unwrap().get(&id).cloned() {
+        Some(value) => (status, Json(value)).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 async fn channel(State(state): State<Arc<Memory>>) -> Response {
     Json(json!({"version":1,"blob":STANDARD.encode(state.channel.lock().unwrap().as_slice())}))
