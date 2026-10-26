@@ -420,3 +420,57 @@ describe('live AG-UI folding', () => {
     );
   });
 });
+
+it('keeps lifetime consumption through compaction and correlates current-turn usage with durable replay', () => {
+  const started = foldAgentEvent(
+    conversationFromTranscript(TRANSCRIPT),
+    durable(5, 'turn_started', { turn_sequence: 5 }),
+  );
+  const observed = foldAgentEvent(
+    started,
+    durable(6, 'usage_updated', {
+      input_tokens: 1000,
+      output_tokens: 200,
+      context_used: 400,
+      context_window: 10000,
+      turn_sequence: 5,
+      turn_input_tokens: 100,
+      turn_output_tokens: 20,
+    }),
+  );
+  const compacted = foldAgentEvent(
+    observed,
+    durable(7, 'usage_updated', {
+      input_tokens: 1000,
+      output_tokens: 200,
+      context_used: 80,
+      context_window: 10000,
+      turn_sequence: 5,
+      turn_input_tokens: 100,
+      turn_output_tokens: 20,
+    }),
+  );
+  expect(compacted.usage).toMatchObject({
+    inputTokens: 1000,
+    outputTokens: 200,
+    contextUsed: 80,
+    currentTurn: { turnSequence: 5, inputTokens: 100, outputTokens: 20 },
+  });
+  expect(
+    foldAgentEvent(
+      compacted,
+      durable(6, 'usage_updated', { input_tokens: 900, output_tokens: 100 }),
+    ),
+  ).toBe(compacted);
+  const metadata = foldAgentEvent(
+    compacted,
+    durable(8, 'runtime_metadata_changed', {
+      metadata: { working_directory: '/home/cma/research', description: 'Review native workspace' },
+    }),
+  );
+  expect(metadata.runtimeMetadata).toEqual({
+    workingDirectory: '/home/cma/research',
+    description: 'Review native workspace',
+  });
+  expect(metadata.messages).toEqual(compacted.messages);
+});

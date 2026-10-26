@@ -67,7 +67,10 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
     let mut spec = environment_spec(
         &sandbox.id,
         &sandbox.profile,
-        &sandbox.credential.effective_reaches(),
+        &sandbox.runtime.as_ref().map_or_else(
+            || sandbox.credential.effective_reaches(),
+            |runtime| sandbox.credential.runtime_reaches(runtime),
+        ),
         deployment_id,
     );
     if let layer2_core::sandbox::SandboxCredentialSource::Binding { tool_endpoint, .. } =
@@ -81,6 +84,21 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         .as_ref()
         .and_then(|home| home.attachment())
         .map(Box::new);
+    if spec.runtime_image.is_none() {
+        spec.runtime_image = sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.native_pool.as_ref())
+            .map(|native| {
+                // Original pool authority stays immutable; the current binding
+                // records the actual image after an admitted software update.
+                sandbox
+                    .retained_runtime_binding()
+                    .map(|binding| binding.runtime_version.clone())
+                    .unwrap_or_else(|| native.request.pool.spec.image.uri.clone())
+            });
+    }
     spec
 }
 
@@ -96,6 +114,7 @@ pub(super) fn environment_spec(
             cpu_millis: profile.content.cpu_millis,
             memory_mib: profile.content.memory_mib,
         },
+        runtime_image: profile.content.runtime_image.clone(),
         environment: profile
             .content
             .environment_variables

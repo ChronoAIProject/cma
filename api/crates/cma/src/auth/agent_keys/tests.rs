@@ -1,19 +1,30 @@
 use super::*;
 use crate::auth::persistence::{AuthStore, MemoryAuthStore};
 use axum::{
-    http::{header, HeaderMap},
+    http::{header, HeaderMap, StatusCode},
     routing::post,
     Form, Json, Router,
 };
 use layer2_core::sandbox::InMemorySandboxStore;
 use layer2_core::{Capability, SubjectId};
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::RwLock;
+
+mod http;
 
 struct Fixture {
     base: String,
     response: Arc<RwLock<Value>>,
+    status: Arc<RwLock<StatusCode>>,
+    introspections: Arc<AtomicUsize>,
+    bindings: Arc<InMemorySandboxStore>,
     store: Arc<MemoryAuthStore>,
     server: tokio::task::JoinHandle<()>,
 }
@@ -30,16 +41,23 @@ impl Fixture {
             "permissions":["cma:sandbox:use", "cma:profile:manage"]
         })));
         let control = response.clone();
+        let status = Arc::new(RwLock::new(StatusCode::OK));
+        let controlled_status = status.clone();
+        let introspections = Arc::new(AtomicUsize::new(0));
+        let observed = introspections.clone();
         let app = Router::new().route(
             "/introspect",
             post(move |Form(form): Form<HashMap<String, String>>| {
                 let control = control.clone();
+                let status = controlled_status.clone();
+                let observed = observed.clone();
                 async move {
                     assert_eq!(form["service_id"], "cma-service");
                     assert_eq!(form["token_type_hint"], "api_key");
                     assert_eq!(form["client_id"], "cma-client");
                     assert!(is_agent_key(&form["token"]));
-                    Json(control.read().await.clone())
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    (*status.read().await, Json(control.read().await.clone()))
                 }
             }),
         );
@@ -51,6 +69,9 @@ impl Fixture {
         Self {
             base,
             response,
+            status,
+            introspections,
+            bindings: Arc::new(InMemorySandboxStore::default()),
             store: Arc::new(MemoryAuthStore::default()),
             server,
         }
@@ -67,7 +88,7 @@ impl Fixture {
             self.store.clone(),
         )
         .with_agent_key_service(Some("cma-service".into()))
-        .with_binding_store(Arc::new(InMemorySandboxStore::default()));
+        .with_binding_store(self.bindings.clone());
         *auth.metadata.write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{}/authorize", self.base),
             token_endpoint: format!("{}/token", self.base),
@@ -153,4 +174,137 @@ async fn nonexpiring_key_command_custody_survives_restart_and_rechecks_revocatio
     assert!(restarted.verify_api_custody(&custody).await.is_ok());
     *f.response.write().await = json!({"active":false});
     assert!(restarted.verify_api_custody(&custody).await.is_err());
+}
+
+#[tokio::test]
+async fn expiring_key_custody_preserves_exact_expiry_and_rechecks_authority() {
+    use layer2_core::sandbox::agent_io::CommandAuthorizationError;
+    let fixture = Fixture::new().await;
+    let expiry = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    fixture.response.write().await["exp"] = json!(expiry);
+    let original = fixture.response.read().await.clone();
+    let auth = fixture.auth().await;
+    let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
+    let request = auth.resolve_request(&headers(&key)).await.unwrap().unwrap();
+    let authority = auth
+        .independent_command_authority(&auth.resource_request_context(&request), &key)
+        .await
+        .unwrap();
+    let restarted = fixture.auth().await;
+    let custody = restarted
+        .retained_api_custody(&request.subject, &authority)
+        .await
+        .unwrap();
+    assert_eq!(
+        custody.expires_at,
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(expiry))
+    );
+    assert!(restarted.verify_api_custody(&custody).await.is_ok());
+    for (field, value) in [
+        ("active", json!(false)),
+        ("sub", json!("another-owner")),
+        ("aud", json!("another-service")),
+        ("permissions", json!([])),
+        ("exp", json!(expiry + 1)),
+        ("exp", json!(1)),
+    ] {
+        let mut changed = original.clone();
+        changed[field] = value;
+        *fixture.response.write().await = changed;
+        assert!(
+            matches!(
+                restarted.verify_api_custody(&custody).await,
+                Err(CommandAuthorizationError::Revoked)
+            ),
+            "accepted changed {field}"
+        );
+    }
+    *fixture.response.write().await = original;
+    *fixture.status.write().await = StatusCode::BAD_GATEWAY;
+    assert!(matches!(
+        restarted.verify_api_custody(&custody).await,
+        Err(CommandAuthorizationError::Unavailable)
+    ));
+    assert!(fixture
+        .store
+        .subject(&request.subject)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn retained_ordinary_key_loses_owner_authority_when_registered_as_a_binding() {
+    use layer2_core::profiles::{content_digest, AgentProvider, ProfileCapacityBounds};
+    use layer2_core::sandbox::agent_io::CommandAuthorizationError;
+    use layer2_core::sandbox::binding::{
+        map_profile, BindingStore, ProvidedCredential, ProviderBinding,
+    };
+
+    let fixture = Fixture::new().await;
+    let auth = fixture.auth().await;
+    let key = ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap();
+    let request = auth
+        .resolve_request(&headers(key.expose()))
+        .await
+        .unwrap()
+        .unwrap();
+    let authority = auth
+        .independent_command_authority(&auth.resource_request_context(&request), key.expose())
+        .await
+        .unwrap();
+    let custody = auth
+        .retained_api_custody(&request.subject, &authority)
+        .await
+        .unwrap();
+    assert!(auth.verify_api_custody(&custody).await.is_ok());
+
+    let profile = json!({
+        "schema_version": 1,
+        "metadata": {"name":"deferred custody", "owner":{"kind":"human", "subject":"owner"}, "provider":"registered"},
+        "model": {"access":"managed", "service":AgentProvider::default().connection_services().managed,
+            "api_type":"responses", "model":"test", "thinking_effort":"medium"},
+        "permission":{"action_mode":"guarded"}, "context":{},
+        "environment":{"size":{"cpu_cores":1, "memory_gib":2}, "workspace":{"type":"directory", "name":"project"}}
+    });
+    let digest = format!("sha256:{}", content_digest(&profile).unwrap());
+    let mapped = map_profile(
+        profile,
+        &digest,
+        AgentProvider::default(),
+        "responses",
+        ProfileCapacityBounds {
+            min_cpu_millis: 250,
+            max_cpu_millis: 8000,
+            min_memory_mib: 512,
+            max_memory_mib: 16384,
+        },
+    )
+    .unwrap();
+    let binding = ProviderBinding::new(
+        "binding-custody".into(),
+        SubjectId::new("manager"),
+        mapped,
+        key.sha256(),
+        layer2_core::now_rfc3339(),
+    )
+    .unwrap();
+    fixture.bindings.save_binding(None, binding).await.unwrap();
+    let current = auth
+        .resolve_request(&headers(key.expose()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(current.binding.is_some());
+    assert!(!current.authorization.allows(Capability::UseOwnSandboxes));
+    let before = fixture.introspections.load(Ordering::SeqCst);
+    assert!(matches!(
+        auth.verify_api_custody(&custody).await,
+        Err(CommandAuthorizationError::Revoked)
+    ));
+    assert_eq!(fixture.introspections.load(Ordering::SeqCst), before);
 }

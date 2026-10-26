@@ -17,6 +17,9 @@ fn query(raw: Option<String>, allowed: &[&str]) -> Result<BTreeMap<String, Strin
     }
     Ok(result)
 }
+pub(super) fn head(raw: Option<String>) -> Result<(), Error> {
+    query(raw, &[]).map(|_| ())
+}
 pub(super) fn snapshot(raw: Option<String>) -> Result<(u16, Option<String>), Error> {
     let mut query = query(raw, &["limit", "page_cursor"])?;
     let limit = match query.remove("limit") {

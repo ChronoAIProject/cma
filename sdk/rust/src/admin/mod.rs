@@ -9,8 +9,10 @@ use crate::{
 use reqwest::{Method, StatusCode};
 mod settings;
 mod types;
+mod warm_pools;
 pub use settings::*;
 pub use types::*;
+pub use warm_pools::*;
 
 /// Operator Sandbox filters.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -115,6 +117,29 @@ impl Administration<'_> {
             )
             .await?;
         identity(&result.id, id)?;
+        Ok(result)
+    }
+    /// Queue the managed runtime update across owners after existing work finishes.
+    pub async fn update_sandbox_runtime(
+        &self,
+        id: &str,
+        body: &crate::instances::UpdateSandboxRuntimeRequest,
+    ) -> Result<crate::instances::Sandbox> {
+        let result: crate::instances::Sandbox = self
+            .client
+            .operation(
+                Method::POST,
+                &["admin", "sandboxes", id, "runtime-update"],
+                Some(body),
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        identity(&result.id, id)?;
+        if result.runtime_update.is_none() {
+            return Err(Error::protocol(
+                "Runtime update response omitted its status",
+            ));
+        }
         Ok(result)
     }
     /// List profile metadata without private content.

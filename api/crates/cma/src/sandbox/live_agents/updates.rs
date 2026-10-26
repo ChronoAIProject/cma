@@ -18,15 +18,14 @@ mod tests;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_update_task(
     registry: Weak<LiveAgentRegistry>,
-    attachment: LiveAgentAttachmentIdentity,
-    activated: oneshot::Receiver<()>,
+    activated: oneshot::Receiver<LiveAgentAttachmentIdentity>,
     mut updates: mpsc::Receiver<ConversationUpdate>,
     recorder: Arc<dyn AgentUpdateRecorder>,
 ) -> AbortHandle {
     let task = tokio::spawn(async move {
-        if activated.await.is_err() {
+        let Ok(attachment) = activated.await else {
             return;
-        }
+        };
         let mut assembly = AgentMessageAssembly::default();
         if restore_assembly(
             recorder.as_ref(),

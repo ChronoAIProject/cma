@@ -34,11 +34,8 @@ settings fields, so editing a known field does not discard newer deployment
 configuration. Patch replaces only supplied sections; it is not an arbitrary
 deep merge. Server validation remains authoritative.
 
-`checkpoints.interval_seconds` controls periodic snapshots globally (60 through
-86400 seconds, default 1800), using `Section<Checkpoints>`. Workers reread the
-setting without a restart. Manual and inactivity pauses still require a fresh
-completed snapshot. Only the latest completed snapshot is retained; replacement
-commits before old archives are removed. Older APIs can omit the section.
+Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
+no public setting for snapshot scheduling or checkpoint archive retention.
 
 `pause_triggers` and `resume_triggers` change orchestration controls. They do not
 cancel admitted Launches or authorize deleting their resources. Operator
@@ -54,3 +51,55 @@ recorded value and the authority of already admitted Launches.
 `read_openapi` and `read_conformance` inspect anonymous deployment declarations.
 `unsupported().mcp()`, `a2a()`, and `agent_card()` expose named refusal evidence;
 they do not invent Agent tools, tasks, or an executable terminal plane.
+
+## Native warm pools
+
+Native pools reserve the deployment's pinned system runtime image and CPU/memory
+allocation. The server owns the initialized home seed and runtime admission
+policy. Inventory and writes require `configure_platform`.
+The Rust and TypeScript SDKs expose the same three pool routes and replay the
+shared backend contract corpus for accepted operations and API errors.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, admin::{ConfigureWarmPoolBody, ResizeWarmPoolBody}};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let inventory = client.admin().list_warm_pools().await?;
+let target = client.admin().configure_warm_pool(
+    &ConfigureWarmPoolBody {
+        cpu_millis: inventory.default_cpu_millis,
+        memory_mib: inventory.default_memory_mib,
+        target_replicas: 2,
+    },
+    &IdempotencyKey::new("operator-pool-create-2026-10-13")?,
+).await?;
+
+// A 202 receipt acknowledges durable intent. Poll inventory for readiness.
+let refreshed = client.admin().list_warm_pools().await?;
+if let Some(current) = refreshed.items.iter().find(|pool| pool.id == target.id) {
+    client.admin().resize_warm_pool(&current.id, &ResizeWarmPoolBody {
+        expected_revision: current.revision,
+        target_replicas: 0,
+    }).await?;
+}
+# Ok(())
+# }
+```
+
+Reuse the same key and request after an uncertain creation response. Pool keys
+are limited to 128 visible ASCII bytes, narrower than the shared
+`IdempotencyKey` type. Resize requires the current positive revision below
+`i64::MAX`; refresh after a conflict before evaluating another command. Targets
+range from zero to 1,000; zero stops replenishment while claimed Agent runtimes keep their homes
+and lifecycle.
+
+`available: false` means provider inventory could not be observed. Recorded
+targets remain visible with their original images. `ready_replicas: None` means
+readiness is unknown; inspect `status` and `observed` for reconciliation progress.
+
+Pool inventory exposes each target's immutable `config_sha256` and the current
+`default_config_sha256` for the default image, CPU, memory, home, and Pod policy.
+Older servers omit these fields, which the SDK represents as `None`.
+Select default capacity only when both digests are `Some` and equal;
+matching only image and resources can select a retained older policy.
+Use a new idempotency key to create a target after policy changes. Replaying an
+old key and resizing an old target preserve that target's original policy.

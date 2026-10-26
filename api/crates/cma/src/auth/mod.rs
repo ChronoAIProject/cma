@@ -23,6 +23,7 @@ mod identity;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
+pub(crate) mod nyxid_proxy;
 pub mod organizations;
 mod permissions;
 pub mod persistence;
@@ -32,7 +33,9 @@ pub(crate) mod provider_http;
 mod public_contract_tests;
 mod records;
 mod refresh;
+mod resource_request;
 mod sandbox_prerequisite;
+pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
 #[cfg(test)]
@@ -95,6 +98,8 @@ impl std::fmt::Debug for AuthMode {
 pub struct AuthState {
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
+    resource_request_enabled: bool,
+    identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -154,6 +159,8 @@ impl AuthState {
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
+            resource_request_enabled: false,
+            identity_proxy: None,
             mode,
             nyxid_public_url,
             records,
@@ -217,6 +224,9 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
+        if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
+            return self.proxy_request(headers).await;
+        }
         if let Some(token) = bearer::bearer_token(headers) {
             if agent_keys::is_agent_key(&token) {
                 if self.bindings.is_some() {
@@ -267,13 +277,12 @@ impl AuthState {
                             ));
                         }
                         refresh::refresh_if_needed(self, &mut state).await?;
-                        return cookie_authorization::request_for_cookie(
+                        return cookie_authorization::request_for_browser_cookie(
                             self,
                             &login.subject,
                             state,
                         )
-                        .await
-                        .map(Some);
+                        .await;
                     }
                 }
                 let Some(token) = bearer::bearer_token(headers) else {

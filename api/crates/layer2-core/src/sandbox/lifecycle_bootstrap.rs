@@ -1,0 +1,137 @@
+//! Lifecycle startup admission and snapshot retry eligibility. No runtime effect is authorized here.
+use super::{
+    Agent, AgentOrigin, AgentStatus, AgentWorkStep, Sandbox, SandboxOrigin, SandboxStatus,
+    Workspace, WorkspaceOrigin, WorkspaceStatus,
+};
+
+impl Sandbox {
+    /// Early profile reservation must not turn ordinary parent preparation into
+    /// a failed Workspace attempt. The same atomic claim is offered again once
+    /// installation has a bound runtime and delivered credentials.
+    pub fn defers_lifecycle_workspace(&self, workspace: &Workspace) -> bool {
+        matches!(&self.origin, SandboxOrigin::Lifecycle { operation_id }
+            if self.accepts_lifecycle_bootstrap(operation_id))
+            && bootstrap_workspace(self, workspace)
+            && workspace.status == WorkspaceStatus::Preparing
+            && matches!(
+                workspace.work.step,
+                super::WorkspaceWorkStep::Prepare | super::WorkspaceWorkStep::Setup
+            )
+            && (self.status == SandboxStatus::Provisioning
+                || !self.credential.delivered
+                || self.runtime.is_none())
+    }
+
+    pub fn accepts_lifecycle_bootstrap(&self, operation_id: &str) -> bool {
+        matches!(&self.origin, SandboxOrigin::Lifecycle { operation_id: original } if original == operation_id)
+            && matches!(
+                self.status,
+                SandboxStatus::Provisioning | SandboxStatus::Installing
+            )
+            && self.lifecycle.operation.is_none()
+            && self.lifecycle.checkpoint_capture.is_none()
+            && self.lifecycle.suspended_runtime.is_none()
+            && self.retired_at.is_none()
+            && self.failure.is_none()
+    }
+}
+
+/// The exact profile child is reserved once; its normal worker still prepares it later.
+pub(super) fn bootstrap_workspace(sandbox: &Sandbox, workspace: &Workspace) -> bool {
+    workspace.owner == sandbox.owner
+        && workspace.sandbox_id == sandbox.id
+        && matches!(workspace.origin, WorkspaceOrigin::SandboxProfile { .. })
+        && workspace.origin_matches_sandbox_profile(sandbox)
+        && matches!(
+            workspace.status,
+            WorkspaceStatus::Preparing | WorkspaceStatus::Ready
+        )
+        && workspace.failed.is_none()
+        && workspace.removed_at.is_none()
+}
+
+impl Agent {
+    /// An exact lifecycle parent, never a generic Preparing/Installing permission.
+    pub fn bootstrap_operation<'a>(&'a self, parent: &Sandbox) -> Option<&'a str> {
+        let AgentOrigin::Lifecycle { operation_id } = &self.origin else {
+            return None;
+        };
+        (self.owner == parent.owner
+            && self.sandbox_id == parent.id
+            && self.status == AgentStatus::Starting
+            && self.work.step == AgentWorkStep::WaitForWorkspace
+            && self.requested_stop_reason.is_none()
+            && self.has_no_runtime_effects()
+            && parent.accepts_lifecycle_bootstrap(operation_id))
+        .then_some(operation_id)
+    }
+
+    pub fn bootstrap_lineage<'a>(
+        &'a self,
+        parent: &Sandbox,
+        workspace: &Workspace,
+    ) -> Option<&'a str> {
+        self.bootstrap_operation(parent)
+            .filter(|_| self.workspace_id == workspace.id && bootstrap_workspace(parent, workspace))
+    }
+
+    /// A retained prepared conversation can finish startup after its parent is
+    /// Active. This identifies only retry eligibility after an uncommitted
+    /// command conflict; every attempt must still reauthorize and reserve.
+    pub(in crate::sandbox) fn prepared_creation_lineage<'a>(
+        &'a self,
+        parent: &Sandbox,
+        workspace: &Workspace,
+    ) -> Option<&'a str> {
+        let AgentOrigin::Lifecycle { operation_id } = &self.origin else {
+            return None;
+        };
+        (matches!(&parent.origin, SandboxOrigin::Lifecycle { operation_id: original }
+            if original == operation_id)
+            && self.owner == parent.owner
+            && self.sandbox_id == parent.id
+            && self.workspace_id == workspace.id
+            && bootstrap_workspace(parent, workspace)
+            && workspace.status == WorkspaceStatus::Ready
+            && parent.status == SandboxStatus::Active
+            && parent.lifecycle.operation.is_none()
+            && parent.lifecycle.checkpoint_capture.is_none()
+            && parent.lifecycle.suspended_runtime.is_none()
+            && parent.retired_at.is_none()
+            && parent.failure.is_none()
+            && self.status == AgentStatus::Starting
+            && self.ready_at.is_none()
+            && self.requested_stop_reason.is_none()
+            && self.failure.is_none()
+            && self.stopped_at.is_none()
+            && self.deleted_at.is_none()
+            && self.conversation.active_turn.is_none()
+            && self.conversation.operation.is_none()
+            && self.work.warm_conversation_id.is_some()
+            && matches!(
+                self.work.step,
+                AgentWorkStep::AddWorktree
+                    | AgentWorkStep::MaterializeHome
+                    | AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+            ))
+        .then_some(operation_id)
+    }
+
+    /// Every runtime mutation records debt before dispatch. Absence of both debt
+    /// and receipts on this lifecycle reservation proves there is nothing to remove.
+    pub fn has_no_runtime_effects(&self) -> bool {
+        matches!(self.origin, AgentOrigin::Lifecycle { .. })
+            && self.work.receipts.is_empty()
+            && self.work.cleanup_debt.is_empty()
+            && self.work.resolved_skills.is_none()
+            && self.work.warm_conversation_id.is_none()
+            && self.work.live_skills.is_empty()
+            && self.conversation.conversation_id.is_none()
+            && self.conversation.runtime_generation.is_none()
+            && self.conversation.active_turn.is_none()
+            && self.conversation.operation.is_none()
+            && self.conversation.queued_messages.is_empty()
+            && self.ready_at.is_none()
+    }
+}

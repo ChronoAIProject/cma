@@ -1,0 +1,126 @@
+/*
+ * Tool calls in the conversation timeline — `docs/Web_Style.md` §13.
+ *
+ * Tool activity is the Agent at work between replies, so it is one quiet line
+ * rather than a box: no border, ground or radius, in secondary ink. Expanded
+ * rows hang under the summary against a single left rule instead of a frame.
+ */
+
+.tool-calls {
+  width: 100%;
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.tool-calls__toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.tool-calls__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.tool-calls__chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tool-calls__count {
+  flex: none;
+}
+
+.tool-calls__running {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tool-calls__failed {
+  flex: none;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Indented past the chevron (14px and the 6px gap) so rows hang under the count. */
+.tool-calls__rows {
+  margin: 4px 0 0 7px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent-event--tool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 0;
+}
+
+.tool-call__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* Reserves the dot's column even when the state draws none, so titles align. */
+.tool-call__dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 20px;
+}
+
+.agent-event--tool strong {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.tool-call__kind {
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.tool-call__word {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.agent-event--tool[data-outcome='failed'] .tool-call__word {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Details line up under the title, past the dot's column and its gap. */
+.agent-event--tool > details {
+  margin-left: 18px;
+}

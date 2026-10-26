@@ -33,6 +33,9 @@ pub struct PlatformCapability {
 /// Gateway connection capabilities.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityView {
+    /// Additive source-policy features; absent on older gateways.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_features: Vec<String>,
     /// Supported platforms.
     pub platforms: Vec<PlatformCapability>,
 }

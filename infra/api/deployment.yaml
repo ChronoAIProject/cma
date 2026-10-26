@@ -1,11 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
+  annotations:
+    cma.chronoai.dev/api-image-digest: "sha256:31aa28af329c3ed5f99da9829da22827ad7578917a73c9caf632933d971d100f"
+    cma.chronoai.dev/build-mode: "github-ci-artifact"
+    cma.chronoai.dev/candidate: "e3c76bb3d273e5e0e97c84880e42bf8814083ebe"
+    cma.chronoai.dev/ci-artifact: "12448259622"
+    cma.chronoai.dev/ci-attempt: "1"
+    cma.chronoai.dev/ci-head: "7b3dad0786ba5fc4ed8ac478dccaf405c2e7728d"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:3f8d02a8f94206eac86fe6d6183ca17b9ca760ca1c4f6865063e42eeafeeea84"
+    cma.chronoai.dev/ci-run: "39827079480"
+    cma.chronoai.dev/image-digest: "sha256:31aa28af329c3ed5f99da9829da22827ad7578917a73c9caf632933d971d100f"
+    cma.chronoai.dev/image-source: "104f8011aef293eff4395453119937aa1dee8173"
+    cma.chronoai.dev/source-tree: "ce6a5d475e1f71ae535212246d5ff0564718a11d"
 spec:
   replicas: 1
   # Quota reservations and rate counters are process-local. Keep one replica
@@ -15,14 +27,25 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: cma-api
+      app.kubernetes.io/name: cma-agent-manager
   template:
     metadata:
       annotations:
-        # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
+        cma.chronoai.dev/allocation-provider: "agent-sandbox"
+        cma.chronoai.dev/api-image-digest: "sha256:31aa28af329c3ed5f99da9829da22827ad7578917a73c9caf632933d971d100f"
+        cma.chronoai.dev/build-mode: "github-ci-artifact"
+        cma.chronoai.dev/candidate: "e3c76bb3d273e5e0e97c84880e42bf8814083ebe"
+        cma.chronoai.dev/ci-artifact: "12448259622"
+        cma.chronoai.dev/ci-attempt: "1"
+        cma.chronoai.dev/ci-head: "7b3dad0786ba5fc4ed8ac478dccaf405c2e7728d"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:3f8d02a8f94206eac86fe6d6183ca17b9ca760ca1c4f6865063e42eeafeeea84"
+        cma.chronoai.dev/ci-run: "39827079480"
+        cma.chronoai.dev/image-digest: "sha256:31aa28af329c3ed5f99da9829da22827ad7578917a73c9caf632933d971d100f"
+        cma.chronoai.dev/image-source: "104f8011aef293eff4395453119937aa1dee8173"
+        cma.chronoai.dev/runtime-image: "sha256:2634b16afd512281de38961f481909df2c7d186788c918dfe39896178e4cf52e"
+        cma.chronoai.dev/source-tree: "ce6a5d475e1f71ae535212246d5ff0564718a11d"
       labels:
-        app.kubernetes.io/name: cma-api
+        app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
@@ -43,7 +66,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
                   matchLabels:
-                    app.kubernetes.io/name: cma-api
+                    app.kubernetes.io/name: cma-agent-manager
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -55,7 +78,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:812fd91f16b6ed49f0f1221b6e237cc366c75124854f51d0cbf177d88190d250
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:31aa28af329c3ed5f99da9829da22827ad7578917a73c9caf632933d971d100f
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -63,9 +86,33 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: cma-api
+                name: cma-agent-manager
             - secretRef:
-                name: cma-api
+                name: cma-agent-manager
+          env:
+            # Production opts into one prepared default hierarchy at the
+            # Deployment layer while the shared ConfigMap keeps its safe
+            # default of zero for environments that do not opt in.
+            - name: CHRONO_NATIVE_PREPARED_TARGET
+              value: "1"
+            - name: CHRONO_AGENT_SANDBOX_API_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_API_SERVER
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_NAMESPACE
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_CA_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_CA_FILE
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -107,6 +154,12 @@ spec:
             # Longer than the API's two-second store-ping deadline.
             timeoutSeconds: 3
           volumeMounts:
+            - name: chrono-pod-configmap
+              mountPath: /etc/chrono-pod
+              readOnly: true
+            - name: agent-sandbox-control
+              mountPath: /var/run/cma-agent-sandbox
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             # Read-only so a compromised process cannot rewrite the credential
@@ -115,6 +168,18 @@ spec:
               mountPath: /var/secrets
               readOnly: true
       volumes:
+        - name: chrono-pod-configmap
+          configMap:
+            name: chrono-pod-configmap
+            optional: true
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: agent-sandbox-control
+          secret:
+            secretName: cma-agent-sandbox-control
+            optional: true
+            defaultMode: 0440
         - name: tmp
           emptyDir: {}
         # The OpenSandbox API key arrives as a file rather than an environment

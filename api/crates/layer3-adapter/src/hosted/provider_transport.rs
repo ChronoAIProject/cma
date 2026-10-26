@@ -6,10 +6,10 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use super::acp::{Bridge, OpenedBridge, MAX_FRAME_BYTES};
+use super::acp::{Bridge, OpenedBridge, Socket, MAX_FRAME_BYTES};
 use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFactory};
 use super::checkpoint_transport::{restore_request, successful_checkpoint};
-use super::provider_endpoint::RuntimeEndpoint;
+use super::provider_endpoint::{NativeRuntimeIdentity, RuntimeEndpoint};
 use super::{checkpoint_transport, control_correlation, HostedAgentOpenSettings};
 use crate::provider::SandboxClient;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
@@ -21,13 +21,30 @@ const SUPERVISOR_PORT: u16 = 9090;
 const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(60 * 60);
 
+/// Runtime data path, independent of Kubernetes resource allocation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeRuntimeTransport {
+    #[default]
+    Direct,
+    KubernetesPortforward,
+    KubernetesExec,
+}
+
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 pub struct ProviderHostedControlTransport {
-    client: SandboxClient,
+    client: RuntimeDiscovery,
     http: reqwest::Client,
-    archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+    archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
+    native_transport: NativeRuntimeTransport,
+    native_http_budget: Arc<tokio::sync::Semaphore>,
+}
+
+#[derive(Clone)]
+enum RuntimeDiscovery {
+    Provider(Arc<SandboxClient>),
+    AgentSandbox(Arc<crate::agent_sandbox::AgentSandboxClient>),
 }
 
 #[derive(Default)]
@@ -35,14 +52,16 @@ struct TransportState {
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
     slot_epochs: BTreeMap<(RuntimeHandle, AgentSlot), u64>,
-    archives: BTreeMap<RuntimeHandle, BoundArchive>,
+    bindings: BTreeMap<RuntimeHandle, BoundRuntime>,
     links: BTreeMap<(RuntimeHandle, AgentSlot), ActiveLink>,
+    native_http: BTreeMap<RuntimeHandle, Arc<native_pool::NativeHttpSlot>>,
 }
 
 #[derive(Clone)]
-struct BoundArchive {
+struct BoundRuntime {
     sandbox_id: String,
-    store: Arc<dyn CheckpointArchiveStore>,
+    request_sha256: Option<String>,
+    store: Option<Arc<dyn CheckpointArchiveStore>>,
 }
 
 #[derive(Clone)]
@@ -62,82 +81,9 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
-    pub fn new(
-        client: SandboxClient,
-        archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
-    ) -> crate::Result<Self> {
-        RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
-        let http = reqwest::Client::builder()
-            .connect_timeout(CONNECT_DEADLINE)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                AdapterError::Unavailable(format!(
-                    "runtime HTTP client could not be built: {error}"
-                ))
-            })?;
-        Ok(Self {
-            client,
-            http,
-            archive_factory,
-            state: Arc::new(Mutex::new(TransportState::default())),
-            subscriptions: None,
-        })
-    }
-
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self
-    }
-
-    async fn endpoint(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeEndpoint> {
-        let advertised = self
-            .client
-            .endpoint(handle.as_str(), SUPERVISOR_PORT)
-            .await?;
-        RuntimeEndpoint::parse(self.client.base_url(), &advertised.endpoint)
-    }
-
-    async fn archive(&self, handle: &RuntimeHandle) -> crate::Result<BoundArchive> {
-        self.state
-            .lock()
-            .await
-            .archives
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| {
-                AdapterError::Unavailable(format!(
-                    "runtime {} has no sandbox-bound checkpoint store",
-                    handle.0
-                ))
-            })
-    }
-
-    async fn control(
-        &self,
-        endpoint: &RuntimeEndpoint,
-        request: &RequestFrame,
-    ) -> crate::Result<ResponseFrame> {
-        let url = endpoint.control()?;
-        let auth = self.client.auth_header();
-        let exchange = async {
-            let response = self
-                .http
-                .post(url)
-                .header(auth.0, auth.1)
-                .json(request)
-                .send()
-                .await
-                .map_err(|error| {
-                    AdapterError::Unavailable(format!("runtime control request failed: {error}"))
-                })?;
-            super::provider_http::decode_control(response).await
-        };
-        let response = tokio::time::timeout(CONTROL_DEADLINE, exchange)
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime control request timed out".into()))??;
-        control_correlation::validate(request, &response)?;
-        Ok(response)
     }
 
     async fn exchange_at(
@@ -146,14 +92,15 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        self.require_supported_operation(&request)?;
         if let Some(restore) = restore_request(&request) {
             let archive = self.archive(handle).await?;
             checkpoint_transport::import(
                 &self.http,
                 endpoint.checkpoint(&restore.object_reference)?,
-                self.client.auth_header(),
+                self.auth_header(endpoint),
                 restore,
-                &archive.store,
+                &archive,
             )
             .await?;
         }
@@ -165,9 +112,9 @@ impl ProviderHostedControlTransport {
             let exported = checkpoint_transport::export(
                 &self.http,
                 endpoint.checkpoint(&checkpoint.object_reference)?,
-                self.client.auth_header(),
+                self.auth_header(endpoint),
                 checkpoint,
-                &archive.store,
+                &archive,
             )
             .await;
             if let Err(error) = exported {
@@ -317,27 +264,62 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
-    ) -> crate::Result<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    > {
+    ) -> crate::Result<Socket> {
+        self.connect_with_prepared_stream(endpoint, agent_id, None)
+            .await
+    }
+
+    async fn connect_with_prepared_stream(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        agent_id: &AgentSlot,
+        prepared: Option<crate::agent_sandbox::RuntimeStream>,
+    ) -> crate::Result<Socket> {
         let mut url = endpoint.conversation(agent_id.as_str())?;
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
             .as_str()
             .into_client_request()
             .map_err(|_| AdapterError::Rejected("runtime WebSocket URL is invalid".into()))?;
-        let (name, value) = self.client.auth_header();
-        let value = value
+        let (name, value) = self.auth_header(endpoint);
+        let mut value: http::HeaderValue = value
             .parse()
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
+        value.set_sensitive(true);
         request.headers_mut().insert(name, value);
         let config = WebSocketConfig {
             max_message_size: Some(MAX_FRAME_BYTES + 25),
             max_frame_size: Some(MAX_FRAME_BYTES + 25),
             ..WebSocketConfig::default()
         };
+        if endpoint.native_binding().is_some() {
+            let connected = async {
+                let stream = match prepared {
+                    Some(stream) => stream,
+                    None => {
+                        self.native_stream(
+                            endpoint,
+                            crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                        )
+                        .await?
+                    }
+                };
+                let (socket, _) =
+                    tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+                        .await
+                        .map_err(|_| {
+                            AdapterError::Unavailable(
+                                "runtime WebSocket over Kubernetes failed".into(),
+                            )
+                        })?;
+                Ok(Box::new(socket) as Socket)
+            };
+            return tokio::time::timeout(CONNECT_DEADLINE, connected)
+                .await
+                .map_err(|_| {
+                    AdapterError::Unavailable("runtime WebSocket connection timed out".into())
+                })?;
+        }
         let connected = tokio_tungstenite::connect_async_with_config(request, Some(config), false);
         let (stream, _) = tokio::time::timeout(CONNECT_DEADLINE, connected)
             .await
@@ -347,40 +329,43 @@ impl ProviderHostedControlTransport {
             .map_err(|error| {
                 AdapterError::Unavailable(format!("runtime WebSocket connection failed: {error}"))
             })?;
-        Ok(stream)
+        Ok(Box::new(stream))
     }
 }
 
+#[path = "provider_control.rs"]
+mod control;
+#[path = "native_http_pool.rs"]
+mod native_pool;
+#[path = "provider_open.rs"]
+mod open;
+
+#[path = "native_status.rs"]
+mod native_status;
+#[path = "native_transport.rs"]
+mod native_transport;
+
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {
+    async fn inspect_native_status(
+        &self,
+        inspection: &super::NativeStatusInspection<'_>,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.inspect_reused_native_status(inspection).await
+    }
+
     async fn bind_runtime(&self, handle: &RuntimeHandle, sandbox_id: &str) -> crate::Result<()> {
-        if sandbox_id.is_empty()
-            || sandbox_id.len() > 256
-            || sandbox_id.trim() != sandbox_id
-            || sandbox_id.chars().any(char::is_control)
-        {
-            return Err(AdapterError::Rejected(
-                "checkpoint sandbox identity is invalid".into(),
-            ));
-        }
-        let mut state = self.state.lock().await;
-        if let Some(existing) = state.archives.get(handle) {
-            if existing.sandbox_id != sandbox_id {
-                return Err(AdapterError::Rejected(
-                    "runtime handle is already bound to another sandbox".into(),
-                ));
-            }
-            return Ok(());
-        }
-        let store = self.archive_factory.for_sandbox(sandbox_id)?;
-        state.archives.insert(
-            handle.clone(),
-            BoundArchive {
-                sandbox_id: sandbox_id.into(),
-                store,
-            },
-        );
-        Ok(())
+        self.bind_sandbox(handle, sandbox_id).await
+    }
+
+    async fn bind_native_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        sandbox_id: &str,
+        request_sha256: &str,
+    ) -> crate::Result<()> {
+        self.bind_native_identity(handle, sandbox_id, request_sha256)
+            .await
     }
 
     async fn exchange(
@@ -388,6 +373,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        self.require_supported_operation(&request)?;
         let endpoint = self.endpoint(handle).await?;
         self.exchange_at(handle, &endpoint, request).await
     }
@@ -408,6 +394,15 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         .await
     }
 
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        ProviderHostedControlTransport::export_agent_history(self, handle, agent).await
+    }
+
+    #[tracing::instrument(skip_all, fields(agent_id = launch.request.agent_id.as_str()))]
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -416,25 +411,20 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         mut settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let mut timing = super::startup_timing::StartupTiming::new();
         let key = (handle.clone(), launch.request.agent_id.clone());
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
-        let response = self
-            .exchange_at(handle, &endpoint, RequestFrame::OpenAgent(launch.clone()))
+        timing.completed("transport_endpoint");
+        let (mut receipt, socket) = self
+            .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
-        let mut receipt = match response {
-            ResponseFrame::OpenAgent(receipt) => receipt,
-            ResponseFrame::Failure(failure) => {
-                return Err(super::provider_http::runtime_failure(failure))
-            }
-            _ => unreachable!("control correlation verifies open response operation"),
-        };
-        let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
+        timing.completed("conversation_transport");
         let subscription = if settings.own_credential {
             match &self.subscriptions {
                 Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
                     source: source.clone(),
-                    sandbox_id: self.archive(handle).await?.sandbox_id,
+                    sandbox_id: self.binding(handle).await?.sandbox_id,
                     runtime: handle.clone(),
                     agent: launch.request.agent_id.clone(),
                 }),
@@ -454,6 +444,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             updates,
         )
         .await?;
+        timing.completed("conversation_handshake");
         let channel = self.register_link(key, epochs, opened).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))
@@ -464,7 +455,10 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             let mut state = self.state.lock().await;
             let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
             *epoch = epoch.wrapping_add(1);
-            state.archives.remove(handle);
+            state.bindings.remove(handle);
+            if let Some(slot) = state.native_http.remove(handle) {
+                slot.cancel();
+            }
             state
                 .slot_epochs
                 .retain(|(runtime, _), _| runtime != handle);
@@ -488,3 +482,12 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
 #[cfg(test)]
 #[path = "provider_transport_tests.rs"]
 mod tests;
+
+#[path = "provider_discovery.rs"]
+mod discovery;
+
+#[path = "provider_history.rs"]
+mod history;
+
+#[path = "provider_binding.rs"]
+mod binding;

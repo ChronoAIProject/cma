@@ -363,9 +363,10 @@ async fn archived_legacy_collections_preserve_custody_and_allow_full_new_store_b
             .collect::<Vec<_>>()
     );
 
-    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
-    let stores = MongoStores::connect(
-        &uri,
+    // This fixture owns schema migration with an unrestricted disposable
+    // credential. Production connect verifies its runtime role before DDL.
+    let stores = MongoStores::open(
+        client.clone(),
         &name,
         "schema-archive-test",
         &auth_key(),

@@ -1,55 +1,82 @@
 import type { ApprovalDecision } from './controller';
-import type {
-  ApprovalRequest,
-  ConversationMessage,
-  ReasoningBlock,
-  RecoveryNotice,
-  ToolCall,
-} from './model';
-import { Button } from '../ui/Button';
-import {
-  IconCodeOutline16,
-  IconRightUpOutline16,
-  IconThinkOutline16,
-  IconWarningOutline16,
-} from '../ui/icons';
+import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
 import { SignInCard } from './SignInCard';
-import { ActivityBody } from './Thinking';
-import { isPendingTool } from './toolStatus';
-
-export type Entry =
-  | { kind: 'message'; item: ConversationMessage }
-  | { kind: 'tool'; item: ToolCall }
-  | { kind: 'reasoning'; item: ReasoningBlock }
-  | { kind: 'approval'; item: ApprovalRequest }
-  | { kind: 'recovery'; item: RecoveryNotice };
+import { ToolCallRow } from './ToolCallRows';
+import { PlanCard } from './PlanCard';
+import { ApprovalCard } from './ApprovalCard';
+import { UserMessage } from './UserMessage';
+import { TurnUsage } from './TurnUsage';
+import type { AgentUsage } from '../api/types';
+import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
+import { MessageFooter } from './MessageFooter';
+import type { MessageFeedbackControls } from './useMessageFeedback';
+import type { Entry } from './timeline';
 
 export function StreamEntry({
   entry,
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
+  activeRunId,
+  showUsage = false,
+  usage,
+  user,
+  unknownUserName,
+  feedback,
+  continued = false,
 }: {
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  /** Only the active turn can still be running a call. */
+  readonly activeRunId?: string;
+  readonly showUsage?: boolean;
+  readonly usage?: AgentUsage['currentTurn'];
+  readonly user?: MessageUser;
+  readonly unknownUserName?: string;
+  readonly feedback?: MessageFeedbackControls;
+  /** The previous message has the same author, so this one does not repeat the identity. */
+  readonly continued?: boolean;
 }) {
   if (entry.kind === 'message') {
     const message = entry.item;
+    const identity = messageIdentity(message.role, user, unknownUserName);
     return (
       <article
         className={`message message--${message.role}`}
-        aria-label={message.role === 'user' ? 'You' : 'Agent'}
+        aria-label={identity.name}
         data-streaming={message.status === 'streaming' ? '' : undefined}
+        data-message-key={`message:${message.id}`}
       >
-        <span className="message__role">{message.role === 'user' ? 'You' : 'Agent'}</span>
-        {message.role === 'user' ? (
-          <p>{message.content}</p>
-        ) : (
-          <MessageContent content={message.content} streaming={message.status === 'streaming'} />
-        )}
+        <MessageAvatar identity={identity} continued={continued} />
+        <div className="message__body">
+          {continued ? null : <span className="message__role">{identity.name}</span>}
+          {message.role === 'user' ? (
+            <UserMessage content={message.content} />
+          ) : (
+            <MessageContent content={message.content} streaming={message.status === 'streaming'} />
+          )}
+          {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
+          {showUsage && usage !== undefined ? (
+            <div className="message__usage" aria-label="Turn token usage">
+              <TurnUsage usage={usage} animateInitial={false} />
+            </div>
+          ) : null}
+          <MessageFooter
+            id={message.id}
+            canVote={message.role === 'assistant'}
+            at={message.at}
+            content={message.content}
+            committed={
+              !message.liveOnly &&
+              message.status !== 'streaming' &&
+              /^event:[1-9]\d*$/.test(message.id)
+            }
+            feedback={feedback}
+          />
+        </div>
       </article>
     );
   }
@@ -65,34 +92,16 @@ export function StreamEntry({
       </details>
     );
   }
-  if (entry.kind === 'tool') {
-    const tool = entry.item;
-    return (
-      <article className="agent-event agent-event--tool" aria-label={`Tool call: ${tool.title}`}>
-        <IconCodeOutline16 aria-hidden="true" />
-        <div>
-          <strong>{tool.title}</strong>
-          <span>
-            {[
-              tool.kind,
-              isPendingTool(tool)
-                ? `Outcome not reported (last status: ${tool.status})`
-                : tool.status,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </span>
-          <span className="tool-call__duration">Duration not reported</span>
-          <ActivityBody
-            label="Details"
-            body={tool.detail === undefined ? undefined : { text: tool.detail, truncated: false }}
-          />
-        </div>
-      </article>
-    );
-  }
+  if (entry.kind === 'tool') return <ToolCallRow tool={entry.item} activeRunId={activeRunId} />;
+  if (entry.kind === 'plan') return <PlanCard plan={entry.item} />;
   if (entry.kind === 'recovery') {
     const notice = entry.item;
+    if (notice.clearsOn !== undefined)
+      return (
+        <p className="message__delivery" role="status">
+          {notice.title}
+        </p>
+      );
     if (notice.id.startsWith('sign-in:') || notice.id === 'live-sign-in')
       return <SignInCard notice={notice} />;
     const url =
@@ -113,40 +122,12 @@ export function StreamEntry({
       </div>
     );
   }
-  const approval = entry.item;
   return (
-    <section className="approval" aria-labelledby={`approval-${approval.id}`}>
-      <div>
-        <span className="approval__eyebrow">Approval</span>
-        <h2 id={`approval-${approval.id}`}>{approval.reason}</h2>
-        {approval.message === undefined ? null : <p>{approval.message}</p>}
-      </div>
-      {approval.decision === undefined && approvalReadOnly ? (
-        <p>Waiting for an authorized participant to answer this approval.</p>
-      ) : approval.decision === undefined ? (
-        <div className="approval__actions">
-          <Button size="sm" disabled={approvalBusy} onClick={() => onApproval(approval.id, 'deny')}>
-            Deny
-          </Button>
-          <Button
-            size="sm"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'abort')}
-          >
-            Abort
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            disabled={approvalBusy}
-            onClick={() => onApproval(approval.id, 'allow')}
-          >
-            Allow
-          </Button>
-        </div>
-      ) : (
-        <span className="approval__decision">{approval.decision}</span>
-      )}
-    </section>
+    <ApprovalCard
+      approval={entry.item}
+      busy={approvalBusy}
+      readOnly={approvalReadOnly}
+      onApproval={onApproval}
+    />
   );
 }

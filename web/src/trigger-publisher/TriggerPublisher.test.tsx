@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -46,10 +47,19 @@ async function next(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function selectTargets(user: ReturnType<typeof userEvent.setup>) {
+  const inlineImage = screen.queryByRole('button', { name: 'Image' });
+  if (inlineImage !== null) {
+    await waitFor(() => expect(inlineImage).toBeEnabled());
+    return;
+  }
   for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
-    const select = screen.getByRole('combobox', { name: `${kind} profile` });
+    const select = screen.getByRole('button', { name: `${kind} profile` });
     await waitFor(() => expect(select).toBeEnabled());
-    await user.selectOptions(select, `${profiles[kind].id}:${String(profiles[kind].revision)}`);
+    await chooseOptionValue(
+      user,
+      select,
+      `${profiles[kind].id}:${String(profiles[kind].revision)}`,
+    );
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
 }
@@ -93,22 +103,58 @@ describe('Trigger publisher flow', () => {
     expect(navigate).toHaveBeenCalledWith({ kind: 'trigger_embed', triggerId: published.id });
   });
 
+  it.each([
+    ['draft', 'Draft', 'muted'],
+    ['published', 'Published', 'neutral'],
+    ['retired', 'Retired', 'muted'],
+  ] as const)(
+    'marks a %s Trigger with its badge in the rail and the header',
+    async (availability, word, tone) => {
+      const document = { ...published, availability };
+      const fixture = publisherFixture(document);
+      render(
+        <TriggerPublisherPage
+          client={fixture.client}
+          triggerId={document.id}
+          view="embed"
+          onNavigate={vi.fn()}
+        />,
+      );
+      const link = await screen.findByRole('link', { name: /trureturing/ });
+      expect(within(link).getByText(word).closest('.badge')).toHaveAttribute('data-tone', tone);
+      const header = screen.getByRole('heading', { name: 'Triggers' }).closest('header')!;
+      expect(within(header).getByText(word).closest('.badge')).toHaveAttribute('data-tone', tone);
+      expect(within(link).queryByText(availability)).not.toBeInTheDocument();
+    },
+  );
+
+  it('names no status in the header while authoring a new Trigger', async () => {
+    const fixture = publisherFixture(published);
+    render(<TriggerPublisherPage client={fixture.client} onNavigate={vi.fn()} />);
+    await screen.findByRole('link', { name: /trureturing/ });
+    const header = screen.getByRole('heading', { name: 'Triggers' }).closest('header')!;
+    expect(header.querySelector('.badge')).toBeNull();
+  });
+
+  it('reports a list that could not be read as an alert with Try again', async () => {
+    const fixture = publisherFixture();
+    fixture.triggers.list.mockRejectedValueOnce(new TypeError('offline'));
+    render(<TriggerPublisherPage client={fixture.client} onNavigate={vi.fn()} />);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Triggers could not be loaded.');
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeEnabled();
+  });
+
   it('publishes the trureturing setup in five steps with pinned payloads and API README/HTML snippets', async () => {
     const user = userEvent.setup();
     const test = publisherFixture();
     render(<RoutedPublisher client={test.client} />);
-    await next(user);
-    expect(screen.getAllByRole('alert')).toHaveLength(3);
-    expect(test.triggers.create).not.toHaveBeenCalled();
     await selectTargets(user);
     expect(
       screen.getByText(
-        'Visitors get Codex in a trureturing workspace inside a Standard sandbox that reaches github.',
+        'Visitors get an inline Agent from the system default image in an empty workspace.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'From Sandbox profile' })).toBeInTheDocument();
-    await user.click(screen.getByText('Standard: commands and environment'));
-    expect(screen.getByText('corepack enable')).toBeInTheDocument();
     await next(user);
     await user.click(screen.getByRole('radio', { name: 'Always start a new one' }));
     expect(screen.getByText(/Every click starts a new Agent there/)).toBeInTheDocument();
@@ -194,7 +240,7 @@ describe('Trigger publisher flow', () => {
     await screen.findByRole('button', { name: 'Retry original request' });
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'New Trigger' })).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Your Triggers' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Your Triggers' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Retry original request' }));
     await screen.findByRole('heading', { name: 'Embed revision 1' });
     expect(test.triggers.save).toHaveBeenCalledOnce();
@@ -219,7 +265,7 @@ describe('Trigger publisher flow', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Publish revision 1 of trureturing' }));
     await user.click(screen.getByRole('button', { name: 'Publish revision 1' }));
     await screen.findByRole('heading', { name: 'What it opens' });
-    const picker = screen.getByRole('combobox', { name: 'workspace profile' });
+    const picker = screen.getByRole('button', { name: 'workspace profile' });
     expect(picker).toHaveAttribute('aria-invalid', 'true');
     expect(picker).toHaveAccessibleDescription(/Every referenced profile must be public/);
   });

@@ -17,7 +17,12 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .lock()
             .sandboxes
             .iter()
-            .filter(|(_, sandbox)| sandbox.status == SandboxStatus::Active)
+            .filter(|(_, sandbox)| {
+                matches!(
+                    sandbox.status,
+                    SandboxStatus::Active | SandboxStatus::Paused
+                )
+            })
             .map(|(stored_id, sandbox)| {
                 if stored_id != &sandbox.id {
                     return Err(SandboxStoreError::Corrupt(
@@ -86,6 +91,12 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
         let agents = sandbox_agents(&state, &current.id)?;
+        if state.workspaces.values().any(|workspace| {
+            workspace.sandbox_id == current.id
+                && (workspace.work.step.is_pending() || workspace.work.lease.is_some())
+        }) {
+            return Ok(SandboxMaintenanceOutcome::NotEligible);
+        }
         persist_application(
             &mut state,
             apply_image_rotation(&current, &agents, &request)?,

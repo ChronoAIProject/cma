@@ -1,15 +1,35 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# Existing sealed ChannelPointers pin this exact Service DNS authority. Keep
+# their origin valid while the canonical workload and Service use the new name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cma-api
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-agent-manager
+    app.kubernetes.io/part-of: cma
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cma-agent-manager
   ports:
     - name: http
       port: 80

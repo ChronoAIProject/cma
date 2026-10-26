@@ -17,6 +17,7 @@ pub async fn create(
     request: ChannelCreateRequest,
     record_id: RecordId,
 ) -> Result<CreatedChannel, ManagementError> {
+    custom_attachments_allowed(state, &request.sources)?;
     let uuid = uuid::Uuid::parse_str(record_id.as_str()).map_err(|_| {
         ManagementError::Invalid(ValidationError::new("/record_id", "must be a UUID"))
     })?;
@@ -44,6 +45,11 @@ pub async fn create(
                 record_id.clone(),
                 binding_id,
                 ConformanceLevel::L1,
+                super::write_gate::WriteFlags {
+                    native_bot_mentions: state.native_bot_mentions_writes_enabled,
+                    thread_contract: state.thread_contract_writes_enabled,
+                    ..Default::default()
+                },
             )
             .map_err(ManagementError::Invalid)?;
             definition.creation = Some(ChannelCreation {
@@ -57,12 +63,15 @@ pub async fn create(
                 .put(&record_id, &creator.subject, &blob, None)
                 .await
             {
-                Ok(version) => LoadedChannel {
-                    channel_id,
-                    pointer,
-                    definition,
-                    record: crate::records::RecordValue { blob, version },
-                },
+                Ok(version) => {
+                    state.index.changed(&record_id, &creator.subject, version);
+                    LoadedChannel {
+                        channel_id,
+                        pointer,
+                        definition,
+                        record: crate::records::RecordValue { blob, version },
+                    }
+                }
                 Err(RecordError::Conflict { .. }) => {
                     load_record(state, creator, &record_id).await?
                 }
@@ -113,7 +122,10 @@ pub async fn create(
         )
         .await
     {
-        Ok(version) => version,
+        Ok(version) => {
+            state.index.changed(&record_id, &creator.subject, version);
+            version
+        }
         Err(RecordError::Conflict { .. }) => {
             let retained = load_record(state, creator, &record_id).await?;
             if retained

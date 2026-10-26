@@ -1,30 +1,51 @@
 import type { ConversationState } from './model';
 import { Thinking } from './Thinking';
 import { isPendingTool } from './toolStatus';
+import { visibleTurnText } from './tokenEstimate';
+import { Presence } from '../ui/Presence';
+import { useThinkingPlacement } from './thinkingPlacement';
 
-/** This dock is outside the history scrollport so it remains visible while reading. */
+/** Ephemeral turn status follows the reply in the conversation, never in stored history. */
 export function ActiveThinking({ conversation }: { readonly conversation: ConversationState }) {
   const runId = conversation.activeRunId;
-  if (runId === undefined) return null;
+  const placement = useThinkingPlacement(conversation);
   return (
-    <div className="agent-surface__thinking">
-      <Thinking
-        key={runId}
-        startedAt={conversation.activeRunStartedAt}
-        text={conversation.reasoning
-          .filter((item) => item.runId === runId)
-          .map((item) => item.content)
-          .join('\n')}
-        activities={conversation.toolCalls
-          .filter((item) => item.runId === runId && isPendingTool(item))
-          .map((item) => ({
-            id: item.id,
-            kind: item.kind ?? 'Tool',
-            target: item.title,
-            status: item.status,
-            detail: item.detail === undefined ? undefined : { text: item.detail, truncated: false },
-          }))}
-      />
-    </div>
+    <Presence>
+      {runId === undefined ? null : (
+        <div className="active-thinking" ref={placement} aria-live="off">
+          <div className="active-thinking__content">
+            <Thinking
+              key={runId}
+              startedAt={conversation.activeRunStartedAt}
+              visibleText={visibleTurnText(conversation)}
+              visibleAnchor={
+                String(conversation.visibleUsageAnchor?.turnSequence) === runId
+                  ? conversation.visibleUsageAnchor?.parts
+                  : undefined
+              }
+              usage={
+                String(conversation.usage?.currentTurn?.turnSequence) === runId
+                  ? conversation.usage?.currentTurn
+                  : undefined
+              }
+              text={conversation.reasoning
+                .filter((item) => item.runId === runId)
+                .map((item) => item.content)
+                .join('\n')}
+              activities={conversation.toolCalls
+                .filter((item) => item.runId === runId && isPendingTool(item))
+                .map((item) => ({
+                  id: item.id,
+                  kind: item.kind ?? 'Tool',
+                  target: item.title,
+                  status: item.status,
+                  detail:
+                    item.detail === undefined ? undefined : { text: item.detail, truncated: false },
+                }))}
+            />
+          </div>
+        </div>
+      )}
+    </Presence>
   );
 }

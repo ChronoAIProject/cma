@@ -1,21 +1,28 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
+import { Alert } from '../ui/Alert';
+import { StatusBadge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
+import { Table, TableActions, TableCell } from '../ui/Table';
 import { IconArchiveOutline20, IconInspectOutline12, IconSearchOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
-import {
-  FailureNotice,
-  RecordControls,
-  Records,
-  Timestamp,
-  stateWord,
-  useRecords,
-} from './records';
+import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { SandboxDetail } from './SandboxDetail';
+import { useSandboxOwners } from './useSandboxOwners';
+
+const COLUMNS = [
+  { header: 'Sandbox' },
+  { header: 'Owner' },
+  { header: 'Status' },
+  { header: 'Runtime' },
+  { header: 'Agents', align: 'end' },
+  { header: 'Last activity (SGT)' },
+] as const;
 
 const statuses: readonly SandboxStatus[] = [
   'provisioning',
@@ -31,7 +38,17 @@ const statuses: readonly SandboxStatus[] = [
   'retired',
 ];
 
-export function Sandboxes({
+export function Sandboxes(props: {
+  readonly client: OperatorClient;
+  readonly canControl: boolean;
+}) {
+  const [scope, setScope] = useState({ client: props.client, generation: 0 });
+  if (scope.client !== props.client)
+    setScope({ client: props.client, generation: scope.generation + 1 });
+  return <SandboxInventory key={scope.generation} {...props} />;
+}
+
+function SandboxInventory({
   client,
   canControl,
 }: {
@@ -42,9 +59,19 @@ export function Sandboxes({
   const [status, setStatus] = useState<SandboxStatus | ''>('');
   const [version, setVersion] = useState('');
   const [filters, setFilters] = useState({ owner, status, version });
+  const owners = useSandboxOwners(client);
+  const ownerHintId = useId();
   return (
     <section aria-label="Sandbox inventory">
       <h2>Sandboxes</h2>
+      {/* Said once for the page: every row would otherwise repeat the same sentence. */}
+      {canControl ? null : (
+        <div className="operator-notices">
+          <Alert tone="info" title="Cross-owner control is required.">
+            You can review these Sandboxes, but Retire stays unavailable.
+          </Alert>
+        </div>
+      )}
       <form
         className="operator-filters"
         onSubmit={(event) => {
@@ -54,27 +81,43 @@ export function Sandboxes({
       >
         <label className="operator-field">
           <span>Owner</span>
-          <Input
-            aria-label="Sandbox owner"
+          <Picker
+            label="Sandbox owner"
             value={owner}
-            onChange={(event) => setOwner(event.target.value)}
-            maxLength={255}
+            onChange={setOwner}
+            options={[
+              { value: '', label: 'All owners' },
+              ...(owners.state.status === 'ready' ? owners.state.options : []),
+            ]}
+            disabled={owners.state.status !== 'ready'}
+            describedBy={owners.state.status === 'ready' ? undefined : ownerHintId}
           />
+          {owners.state.status === 'loading' ? (
+            <span id={ownerHintId} role="status">
+              Loading owners…
+            </span>
+          ) : owners.state.status === 'error' ? (
+            <span id={ownerHintId} role="alert">
+              Owner choices could not be loaded.
+            </span>
+          ) : null}
         </label>
+        {owners.state.status === 'error' ? (
+          <Button size="sm" onClick={owners.retry}>
+            Retry owner choices
+          </Button>
+        ) : null}
         <label className="operator-field">
           <span>Status</span>
-          <select
-            aria-label="Sandbox status"
+          <Picker
+            label="Sandbox status"
             value={status}
-            onChange={(event) => setStatus(event.target.value as SandboxStatus | '')}
-          >
-            <option value="">All statuses</option>
-            {statuses.map((value) => (
-              <option key={value} value={value}>
-                {stateWord(value)}
-              </option>
-            ))}
-          </select>
+            onChange={(choice) => setStatus(choice as SandboxStatus | '')}
+            options={[
+              { value: '', label: 'All statuses' },
+              ...statuses.map((value) => ({ value, label: stateWord(value) })),
+            ]}
+          />
         </label>
         <label className="operator-field">
           <span>Runtime version</span>
@@ -162,54 +205,58 @@ function SandboxRecords({
     <>
       <RecordControls {...records} />
       <FailureNotice failure={records.error} />
-      <Records loading={records.loading} empty={records.page?.items.length === 0}>
+      <Table
+        label="Sandboxes"
+        placement="operator-table"
+        columns={COLUMNS}
+        actions="Actions"
+        loading={records.loading}
+        loadingLabel="Loading records"
+        empty={records.page === undefined ? undefined : 'No records match these filters.'}
+      >
         {records.page?.items.map((row) => (
-          <article className="operator-record" key={row.id}>
-            <Timestamp value={row.last_activity_at} />
-            <div>
-              <p>
-                {row.name} <span className="operator-state">{stateWord(row.status)}</span>
-              </p>
-              <p className="operator-meta">
-                <span>Owner {row.owner_name?.trim() || 'Name unavailable'}</span>
-                <span>{row.agent_count} Agents</span>
-                <span>Runtime {row.runtime_version ?? 'not bound'}</span>
-              </p>
-              <code>{row.id}</code>
-            </div>
-            <div>
-              <div className="operator-actions">
-                <Button
-                  size="sm"
-                  icon={<IconInspectOutline12 />}
-                  onClick={() => setDetail(row.id)}
-                  aria-label={`Details for ${row.name}`}
-                >
-                  Details
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  icon={<IconArchiveOutline20 />}
-                  disabled={!canControl || row.status === 'retired' || row.status === 'retiring'}
-                  onClick={() => {
-                    setFailure(undefined);
-                    setUncertain(false);
-                    setTarget(row);
-                  }}
-                >
-                  Retire
-                </Button>
-              </div>
-              {!canControl ? (
-                <p className="operator-notice">Cross-owner control is required.</p>
-              ) : row.status === 'retired' || row.status === 'retiring' ? (
-                <p className="operator-notice">Retirement already requested.</p>
-              ) : null}
-            </div>
-          </article>
+          <tr key={row.id}>
+            <TableCell>
+              <span className="operator-name">{row.name}</span>
+              <code className="operator-id">{row.id}</code>
+            </TableCell>
+            <TableCell>{row.owner_name?.trim() || 'Name unavailable'}</TableCell>
+            <TableCell>
+              <StatusBadge status={row.status} />
+            </TableCell>
+            <TableCell mono>{row.runtime_version ?? 'not bound'}</TableCell>
+            <TableCell align="end">{row.agent_count}</TableCell>
+            <TableCell>
+              <Timestamp value={row.last_activity_at} />
+            </TableCell>
+            <TableActions>
+              <Button
+                size="sm"
+                icon={<IconInspectOutline12 />}
+                onClick={() => setDetail(row.id)}
+                aria-label={`Details for ${row.name}`}
+              >
+                Details
+              </Button>
+              {/* Without the capability the page says so once; a Deleting or
+                  Deleted badge is this row's own reason. */}
+              <Button
+                size="sm"
+                variant="danger"
+                icon={<IconArchiveOutline20 />}
+                disabled={!canControl || row.status === 'retired' || row.status === 'retiring'}
+                onClick={() => {
+                  setFailure(undefined);
+                  setUncertain(false);
+                  setTarget(row);
+                }}
+              >
+                Retire
+              </Button>
+            </TableActions>
+          </tr>
         ))}
-      </Records>
+      </Table>
       {detail === undefined ? null : (
         <SandboxDetail client={client} id={detail} onClose={() => setDetail(undefined)} />
       )}

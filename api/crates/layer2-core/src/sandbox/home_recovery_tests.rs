@@ -15,6 +15,7 @@ fn native() -> Sandbox {
     let mut home = SandboxHome::reserve(
         &value.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "empty".into(),
@@ -23,6 +24,7 @@ fn native() -> Sandbox {
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "original-disk".into(),
@@ -41,7 +43,7 @@ fn lost_pause() -> Sandbox {
     value
         .begin_pause(IDLE_AT.into(), Some("Paused by you.".into()))
         .unwrap();
-    value.recover_runtime_loss(&[], NOW.into()).unwrap();
+    value.recover_runtime_loss(&[], false, NOW.into()).unwrap();
     value
 }
 
@@ -74,7 +76,7 @@ fn mutation(current: &Sandbox, next: Sandbox) -> SandboxLifecycleMutation {
 fn loss_before_first_snapshot_pins_original_disk_without_inventing_an_archive() {
     let mut value = native();
     let original = value.clone();
-    value.recover_runtime_loss(&[], NOW.into()).unwrap();
+    value.recover_runtime_loss(&[], false, NOW.into()).unwrap();
     assert_eq!(value.status, SandboxStatus::Reviving);
     assert!(value.runtime.is_none());
     assert!(value.lifecycle.checkpoints.latest.is_none());
@@ -100,7 +102,7 @@ fn loss_before_first_snapshot_pins_original_disk_without_inventing_an_archive() 
 fn recovery_uses_disk_even_when_a_completed_older_archive_exists() {
     let mut value = native();
     value.lifecycle.checkpoints.latest = Some(checkpoint(1, IDLE_AT));
-    value.recover_runtime_loss(&[], NOW.into()).unwrap();
+    value.recover_runtime_loss(&[], false, NOW.into()).unwrap();
     let fence = claim(&mut value);
     let original = value.clone();
     let archive = value.lifecycle.checkpoints.latest.clone().unwrap();
@@ -161,7 +163,11 @@ fn interrupted_pause_returns_to_pausing_with_new_authority_and_no_live_publicati
         value.lifecycle.next_authority,
         original.lifecycle.next_authority + 1
     );
-    assert!(value.retained_home_recovery().is_none());
+    let retained = value
+        .retained_home_recovery()
+        .expect("the resumed pause keeps the retained home authority");
+    assert_eq!(retained.source_generation, 11);
+    assert!(retained.resume_pause.is_none());
     assert_eq!(value.work.ready_at, NOW);
     assert_eq!(
         value.lifecycle.paused_notice.as_deref(),
@@ -174,7 +180,7 @@ fn interrupted_pause_returns_to_pausing_with_new_authority_and_no_live_publicati
 fn repeated_runtime_loss_preserves_pause_but_new_creation_cancels_it() {
     let mut value = lost_pause();
     value.runtime = native().runtime;
-    value.recover_runtime_loss(&[], NOW.into()).unwrap();
+    value.recover_runtime_loss(&[], false, NOW.into()).unwrap();
     assert!(value
         .retained_home_recovery()
         .unwrap()
@@ -234,7 +240,7 @@ fn ready_publication_keeps_the_original_conversation_and_startup_receipts() {
     );
     let mut recovering = value;
     recovering
-        .recover_runtime_loss(std::slice::from_ref(&next), NOW.into())
+        .recover_runtime_loss(std::slice::from_ref(&next), false, NOW.into())
         .unwrap();
     assert!(!recovering.restores_agent(&next));
 }
@@ -282,6 +288,7 @@ async fn queued_message_and_pause_cancellation_commit_together() {
     next.revision += 1;
     next.updated_at = NOW.into();
     let request = AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,

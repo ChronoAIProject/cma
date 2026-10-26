@@ -3,6 +3,18 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode};
 
 impl Cmaeg {
+    /// List owner-visible channels with an opaque continuation cursor.
+    pub async fn list_channels(&self, after: Option<&str>) -> Result<ChannelPage> {
+        let query: Vec<_> = after
+            .map(|value| ("after", value.to_owned()))
+            .into_iter()
+            .collect();
+        let mut request = Request::get(&["v1", "channels"]);
+        request.root = true;
+        request.query = &query;
+        self.client.request(request).await
+    }
+
     /// Create a channel; reserve `record_id` for recovery across replicas/restarts.
     pub async fn create_channel(
         &self,
@@ -59,10 +71,13 @@ impl Cmaeg {
         self.client.empty(request).await
     }
     /// Run the gateway's synthetic provider test, without sending a channel message.
+    /// Defaults to 125 seconds for startup and completion; an explicit builder
+    /// request timeout takes precedence.
     pub async fn test_channel(&self, id: &str) -> Result<TestChannelResponse> {
         let segments = ["v1", "channels", id, "test"];
         let mut request = Request::operation(Method::POST, &segments, None::<&()>, StatusCode::OK)?;
         request.root = true;
+        request.timeout = Some(self.test_timeout);
         self.client.request(request).await
     }
     /// Re-encrypt the record. Requires a dedicated CMA service credential.

@@ -391,6 +391,7 @@ pub fn wire(case: &Case) -> Expected {
         path: case.request.path.clone(),
         headers: request_headers,
         body: case.request.body.clone(),
+        raw_body: case.request.expanded_raw_body().map(String::into_bytes),
         status: case.response.status,
         response_headers: case.response.headers.clone(),
         response,

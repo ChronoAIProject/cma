@@ -1,4 +1,6 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
+import type { SetStateAction } from 'react';
 import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
 import { Input } from '../ui/Input';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
@@ -7,20 +9,41 @@ import { DraftBadge } from './BadgePreview';
 import { LABELS, resultSentence, reuseExplanation, type SelectedProfiles } from './model';
 import { ProfilePicker } from './ProfilePicker';
 import { QuickMessageFields } from './QuickMessageFields';
+import { InlineTargetStep } from './InlineTargetStep';
+import { TrustDisclosures } from './TrustDisclosures';
+
+export { TrustDisclosures } from './TrustDisclosures';
 
 export function TargetStep({
   client,
+  value,
   profiles,
   errors,
   disabled,
+  onChange,
   onSelect,
+  onImageResolving,
 }: {
   readonly client: TriggerPublisherClient;
+  readonly value: TriggerContent;
   readonly profiles: SelectedProfiles;
   readonly errors: Readonly<Record<string, string>>;
   readonly disabled: boolean;
+  readonly onChange: (value: SetStateAction<TriggerContent>) => void;
+  readonly onImageResolving: (resolving: boolean) => void;
   readonly onSelect: (kind: ProfileKind, choice: PublisherProfileChoice) => void;
 }) {
+  if (value.target.inline !== undefined) {
+    return (
+      <InlineTargetStep
+        value={value}
+        errors={errors}
+        disabled={disabled}
+        onChange={onChange}
+        onImageResolving={onImageResolving}
+      />
+    );
+  }
   const sandbox = profiles.sandbox;
   const sentence = resultSentence(profiles);
   return (
@@ -185,24 +208,26 @@ export function PresentationStep({
       </fieldset>
       <div className="trigger-field">
         <label htmlFor="trigger-theme">Theme</label>
-        <select
+        <Picker
           id="trigger-theme"
           value={presentation.theme}
           disabled={disabled}
-          onChange={(event) =>
+          onChange={(choice) =>
             onChange({
               ...value,
               presentation: {
                 ...presentation,
-                theme: event.target.value as typeof presentation.theme,
+                theme: choice as typeof presentation.theme,
               },
             })
           }
-        >
-          <option value="auto">Match the visitor</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
+          label="Theme"
+          options={[
+            { value: 'auto', label: 'Match the visitor' },
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
+        />
       </div>
       <label className="trigger-checkbox">
         <input
@@ -215,45 +240,6 @@ export function PresentationStep({
         />
         Show a review page first
       </label>
-    </>
-  );
-}
-
-export function TrustDisclosures({ profiles }: { readonly profiles: SelectedProfiles }) {
-  return (
-    <>
-      {Object.values(profiles).flatMap((profile) => {
-        if (profile.kind === 'agent' || !profile.public) return [];
-        const commands =
-          profile.kind === 'sandbox'
-            ? profile.content.software_install_commands
-            : profile.content.setup_commands;
-        const environment = profile.kind === 'sandbox' ? profile.content.environment_variables : [];
-        if (commands.length === 0 && environment.length === 0) return [];
-        return [
-          <details className="trigger-trust" key={`${profile.kind}:${profile.id}`}>
-            <summary>{profile.name}: commands and environment</summary>
-            <p className="trigger-caption">
-              Revision {profile.revision}; {profile.digest}
-            </p>
-            {commands.map((command, index) => (
-              <pre key={index}>
-                <code>{command}</code>
-              </pre>
-            ))}
-            {environment.length === 0 ? null : (
-              <dl>
-                {environment.map((variable) => (
-                  <div key={variable.name}>
-                    <dt>{variable.name}</dt>
-                    <dd>{variable.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-          </details>,
-        ];
-      })}
     </>
   );
 }

@@ -42,6 +42,7 @@ async fn request(
     (status, serde_json::from_slice(&body).unwrap())
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn bot_rest_admits_durable_work_and_hides_other_owners_without_exposing_keys() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;

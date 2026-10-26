@@ -23,6 +23,7 @@ fn sandbox_snapshot() -> SandboxProfileSnapshot {
         revision: 1,
         digest: "a".repeat(64),
         content: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: vec![],
@@ -82,6 +83,7 @@ fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -163,6 +165,10 @@ fn agent() -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,
@@ -226,6 +232,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::Pausing, SandboxStatus::Active),
         (SandboxStatus::Pausing, SandboxStatus::Retiring),
         (SandboxStatus::Paused, SandboxStatus::Reviving),
+        (SandboxStatus::Paused, SandboxStatus::Rotating),
         (SandboxStatus::Paused, SandboxStatus::Retiring),
         (SandboxStatus::Reviving, SandboxStatus::Active),
         (SandboxStatus::Reviving, SandboxStatus::Pausing),
@@ -234,6 +241,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::CredentialRotating, SandboxStatus::Reviving),
         (SandboxStatus::CredentialRotating, SandboxStatus::Retiring),
         (SandboxStatus::Rotating, SandboxStatus::Active),
+        (SandboxStatus::Rotating, SandboxStatus::Pausing),
         (SandboxStatus::Rotating, SandboxStatus::Retiring),
         (SandboxStatus::Failed, SandboxStatus::Retiring),
         (SandboxStatus::Retiring, SandboxStatus::Retired),
@@ -680,3 +688,9 @@ fn agent_limits_count_only_live_agents_in_the_selected_workspace() {
         Ok(())
     );
 }
+
+#[path = "agent_attachments_tests.rs"]
+mod attachments;
+
+#[path = "agent_filesystem_tests.rs"]
+mod filesystem;

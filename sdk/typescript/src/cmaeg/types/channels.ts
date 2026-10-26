@@ -34,11 +34,15 @@ export const IdentityAdmissionSchema = tagged(
 );
 export type IdentityAdmission = Output<typeof IdentityAdmissionSchema>;
 
+export const BotMessageAdmissionSchema = enumeration('deny', 'native_mentions');
+export type BotMessageAdmission = Output<typeof BotMessageAdmissionSchema>;
+
 export const AdmissionPolicySchema = tagged(
   {
     all: object({ type: enumeration('all') }),
     allowlist: object({ sender_ids: array(text), type: enumeration('allowlist') }),
     scoped: object({
+      bot_messages: optional(BotMessageAdmissionSchema),
       chats: IdentityAdmissionSchema,
       groups: GroupAdmissionSchema,
       senders: IdentityAdmissionSchema,
@@ -61,7 +65,11 @@ export const CredentialsRequestSchema = object({
 });
 export type CredentialsRequest = Output<typeof CredentialsRequestSchema>;
 
-export const PartitionRuleSchema = object({ key: PartitionKeySchema, version: integer });
+export const PartitionRuleSchema = object({
+  key: PartitionKeySchema,
+  custom_key: optional(nullable(PartitionKeySchema)),
+  version: integer,
+});
 export type PartitionRule = Output<typeof PartitionRuleSchema>;
 
 export const ProviderTargetSchema = tagged(
@@ -112,6 +120,12 @@ export const CustomAuthSchema = tagged(
 );
 export type CustomAuth = Output<typeof CustomAuthSchema>;
 
+export const CustomAttachmentsSchema = object({
+  origins: optional(array(text)),
+  pointer: optional(text),
+});
+export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
+
 export const SourceRequestSchema = tagged(
   {
     telegram: object({
@@ -132,6 +146,7 @@ export const SourceRequestSchema = tagged(
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
+      attachments: optional(nullable(CustomAttachmentsSchema)),
       auth: CustomAuthSchema,
       prompt_template: optional(nullable(text)),
       schema: optional(anything),
@@ -172,6 +187,143 @@ export const ProviderBindingSchema = object({
 });
 export type ProviderBinding = Output<typeof ProviderBindingSchema>;
 
+/** A channel consumer's id: `default` or `csm_` and 12 lowercase hex digits. */
+export const ConsumerIdSchema = text;
+export type ConsumerId = Output<typeof ConsumerIdSchema>;
+
+/** A consumer's chat name, `^[a-z][a-z0-9_-]{1,31}$`, unique per channel. */
+export const ConsumerNameSchema = text;
+export type ConsumerName = Output<typeof ConsumerNameSchema>;
+
+/** A routing rule's id, `^[a-z0-9_-]{1,32}$`, unique per channel. */
+export const RuleIdSchema = text;
+export type RuleId = Output<typeof RuleIdSchema>;
+
+/** A source slot: `telegram`, `relay_<platform>`, `custom` or `agent`. */
+export const SourceIdSchema = text;
+export type SourceId = Output<typeof SourceIdSchema>;
+
+/** An exact match, or a prefix match when it ends in one `*`. */
+export const PatternSchema = text;
+export type Pattern = Output<typeof PatternSchema>;
+
+export const ActivityKindNameSchema = enumeration('message', 'command', 'interaction', 'event');
+export type ActivityKindName = Output<typeof ActivityKindNameSchema>;
+
+export const ReplyChoiceSchema = enumeration('origin', 'default');
+export type ReplyChoice = Output<typeof ReplyChoiceSchema>;
+
+export const ReplyLabelSchema = enumeration('auto', 'always', 'never');
+export type ReplyLabel = Output<typeof ReplyLabelSchema>;
+
+export const ConsumerReplySchema = object({
+  auto_final: optional(nullable(boolean)),
+  destination: optional(ReplyChoiceSchema),
+});
+export type ConsumerReply = Output<typeof ConsumerReplySchema>;
+
+export const PublishPolicySchema = object({
+  enabled: boolean,
+  targets: optional(array(ConsumerIdSchema)),
+});
+export type PublishPolicy = Output<typeof PublishPolicySchema>;
+
+/** An additional consumer beside `default`; it exposes only its key's public hash. */
+export const ConsumerSchema = object({
+  agent_key_hash: text,
+  created_at: text,
+  id: ConsumerIdSchema,
+  label: optional(nullable(text)),
+  mentionable: optional(boolean),
+  name: ConsumerNameSchema,
+  non_human: optional(nullable(boolean)),
+  pending: optional(boolean),
+  profile: EventWorkerProfileSchema,
+  profile_digest: text,
+  provider: ProviderBindingSchema,
+  publish: optional(PublishPolicySchema),
+  reply: optional(ConsumerReplySchema),
+});
+export type Consumer = Output<typeof ConsumerSchema>;
+
+/** How the implicit `default` consumer is presented. */
+export const DefaultConsumerSchema = object({
+  label: optional(nullable(text)),
+  mentionable: optional(boolean),
+  name: ConsumerNameSchema,
+  non_human: optional(nullable(boolean)),
+  publish: optional(PublishPolicySchema),
+  reply: optional(ConsumerReplySchema),
+});
+export type DefaultConsumer = Output<typeof DefaultConsumerSchema>;
+
+export const RuleMatchSchema = object({
+  chats: optional(array(text)),
+  event_sources: optional(array(PatternSchema)),
+  event_types: optional(array(PatternSchema)),
+  kinds: optional(array(ActivityKindNameSchema)),
+  senders: optional(array(text)),
+  sources: optional(array(SourceIdSchema)),
+});
+export type RuleMatch = Output<typeof RuleMatchSchema>;
+
+export const RoutingRuleSchema = object({
+  id: RuleIdSchema,
+  targets: array(ConsumerIdSchema),
+  when: optional(RuleMatchSchema),
+});
+export type RoutingRule = Output<typeof RoutingRuleSchema>;
+
+/** Gateway routing directives; an absent switch is on. */
+export const AddressingSchema = object({
+  command: optional(boolean),
+  event_field: optional(boolean),
+  mentions: optional(boolean),
+  unknown_target_notice: optional(boolean),
+});
+export type Addressing = Output<typeof AddressingSchema>;
+
+export const DefaultReplySchema = tagged(
+  {
+    telegram_chat: object({
+      chat_id: text,
+      source_id: SourceIdSchema,
+      thread_id: optional(nullable(text)),
+      type: enumeration('telegram_chat'),
+    }),
+    relay_conversation: object({
+      route_id: text,
+      source_id: SourceIdSchema,
+      type: enumeration('relay_conversation'),
+    }),
+    sinks: object({ type: enumeration('sinks') }),
+  },
+  'type',
+);
+export type DefaultReply = Output<typeof DefaultReplySchema>;
+
+export const AgentEventPolicySchema = object({
+  max_hops: optional(integer),
+  per_channel_per_minute: optional(integer),
+  per_consumer_per_minute: optional(integer),
+});
+export type AgentEventPolicy = Output<typeof AgentEventPolicySchema>;
+
+/** Multi-consumer routing, exposed read-only on a channel definition. */
+export const RoutingPolicySchema = object({
+  addressing: optional(AddressingSchema),
+  agent_events: optional(AgentEventPolicySchema),
+  consumers: optional(array(ConsumerSchema)),
+  default_consumer: DefaultConsumerSchema,
+  default_reply: optional(nullable(DefaultReplySchema)),
+  default_targets: array(ConsumerIdSchema),
+  max_targets: optional(integer),
+  reply_label: optional(ReplyLabelSchema),
+  rules: optional(array(RoutingRuleSchema)),
+  version: integer,
+});
+export type RoutingPolicy = Output<typeof RoutingPolicySchema>;
+
 export const PublicSecretsSchema = object({ agent_key_hash: text });
 export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 
@@ -196,6 +348,7 @@ export const SourceSchema = tagged(
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
+      attachments: optional(nullable(CustomAttachmentsSchema)),
       auth: CustomAuthSchema,
       prompt_template: optional(nullable(text)),
       schema: optional(anything),
@@ -218,6 +371,7 @@ export const PublicChannelDefinitionSchema = object({
   provider: ProviderBindingSchema,
   record_id: RecordIdSchema,
   reply: ReplyPolicySchema,
+  routing: optional(nullable(RoutingPolicySchema)),
   schema_version: integer,
   secrets: PublicSecretsSchema,
   sources: array(SourceSchema),
@@ -254,6 +408,23 @@ export const ChannelResponseSchema = object({
   version: integer,
 });
 export type ChannelResponse = Output<typeof ChannelResponseSchema>;
+
+/** Owned channel metadata; legacy records omit an unrecoverable original ID and endpoints. */
+export const ChannelListItemSchema = object({
+  channel_id: optional(nullable(text)),
+  definition: PublicChannelDefinitionSchema,
+  endpoints: optional(nullable(EndpointResponseSchema)),
+  provider: ProviderResponseSchema,
+  record_id: text,
+  version: integer,
+});
+export type ChannelListItem = Output<typeof ChannelListItemSchema>;
+
+export const ChannelPageSchema = object({
+  items: array(ChannelListItemSchema),
+  next_cursor: optional(nullable(text)),
+});
+export type ChannelPage = Output<typeof ChannelPageSchema>;
 
 export const CredentialPatchSchema = object({
   agent_key: optional(nullable(SecretSchema)),

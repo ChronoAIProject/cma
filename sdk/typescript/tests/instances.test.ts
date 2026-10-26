@@ -13,6 +13,33 @@ import {
 } from './resource-fixtures.js';
 
 describe('Sandbox hierarchy resources', () => {
+  it('accepts optional pinned providers and rejects malformed provider projections', async () => {
+    const test = transport();
+    const detail = {
+      ...sandbox,
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+      workspaces: [],
+    };
+    for (const access of ['chronoai_managed', 'own_credentials']) {
+      test.answer({ ...detail, agent_provider: 'codex', model_access: access });
+      expect(await test.client.sandboxes.read(sandbox.id)).toMatchObject({
+        agent_provider: 'codex',
+        model_access: access,
+      });
+    }
+    test.answer(detail);
+    expect((await test.client.sandboxes.read(sandbox.id)).agent_provider).toBeUndefined();
+    for (const invalid of [
+      { agent_provider: 'unknown' },
+      { model_access: 'unknown' },
+      { model_access: null },
+    ]) {
+      test.answer({ ...detail, ...invalid });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
   it('retains authoritative lifecycle eligibility and recorded phases without status inference', async () => {
     const test = transport();
     const base = {
@@ -62,6 +89,34 @@ describe('Sandbox hierarchy resources', () => {
       },
     ]) {
       test.answer({ ...base, lifecycle: malformed });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
+  it('retains explicit interruption evidence while accepting older lifecycle responses', async () => {
+    const test = transport();
+    const base = {
+      ...sandbox,
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+      workspaces: [],
+    };
+    const lifecycle = { pause: { allowed: true }, revive: { allowed: false } };
+    test.answer({ ...base, lifecycle });
+    expect((await test.client.sandboxes.read(sandbox.id)).lifecycle?.interruption).toBeUndefined();
+    for (const cause of ['out_of_memory', 'runtime_restarted', 'runtime_unavailable']) {
+      const interruption = { cause, detected_at: now, memory_limit_mib: 8192 };
+      test.answer({ ...base, lifecycle: { ...lifecycle, interruption } });
+      expect((await test.client.sandboxes.read(sandbox.id)).lifecycle?.interruption).toEqual(
+        interruption,
+      );
+    }
+    for (const interruption of [
+      { cause: 'exit_137', detected_at: now, memory_limit_mib: 8192 },
+      { cause: 'out_of_memory', detected_at: now, memory_limit_mib: -1 },
+    ]) {
+      test.answer({ ...base, lifecycle: { ...lifecycle, interruption } });
       await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
     }
   });

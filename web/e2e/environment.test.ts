@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   faultNames,
@@ -158,6 +159,15 @@ describe('staging harness fail-closed prerequisites', () => {
     expect(() => outsideRepository('relative.json', 'auth state')).toThrow('absolute path');
     expect(() => outsideRepository(process.cwd(), 'auth state')).toThrow('outside the repository');
     expect(outsideRepository('/tmp/cma-e2e-test', 'output')).toBe('/tmp/cma-e2e-test');
+  });
+  it('allows a sibling of the checkout while rejecting the checkout and nested paths', () => {
+    const root = fileURLToPath(new URL('../..', import.meta.url));
+    const sibling = fileURLToPath(new URL('../../../cma-e2e-sibling-output', import.meta.url));
+    expect(outsideRepository(sibling, 'output')).toBe(sibling);
+    expect(() => outsideRepository(root, 'output')).toThrow('outside the repository');
+    expect(() => outsideRepository(join(root, 'web', 'nested-evidence'), 'output')).toThrow(
+      'outside the repository',
+    );
   });
 });
 

@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::{now_rfc3339, AgentId};
 
 use super::{LiveAgentRegistry, RegistryEntry};
+use layer2_core::sandbox::{AgentRuntimeError, AgentRuntimeTarget};
 
 const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
@@ -23,6 +24,10 @@ pub(crate) struct LiveAgentAttachmentIdentity {
 #[async_trait::async_trait]
 pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
+
+    async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.connection_lost(attachment).await;
+    }
 }
 
 pub(crate) struct DurableAgentConnectionLossHandler {
@@ -38,6 +43,16 @@ impl DurableAgentConnectionLossHandler {
 #[async_trait::async_trait]
 impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.recover(attachment, false).await;
+    }
+
+    async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.recover(attachment, true).await;
+    }
+}
+
+impl DurableAgentConnectionLossHandler {
+    async fn recover(&self, attachment: LiveAgentAttachmentIdentity, publication_only: bool) {
         loop {
             let current = match self.store.get_agent(&attachment.agent_id).await {
                 Ok(Some(agent)) => agent,
@@ -63,6 +78,11 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
             if current.conversation.conversation_id.as_deref() != Some(&attachment.conversation_id)
                 || current.conversation.runtime_generation != Some(attachment.runtime_generation)
                 || current.work.next_fence <= attachment.authority_fence
+                // A newer lifecycle claim owns recovery once publication has
+                // completed. Never let its predecessor reschedule that route.
+                || (publication_only
+                    && attachment.authority_fence.checked_add(1)
+                        != Some(current.work.next_fence))
             {
                 return;
             }
@@ -106,6 +126,33 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
 }
 
 impl LiveAgentRegistry {
+    pub(super) async fn reconnect_target(
+        &self,
+        target: &AgentRuntimeTarget,
+    ) -> Result<(), AgentRuntimeError> {
+        let identity = {
+            let state = self.lock();
+            let entry = state
+                .entries
+                .get(&target.agent_id)
+                .ok_or(AgentRuntimeError::NotFound)?;
+            if entry.runtime_generation != target.runtime_generation
+                || entry.conversation_id != target.conversation_id
+            {
+                return Err(AgentRuntimeError::StaleGeneration);
+            }
+            LiveAgentAttachmentIdentity {
+                agent_id: target.agent_id.clone(),
+                conversation_id: target.conversation_id.clone(),
+                runtime_generation: target.runtime_generation,
+                authority_fence: entry.authority_fence,
+                nonce: entry.nonce,
+            }
+        };
+        self.connection_ended(identity).await;
+        Ok(())
+    }
+
     pub(crate) fn install_connection_loss_handler(
         &self,
         handler: Arc<dyn LiveAgentConnectionLossHandler>,
@@ -150,7 +197,6 @@ impl LiveAgentRegistry {
     }
 }
 
-#[cfg(test)]
 impl super::LiveAgentAttachment {
     pub(crate) fn identity(&self) -> LiveAgentAttachmentIdentity {
         LiveAgentAttachmentIdentity {

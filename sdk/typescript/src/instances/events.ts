@@ -69,6 +69,15 @@ export const sandboxEventKind = tagged({
       credential_generation_floor: integer,
     }),
   }),
+  service_access_revised: variant('service_access_revised', {
+    scope: object({
+      revision: integer,
+      services: array(text),
+      authorized_by: text,
+      authorized_at: text,
+      credential_generation_floor: integer,
+    }),
+  }),
   checkpoint_sealed: variant('checkpoint_sealed', { object_reference: text }),
   revived: variant('revived', {}),
   rotated: variant('rotated', { runtime_version: text }),

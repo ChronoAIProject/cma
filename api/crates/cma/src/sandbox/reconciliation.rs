@@ -19,8 +19,14 @@ use super::runtime_mapping::sandbox_spec;
 
 const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(15);
 
+#[path = "reconciliation_interruption.rs"]
+mod interruption;
+
 #[path = "reconciliation_homes.rs"]
 mod homes;
+
+#[path = "reconciliation_updates.rs"]
+mod updates;
 
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
@@ -38,6 +44,7 @@ pub(crate) struct SandboxReconciler {
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
     profile_agents: Option<Arc<AgentService>>,
+    runtime_version: Option<String>,
 }
 
 impl SandboxReconciler {
@@ -53,11 +60,17 @@ impl SandboxReconciler {
             policy,
             deployment_id,
             profile_agents: None,
+            runtime_version: None,
         }
     }
 
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
         self.profile_agents = Some(agents);
+        self
+    }
+
+    pub(crate) fn with_runtime_version(mut self, runtime_version: String) -> Self {
+        self.runtime_version = Some(runtime_version);
         self
     }
 
@@ -97,13 +110,30 @@ impl SandboxReconciler {
                     && current.lifecycle.runtime_provision.is_none()
                     && current.lifecycle.operation.is_none()
                     && current.lifecycle.checkpoint_capture.is_none();
-                if observation.generation > current.lifecycle.runtime_generation_high_water
+                if current
+                    .lifecycle
+                    .suspended_runtime
+                    .as_ref()
+                    .is_some_and(|binding| binding.runtime_id == observation.handle.0)
+                    || observation.generation > current.lifecycle.runtime_generation_high_water
                     || (observation.generation == current.lifecycle.runtime_generation_high_water
                         && !settled_unbound)
                     || current.runtime.as_ref().is_some_and(|binding| {
                         binding.runtime_id == observation.handle.0
                             || binding.provision_generation.is_none()
                     })
+                {
+                    continue;
+                }
+                // Older recovery records can reserve a successor generation
+                // without retaining the original provider binding. Its object
+                // still owns the home; only explicit retirement may delete it.
+                if observation.handle.as_str().starts_with("agent-sandbox:")
+                    && current
+                        .lifecycle
+                        .home
+                        .as_ref()
+                        .is_some_and(|home| !home.released)
                 {
                     continue;
                 }
@@ -159,6 +189,20 @@ impl SandboxReconciler {
         inventory: &[RuntimeObservation],
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // A durable suspension intent may have stopped the Pod before its DB
+        // acknowledgement. Let the same worker retry and verify Pod absence.
+        if super::runtime_attachment::native_pause_teardown(sandbox)
+            || (sandbox.status == SandboxStatus::Retiring
+                && sandbox.lifecycle.home.is_some()
+                && sandbox
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")))
+        {
+            // Native retirement also needs the original UID after CRD disappearance:
+            // only its delete waiter can prove the last owned Pod has stopped.
+            return Ok(());
+        }
         let Some(binding) = &sandbox.runtime else {
             if sandbox.requires_runtime_loss_recovery() {
                 self.recover_missing(sandbox, now).await?;
@@ -286,11 +330,18 @@ impl SandboxReconciler {
         sandbox: &Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let interruption_cause = interruption::observe(self.adapter.as_ref(), sandbox, now).await;
         self.store
             .recover_runtime_loss(SandboxRuntimeLossRequest {
                 sandbox_id: sandbox.id.clone(),
                 expected_revision: sandbox.revision,
                 expected_runtime: sandbox.runtime.clone(),
+                retain_runtime: sandbox.lifecycle.home.is_some()
+                    && sandbox
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
+                interruption_cause,
                 observed_at: rfc3339_at(now),
             })
             .await?;
@@ -318,11 +369,9 @@ impl SandboxReconciler {
                         tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
                     }
                 }
-                // A deployment's image is a default for new allocations, not
-                // permission to replace a user's live runtime. Adoption above
-                // validates the image recorded on each retained binding. Keep
-                // previously admitted lifecycle operations recoverable, but
-                // never create rotation work from configuration drift.
+                if self.reconcile_runtime_update(&sandbox_id, now).await? {
+                    continue;
+                }
                 self.store
                     .schedule_inactivity_pause(SandboxInactivityPauseRequest {
                         sandbox_id,

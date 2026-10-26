@@ -8,18 +8,15 @@ use layer2_core::sandbox::store::{
     allocated_sandbox_name, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
     SandboxAdmissionResult, SandboxAdmissionStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind};
+use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
 
 use super::sandbox_events::{event_document, read_event};
-use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-};
+use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
-const ADMISSION_TRANSACTION_ATTEMPTS: usize = 16;
-const ADMISSION_RETRY_MAX_DELAY_MILLIS: u64 = 32;
+mod retry;
+
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
 
 pub(super) enum AdmissionError {
@@ -27,12 +24,14 @@ pub(super) enum AdmissionError {
     Driver(mongodb::error::Error),
     Retry(mongodb::error::Error),
     Duplicate,
+    PreparedLeaseBusy,
 }
 
 enum AdmissionReceipt {
     Created {
         sandbox: Sandbox,
         event: SandboxEvent,
+        prepared_outcome: &'static str,
     },
     Existing(Sandbox),
 }
@@ -51,102 +50,38 @@ impl SandboxAdmissionStore for MongoSandboxStore {
     async fn sandbox_admission_replay(
         &self,
         owner: &SubjectId,
-        launch_id: &str,
+        origin: &SandboxOrigin,
     ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
-        durable_origin_replay(self, owner, launch_id).await
+        durable_origin_replay(self, owner, origin).await
     }
 
     async fn admit_sandbox(
         &self,
         admission: SandboxAdmission,
     ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
-        admission.validate()?;
-        let mut last_transient = None;
-        for attempt in 0..ADMISSION_TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::time::sleep(admission_retry_delay(attempt)).await;
-            }
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-            if let Err(error) = start_transaction(&mut session).await {
-                if is_transient(&error) {
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                return Err(SandboxStoreError::Unavailable(error.to_string()));
-            }
-            let receipt = match apply(self, &admission, &mut session).await {
-                Ok(receipt) => receipt,
-                Err(AdmissionError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(error);
-                }
-                Err(AdmissionError::Retry(error)) | Err(AdmissionError::Driver(error))
-                    if is_transient(&error) =>
-                {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                Err(AdmissionError::Retry(error)) => {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                Err(AdmissionError::Duplicate) => {
-                    let _ = session.abort_transaction().await;
-                    return match durable_replay(self, &admission).await? {
-                        Some(sandbox) => Ok(SandboxAdmissionResult::Existing(sandbox)),
-                        None => Err(SandboxStoreError::Duplicate),
-                    };
-                }
-                Err(AdmissionError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
-            };
-            match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => {
-                    self.warmup_changed.notify_one();
-                    return Ok(receipt.into_result());
-                }
-                CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
-                CommitOutcome::Unknown(error) => {
-                    return reconcile(self, &admission, &receipt).await?.ok_or_else(|| {
-                        SandboxStoreError::Unavailable(format!(
-                            "sandbox admission commit remained unknown: {error}"
-                        ))
-                    });
-                }
-                CommitOutcome::Failed(error) => {
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
-            }
-        }
-        Err(SandboxStoreError::Unavailable(format!(
-            "sandbox admission exhausted its retry budget: {}",
-            last_transient.unwrap_or_else(|| "no driver result".into())
-        )))
+        let result = self.commit_sandbox_admission(admission).await?;
+        // Includes durable replays and positively reconciled ambiguous commits.
+        // A failed or cancelled admission leaves periodic discovery to recover.
+        self.sandbox_admitted.notify_one();
+        Ok(result)
     }
 }
 
 fn admission_retry_delay(attempt: usize) -> Duration {
     let exponent = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
-    let millis = 1_u64
-        .checked_shl(exponent)
-        .unwrap_or(u64::MAX)
-        .min(ADMISSION_RETRY_MAX_DELAY_MILLIS);
-    Duration::from_millis(millis)
+    Duration::from_millis(1_u64.checked_shl(exponent).unwrap_or(u64::MAX).min(32))
 }
 
-async fn apply(
+async fn apply<F>(
     store: &MongoSandboxStore,
     admission: &SandboxAdmission,
     session: &mut mongodb::ClientSession,
-) -> Result<AdmissionReceipt, AdmissionError> {
+    observe: &F,
+    wait_for_prepared_lease: bool,
+) -> Result<AdmissionReceipt, AdmissionError>
+where
+    F: Fn() -> String + Sync,
+{
     let resource_policy = store
         .bindings
         .admit_sandbox(admission, session)
@@ -189,10 +124,36 @@ async fn apply(
     }
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
-    if admission.binding.is_none() {
-        super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session)
-            .await?;
-    }
+    let prepared_outcome = if admission.binding.is_none() {
+        use super::native_prepared::ClaimOutcome;
+        // The transaction snapshot already exists. Observe now, so a health
+        // completion visible in this snapshot cannot postdate our lease clock.
+        let observed_at = observe();
+        match super::native_prepared::claim_ready(store, &mut sandbox, &observed_at, session)
+            .await?
+        {
+            ClaimOutcome::Claimed => "hit",
+            ClaimOutcome::Busy if wait_for_prepared_lease => {
+                return Err(AdmissionError::PreparedLeaseBusy);
+            }
+            outcome => {
+                super::warm_sandboxes::claim_ready(
+                    store,
+                    &mut sandbox,
+                    &admission.event_at,
+                    session,
+                )
+                .await?;
+                match outcome {
+                    ClaimOutcome::Busy => "miss_health_lease_timeout",
+                    ClaimOutcome::Miss(reason) => reason,
+                    ClaimOutcome::Claimed => unreachable!("claimed above"),
+                }
+            }
+        }
+    } else {
+        "miss_bound_creation"
+    };
     let event = SandboxEvent {
         sandbox_id: sandbox.id.clone(),
         seq: 1,
@@ -221,7 +182,11 @@ async fn apply(
         .map_err(classify_insert)?;
     super::resource_access::insert_admission_policy(store, resource_policy.as_ref(), session)
         .await?;
-    Ok(AdmissionReceipt::Created { sandbox, event })
+    Ok(AdmissionReceipt::Created {
+        sandbox,
+        event,
+        prepared_outcome,
+    })
 }
 
 async fn replay_in_transaction(
@@ -229,7 +194,7 @@ async fn replay_in_transaction(
     admission: &SandboxAdmission,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<Sandbox>, AdmissionError> {
-    let Some(filter) = trigger_filter(admission) else {
+    let Some(filter) = admission_filter(admission) else {
         return Ok(None);
     };
     let mut cursor = store
@@ -254,10 +219,10 @@ async fn durable_replay(
     store: &MongoSandboxStore,
     admission: &SandboxAdmission,
 ) -> Result<Option<Sandbox>, SandboxStoreError> {
-    let Some(launch_id) = admission.trigger_launch_id() else {
+    let Some(_) = admission.origin_key() else {
         return Ok(None);
     };
-    durable_origin_replay(store, &admission.sandbox.owner, launch_id)
+    durable_origin_replay(store, &admission.sandbox.owner, &admission.sandbox.origin)
         .await?
         .map(|replay| classify_replay_record(admission, replay))
         .transpose()
@@ -266,11 +231,13 @@ async fn durable_replay(
 async fn durable_origin_replay(
     store: &MongoSandboxStore,
     owner: &SubjectId,
-    launch_id: &str,
+    origin: &SandboxOrigin,
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     let mut cursor = store
         .sandboxes
-        .find(origin_filter(owner.as_str(), launch_id))
+        .find(origin_filter(owner.as_str(), origin).ok_or(
+            SandboxStoreError::InvalidTransaction("manual origin has no replay identity"),
+        )?)
         .limit(REPLAY_CANDIDATE_LIMIT)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
@@ -285,27 +252,23 @@ async fn durable_origin_replay(
     unique_origin_replay(documents)
 }
 
-fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
-    admission
-        .trigger_launch_id()
-        .map(|launch_id| origin_filter(admission.sandbox.owner.as_str(), launch_id))
+fn admission_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
+    origin_filter(admission.sandbox.owner.as_str(), &admission.sandbox.origin)
 }
 
-fn origin_filter(owner: &str, launch_id: &str) -> mongodb::bson::Document {
-    doc! {
+fn origin_filter(owner: &str, origin: &SandboxOrigin) -> Option<mongodb::bson::Document> {
+    let (kind, id) = origin.replay_key()?;
+    let (query_field, record_field) = match origin {
+        SandboxOrigin::Trigger { .. } => ("origin_launch_id", "record.origin.launch_id"),
+        SandboxOrigin::Lifecycle { .. } => ("origin_operation_id", "record.origin.operation_id"),
+        SandboxOrigin::Manual => return None,
+    };
+    Some(doc! {
         "$or": [
-            {
-                "owner": owner,
-                "origin_type": "trigger",
-                "origin_launch_id": launch_id,
-            },
-            {
-                "record.owner": owner,
-                "record.origin.type": "trigger",
-                "record.origin.launch_id": launch_id,
-            },
+            { "owner": owner, "origin_type": kind, query_field: id },
+            { "record.owner": owner, "record.origin.type": kind, record_field: id },
         ],
-    }
+    })
 }
 
 fn unique_origin_replay(
@@ -313,7 +276,7 @@ fn unique_origin_replay(
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     if documents.len() > 1 {
         return Err(SandboxStoreError::Corrupt(
-            "multiple sandboxes claim one trigger launch origin".into(),
+            "multiple sandboxes claim one admission origin".into(),
         ));
     }
     documents
@@ -395,7 +358,7 @@ async fn reconcile(
 ) -> Result<Option<SandboxAdmissionResult>, SandboxStoreError> {
     if let Some(current) = durable_replay(store, admission).await? {
         return match receipt {
-            AdmissionReceipt::Created { sandbox, event } if current.id == sandbox.id => {
+            AdmissionReceipt::Created { sandbox, event, .. } if current.id == sandbox.id => {
                 let stored_event = store
                     .sandbox_events
                     .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
@@ -412,7 +375,7 @@ async fn reconcile(
             }
         };
     }
-    let AdmissionReceipt::Created { sandbox, event } = receipt else {
+    let AdmissionReceipt::Created { sandbox, event, .. } = receipt else {
         return Ok(None);
     };
     let stored_sandbox = store
@@ -438,59 +401,5 @@ async fn reconcile(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use layer2_core::sandbox::store::SandboxStoreError;
-    use mongodb::bson::doc;
-
-    use super::{admission_retry_delay, origin_filter, suffixed, unique_origin_replay};
-
-    #[test]
-    fn retry_delay_is_exponential_and_bounded() {
-        let delays = (1..=8).map(admission_retry_delay).collect::<Vec<_>>();
-        assert_eq!(
-            delays,
-            [1, 2, 4, 8, 16, 32, 32, 32].map(Duration::from_millis)
-        );
-        assert_eq!(admission_retry_delay(usize::MAX), Duration::from_millis(32));
-    }
-
-    #[test]
-    fn allocated_suffixes_preserve_the_name_limit_and_utf8() {
-        assert_eq!(suffixed("research", 1), "research");
-        assert_eq!(suffixed("research", 2), "research-2");
-        let value = suffixed(&"é".repeat(32), 12);
-        assert!(value.len() <= 64);
-        assert!(value.ends_with("-12"));
-    }
-
-    #[test]
-    fn replay_discovery_covers_query_and_embedded_origin_fields() {
-        assert_eq!(
-            origin_filter("owner", "launch-one"),
-            doc! {
-                "$or": [
-                    {
-                        "owner": "owner",
-                        "origin_type": "trigger",
-                        "origin_launch_id": "launch-one",
-                    },
-                    {
-                        "record.owner": "owner",
-                        "record.origin.type": "trigger",
-                        "record.origin.launch_id": "launch-one",
-                    },
-                ],
-            }
-        );
-    }
-
-    #[test]
-    fn replay_discovery_rejects_multiple_candidates_before_decoding() {
-        assert!(matches!(
-            unique_origin_replay(vec![doc! {}, doc! {}]),
-            Err(SandboxStoreError::Corrupt(_))
-        ));
-    }
-}
+#[path = "sandbox_admission_tests.rs"]
+mod tests;

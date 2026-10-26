@@ -31,6 +31,8 @@ export interface OperationOptions {
 export interface RequestOptions extends OperationOptions {
   readonly method?: string;
   readonly body?: unknown;
+  /** Binary body for upload endpoints; mutually exclusive with JSON body. */
+  readonly rawBody?: Blob;
   readonly headers?: HeadersInit;
   readonly expectedStatus?: number | readonly number[];
 }
@@ -101,11 +103,12 @@ export async function requestBytes(
   config: ResolvedConfig,
   path: string,
   options: RequestOptions = {},
+  maxBytes = MAX_RESPONSE_BYTES,
 ): Promise<Uint8Array> {
   return withDeadline(config, options, async (signal, requestId) => {
     const { response, metadata } = await send(config, path, options, signal, requestId);
     await requireSuccess(response, options.expectedStatus, signal, metadata.requestId);
-    return readBytes(response, signal);
+    return readBytes(response, signal, maxBytes);
   });
 }
 
@@ -211,7 +214,10 @@ async function send(
   requestId: string,
 ): Promise<CompletedResponse> {
   throwIfSignalAborted(signal);
-  let body: string | undefined;
+  if (options.body !== undefined && options.rawBody !== undefined) {
+    throw new ValidationError('request cannot contain both JSON and binary bodies');
+  }
+  let body: string | Blob | undefined = options.rawBody;
   if (options.body !== undefined) {
     try {
       body = JSON.stringify(options.body);
@@ -366,10 +372,16 @@ async function readText(response: Response, signal?: AbortSignal): Promise<strin
   }
 }
 
-export async function readBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
+export async function readBytes(
+  response: Response,
+  signal?: AbortSignal,
+  maxBytes = MAX_RESPONSE_BYTES,
+): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+    throw new ValidationError('response byte limit must be a positive safe integer');
   const declared = contentLength(response);
-  if (declared !== undefined && declared > MAX_RESPONSE_BYTES) {
-    throw new ProtocolError(`response exceeds the ${String(MAX_RESPONSE_BYTES)}-byte boundary`);
+  if (declared !== undefined && declared > maxBytes) {
+    throw new ProtocolError(`response exceeds the ${String(maxBytes)}-byte boundary`);
   }
   if (response.body === null) {
     return new Uint8Array();
@@ -383,9 +395,9 @@ export async function readBytes(response: Response, signal?: AbortSignal): Promi
       const { done, value } = await readChunk(reader, signal);
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) {
+      if (size > maxBytes) {
         await reader.cancel();
-        throw new ProtocolError(`response exceeds the ${String(MAX_RESPONSE_BYTES)}-byte boundary`);
+        throw new ProtocolError(`response exceeds the ${String(maxBytes)}-byte boundary`);
       }
       chunks.push(value);
     }

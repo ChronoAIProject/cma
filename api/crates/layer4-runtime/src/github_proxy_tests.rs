@@ -25,7 +25,7 @@ impl Fixture {
         std::fs::create_dir(&root).unwrap();
         let mut environment = BTreeMap::from([(
             "CHRONO_SANDBOX_REACHES".into(),
-            "chrono-llm,ornn-api,api-github".into(),
+            "chrono-llm-public,ornn-api".into(),
         )]);
         let platform = ProxyConfig {
             role: "platform",
@@ -70,7 +70,7 @@ async fn install(holder: &CredentialHolder, generation: u64) {
 }
 
 #[test]
-fn configuration_requires_the_exact_service_grant_and_keeps_identity_out() {
+fn configuration_prepares_managed_transport_without_a_grant_and_keeps_identity_out() {
     for reaches in [
         "",
         "api-github-other",
@@ -87,6 +87,7 @@ fn configuration_requires_the_exact_service_grant_and_keeps_identity_out() {
     let mut env = BTreeMap::from([("CHRONO_SANDBOX_REACHES".into(), "api-github".into())]);
     assert!(configuration(Path::new("/tmp/state"), &mut env, None).is_err());
     let fixture = Fixture::new("https://nyxid.example");
+    assert!(!fixture.environment["CHRONO_SANDBOX_REACHES"].contains("api-github"));
     assert_eq!(
         fixture.config.upstream,
         "https://nyxid.example/api/v1/proxy/s/api-github"
@@ -235,6 +236,60 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
 }
 
 #[tokio::test]
+async fn github_access_tracks_hot_grant_and_removal_without_restarting_transport() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let startup_environment = fixture.environment.clone();
+    let (sent, mut received) = mpsc::channel(3);
+    let upstream = tokio::spawn(async move {
+        let app = axum::Router::new().fallback(any(move |headers: HeaderMap| {
+            let sent = sent.clone();
+            async move {
+                let credential = headers[header::AUTHORIZATION].clone();
+                let granted = credential == "Bearer scoped-fixture-generation-2";
+                sent.send(credential).await.unwrap();
+                if granted {
+                    (StatusCode::OK, r#"{"login":"viewer"}"#)
+                } else {
+                    (
+                        StatusCode::FORBIDDEN,
+                        r#"{"message":"service not granted"}"#,
+                    )
+                }
+            }
+        }));
+        axum::serve(listener, app).await.unwrap();
+    });
+    let holder = CredentialHolder::new();
+    PreparedGithubProxy::bind(&fixture.config)
+        .await
+        .unwrap()
+        .start(holder.clone());
+    let client = fixture.client();
+    for (generation, expected) in [
+        (1, StatusCode::FORBIDDEN),
+        (2, StatusCode::OK),
+        (3, StatusCode::FORBIDDEN),
+    ] {
+        install(&holder, generation).await;
+        let response = client
+            .get("http://api.github.com/user")
+            .bearer_auth(PLACEHOLDER)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(
+            received.recv().await.unwrap(),
+            format!("Bearer scoped-fixture-generation-{generation}")
+        );
+        assert_eq!(fixture.environment, startup_environment);
+    }
+    upstream.abort();
+    let _ = upstream.await;
+}
+
+#[tokio::test]
 async fn github_response_cannot_return_scoped_credentials() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
@@ -286,63 +341,85 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
         .starts_with(&format!("gh version {pinned} ")));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
-    let (sent, mut received) = mpsc::channel(4);
+    let (sent, mut received) = mpsc::channel(6);
     let upstream = tokio::spawn(async move {
         let app = axum::Router::new().fallback(any(move |request: axum::extract::Request| {
             let sent = sent.clone();
             async move {
-                assert_eq!(
-                    request.headers()[header::AUTHORIZATION],
-                    "Bearer scoped-fixture-generation-1"
-                );
-                sent.send(request.uri().path().to_string()).await.unwrap();
-                axum::Json(
-                    serde_json::json!({"login":"viewer", "data":{"viewer":{"login":"viewer"}}}),
-                )
+                let credential = request.headers()[header::AUTHORIZATION].clone();
+                let granted = credential == "Bearer scoped-fixture-generation-2";
+                sent.send((request.uri().path().to_string(), credential))
+                    .await
+                    .unwrap();
+                if granted {
+                    (
+                        StatusCode::OK,
+                        axum::Json(serde_json::json!({
+                            "login":"viewer", "data":{"viewer":{"login":"viewer"}}
+                        })),
+                    )
+                } else {
+                    (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(serde_json::json!({
+                            "message":"service not granted"
+                        })),
+                    )
+                }
             }
         }));
         axum::serve(listener, app).await.unwrap();
     });
     let holder = CredentialHolder::new();
-    install(&holder, 1).await;
     PreparedGithubProxy::bind(&fixture.config)
         .await
         .unwrap()
-        .start(holder);
-    for args in [
-        vec!["api", "user", "--jq", ".login"],
-        vec![
-            "api",
-            "graphql",
-            "-f",
-            "query=query { viewer { login } }",
-            "--jq",
-            ".data.viewer.login",
-        ],
-    ] {
-        let output = tokio::process::Command::new(&executable)
-            .env_clear()
-            .envs(&fixture.environment)
-            .env("HOME", &fixture.root)
-            .args(args)
-            .output()
-            .await
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "gh failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "viewer");
+        .start(holder.clone());
+    for generation in [1, 2, 3] {
+        install(&holder, generation).await;
+        for (path, args) in [
+            ("user", vec!["api", "user", "--jq", ".login"]),
+            (
+                "graphql",
+                vec![
+                    "api",
+                    "graphql",
+                    "-f",
+                    "query=query { viewer { login } }",
+                    "--jq",
+                    ".data.viewer.login",
+                ],
+            ),
+        ] {
+            let output = tokio::process::Command::new(&executable)
+                .env_clear()
+                .envs(&fixture.environment)
+                .env("HOME", &fixture.root)
+                .args(args)
+                .output()
+                .await
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                generation == 2,
+                "unexpected gh status: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if generation == 2 {
+                assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "viewer");
+            } else {
+                assert!(String::from_utf8(output.stderr)
+                    .unwrap()
+                    .contains("HTTP 403"));
+            }
+            let (observed_path, credential) = received.recv().await.unwrap();
+            assert_eq!(observed_path, format!("/api/v1/proxy/s/api-github/{path}"));
+            assert_eq!(
+                credential,
+                format!("Bearer scoped-fixture-generation-{generation}")
+            );
+        }
     }
-    assert_eq!(
-        received.recv().await.unwrap(),
-        "/api/v1/proxy/s/api-github/user"
-    );
-    assert_eq!(
-        received.recv().await.unwrap(),
-        "/api/v1/proxy/s/api-github/graphql"
-    );
     let output = tokio::process::Command::new(&executable)
         .env_clear()
         .envs(&fixture.environment)

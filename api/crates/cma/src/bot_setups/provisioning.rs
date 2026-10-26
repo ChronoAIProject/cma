@@ -140,6 +140,9 @@ impl SetupDependencies {
                     name: name.into(),
                     external_bot_id: String::new(),
                     connection_ref: setup.connection_ref.clone(),
+                    image: None,
+                    repository: None,
+                    inline_agent: None,
                     profile: agent_ref,
                     sandbox_profile: Some(SandboxProfileRef {
                         id: sandbox.profile_id,

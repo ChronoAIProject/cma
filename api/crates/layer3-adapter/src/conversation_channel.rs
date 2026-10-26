@@ -30,6 +30,16 @@ pub trait ConversationInputGuard: Send + Sync {
     async fn check(&self) -> crate::Result<()>;
 }
 
+/// Read-only live capability evidence. Retained runtime images can refuse a new
+/// settings operation without interrupting their current conversation.
+#[async_trait::async_trait]
+pub trait ConversationSettingsSupport: Send + Sync {
+    async fn system_prompt_supported(&self) -> bool;
+    async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
+        None
+    }
+}
+
 /// What is known about one attempt to hand input to the runtime link.
 #[derive(Debug)]
 pub enum ConversationSendOutcome {
@@ -57,6 +67,7 @@ impl Drop for AbortOnDrop {
 pub struct ConversationInputSender {
     inner: mpsc::Sender<PendingInput>,
     abort: tokio::task::AbortHandle,
+    settings_support: Option<Arc<dyn ConversationSettingsSupport>>,
 }
 
 impl std::fmt::Debug for ConversationInputSender {
@@ -107,9 +118,20 @@ impl ConversationInputSender {
                 {
                     continue;
                 }
+                let configuring = matches!(
+                    input,
+                    ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+                );
+                let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
                 let result = handler(input).await;
-                let failed = result.is_err();
+                // Configure handlers reserve Unsupported for a definitive
+                // refusal before any setting changes; later failures are ambiguous.
+                let refused = configuring && matches!(result, Err(AdapterError::Unsupported(_)))
+                    || refreshing
+                        && matches!(result, Err(AdapterError::OperationIdentityConflict(_)));
+                let failed = result.is_err() && !refused;
                 let outcome = match result {
+                    Err(error) if refused => ConversationSendOutcome::PreWriteFailure(error),
                     Ok(()) => ConversationSendOutcome::WriteConfirmed,
                     Err(error) => ConversationSendOutcome::Ambiguous(error),
                 };
@@ -123,7 +145,27 @@ impl ConversationInputSender {
         Self {
             inner,
             abort: task.abort_handle(),
+            settings_support: None,
         }
+    }
+
+    pub fn with_settings_support(mut self, support: Arc<dyn ConversationSettingsSupport>) -> Self {
+        self.settings_support = Some(support);
+        self
+    }
+
+    pub async fn system_prompt_supported(&self) -> bool {
+        match &self.settings_support {
+            Some(support) => support.system_prompt_supported().await,
+            None => false,
+        }
+    }
+
+    pub async fn managed_context_receipt(&self, sequence: u64) -> Option<String> {
+        self.settings_support
+            .as_ref()?
+            .managed_context_receipt(sequence)
+            .await
     }
 
     /// Wait for the local writer to confirm the operation was written.
@@ -137,8 +179,15 @@ impl ConversationInputSender {
 
     /// Distinguish refusal before handler invocation from uncertain delivery.
     pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
-        self.send_with_deadline(input, None, DELIVERY_DEADLINE)
-            .await
+        let deadline = if matches!(
+            input,
+            ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+        ) {
+            Duration::from_secs(15)
+        } else {
+            DELIVERY_DEADLINE
+        };
+        self.send_with_deadline(input, None, deadline).await
     }
 
     pub async fn send_guarded(
@@ -146,8 +195,15 @@ impl ConversationInputSender {
         input: ConversationInput,
         guard: Arc<dyn ConversationInputGuard>,
     ) -> ConversationSendOutcome {
-        self.send_with_deadline(input, Some(guard), DELIVERY_DEADLINE)
-            .await
+        let deadline = if matches!(
+            input,
+            ConversationInput::Configure { .. } | ConversationInput::RefreshContext { .. }
+        ) {
+            Duration::from_secs(15)
+        } else {
+            DELIVERY_DEADLINE
+        };
+        self.send_with_deadline(input, Some(guard), deadline).await
     }
 
     async fn send_with_deadline(

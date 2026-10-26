@@ -144,39 +144,45 @@
   padding: 0;
 }
 .public-step {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 12px;
   padding: 16px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
+/* A fixed dot slot keeps every step's name on one edge whatever its state. */
+.public-step__line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
 .public-step__icon {
-  width: 44px;
-  height: 44px;
   display: grid;
   place-items: center;
-}
-.public-step__line {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
+  width: 16px;
+  height: 16px;
 }
 .public-step__line h2 {
   margin: 0;
   font: var(--dsw-font-markdown-base-strong);
 }
-.public-step__line span {
+.public-step__state {
   font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
 }
-.public-step--failed,
-.public-error {
+.public-step__state[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+.public-step__state[data-tone='error'] {
   color: var(--dsw-alias-state-error-primary);
 }
-.public-notice {
-  padding: 12px 0;
-  border-top: 1px solid var(--dsw-alias-border-l2);
+/* Two classes, to outrank the frame's paragraph margin. */
+.public-step .public-step__detail {
+  margin: 4px 0 0 28px;
+  color: var(--dsw-alias-label-secondary);
+}
+.public-alert {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
 }
 @media (max-width: 30rem) {
   .public-frame {

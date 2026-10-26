@@ -1,3 +1,5 @@
+import type { AgentStatus } from '@chronoai/cma-sdk';
+import { scopeValue } from './scope';
 import { useAccessSummaries } from './useAccessSummaries';
 import { ResourceAccessSummary } from './ResourceAccessSummary';
 import { useMemo, useState } from 'react';
@@ -17,17 +19,26 @@ export function SharedAgentNavigation({
   client,
   onNavigate,
   route,
+  organization,
+  shared = true,
+  statusFilter = 'all',
 }: {
   readonly client: ResourceViewsClient;
+  readonly organization?: string;
+  readonly shared?: boolean;
+  readonly statusFilter?: string;
   readonly route?: AppRoute;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
+  const label = shared ? 'Shared Agents' : 'Organization Agents';
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
   const cursor = cursors.at(-1);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       const page = await client.agents.provenanceInventory({
-        shared: true,
+        shared,
+        organization,
+        status: statusFilter === 'all' ? undefined : (statusFilter as AgentStatus),
         cursor,
         limit: 50,
         signal,
@@ -45,32 +56,38 @@ export function SharedAgentNavigation({
       }
       return { value: page };
     },
-    [client, cursor],
+    [client, cursor, organization, shared, statusFilter],
   );
   const current = useAuthorizedRead(read);
   const accessSummaries = useAccessSummaries(
     client,
     'agent',
     current.state.status === 'ready' ? current.state.value.items.map((row) => row.agent_id) : [],
+    scopeValue(organization, shared),
   );
   return (
     <div className="scoped-navigation__tree resource-tree">
-      <ResourceLink route={{ kind: 'inventory', shared: true }} onNavigate={onNavigate}>
-        All shared Agents
+      <ResourceLink route={{ kind: 'inventory', shared, organization }} onNavigate={onNavigate}>
+        All authorized Agents
       </ResourceLink>
       <Button size="sm" onClick={current.reload}>
-        Refresh shared Agents
+        Refresh Agents
       </Button>
       {current.state.status === 'loading' ? (
-        <p role="status">Loading shared Agents</p>
+        <p role="status">Loading Agents</p>
       ) : current.state.status === 'error' ? (
         <p role="alert">{current.state.message}</p>
       ) : (
         <>
           {current.state.value.items.length === 0 ? (
-            <p>No shared Agents on this page.</p>
+            <p>No Agents match this scope and status on this page.</p>
           ) : (
-            <div role="tree" aria-label="Shared Agents" onKeyDown={keyboardNavigation}>
+            <div
+              className="agent-navigation"
+              role="tree"
+              aria-label={label}
+              onKeyDown={keyboardNavigation}
+            >
               {current.state.value.items.map((row) => (
                 <TreeRow
                   key={row.agent_id}
@@ -99,7 +116,7 @@ export function SharedAgentNavigation({
               disabled={cursors.length === 1}
               onClick={() => setCursors((values) => values.slice(0, -1))}
             >
-              Previous shared Agents
+              Previous Agents
             </Button>
             <Button
               size="sm"
@@ -111,7 +128,7 @@ export function SharedAgentNavigation({
                 }
               }}
             >
-              Next shared Agents
+              Next Agents
             </Button>
           </div>
         </>

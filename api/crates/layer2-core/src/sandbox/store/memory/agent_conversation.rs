@@ -126,6 +126,20 @@ fn apply_conversation(
         return Err(SandboxStoreError::AgentLogCapacityExceeded);
     }
     validate_mutation(candidate, &mutation)?;
+    if mutation.is_managed_context_admission()
+        && candidate.agent_commands.values().any(|command| {
+            command.receipt.envelope.agent_id == mutation.agent.id && !command.status.is_terminal()
+        })
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if let Some(fence) = &mutation.settings_fence {
+        let snapshot = super::resource_access::snapshot(candidate, fence.target())
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        fence
+            .validate_snapshot(&snapshot)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
     super::agent_command_work::bind_dispatch(candidate, &mutation)?;
     if mutation.admission_guard.is_some() {
         candidate
@@ -162,6 +176,11 @@ fn apply_conversation(
         mutation.agent_logs,
     )?;
     if let Some(fence) = &mutation.execution_fence {
+        fence
+            .require_current()
+            .map_err(|_| SandboxStoreError::Conflict)?;
+    }
+    if let Some(fence) = &mutation.settings_fence {
         fence
             .require_current()
             .map_err(|_| SandboxStoreError::Conflict)?;
@@ -231,7 +250,8 @@ fn immutable_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.creation_fingerprint != next.creation_fingerprint
         || current.profile != next.profile
         || current.capabilities != next.capabilities
-        || current.work != next.work
+        || (current.work != next.work
+            && !crate::sandbox::agent_live_skills::is_install_admission(current, next))
         || current.failure != next.failure
         || current.title != next.title
         || current.created_at != next.created_at

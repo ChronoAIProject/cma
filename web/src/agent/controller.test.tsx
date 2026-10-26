@@ -23,7 +23,7 @@ function readableClient(overrides = {}) {
 }
 
 describe('Agent controller loading', () => {
-  it('keeps the authorized transcript and partial tools visible after a failed event page, then retries from zero', async () => {
+  it('keeps the current transcript without replaying incomplete historical tools, then recovers tools on retry', async () => {
     vi.useFakeTimers();
     let failSecondPage = true;
     const events: AgentEvent[] = [
@@ -68,12 +68,13 @@ describe('Agent controller loading', () => {
         messages: expect.arrayContaining([
           expect.objectContaining({ content: 'The repository is ready.' }),
         ]),
-        toolCalls: [expect.objectContaining({ id: 'read', status: 'running' })],
+        toolCalls: [],
+        activeRunId: undefined,
       },
     });
-    expect(client.replayAgent).not.toHaveBeenCalled();
-    await act(() => result.current.send('Must wait'));
-    expect(client.runAgent).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 4 }));
+    await act(() => result.current.send('Continue while activity recovers'));
+    expect(client.runAgent).toHaveBeenCalledOnce();
     failSecondPage = false;
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(readAgentEvents.mock.calls.map((call) => call[1].cursor)).toEqual([0, 2, 0, 2]);
@@ -83,6 +84,7 @@ describe('Agent controller loading', () => {
       conversation: {
         cursor: 4,
         toolCalls: [expect.objectContaining({ id: 'read', status: 'completed' })],
+        activeRunId: undefined,
       },
     });
     expect(client.replayAgent).toHaveBeenCalledWith('agt_1', expect.objectContaining({ after: 4 }));
@@ -115,7 +117,8 @@ describe('Agent controller loading', () => {
     expect(result.current.state).toMatchObject({ status: 'ready', historyUnavailable: true });
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(result.current.state).toEqual({ status: 'error', message: 'Denied' });
-    expect(client.replayAgent).not.toHaveBeenCalled();
+    expect(client.replayAgent).toHaveBeenCalledOnce();
+    expect(vi.mocked(client.replayAgent).mock.calls[0]![1].signal?.aborted).toBe(true);
   });
 
   it('backs off repeated transient recovery failures and cancels retries on unmount', async () => {
@@ -591,21 +594,21 @@ describe('Agent controller operations', () => {
         type: 'TEXT_MESSAGE_START',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
         role: 'assistant',
       });
       options.onEvent({
         type: 'TEXT_MESSAGE_CONTENT',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
         delta: 'Live answer',
       });
       options.onEvent({
         type: 'TEXT_MESSAGE_END',
         runId: '2',
         threadId: 'agt_1',
-        messageId: 'msg_2',
+        messageId: 'msg_5',
       });
     });
     const client = readableClient({ replayAgent, runAgent });

@@ -25,7 +25,7 @@ async fn opted_lark_and_feishu_bind_verified_thread_and_boolean_mention_evidence
                 false,
             ),
             (
-                json!([{"key":"@_user_1","id":{"open_id":"ou_someone"}},{"key":"@_user_2","id":{"user_id":"ou_bot"}}]),
+                json!([{"key":"@_user_1","id":{"open_id":"ou_someone"}},{"key":"@_user_2","id":{"open_id":"ou_bot"}}]),
                 ThreadAddress::Mention,
                 false,
             ),
@@ -161,4 +161,83 @@ async fn unknown_ancestry_is_not_fabricated_from_the_parent_and_private_chats_st
         .activity
         .thread
         .is_none());
+}
+
+#[tokio::test]
+async fn thread_follow_preserves_bot_opt_in_and_never_labels_a_bot_human() {
+    let fixture = Fixture::on(
+        "lark",
+        |value| {
+            policy(value, &["oc_chat"]);
+            value["sources"][0]["admission"]["bot_messages"] = json!("native_mentions");
+        },
+        Default::default(),
+    )
+    .await;
+    let mut envelope = Envelope::on("lark");
+    envelope.group();
+    envelope.payload["raw_platform_data"]["event"]["sender"]["sender_type"] = json!("app");
+    envelope.lark_message()["mentions"] = json!([{"key":"@_user_1","id":{"open_id":"ou_bot"}}]);
+    let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+    assert_eq!(response["status"], "accepted");
+    let request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
+    assert_eq!(
+        request.activity.actor.kind,
+        cmaeg_core::activity::ActorKind::Bot
+    );
+    assert!(request.activity.thread.is_none());
+    envelope.lark_message()["mentions"] = json!([]);
+    let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+    assert_eq!(response["reason"], "group_not_addressed");
+}
+
+#[tokio::test]
+async fn thread_contract_does_not_weaken_exact_open_id_mention_evidence() {
+    let fixture = Fixture::on("lark", |value| policy(value, &[]), Default::default()).await;
+    let mut envelope = Envelope::on("lark");
+    envelope.group();
+    envelope.lark_message()["mentions"] = json!([{"key":"@_user_1","id":{"user_id":"ou_bot"}}]);
+    let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+    assert_eq!(response["reason"], "group_not_addressed");
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn followed_native_thread_keeps_lark_media_and_sealed_attachment_facts() {
+    use super::lark_media::{lark, resource, IMAGE_KEY};
+    let fixture = Fixture::on_with_media(
+        "lark",
+        |value| policy(value, &["oc_chat"]),
+        Default::default(),
+    )
+    .await;
+    let mut envelope = lark(
+        "image",
+        json!({"image_key":IMAGE_KEY}),
+        "image",
+        vec![resource(0, "image_key", IMAGE_KEY, json!({}))],
+    );
+    envelope.group();
+    envelope.lark_message()["root_id"] = json!("om_root");
+    let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+    assert_eq!(response["status"], "accepted", "{response}");
+    let request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
+    assert_eq!(
+        request.activity.thread.as_ref().unwrap().root_id.as_deref(),
+        Some("om_root")
+    );
+    let ActivityKind::Message { attachments, .. } = &request.activity.kind else {
+        panic!("expected media message")
+    };
+    assert_eq!(attachments.len(), 1);
+    assert_eq!(
+        attachments[0].kind,
+        cmaeg_core::activity::AttachmentKind::Image
+    );
+    let sealed = request
+        .event_ref
+        .open(&fixture.state.master_keys, now())
+        .unwrap()
+        .payload;
+    assert!(sealed.verifies_activity(&request.activity));
 }

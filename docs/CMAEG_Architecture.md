@@ -7,7 +7,7 @@ listed in [CMA Public APIs](CMA_Public_APIs.md); exact schemas come from each
 service's `GET /openapi.json`.
 
 Start with the public [integration guide](CMAEG_Integration.md), hosted at
-<https://bot-gateway.chrono-ai.fun/docs>. It covers creator applications,
+<https://bot.chrono-ai.fun/event-gateway/docs>. It covers creator applications,
 event sources, Agent tools and downstream providers. The globally auto-connected
 NyxID service is **Agent Event Gateway** (`cmaeg`); its REST proxy is
 `https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
@@ -50,6 +50,16 @@ CMA's authenticated record API; caches are disposable. Provider conversation,
 turn, event-context and idempotency records belong to the provider. Active HTTP
 connections are process-local: a restart can interrupt a connection, and recovery
 must use the original durable identity rather than infer that no work happened.
+
+Video keyframes and audio transcoding, when the operator configures them, run
+inside the gateway Pod rather than in a new workload: each FFmpeg job is a
+fresh, sandboxed exec of the gateway binary that limits itself, installs
+seccomp filters and executes FFmpeg once, reading its input from a memory
+volume and writing only to its stdout. The gateway runs one job at a time,
+signals it only through a pidfd, and a watchdog thread kills any job that
+pushes the container toward its memory limit. The gateway itself is
+non-dumpable, so a job cannot read its secrets. With the transformer off, the
+gateway keeps platform thumbnails and direct speech-to-text uploads.
 
 ## Event Worker Profiles
 
@@ -123,6 +133,17 @@ reference or return another conversation's context. New references attest the
 activity digest, so changing an actor or callback selection in provider storage
 cannot create valid sender authority. Legacy references are explicitly unverified.
 
+References are bound to a consumer. When a channel has several consumers, the
+routing decision travels inside the Activity, the one object CMA and providers
+keep verbatim, and each targeted consumer is issued its own `event_ref` naming
+it, its own conversation and idempotency identity, and, for a hand-off between
+consumers, the chain's sealed lineage. The lineage lives only in references and
+is never read back from a provider. Every replica reads these fields before any
+writes them. A reference for the `default` consumer names no consumer, so a channel
+without consumers is issued exactly the references, conversations and cards it
+always was, and an image that predates consumers refuses, rather than
+misroutes, a reference or card that names one.
+
 ## Durable delayed replies
 
 Providers can exchange a valid, activity-attested event reference for a sealed
@@ -169,6 +190,36 @@ CMAEG decrypts and validates the channel and refreshes its bounded caches. A
 cached record is not permission to invent a new owner, provider URL or credential.
 Current deployment-specific secret names and rotation commands are documented
 in the operations guide. Native Kubernetes Secrets are the deployment source.
+
+## Console
+
+The console at `/console` runs inside the gateway Pod and keeps no database.
+A person signs in through an explicit link to NyxID (authorization code with
+PKCE); every later request derives their authority again through the same
+creator cache REST uses, so a demotion stops the console as fast as it stops
+REST. Pages are rendered on the server from gateway memory and carry no
+JavaScript.
+
+```mermaid
+flowchart LR
+    Browser[Owner browser without JavaScript] -->|pages and CSRF-checked forms| Console[Console routes in the CMAEG pod]
+    Browser -->|explicit sign-in link| NyxID[NyxID OAuth with PKCE]
+    NyxID -->|callback| Console
+    Console -->|authority on every request, cached 60 s| NyxID
+    Console -->|owner-checked reads| Memory[(Console memory: owner index, summaries, channel ids, activity, producers)]
+    Hot[Ingress, launch, delivery, management] -->|masked observations, never waiting| Queue[[Observation queue]]
+    Queue -->|one drainer| Memory
+    Memory -->|paced record heads and reads, four permits| CMA[CMA record API]
+    Console -->|source changes by record| Management[Channel management shared with REST]
+    Management --> CMA
+```
+
+The hot paths only queue masked observations and never wait for the console;
+a full queue drops detail, never traffic. The owner index is listed from CMA
+30 seconds after readiness and paced under four permits of its own, apart
+from channel restores. Source changes go through the same record-keyed
+management functions as REST. The [operations guide](CMAEG_Operations.md)
+describes the pages, masking and alerts.
 
 ## Retired integration
 

@@ -150,7 +150,7 @@ export interface CreateResponseRequest {
   readonly stream: true;
   readonly metadata?: Readonly<Record<string, string>> | null;
   readonly previous_response_id?: string | null;
-  /** Accepted for compatibility; the response reports the pinned Agent Profile model. */
+  /** Accepted for compatibility; the response reports the model selected for its Agent turn. */
   readonly model?: string;
   readonly store?: true;
 }

@@ -197,6 +197,8 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await composer.fill('Keep this personal draft');
   const composerNode = await composer.elementHandle();
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+  // Scope sits behind the navigation Filter button.
+  await page.getByRole('button', { name: /^Filter/ }).click();
   await page.getByRole('button', { name: 'Navigation scope', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Shared with me', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');

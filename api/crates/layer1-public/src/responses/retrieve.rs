@@ -102,6 +102,11 @@ pub(super) fn project(
         .position(|entry| matches!(entry.kind, AgentLogKind::TurnStarted { .. }))
         .map_or(history.len(), |offset| start + 1 + offset);
     let mut response = empty(agent, turn);
+    response.model = super::model::for_turn(
+        agent.profile.content.model.as_deref(),
+        turn,
+        history.iter().map(|entry| (entry.seq, Some(&entry.kind))),
+    )?;
     response.created_at =
         layer2_core::seconds_from_rfc3339(&history[start].appended_at).unwrap_or_default();
     response.previous_response_id = previous.map(|turn| response_id(&agent.id, turn));
@@ -127,6 +132,20 @@ pub(super) fn project(
                     output_tokens_details: OutputTokenDetails::default(),
                     total_tokens: input_tokens.saturating_add(*output_tokens),
                 })
+            }
+            AgentLogKind::UsageUpdated {
+                turn_sequence: Some(observed_turn),
+                turn_input_tokens,
+                turn_output_tokens,
+                ..
+            } if *observed_turn == turn => {
+                response.usage = Some(ResponseUsage {
+                    input_tokens: *turn_input_tokens,
+                    output_tokens: *turn_output_tokens,
+                    input_tokens_details: InputTokenDetails::default(),
+                    output_tokens_details: OutputTokenDetails::default(),
+                    total_tokens: turn_input_tokens.saturating_add(*turn_output_tokens),
+                });
             }
             AgentLogKind::ConversationGap { frames } if turn_active => {
                 lost_frames = lost_frames.saturating_add(*frames);
@@ -199,12 +218,7 @@ pub(super) fn empty(agent: &Agent, turn: u64) -> ResponseObject {
         incomplete_details: None,
         instructions: None,
         max_output_tokens: None,
-        model: agent
-            .profile
-            .content
-            .model
-            .clone()
-            .unwrap_or_else(|| "deployment-default".into()),
+        model: super::model::named_or_default(agent.selected_model().as_deref()),
         output: Vec::new(),
         parallel_tool_calls: false,
         previous_response_id: None,

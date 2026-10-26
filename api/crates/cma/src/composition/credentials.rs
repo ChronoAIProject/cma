@@ -38,3 +38,36 @@ pub(super) fn sandbox_credentials(
         stores.sandbox_model.clone(),
     )
 }
+
+pub(super) fn authentication(
+    config: &Config,
+    stores: &crate::store::MongoStores,
+    users: &Arc<layer2_core::UserDirectory>,
+    activity: &Arc<layer2_core::ActivityService>,
+) -> Result<Arc<crate::auth::AuthState>, String> {
+    use crate::auth::{AuthState, SignInRecords};
+    let auth = AuthState::with_store_and_nyxid_public_url(
+        config.auth_mode.clone(),
+        Some(SignInRecords {
+            users: Arc::clone(users),
+            activity: Arc::clone(activity),
+        }),
+        stores.auth.clone(),
+        config.nyxid_public_url.clone(),
+    )
+    .with_agent_key_service(config.nyxid_service_id.clone())
+    .with_resource_request_enabled(config.features.nyxid_resource_request)
+    .with_identity_proxy(
+        config.features.nyxid_proxy,
+        config.nyxid_proxy_issuer.clone(),
+        config.nyxid_proxy_jwks_url.clone(),
+    )?
+    .with_binding_store(stores.sandbox_model.clone())
+    .with_bot_father_username(
+        config
+            .bot_father
+            .as_ref()
+            .map(|father| father.username.clone()),
+    )?;
+    Ok(auth)
+}

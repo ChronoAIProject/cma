@@ -1,23 +1,30 @@
 import { Presence } from '../../ui/Presence';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
 import type { ServiceCatalogClient, ServiceCatalogEntry } from '../client';
 import { ReferenceLink } from '../ReferenceLink';
 import { isCodexConnection } from '../modelProvider';
+import '../Profiles.css';
 
 export function ServicePicker({
   catalog,
   value,
   onChange,
   disabled,
+  fixed = [],
+  help = 'Choose the services this sandbox needs. We’ll help each user connect any missing services before opening their sandbox.',
 }: {
   readonly catalog?: ServiceCatalogClient;
   readonly value: readonly string[];
   readonly onChange: (value: readonly string[]) => void;
   readonly disabled: boolean;
+  readonly help?: string;
+  readonly fixed?: readonly { readonly id: string; readonly reason: string }[];
 }) {
+  const searchId = useId();
+  const helpId = useId();
   const [query, setQuery] = useState('');
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
@@ -41,37 +48,48 @@ export function ServicePicker({
   }, [catalog, reload]);
   return (
     <div className="profile-field">
-      <p id="profile-services-help" className="profile-field__help">
-        Choose the services this sandbox needs. We’ll help each user connect any missing services
-        before opening their sandbox.
+      <p id={helpId} className="profile-field__help">
+        {help}
       </p>
-      <label className="sr-only" htmlFor="profile-service-search">
+      <label className="sr-only" htmlFor={searchId}>
         Search services
       </label>
       <Input
-        id="profile-service-search"
+        id={searchId}
         value={query}
         icon={<IconSearchOutline16 />}
-        aria-describedby="profile-services-help"
+        aria-describedby={helpId}
         disabled={disabled || catalog === undefined}
         onChange={(event) => setQuery(event.target.value)}
       />
-      <ul className="profile-service-list">
+      <ul className="profile-service-list" aria-label="Services">
         {[
-          ...state.entries,
+          ...fixed.map((entry) => ({
+            id: entry.id,
+            name: entry.id,
+            description: entry.reason,
+            catalogId: undefined,
+          })),
+          ...state.entries.filter((entry) => !fixed.some((item) => item.id === entry.id)),
           ...value
-            .filter((id) => !state.entries.some((entry) => entry.id === id))
+            .filter(
+              (id) =>
+                !state.entries.some((entry) => entry.id === id) &&
+                !fixed.some((entry) => entry.id === id),
+            )
             .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
         ]
-          .filter((entry) => !isCodexConnection(entry.id))
+          .filter(
+            (entry) => fixed.some((item) => item.id === entry.id) || !isCodexConnection(entry.id),
+          )
           .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
           .map((entry) => (
             <li key={entry.id}>
               <label>
                 <input
                   type="checkbox"
-                  checked={value.includes(entry.id)}
-                  disabled={disabled}
+                  checked={value.includes(entry.id) || fixed.some((item) => item.id === entry.id)}
+                  disabled={disabled || fixed.some((item) => item.id === entry.id)}
                   onChange={(event) =>
                     onChange(
                       event.target.checked
@@ -80,15 +98,19 @@ export function ServicePicker({
                     )
                   }
                 />
-                <span>
+                <span
+                  title={[entry.name, 'description' in entry ? entry.description : undefined]
+                    .filter(Boolean)
+                    .join(' — ')}
+                >
                   <ReferenceLink
                     kind="service"
                     id={entry.id}
                     name={entry.name}
                     catalogId={entry.catalogId}
-                  />
+                  />{' '}
                   {'description' in entry && entry.description !== undefined ? (
-                    <small>{entry.description}</small>
+                    <small> {entry.description}</small>
                   ) : null}
                 </span>
               </label>
@@ -100,7 +122,7 @@ export function ServicePicker({
           <p role="status">The service catalogue is unavailable.</p>
         ) : state.loading ? (
           <p role="status">Loading services</p>
-        ) : state.error !== undefined ? null : state.entries.length === 0 ? (
+        ) : state.error !== undefined ? null : state.entries.length === 0 && fixed.length === 0 ? (
           <p>No services available</p>
         ) : null}
         <Presence>

@@ -6,16 +6,27 @@ import { eventStream } from '../streaming.js';
 import { cursor, identifier, pageCursor, type V2AgentCursor } from './schema.js';
 import { readAgentJson } from './read.js';
 import { agentFrames } from './stream.js';
-import { v2AgentEventPage, v2UiTransport, type V2AgentStreamFrame } from './types.js';
+import {
+  v2AgentEventHead,
+  v2AgentEventPage,
+  v2UiTransport,
+  type V2AgentStreamFrame,
+} from './types.js';
 export type * from './types.js';
 export type { V2AgentEventKind } from './kinds.js';
 export type { V2AgentCursor, V2AgentPageCursor } from './schema.js';
 
 export interface V2AgentSnapshotOptions extends OperationOptions {
+  /** Opt into authoritative per-message command correlation; older servers may omit it. */
+  readonly messageBindings?: boolean;
   readonly limit?: number;
   readonly pageCursor?: string;
 }
 export interface V2AgentEventsOptions extends OperationOptions {
+  /** Request the server's real live-fragment observation time; older servers may omit it. */
+  readonly liveTimestamps?: boolean;
+  /** Opt into authoritative per-message command correlation; older servers may omit it. */
+  readonly messageBindings?: boolean;
   /** The last completely applied durable Agent cursor; omit to start at the retained beginning. */
   readonly afterCursor?: string;
   /** Standard SSE resume header alternative; if both coordinates are supplied they must match. */
@@ -33,6 +44,14 @@ export class AgentEventsV2 {
   async readTransportEligibility(options: OperationOptions = {}) {
     return v2UiTransport(await readAgentJson(this.config, '/api/v2/ui/transport', options));
   }
+  /** Capture a current tail baseline while historical snapshot pages load independently. */
+  async head(agentId: string, options: OperationOptions = {}) {
+    const id = preflight(identifier, agentId);
+    return v2AgentEventHead(
+      await readAgentJson(this.config, `/api/v2/agents/${segment(id)}/events/head`, options),
+      id,
+    );
+  }
   /** Fetch one fixed-head page. Apply every page before acknowledging through_cursor for tail startup. */
   async snapshot(agentId: string, options: V2AgentSnapshotOptions = {}) {
     const id = preflight(identifier, agentId);
@@ -48,6 +67,7 @@ export class AgentEventsV2 {
         page_cursor: previous,
       }),
       options,
+      options.messageBindings ? { Prefer: 'cma-message-bindings' } : undefined,
     );
     return v2AgentEventPage(value, id, limit, previous);
   }
@@ -63,6 +83,8 @@ export class AgentEventsV2 {
     const after = queryCursor ?? headerCursor;
     if (options.follow !== undefined && typeof options.follow !== 'boolean')
       throw new ValidationError('follow must be a boolean');
+    if (options.liveTimestamps !== undefined && typeof options.liveTimestamps !== 'boolean')
+      throw new ValidationError('liveTimestamps must be a boolean');
     if (
       typeof options.onEvent !== 'function' ||
       (options.onCursor !== undefined && typeof options.onCursor !== 'function')
@@ -79,7 +101,19 @@ export class AgentEventsV2 {
       (response, signal) => agentFrames(response, signal, id, after),
       'Agent events v2',
       undefined,
-      headerCursor === undefined ? undefined : { 'Last-Event-ID': headerCursor },
+      {
+        ...(headerCursor === undefined ? {} : { 'Last-Event-ID': headerCursor }),
+        ...(options.messageBindings || options.liveTimestamps
+          ? {
+              Prefer: [
+                options.messageBindings ? 'cma-message-bindings' : undefined,
+                options.liveTimestamps ? 'cma-live-observed-at' : undefined,
+              ]
+                .filter(Boolean)
+                .join(', '),
+            }
+          : {}),
+      },
     )) {
       try {
         await options.onEvent(frame);

@@ -1,33 +1,37 @@
 //! Native chat delivery using only the channel's encrypted platform credential.
 use super::{
-    event::EventState,
+    gate::expired,
     intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
     render::{RelayText, Renderer},
-    send::{unsupported, Sender},
+    send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
-    channel::{Secret, Source},
+    channel::{ChannelDefinition, Platform, Secret, Source},
     ids::MessageRef,
     message::OutboundMessage,
-    seal::{MessageRefPayload, ReplyAddress},
+    seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
 };
 use serde_json::json;
 
 impl Sender {
     pub(super) async fn native_reply(
         &self,
-        state: &mut EventState,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
         message: &OutboundMessage,
-    ) -> IntentReceipt {
+    ) -> (IntentReceipt, SendEffects) {
+        // A native send never marks the event's first send; writing it would
+        // change when the relay ack is due.
+        let effects = SendEffects::default();
         let ReplyAddress::Telegram {
             bot_id,
             chat_id,
             thread_id,
             ..
-        } = &state.event.reply
+        } = &event.reply
         else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         let mut receipt = IntentReceipt {
@@ -37,11 +41,19 @@ impl Sender {
                 reason: "empty_message".into(),
             },
         };
-        let Some(token) = token(&state.channel, bot_id) else {
+        let Some(token) = token(ctx.channel, bot_id) else {
             receipt.delivery = DeliveryOutcome::Rejected {
                 reason: "native_destination_revoked".into(),
             };
-            return receipt;
+            return (receipt, effects);
+        };
+        let route = crate::telegram::route(bot_id, chat_id);
+        let _ticket = match ctx.gate.enter_route(&route).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                receipt.delivery = refusal.outcome();
+                return (receipt, effects);
+            }
         };
         let controls = crate::interactions::has_controls(message);
         let mut prepared = if controls {
@@ -49,48 +61,75 @@ impl Sender {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "interactive_message_must_fit_one_part".into(),
                 };
-                return receipt;
+                return (receipt, effects);
             }
             let Some(store) = &self.relay.interactions else {
-                return unsupported();
+                return (unsupported(), effects);
             };
-            match store.prepare(&state.channel, &state.event, message).await {
+            // Commit point (Amendment R3 §R3.1): the durable card write is
+            // this send's first side effect.
+            if !ctx.gate.commit() {
+                receipt.delivery = expired();
+                return (receipt, effects);
+            }
+            match store.prepare(ctx.channel, event, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
                     receipt.delivery = DeliveryOutcome::Rejected {
                         reason: "interaction_state_unavailable".into(),
                     };
-                    return receipt;
+                    return (receipt, effects);
                 }
             }
         } else {
             None
         };
-        let route = crate::telegram::route(bot_id, chat_id);
         let mut confirmed = 0;
         let mut first = None;
-        for part in &parts {
+        for (index, part) in parts.iter().enumerate() {
             let Some(mut slot) = self.pacing.acquire(&route).await else {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
                 break;
             };
+            let permit = match ctx.gate.attempt().await {
+                Ok(permit) => permit,
+                Err(refusal) => {
+                    receipt.delivery = refusal.outcome();
+                    break;
+                }
+            };
+            // Commit point of a text reply: its first request. A reply with
+            // controls committed before its card write; committing is idempotent.
+            if index == 0 && !ctx.gate.commit() {
+                receipt.delivery = expired();
+                break;
+            }
             let markup = prepared.as_ref().map(|p| &p.markup);
             let mut sent = self
                 .relay
                 .telegram
                 .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
                 .await;
+            drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
                 slot.cooldown(delay);
                 slot.retry().await;
+                let _retry = match ctx.gate.attempt().await {
+                    Ok(permit) => permit,
+                    Err(refusal) => {
+                        receipt.delivery = refusal.outcome();
+                        break;
+                    }
+                };
                 sent = self
                     .relay
                     .telegram
                     .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
                     .await;
             }
+            ctx.gate.progress();
             match sent {
                 Ok(platform_id) => {
                     confirmed += 1;
@@ -127,11 +166,12 @@ impl Sender {
                     } else if receipt.message_ref.is_none() {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
-                                channel_id: state.event.channel_id.clone(),
-                                event_id: state.event.event_id.clone(),
+                                channel_id: event.channel_id.clone(),
+                                event_id: event.event_id.clone(),
                                 platform_message_id: platform_id,
                                 route_id: route.clone(),
                                 interaction_record_id: None,
+                                consumer: event.consumer.clone(),
                             },
                             &self.keys,
                         )
@@ -149,14 +189,16 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
-        receipt
+        (receipt, effects)
     }
     pub(super) async fn native_update(
         &self,
-        channel: &ResolvedChannel,
+        ctx: &SendContext<'_>,
         reference: &MessageRefPayload,
         message: &OutboundMessage,
-    ) -> IntentReceipt {
+    ) -> (IntentReceipt, SendEffects) {
+        let effects = SendEffects::default();
+        let channel = ctx.channel;
         let Some((bot_id, chat_id)) =
             channel
                 .definition
@@ -170,48 +212,72 @@ impl Sender {
                     _ => None,
                 })
         else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let Some(token) = token(channel, bot_id) else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         if parts.len() != 1 {
-            return IntentReceipt {
-                message_ref: None,
-                rendering,
-                delivery: DeliveryOutcome::Rejected {
-                    reason: "interactive_message_must_fit_one_part".into(),
+            return (
+                IntentReceipt {
+                    message_ref: None,
+                    rendering,
+                    delivery: DeliveryOutcome::Rejected {
+                        reason: "interactive_message_must_fit_one_part".into(),
+                    },
                 },
-            };
+                effects,
+            );
         }
+        let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
         let mut prepared = if reference.interaction_record_id.is_some() {
             let Some(store) = &self.relay.interactions else {
-                return unsupported();
+                return (unsupported(), effects);
             };
+            // Commit point (Amendment R3 §R3.1): fencing the old card is this
+            // send's first side effect.
+            if !ctx.gate.commit() {
+                return (refused(rendering, expired()), effects);
+            }
             match store.replacement(channel, reference, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
-                    return IntentReceipt {
-                        message_ref: None,
-                        rendering,
-                        delivery: DeliveryOutcome::Rejected {
-                            reason: "interaction_expired_or_invalid".into(),
+                    return (
+                        IntentReceipt {
+                            message_ref: None,
+                            rendering,
+                            delivery: DeliveryOutcome::Rejected {
+                                reason: "interaction_expired_or_invalid".into(),
+                            },
                         },
-                    }
+                        effects,
+                    )
                 }
             }
         } else {
             if crate::interactions::has_controls(message) {
-                return unsupported();
+                return (unsupported(), effects);
             }
             None
         };
         let empty = json!({"inline_keyboard":[]});
         let markup = prepared.as_ref().map(|p| &p.markup).unwrap_or(&empty);
         let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
-            return unsupported();
+            return (unsupported(), effects);
         };
+        let _permit = match ctx.gate.attempt().await {
+            Ok(permit) => permit,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
+        // A plain edit's request is its first side effect; after a card write
+        // this commit is idempotent.
+        if !ctx.gate.commit() {
+            return (refused(rendering, expired()), effects);
+        }
         let delivery = match self
             .relay
             .telegram
@@ -237,7 +303,7 @@ impl Sender {
         if matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }) {
             if let Some(prepared) = &mut prepared {
                 let Some(destination) = prepared.card.destination.clone() else {
-                    return unsupported();
+                    return (unsupported(), effects);
                 };
                 match self
                     .relay
@@ -258,7 +324,7 @@ impl Sender {
                 receipt.message_ref = MessageRef::seal(reference, &self.keys).ok();
             }
         }
-        receipt
+        (receipt, effects)
     }
     pub(super) async fn typing(
         &self,
@@ -306,5 +372,30 @@ fn outcome(error: Error) -> DeliveryOutcome {
         Error::Unconfirmed => DeliveryOutcome::Unknown {
             reason: "telegram_response_unconfirmed".into(),
         },
+    }
+}
+
+/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
+/// prepare cards, so the route's own relay must be a Telegram one. The message
+/// reference carries the relay route its card was sent on (`route_id`, copied
+/// from the sealed reply address when the card was bound), so no reply address
+/// is needed. With at most one relay the channel-level check is kept verbatim;
+/// the two agree on every legacy definition, whose only relay is the route's.
+pub(super) fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
+    let relays = definition
+        .sources
+        .iter()
+        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
+        .count();
+    if relays > 1 {
+        matches!(
+            definition.relay_source_for_route(route_id),
+            Some(Source::NyxidRelay {
+                platform: Platform::Telegram,
+                ..
+            })
+        )
+    } else {
+        definition.relay_platform() == Some(Platform::Telegram)
     }
 }

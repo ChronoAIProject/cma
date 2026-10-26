@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type SetStateAction } from 'react';
 import type { ProfileKind, TriggerContent, TriggerDocument } from '@chronoai/cma-sdk';
 import type { CommandOptions } from '../api/client';
 import { Button } from '../ui/Button';
@@ -13,8 +13,10 @@ import {
 import type { PublisherProfileChoice, TriggerPublisherClient } from './client';
 import { PresentationStep, ReuseStep, TargetStep, TrustDisclosures } from './ContentSteps';
 import { Placements } from './Placements';
+import { InlineTargetReview } from './InlineTargetReview';
 import {
   blankContent,
+  inlineResultSentence,
   resultSentence,
   reuseExplanation,
   STEP_NAMES,
@@ -49,6 +51,7 @@ export function TriggerWizard({
   const [step, setStep] = useState(initialStep);
   const [profiles, setProfiles] = useState<SelectedProfiles>({});
   const [reconciling, setReconciling] = useState(false);
+  const [imageResolving, setImageResolving] = useState(false);
   const [profilesKey, setProfilesKey] = useState('');
   const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -84,9 +87,9 @@ export function TriggerWizard({
     },
   );
   useEffect(() => {
-    onLock(command.locked || placementLocked);
+    onLock(command.locked || placementLocked || imageResolving);
     return () => onLock(false);
-  }, [command.locked, placementLocked, onLock]);
+  }, [command.locked, placementLocked, imageResolving, onLock]);
   const targetsKey = JSON.stringify(content.target);
   const profileRequestKey = `${targetsKey}:${String(profileReload)}`;
   const profileBusy = reconciling || profilesKey !== profileRequestKey;
@@ -95,6 +98,15 @@ export function TriggerWizard({
     activeProfile.current?.abort();
     activeProfile.current = request;
     const target = JSON.parse(targetsKey) as TriggerContent['target'];
+    if (target.inline !== undefined) {
+      queueMicrotask(() => {
+        if (request.signal.aborted) return;
+        setProfiles({});
+        setProfileErrors({});
+        setProfilesKey(profileRequestKey);
+      });
+      return () => request.abort();
+    }
     void Promise.all(
       (['sandbox', 'workspace', 'agent'] as const).map(async (kind) => {
         const reference = target[`${kind}_profile`];
@@ -129,7 +141,7 @@ export function TriggerWizard({
   useEffect(() => {
     heading.current?.focus();
   }, [step]);
-  const update = (next: TriggerContent) => {
+  const update = (next: SetStateAction<TriggerContent>) => {
     setContent(next);
     setConfirmed(false);
     setNotice('');
@@ -166,6 +178,7 @@ export function TriggerWizard({
     return saved;
   };
   const save = (publish: boolean) => {
+    if (imageResolving) return;
     setErrors(allErrors);
     if (Object.keys(allErrors).length > 0) {
       setStep(Object.keys(validateStep(0, content, profiles)).length > 0 ? 0 : 2);
@@ -247,10 +260,13 @@ export function TriggerWizard({
         <>
           <TargetStep
             client={client}
+            value={content}
             profiles={profiles}
             errors={fieldErrors}
             disabled={locked || unavailable}
+            onChange={update}
             onSelect={select}
+            onImageResolving={setImageResolving}
           />
           {Object.keys(profileErrors).length === 0 ? null : (
             <Button
@@ -299,23 +315,31 @@ export function TriggerWizard({
       {step === 4 ? (
         <div className="trigger-review">
           <h3>{content.presentation.title || 'Untitled Trigger'}</h3>
-          <p>{resultSentence(profiles)}</p>
+          <p>
+            {content.target.inline
+              ? inlineResultSentence(content.target.inline)
+              : resultSentence(profiles)}
+          </p>
           <p>{reuseExplanation(content.reuse)}</p>
-          <dl>
-            {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
-              <div key={kind}>
-                <dt>{kind} profile</dt>
-                <dd>
-                  <ReferenceLink
-                    kind={kind}
-                    id={content.target[`${kind}_profile`].id}
-                    name={profiles[kind]?.name}
-                  />
-                  , revision {content.target[`${kind}_profile`].revision}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          {content.target.inline ? (
+            <InlineTargetReview target={content.target.inline} />
+          ) : (
+            <dl>
+              {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
+                <div key={kind}>
+                  <dt>{kind} profile</dt>
+                  <dd>
+                    <ReferenceLink
+                      kind={kind}
+                      id={content.target[`${kind}_profile`].id}
+                      name={profiles[kind]?.name}
+                    />
+                    , revision {content.target[`${kind}_profile`].revision}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
           {content.first_message === '' ? null : (
             <div className="trigger-first-message">
               <h3>First message</h3>
@@ -374,7 +398,7 @@ export function TriggerWizard({
       <footer className="trigger-actions">
         <Button
           icon={<IconChevronLeftOutline14 />}
-          disabled={locked || step === 0}
+          disabled={locked || imageResolving || step === 0}
           onClick={() => {
             setStep((value) => value - 1);
             setErrors({});
@@ -382,14 +406,17 @@ export function TriggerWizard({
         >
           Back
         </Button>
-        <Button disabled={locked || unavailable || conflict} onClick={() => save(false)}>
+        <Button
+          disabled={locked || imageResolving || unavailable || conflict}
+          onClick={() => save(false)}
+        >
           Save draft
         </Button>
         {step < 4 ? (
           <Button
             variant="primary"
             icon={<IconChevronRightOutline14 />}
-            disabled={locked || unavailable}
+            disabled={locked || imageResolving || unavailable}
             onClick={() => {
               const validation = validateStep(step, content, profiles);
               setErrors(validation);

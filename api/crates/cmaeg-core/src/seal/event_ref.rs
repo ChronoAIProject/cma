@@ -7,9 +7,9 @@ use utoipa::ToSchema;
 
 use crate::{
     channel::{validate_https_url, Platform, Secret},
-    ids::{ChannelId, ConversationId, EventId, RecordId},
+    ids::{ChannelId, ConsumerId, ConversationId, EventId, RecordId},
     require_string,
-    seal::{open, seal, MasterKeyRing, OpenError, Opened, SealError, TokenKind},
+    seal::{open, seal, Lineage, MasterKeyRing, OpenError, Opened, SealError, TokenKind},
     ValidationError,
 };
 
@@ -26,6 +26,14 @@ pub struct EventRefPayload {
     pub conversation_id: ConversationId,
     pub expires_at: i64,
     pub reply: ReplyAddress,
+    /// The consumer this reference authorizes; absent for the default
+    /// consumer (never `Some("default")`), so a default reference keeps the
+    /// exact plaintext it had before consumers existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<ConsumerId>,
+    /// Present only on hand-off events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<Lineage>,
 }
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
@@ -295,6 +303,18 @@ pub fn activity_digest(activity: &crate::activity::Activity) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+/// A reference names only a non-default consumer: the default consumer's
+/// references stay exactly as they were before consumers existed (I3).
+pub(crate) fn validate_consumer(consumer: Option<&ConsumerId>) -> Result<(), ValidationError> {
+    if consumer.is_some_and(ConsumerId::is_default) {
+        return Err(ValidationError::new(
+            "/consumer",
+            "the default consumer is never named in a reference",
+        ));
+    }
+    Ok(())
+}
+
 impl EventRefPayload {
     pub fn verifies_activity(&self, activity: &crate::activity::Activity) -> bool {
         self.activity_sha256
@@ -318,6 +338,12 @@ impl EventRefPayload {
         require_string(&self.partition_key, "/partition_key", 1, 4_096)?;
         if self.expires_at <= 0 {
             return Err(ValidationError::new("/expires_at", "must be positive"));
+        }
+        validate_consumer(self.consumer.as_ref())?;
+        if let Some(lineage) = &self.lineage {
+            lineage.validate().map_err(|error| {
+                ValidationError::new(format!("/lineage{}", error.pointer), error.message)
+            })?;
         }
         match &self.reply {
             ReplyAddress::NyxidRelay {

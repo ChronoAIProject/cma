@@ -21,6 +21,7 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 fn sandbox(origin: SandboxOrigin) -> Sandbox {
     let content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![ServiceId::new("profile-service")],
@@ -49,6 +50,7 @@ fn sandbox(origin: SandboxOrigin) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("profile-service")],
             key_generation: 0,
             delivered: false,
@@ -174,7 +176,7 @@ fn trigger_query_fields_and_fingerprint_are_independently_validated() {
 #[test]
 fn sandbox_indexes_match_the_schema_contract() {
     let indexes = sandbox_indexes();
-    assert_eq!(indexes.len(), 9);
+    assert_eq!(indexes.len(), 11);
     assert_eq!(indexes[0].keys, doc! { "owner": 1, "name": 1 });
     let options = indexes[0].options.as_ref().unwrap();
     assert_eq!(options.unique, Some(true));

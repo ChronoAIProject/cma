@@ -55,10 +55,47 @@ impl PrivateProfileCreationService {
     ) -> Result<AgentProfileRevision, ProfileCreationError> {
         require(authority)?;
         let id = crate::AgentProfileId(profile_id(authority, "agp", key)?);
+        self.create_agent_with_id(
+            authority.owner_subject(),
+            id,
+            name,
+            description,
+            content,
+            false,
+        )
+        .await
+    }
+
+    /// Create the private revision for a caller that has already been
+    /// authenticated by the enclosing service.  This is used by the inline
+    /// Agent Manager facade, where the user never manages a profile resource.
+    pub async fn create_agent_for_owner(
+        &self,
+        owner: &crate::SubjectId,
+        key: &str,
+        name: String,
+        description: String,
+        content: AgentProfileContent,
+    ) -> Result<AgentProfileRevision, ProfileCreationError> {
+        let id = crate::AgentProfileId(profile_id_for_owner(owner, "agp", key)?);
+        self.create_agent_with_id(owner, id, name, description, content, true)
+            .await
+    }
+
+    async fn create_agent_with_id(
+        &self,
+        owner: &crate::SubjectId,
+        id: crate::AgentProfileId,
+        name: String,
+        description: String,
+        content: AgentProfileContent,
+        internal: bool,
+    ) -> Result<AgentProfileRevision, ProfileCreationError> {
         let now = crate::now_rfc3339();
         let profile = AgentProfile {
+            internal,
             id: id.clone(),
-            owner: authority.owner_subject().clone(),
+            owner: owner.clone(),
             name,
             description,
             visibility: ProfileVisibility::Private,
@@ -72,7 +109,6 @@ impl PrivateProfileCreationService {
         };
         profile.validate()?;
 
-        require(authority)?;
         match self.store.create_agent_profile(profile.clone()).await {
             Ok(()) | Err(ProfileStoreError::Duplicate) => {}
             Err(error) => return Err(error.into()),
@@ -83,6 +119,7 @@ impl PrivateProfileCreationService {
             .await?
             .ok_or(ProfileStoreError::NotFound)?;
         if stored.owner != profile.owner
+            || stored.internal != profile.internal
             || stored.name != profile.name
             || stored.description != profile.description
             || stored.visibility != ProfileVisibility::Private
@@ -94,7 +131,6 @@ impl PrivateProfileCreationService {
             return Err(ProfileCreationError::Conflict);
         }
         if self.store.agent_profile_revision(&id, 1).await?.is_none() {
-            require(authority)?;
             self.store
                 .publish_agent_profile(&id, 1, crate::now_rfc3339())
                 .await?;
@@ -104,7 +140,6 @@ impl PrivateProfileCreationService {
             .agent_profile_revision(&id, 1)
             .await?
             .ok_or(ProfileStoreError::NotFound)?;
-        require(authority)?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
@@ -125,10 +160,44 @@ impl PrivateProfileCreationService {
     ) -> Result<WorkspaceProfileRevision, ProfileCreationError> {
         require(authority)?;
         let id = crate::WorkspaceProfileId(profile_id(authority, "wkp", key)?);
+        self.create_workspace_with_id(
+            authority.owner_subject(),
+            id,
+            name,
+            description,
+            content,
+            false,
+        )
+        .await
+    }
+
+    pub async fn create_workspace_for_owner(
+        &self,
+        owner: &crate::SubjectId,
+        key: &str,
+        name: String,
+        description: String,
+        content: WorkspaceProfileContent,
+    ) -> Result<WorkspaceProfileRevision, ProfileCreationError> {
+        let id = crate::WorkspaceProfileId(profile_id_for_owner(owner, "wkp", key)?);
+        self.create_workspace_with_id(owner, id, name, description, content, true)
+            .await
+    }
+
+    async fn create_workspace_with_id(
+        &self,
+        owner: &crate::SubjectId,
+        id: crate::WorkspaceProfileId,
+        name: String,
+        description: String,
+        content: WorkspaceProfileContent,
+        internal: bool,
+    ) -> Result<WorkspaceProfileRevision, ProfileCreationError> {
         let now = crate::now_rfc3339();
         let profile = WorkspaceProfile {
+            internal,
             id: id.clone(),
-            owner: authority.owner_subject().clone(),
+            owner: owner.clone(),
             name,
             description,
             visibility: ProfileVisibility::Private,
@@ -144,13 +213,12 @@ impl PrivateProfileCreationService {
         references::validate_agent_references(
             self.store.as_ref(),
             self.store.as_ref(),
-            authority.owner_subject(),
+            owner,
             None,
             &profile.draft.agent_profiles,
         )
         .await
         .map_err(|e| e.error)?;
-        require(authority)?;
         match self.store.create_workspace_profile(profile.clone()).await {
             Ok(()) | Err(ProfileStoreError::Duplicate) => {}
             Err(error) => return Err(error.into()),
@@ -161,6 +229,7 @@ impl PrivateProfileCreationService {
             .await?
             .ok_or(ProfileStoreError::NotFound)?;
         if stored.owner != profile.owner
+            || stored.internal != profile.internal
             || stored.name != profile.name
             || stored.description != profile.description
             || stored.visibility != ProfileVisibility::Private
@@ -177,7 +246,6 @@ impl PrivateProfileCreationService {
             .await?
             .is_none()
         {
-            require(authority)?;
             self.store
                 .publish_workspace_profile(&id, 1, crate::now_rfc3339())
                 .await?;
@@ -187,7 +255,6 @@ impl PrivateProfileCreationService {
             .workspace_profile_revision(&id, 1)
             .await?
             .ok_or(ProfileStoreError::NotFound)?;
-        require(authority)?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
@@ -226,18 +293,62 @@ impl PrivateProfileCreationService {
         input: PrivateSandboxProfileInput,
     ) -> Result<SandboxProfileRevision, ProfileCreationError> {
         require(authority)?;
+        let id = crate::SandboxProfileId(profile_id(authority, "sbp", key)?);
+        self.create_sandbox_configured_with_id(authority.owner_subject(), id, input, false)
+            .await
+    }
+
+    pub async fn create_sandbox_for_owner(
+        &self,
+        owner: &crate::SubjectId,
+        key: &str,
+        name: String,
+        description: String,
+        content: SandboxProfileContent,
+    ) -> Result<SandboxProfileRevision, ProfileCreationError> {
+        self.create_sandbox_configured_for_owner(
+            owner,
+            key,
+            PrivateSandboxProfileInput {
+                name,
+                description,
+                content,
+                availability: SandboxProfileAvailability::default(),
+            },
+        )
+        .await
+    }
+
+    pub async fn create_sandbox_configured_for_owner(
+        &self,
+        owner: &crate::SubjectId,
+        key: &str,
+        input: PrivateSandboxProfileInput,
+    ) -> Result<SandboxProfileRevision, ProfileCreationError> {
+        let id = crate::SandboxProfileId(profile_id_for_owner(owner, "sbp", key)?);
+        self.create_sandbox_configured_with_id(owner, id, input, true)
+            .await
+    }
+
+    async fn create_sandbox_configured_with_id(
+        &self,
+        owner: &crate::SubjectId,
+        id: crate::SandboxProfileId,
+        input: PrivateSandboxProfileInput,
+        internal: bool,
+    ) -> Result<SandboxProfileRevision, ProfileCreationError> {
         let PrivateSandboxProfileInput {
             name,
             description,
             content,
             availability,
         } = input;
-        let id = crate::SandboxProfileId(profile_id(authority, "sbp", key)?);
         let now = crate::now_rfc3339();
         let profile = SandboxProfile {
+            internal,
             availability,
             id: id.clone(),
-            owner: authority.owner_subject().clone(),
+            owner: owner.clone(),
             name,
             description,
             visibility: ProfileVisibility::Private,
@@ -253,13 +364,12 @@ impl PrivateProfileCreationService {
         references::validate_workspace_references(
             self.store.as_ref(),
             self.store.as_ref(),
-            authority.owner_subject(),
+            owner,
             None,
             &profile.draft.workspace_profiles,
         )
         .await
         .map_err(|e| e.error)?;
-        require(authority)?;
         match self.store.create_sandbox_profile(profile.clone()).await {
             Ok(()) | Err(ProfileStoreError::Duplicate) => {}
             Err(error) => return Err(error.into()),
@@ -271,6 +381,7 @@ impl PrivateProfileCreationService {
             .ok_or(ProfileStoreError::NotFound)?;
         if stored.availability != profile.availability
             || stored.owner != profile.owner
+            || stored.internal != profile.internal
             || stored.name != profile.name
             || stored.description != profile.description
             || stored.visibility != ProfileVisibility::Private
@@ -282,7 +393,6 @@ impl PrivateProfileCreationService {
             return Err(ProfileCreationError::Conflict);
         }
         if self.store.sandbox_profile_revision(&id, 1).await?.is_none() {
-            require(authority)?;
             self.store
                 .publish_sandbox_profile(
                     &id,
@@ -298,7 +408,6 @@ impl PrivateProfileCreationService {
             .sandbox_profile_revision(&id, 1)
             .await?
             .ok_or(ProfileStoreError::NotFound)?;
-        require(authority)?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
@@ -323,5 +432,17 @@ fn profile_id(
         return Err(ProfileError::new("invalid_creation_key", "key").into());
     }
     let digest = content_digest(&("private-owned-profile-v1", authority.owner(), kind, key))?;
+    Ok(format!("{kind}_{}", &digest[..32]))
+}
+
+fn profile_id_for_owner(
+    owner: &crate::SubjectId,
+    kind: &str,
+    key: &str,
+) -> Result<String, ProfileCreationError> {
+    if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
+        return Err(ProfileError::new("invalid_creation_key", "key").into());
+    }
+    let digest = content_digest(&("private-owned-profile-v1", owner, kind, key))?;
     Ok(format!("{kind}_{}", &digest[..32]))
 }

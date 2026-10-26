@@ -1,82 +1,148 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
-import { AGENT_DETAIL } from '../test/agent';
-import { AgentDetails } from './Details';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CmaClientProvider } from '../api/context';
+import type { AgentFilesClient } from '../api/agentFiles';
+import type { ResourceViewsClient } from '../resources/client';
+import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { NamedReferences } from '../test/references';
+import { AgentDetails } from './Details';
 
-it.each(['ready', 'stopped'] as const)(
-  'holds %s Agent lifecycle controls until history hydration finishes',
-  (status) => {
-    const draw = (historyLoading: boolean) => (
-      <AgentDetails
-        detail={{ ...AGENT_DETAIL, status }}
-        historyLoading={historyLoading}
-        onNavigate={vi.fn()}
-        onStop={vi.fn()}
-        onDelete={vi.fn()}
-      />
-    );
-    const { rerender } = render(draw(true));
-    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation activity.');
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-    rerender(draw(false));
-    expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: status === 'ready' ? 'Stop' : 'Delete' }),
-    ).toBeEnabled();
-  },
-);
-
-it('shows lineage, profile, Worktree, first-message delivery, and guarded controls', async () => {
-  const onStop = vi.fn();
-  const actor = userEvent.setup();
+it('summarises service access read-only beside skills without duplicating composer settings', async () => {
+  const readAgentSettings = vi.fn();
+  const client = agentClient({ readAgentSettings });
   render(
-    <NamedReferences>
-      <AgentDetails detail={AGENT_DETAIL} onNavigate={vi.fn()} onStop={onStop} onDelete={vi.fn()} />
-    </NamedReferences>,
+    <CmaClientProvider client={client}>
+      <NamedReferences>
+        <AgentDetails detail={{ ...AGENT_DETAIL, reach: ['ornn-api', 'github'] }} open />
+      </NamedReferences>
+    </CmaClientProvider>,
   );
-  for (const band of [
-    'Sandbox',
-    'Workspace',
-    'Worktree',
-    'Agent profile',
-    'First-message delivery',
-  ]) {
-    expect(screen.getByRole('heading', { name: band })).toBeInTheDocument();
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+  expect(panel.queryByLabelText('Permission mode')).not.toBeInTheDocument();
+  expect(panel.queryByRole('group', { name: 'Agent key scope' })).not.toBeInTheDocument();
+  expect(panel.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: /Save scope/ })).not.toBeInTheDocument();
+  await screen.findByRole('link', { name: 'GitHub' });
+  const services = within(panel.getByRole('list', { name: 'Services this Agent can use' }));
+  expect(services.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    'chrono-llm-publicRequired',
+    'ornn-apiRequired',
+    'GitHub',
+  ]);
+  for (const required of services.getAllByText('Required')) {
+    expect(required).toHaveClass('agent-details__required');
+    expect(required.closest('.badge')).toBeNull();
   }
-  expect(screen.getByText('agent/one')).toBeInTheDocument();
-  expect(await screen.findByRole('link', { name: 'GitHub' })).toHaveAttribute(
+  expect(panel.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
     'href',
-    'https://nyx.chrono-ai.fun/services/catalog-github',
+    '/sandboxes/sbx_1?tab=access',
   );
-  expect(await screen.findByRole('link', { name: 'TypeScript' })).toHaveAttribute(
-    'href',
-    'https://ornn.chrono-ai.fun/skills/typescript',
-  );
-  expect(screen.getAllByText('Completed')).toHaveLength(2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-  await actor.click(screen.getByRole('button', { name: 'Stop' }));
-  await actor.click(screen.getByRole('button', { name: /^Stop$/ }));
-  expect(onStop).toHaveBeenCalledOnce();
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Service access',
+    'Skills',
+  ]);
+  expect(panel.queryByText(AGENT_DETAIL.workspace.path)).not.toBeInTheDocument();
+  expect(panel.queryByText(AGENT_DETAIL.worktree.branch)).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  expect(readAgentSettings).not.toHaveBeenCalled();
 });
 
-it('requires explicit acknowledgement before deleting a stopped Agent', async () => {
-  const onDelete = vi.fn();
-  const actor = userEvent.setup();
-  render(
-    <AgentDetails
-      detail={{ ...AGENT_DETAIL, status: 'stopped' }}
-      onNavigate={vi.fn()}
-      onStop={vi.fn()}
-      onDelete={onDelete}
-    />,
+describe('reaching the Sandbox page', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+  const draw = (onOpenSandbox?: () => void) =>
+    render(
+      <CmaClientProvider client={agentClient()}>
+        <AgentDetails detail={AGENT_DETAIL} open onOpenSandbox={onOpenSandbox} />
+      </CmaClientProvider>,
+    );
+  const address = () => window.location.pathname + window.location.search;
+  // Console's navigation pushes the bare Sandbox path, as the router does.
+  const navigate = vi.fn(() => window.history.pushState(null, '', '/sandboxes/sbx_1'));
+
+  it('opens the Access tab from Manage on Sandbox', async () => {
+    draw(navigate);
+    await userEvent.click(screen.getByRole('link', { name: 'Manage on Sandbox' }));
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(address()).toBe('/sandboxes/sbx_1?tab=access');
+  });
+
+  it('opens the Activity tab from Sandbox operation progress', async () => {
+    draw(navigate);
+    await userEvent.click(screen.getByRole('button', { name: 'Sandbox operation progress' }));
+    expect(address()).toBe('/sandboxes/sbx_1?tab=activity');
+  });
+
+  it('leaves a modified click, or a drawer without navigation, to the browser', () => {
+    navigate.mockClear();
+    const view = draw(navigate);
+    const link = screen.getByRole('link', { name: 'Manage on Sandbox' });
+    expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+    view.unmount();
+    draw();
+    expect(
+      screen.queryByRole('button', { name: 'Sandbox operation progress' }),
+    ).not.toBeInTheDocument();
+    expect(fireEvent.click(screen.getByRole('link', { name: 'Manage on Sandbox' }))).toBe(true);
+  });
+});
+
+it('focuses the Details heading on open and restores the opener on close', async () => {
+  const onClose = vi.fn();
+  const client = agentClient();
+  const draw = (open: boolean) => (
+    <CmaClientProvider client={client}>
+      <button>Open details</button>
+      <AgentDetails detail={AGENT_DETAIL} open={open} onClose={onClose} />
+    </CmaClientProvider>
   );
-  await actor.click(screen.getByRole('button', { name: 'Delete' }));
-  const confirm = screen.getByRole('button', { name: 'Delete Agent' });
-  expect(confirm).toBeDisabled();
-  await actor.click(screen.getByRole('checkbox'));
-  await actor.click(confirm);
-  expect(onDelete).toHaveBeenCalledOnce();
+  const view = render(draw(false));
+  const opener = screen.getByRole('button', { name: 'Open details' });
+  opener.focus();
+  view.rerender(draw(true));
+  expect(screen.getByRole('heading', { name: 'Details' })).toHaveFocus();
+  await userEvent.click(screen.getByRole('button', { name: 'Close Agent details' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  view.rerender(draw(false));
+  expect(opener).toHaveFocus();
+});
+
+it('orders the calm sections and gives every text action the same quiet link', () => {
+  // Neither client is read until its action is used, so inert stubs suffice.
+  const files = {} as AgentFilesClient;
+  const resourceViews = {} as ResourceViewsClient;
+  const draw = (open: boolean) => (
+    <CmaClientProvider client={agentClient({ files, resourceViews })}>
+      <AgentDetails detail={AGENT_DETAIL} open={open} onOpenSandbox={vi.fn()} />
+    </CmaClientProvider>
+  );
+  const view = render(draw(true));
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Files',
+    'Sharing',
+    'Service access',
+    'Skills',
+  ]);
+  const actions = [
+    panel.getByRole('button', { name: 'Browse files' }),
+    panel.getByRole('button', { name: 'Manage share links' }),
+    panel.getByRole('link', { name: 'Manage on Sandbox' }),
+    panel.getByRole('button', { name: 'Sandbox operation progress' }),
+  ];
+  for (const action of actions) {
+    expect(action).toHaveClass('agent-details__link');
+    expect(action).not.toHaveClass('button');
+  }
+  expect(panel.getByRole('button', { name: 'Manage share links' })).toBeEnabled();
+  view.rerender(draw(false));
+  expect(screen.getByRole('button', { name: 'Manage share links' })).toBeDisabled();
 });

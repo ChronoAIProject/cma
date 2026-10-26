@@ -122,6 +122,7 @@ async fn composition(name: &str) -> (crate::AgentConversationState, Arc<InMemory
     };
     let mut logs = vec![
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: Some("contract-private-origin".into()),
         },

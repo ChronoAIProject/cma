@@ -8,9 +8,12 @@ use layer2_core::Authorization;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod agent_access_cases;
 mod agent_cases;
+mod agent_customization_cases;
 mod agent_event_cases;
 mod artifact_cases;
+mod attachment_cases;
 mod authoring_cases;
 mod binding_cases;
 mod bot_cases;
@@ -18,31 +21,38 @@ mod bot_setup_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
+mod document_cases;
 mod domains;
 mod event_worker_cases;
 mod experience_cases;
 mod fault_cases;
+mod filesystem_cases;
 mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod lifecycle_cases;
+mod message_feedback_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
+mod queued_input_cases;
 mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
+mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
 mod share_cases;
+mod share_link_cases;
 mod shared_agent_cases;
 mod shared_hierarchy_cases;
 mod shared_source_cases;
 mod shared_stream_cases;
-mod snapshot_cases;
 mod source_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod warm_pool_cases;
 
 use symbols::Symbols;
 
@@ -141,6 +151,36 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = document_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(filesystem_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = Box::pin(share_link_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = message_feedback_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = runtime_update_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = attachment_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = agent_customization_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = agent_access_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = warm_pool_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = lifecycle_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = bot_setup_cases::scenario(name).await {
         return scenario;
     }
@@ -154,6 +194,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = binding_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = queued_input_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
@@ -205,9 +248,6 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = source_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = snapshot_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = credential_cases::scenario(name).await {

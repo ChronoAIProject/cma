@@ -18,6 +18,112 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('maps runtime status and a base-view update receipt without an extra detail request', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    const runtime = {
+      current_version: 'registry.example/runtime@sha256:old',
+      latest_version: 'registry.example/runtime@sha256:new',
+      update_available: true,
+      state: 'queued',
+      can_update: false,
+      target_version: 'registry.example/runtime@sha256:new',
+      requested_at: NOW,
+      schedule: { timezone: 'Asia/Singapore', local_time: '02:00' },
+      preserves_home: true,
+    };
+    test.reply({ ...WIRE_SANDBOX_DETAIL, runtime_update: runtime });
+    const detail = await client.readSandbox(WIRE_SANDBOX.id);
+    expect(detail.runtimeUpdate).toMatchObject({
+      currentVersion: runtime.current_version,
+      latestVersion: runtime.latest_version,
+      state: 'queued',
+      requestedAt: NOW,
+      schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
+      preservesHome: true,
+    });
+    test.reply({ ...WIRE_SANDBOX, runtime_update: runtime }, 202);
+    expect(
+      await client.updateSandboxRuntime!(WIRE_SANDBOX.id, runtime.latest_version, options),
+    ).toEqual({
+      runtimeUpdate: detail.runtimeUpdate,
+      revision: WIRE_SANDBOX.revision,
+    });
+    expect(test.fetch).toHaveBeenCalledTimes(2);
+  });
+  it('keeps title provenance and recorded first-message identity in detail and hierarchy reads', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    const metadata = {
+      description: 'A retained automatic setup prompt',
+      description_source: 'prompt_preview',
+      description_is_setup_preview: true,
+      working_directory: '/home/cma/project',
+    };
+    const expected = {
+      description: metadata.description,
+      descriptionSource: 'prompt_preview',
+      descriptionIsSetupPreview: true,
+      workingDirectory: metadata.working_directory,
+    };
+    test.reply({
+      ...WIRE_AGENT,
+      runtime_metadata: metadata,
+      first_message: { ...WIRE_AGENT.first_message, purpose: 'setup', turn_sequence: 7 },
+    });
+    expect(await client.readAgent('agent-1')).toMatchObject({
+      runtimeMetadata: expected,
+      firstMessage: { purpose: 'setup', turnSequence: 7 },
+    });
+    test.reply({
+      ...WIRE_WORKSPACE_DETAIL,
+      agents: WIRE_WORKSPACE_DETAIL.agents.map((agent) => ({
+        ...agent,
+        runtime_metadata: metadata,
+      })),
+    });
+    expect((await client.readWorkspace('workspace-1')).agents[0]?.runtimeMetadata).toEqual(
+      expected,
+    );
+    test.reply(WIRE_AGENT);
+    const legacy = await client.readAgent('agent-1');
+    expect(legacy.runtimeMetadata).toBeUndefined();
+    expect(legacy.firstMessage?.purpose).toBeUndefined();
+    expect(legacy.firstMessage?.turnSequence).toBeUndefined();
+  });
+
+  it('preserves exact public bootstrap lineage and unresolved worktree state without fabricating readiness', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    test.reply({
+      ...WIRE_AGENT,
+      status: 'starting',
+      ready_at: undefined,
+      worktree: { ...WIRE_AGENT.worktree, status: 'creating', base_commit: '' },
+      workspace: { ...WIRE_AGENT.workspace, status: 'preparing', resolved_commit: undefined },
+      sandbox: { ...WIRE_AGENT.sandbox, status: 'provisioning' },
+      bootstrap: {
+        operation_id: 'operation-one',
+        sandbox_id: 'sandbox-1',
+        workspace_id: 'workspace-1',
+      },
+    });
+    expect(await client.readAgent('agent-1')).toMatchObject({
+      id: 'agent-1',
+      status: 'starting',
+      readyAt: undefined,
+      bootstrap: {
+        operationId: 'operation-one',
+        sandboxId: 'sandbox-1',
+        workspaceId: 'workspace-1',
+      },
+      worktree: { status: 'creating', baseCommit: '' },
+      workspace: { status: 'preparing', resolvedCommit: undefined },
+      sandbox: { status: 'provisioning' },
+    });
+    test.reply(WIRE_AGENT);
+    expect((await client.readAgent('agent-1')).bootstrap).toBeUndefined();
+  });
   it('projects only safe access settings from the exact pinned Sandbox profile', async () => {
     const test = restTransport();
     test.reply(wireRevision('sandbox'));
@@ -46,23 +152,15 @@ describe('public REST web binding', () => {
         pause: { allowed: false, reason: 'checkpoint_in_progress' },
         revive: { allowed: false, reason: 'not_paused' },
         checkpoint: { phase, started_at: NOW, epoch: 7 },
-        latest_snapshot: {
-          epoch: 6,
-          saved_at: NOW,
-          download_url: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
-        },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', started_at: NOW },
+        interruption: { cause: 'out_of_memory', detected_at: NOW, memory_limit_mib: 8192 },
       };
       const expected = {
         pause: lifecycle.pause,
         revive: lifecycle.revive,
         checkpoint: { phase, startedAt: NOW, epoch: 7 },
-        latestSnapshot: {
-          epoch: 6,
-          savedAt: NOW,
-          downloadUrl: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
-        },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', startedAt: NOW },
+        interruption: { cause: 'out_of_memory', detectedAt: NOW, memoryLimitMib: 8192 },
       };
       test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, lifecycle }] });
       expect(await client.listSandboxes()).toMatchObject({ items: [{ lifecycle: expected }] });
@@ -217,6 +315,10 @@ describe('public REST web binding', () => {
         },
       ],
     });
+    test.reply({ sequence: 1 });
+    const history = await client.exportAgentHistory('agent-1');
+    expect(await history.text()).toBe('{"sequence":1}');
+    expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/agents/agent-1/history');
     test.reply({
       agent_id: 'agent-1',
       through_seq: 1,

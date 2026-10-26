@@ -238,6 +238,27 @@ extension; older discovery documents remain readable. Standard Responses
 cancellation and verified platform-sender controls are separate contracts.
 Cancellation before turn binding uses the dedicated methods below.
 
+## Interrupt with new input
+
+`interruptWithInput` atomically admits cancellation of an observed active response
+and a distinct new user input. Pass the original Agent and response IDs, a
+`V2ResponseInterruptionRequest` containing `turn_sequence`, `expected_agent_revision`
+and `text`, and one retained idempotency key. Use `observeControls` to obtain the
+current binding and revision before submission.
+
+HTTP 202 returns `control` and `response` command views plus the original
+`target` and `expected_agent_revision`. The control has no response ID; the new
+input has a different response ID from the interrupted response. Its queue
+priority places it before ordinary queued messages while preserving their
+identities and relative order. Admission does not prove cancellation or new-turn
+startup: observe the original response outcome and the new command separately.
+
+After a lost response, retry the exact original IDs, body and key. The SDK never
+retries or retargets automatically. Generic conflicts remain uncertain;
+`response_interrupt_not_admitted` is the definitive proof that the original pair
+was not admitted and its observed target became stale. Keep ordinary Stop on
+`submitControl` with a cancel command; it admits no replacement message.
+
 ## Queued response cancellation
 
 `observeQueuedCancellation(agentId, responseId)` returns the source command,
@@ -372,3 +393,64 @@ Typed `ApiError` codes include `invalid_agent_cursor`, `agent_cursor_beyond_head
 `agent_read_unavailable`. A `cma.agent.error` frame reaches the consumer and then
 rejects observation without acknowledging a cursor. Changed incarnation requires
 rebuilding normalized history for the new resource.
+
+### Current Agent event head
+
+`agentEventsV2.head(agentId, { signal })` reads a constant-size, authorized live
+baseline independently of historical snapshot pagination. It returns
+`through_cursor`, `incarnation` and `active_turn`: either `null` or the exact
+durable `turn_started` item, including any verified `response_binding`. Start a
+separate live tail after this cursor while historical pages load; buffer and
+reconcile later events by durable sequence when merging history. The head is not
+an acknowledgement that earlier history has been applied. A turn may finish or
+a new turn may start after capture; those events arrive on the tail normally.
+The SDK validates Agent identity, incarnation, cursor bounds and the active
+turn's exact sequence and response binding before returning the baseline.
+
+### Edit pending input in place
+
+The public queue lists every editable human/API message in its original admission
+order, including messages submitted from another tab. The server admits at most
+64 pending commands. HTTP pages contain at most four entries and a nullable
+`next_after` admission-order cursor, keeping worst-case JSON escaping within the
+SDK's unchanged 8 MiB response limit. The SDK reader follows these pages and
+returns the full bounded list; it rejects repeated cursors, duplicate commands or
+more than 64 accumulated entries. Pages observe current state independently;
+concurrent edits to earlier pages appear on the next refresh. Refresh after admission,
+edit, cancellation, observed conversation changes, and returning to the page.
+The ledger does not emit conversation events before dispatch; clients displaying
+an active queue should also refresh periodically to observe other tabs.
+
+An edit preserves the source command, response and queue position. It replaces
+the complete text, including packed attachment text, only before runtime dispatch.
+Persist the route, exact source revision, text and a new idempotency key before
+sending. A lost reply must be recovered with identical bytes and the same key.
+`queued_input_not_admitted` proves the original revision is stale; refresh the
+queue before creating another intent. The edit receipt returns its immutable
+replacement text and resulting revision, alongside the source's current status.
+Removal continues to use queued cancellation with a fresh observation.
+
+```typescript
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function editFirstQueuedInput(
+  client: ReturnType<typeof createClient>,
+  agentId: string,
+  retainedEditKey: string,
+) {
+  const queue = await client.responsesV2.listQueuedInputs(agentId);
+  const item = queue.data[0];
+  if (item?.editable) {
+    await client.responsesV2.editQueuedInput(
+      agentId,
+      item.response.receipt.response_id!,
+      {
+        source_command_id: item.response.receipt.command_id,
+        expected_command_revision: item.command_revision,
+        text: 'Updated message, including any attachment text',
+      },
+      { idempotencyKey: retainedEditKey },
+    );
+  }
+}
+```

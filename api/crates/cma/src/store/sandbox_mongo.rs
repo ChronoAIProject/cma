@@ -57,6 +57,8 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WORKSPACES,
     WORKTREES,
     AGENTS,
+    super::agent_access_tools::COLLECTION,
+    super::agent_access_requests::COLLECTION,
     AGENT_REUSE_BINDINGS,
     super::trigger_first_messages::COLLECTION,
     AGENT_LOG,
@@ -73,6 +75,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
+    super::native_prepared::COLLECTION,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
     AGENT_PROFILES,
@@ -94,6 +97,8 @@ pub struct MongoSandboxStore {
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
+    pub(super) agent_access_tools: Collection<Document>,
+    pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
@@ -111,16 +116,32 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
     pub(super) sandbox_profiles: Collection<Document>,
+    #[cfg(test)]
     pub(super) sandbox_profile_revisions: Collection<Document>,
+    #[cfg(test)]
     pub(super) warm_workspace_revisions: Collection<Document>,
+    #[cfg(test)]
     pub(super) warm_agent_revisions: Collection<Document>,
     pub(super) warm_sandboxes: Collection<Document>,
+    pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
+    pub(super) managed_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    // Coalesced process-local hints; durable discovery owns recovery and authority.
+    pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
+    // Broadcast to already leased parent waiters without consuming scheduler hints.
+    pub(crate) agent_parent_ready: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_managed_runtime_version(mut self, version: String) -> Self {
+        self.managed_runtime_version = Some(version);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
@@ -144,6 +165,14 @@ impl MongoSandboxStore {
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
+            agent_access_tools: majority_collection(
+                &database,
+                super::agent_access_tools::COLLECTION,
+            ),
+            agent_access_requests: majority_collection(
+                &database,
+                super::agent_access_requests::COLLECTION,
+            ),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
@@ -164,18 +193,37 @@ impl MongoSandboxStore {
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
             sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
+            #[cfg(test)]
             sandbox_profile_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
+            #[cfg(test)]
             warm_workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
+            #[cfg(test)]
             warm_agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
             warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
+            native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
+            managed_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
+        super::agent_access_requests::ensure_indexes(&store).await?;
+        store
+            .agent_access_tools
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! {"agent_id": 1, "record.conversation": 1})
+                    .build(),
+            )
+            .await
+            .map_err(|error| unavailable("Agent access tool index", error))?;
         super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
@@ -187,6 +235,7 @@ impl MongoSandboxStore {
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
+        super::native_prepared::ensure_indexes(&store.native_prepared).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }
@@ -239,7 +288,7 @@ pub struct MongoProfileStore {
 }
 
 impl MongoProfileStore {
-    pub(super) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
+    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         let database = client.database(name);
         initialize_collections(&database, PROFILE_COLLECTIONS).await?;
         let store = Self {
@@ -412,86 +461,5 @@ pub(super) fn unavailable(context: &str, error: Error) -> StoreError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    use super::*;
-
-    #[test]
-    fn unknown_versions_include_missing_wrong_and_non_integer_values() {
-        assert!(require_version(&doc! { "document_schema_version": 1_i64 }).is_ok());
-        assert!(require_version(&doc! { "document_schema_version": 1_i32 }).is_ok());
-        assert!(require_version(&doc! { "document_schema_version": 2_i64 }).is_err());
-        assert!(require_version(&doc! { "document_schema_version": 1.0 }).is_err());
-        assert!(require_version(&Document::new()).is_err());
-    }
-
-    #[test]
-    fn transaction_server_requires_topology_and_snapshot_support() {
-        assert!(
-            validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 13_i32 })
-                .is_ok()
-        );
-        assert!(
-            validate_transaction_server(&doc! { "msg": "isdbgrid", "maxWireVersion": 25_i64 })
-                .is_ok()
-        );
-
-        let standalone = validate_transaction_server(&doc! { "maxWireVersion": 25_i32 })
-            .unwrap_err()
-            .to_string();
-        assert!(standalone.contains("replica set or mongos"));
-        let old = validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 12_i32 })
-            .unwrap_err()
-            .to_string();
-        assert!(old.contains("MongoDB 5.0 or later"));
-        let missing = validate_transaction_server(&doc! { "setName": "rs0" })
-            .unwrap_err()
-            .to_string();
-        assert!(missing.contains("maxWireVersion"));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn reconciliation_deadline_detaches_instead_of_cancelling_driver_work() {
-        let (release, blocked) = tokio::sync::oneshot::channel::<()>();
-        let finished = Arc::new(AtomicBool::new(false));
-        let completed = Arc::clone(&finished);
-        let result = wait_for_reconciliation_with_deadline(
-            "test reconciliation",
-            Duration::from_secs(1),
-            async move {
-                let _ = blocked.await;
-                completed.store(true, Ordering::SeqCst);
-            },
-        )
-        .await;
-
-        assert_eq!(
-            result,
-            Err("test reconciliation exceeded its 1 second deadline".into())
-        );
-        assert!(!finished.load(Ordering::SeqCst));
-        release.send(()).unwrap();
-        tokio::task::yield_now().await;
-        assert!(finished.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    async fn caller_cancellation_detaches_an_active_reconciliation() {
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
-        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
-        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel::<()>();
-        let caller = tokio::spawn(wait_for_reconciliation("cancelled caller", async move {
-            started_tx.send(()).unwrap();
-            let _ = release_rx.await;
-            finished_tx.send(()).unwrap();
-        }));
-
-        started_rx.await.unwrap();
-        caller.abort();
-        assert!(caller.await.unwrap_err().is_cancelled());
-        release_tx.send(()).unwrap();
-        finished_rx.await.unwrap();
-    }
-}
+#[path = "sandbox_mongo_tests.rs"]
+mod tests;

@@ -141,7 +141,7 @@ validate_image() {
       validate_config amd64 "$source_reference"
       validate_config arm64 "$source_reference"
       ;;
-    api | runtime)
+    api | runtime | cmaeg | image-manager)
       jq -e '
         (.mediaType == "application/vnd.oci.image.manifest.v1+json"
           or .mediaType == "application/vnd.docker.distribution.manifest.v2+json")
@@ -163,8 +163,8 @@ skopeo_command=${SKOPEO_COMMAND:-skopeo}
 skopeo_authfile=${SKOPEO_AUTHFILE:-}
 
 case "$component" in
-  api | web | runtime) ;;
-  *) die "component must be api, web, or runtime" ;;
+  api | web | runtime | cmaeg | image-manager) ;;
+  *) die "component must be api, web, runtime, cmaeg, or image-manager" ;;
 esac
 is_match "$version" '^v[0-9]+\.[0-9]+\.[0-9]+$' \
   || die "version must have the form vMAJOR.MINOR.PATCH"

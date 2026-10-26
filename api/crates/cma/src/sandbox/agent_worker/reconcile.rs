@@ -29,6 +29,27 @@ impl AgentWorker {
                     runtime_generation: candidate.runtime_generation,
                 };
                 if self.dependencies.registry.target_is_attached(&target) {
+                    // The service cheaply skips applied revisions and active work.
+                    // Admission and the ordered writer recheck every mutable fence.
+                    if self.config.managed_documents_enabled {
+                        if let Err(error) = self
+                            .dependencies
+                            .operations
+                            .refresh_managed_context(
+                                &candidate.agent_id,
+                                1,
+                                crate::agent_lifecycle::guidance::managed_v3(),
+                                &[
+                                    crate::agent_lifecycle::guidance::managed_v3().into(),
+                                    crate::agent_lifecycle::guidance::managed_v2().into(),
+                                    crate::agent_lifecycle::guidance::GITHUB_API_V1.into(),
+                                ],
+                            )
+                            .await
+                        {
+                            tracing::debug!(agent_id=%candidate.agent_id, error=%error, "managed context refresh deferred");
+                        }
+                    }
                     continue;
                 }
                 if self

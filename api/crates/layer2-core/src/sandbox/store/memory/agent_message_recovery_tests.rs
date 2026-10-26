@@ -245,6 +245,7 @@ async fn unrelated_semantic_write_advances_private_anchor_without_public_message
     next.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
@@ -347,6 +348,7 @@ impl AgentConversationStore for LostCommitReply {
             next.conversation.last_seq += 1;
             self.store
                 .commit_agent_conversation(AgentConversationMutation {
+                    settings_fence: None,
                     command_claim: None,
                     execution_fence: None,
                     trigger_execution_fence: None,

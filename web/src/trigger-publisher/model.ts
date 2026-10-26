@@ -1,4 +1,10 @@
-import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
+import type {
+  ProfileKind,
+  TriggerContent,
+  TriggerDocument,
+  TriggerInlineTarget,
+} from '@chronoai/cma-sdk';
+import type { StatusTone } from '../vocabulary/status';
 import type { PublisherProfile } from './client';
 
 export type SelectedProfiles = Partial<Record<ProfileKind, PublisherProfile>>;
@@ -9,6 +15,18 @@ export const STEP_NAMES = [
   'Where it lives',
   'Publish',
 ] as const;
+/**
+ * A Trigger's status as a word and tone — `docs/Web_Style.md` §12.1. Only a
+ * published Trigger is live for visitors; a draft and a retired one are not.
+ */
+export const AVAILABILITY = {
+  draft: { label: 'Draft', tone: 'muted' },
+  published: { label: 'Published', tone: 'neutral' },
+  retired: { label: 'Retired', tone: 'muted' },
+} as const satisfies Record<
+  TriggerDocument['availability'],
+  { readonly label: string; readonly tone: StatusTone }
+>;
 export const LABELS = {
   open_in_cma: 'Open in CMA',
   chat_with_this: 'Chat with this',
@@ -21,6 +39,15 @@ export const blankContent = (): TriggerContent => ({
     sandbox_profile: { id: '', revision: 1 },
     workspace_profile: { id: '', revision: 1 },
     agent_profile: { id: '', revision: 1 },
+    inline: {
+      agent: {
+        reasoning_effort: 'medium',
+        permission_mode: 'guarded',
+        skills: [],
+        system_prompt: '',
+        services: [],
+      },
+    },
   },
   reuse: { sandbox: 'reuse_existing', workspace: 'reuse_existing', agent: 'ask' },
   first_message: '',
@@ -34,7 +61,38 @@ export function validateStep(
   profiles: SelectedProfiles,
 ): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (step === 0)
+  if (step === 0 && content.target.inline !== undefined) {
+    const inline = content.target.inline;
+    if (inline.image?.id.trim() === '')
+      errors['target.inline.image'] = 'Choose an image or use the system default.';
+    else if (inline.image !== undefined && inline.image.reference === undefined)
+      errors['target.inline.image'] = 'The selected image has no immutable successful version.';
+    if (inline.agent.model !== undefined && inline.agent.model.trim() === '')
+      errors['target.inline.agent.model'] = 'Enter a model or leave it at the deployment default.';
+    if (inline.agent.skills.length > 32)
+      errors['target.inline.agent.skills'] = 'Choose at most 32 skills.';
+    if (inline.agent.services.length > 64)
+      errors['target.inline.agent.services'] = 'Choose at most 64 services.';
+    const repository = inline.workspace?.repository;
+    if (repository !== undefined) {
+      try {
+        const url = new URL(repository.url);
+        if (
+          url.protocol !== 'https:' ||
+          url.hostname !== 'github.com' ||
+          url.username !== '' ||
+          url.password !== '' ||
+          url.port !== '' ||
+          url.search !== '' ||
+          url.hash !== '' ||
+          url.pathname.split('/').filter(Boolean).length !== 2
+        )
+          errors['target.inline.workspace.repository'] = 'Enter an HTTPS GitHub repository URL.';
+      } catch {
+        errors['target.inline.workspace.repository'] = 'Enter an HTTPS GitHub repository URL.';
+      }
+    }
+  } else if (step === 0)
     for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
       const reference = content.target[`${kind}_profile`];
       const selected = profiles[kind];
@@ -102,6 +160,13 @@ export function resultSentence(profiles: SelectedProfiles): string {
   const { sandbox, workspace, agent } = profiles;
   if (sandbox?.kind !== 'sandbox' || workspace === undefined || agent === undefined) return '';
   return `Visitors get ${agent.name} in a ${workspace.name} workspace inside a ${sandbox.name} sandbox${sandbox.content.nyxid_services.length === 0 ? '.' : ` that reaches ${sandbox.content.nyxid_services.join(', ')}.`}`;
+}
+
+export function inlineResultSentence(target: TriggerInlineTarget): string {
+  const image = target.image?.id ?? 'the system default image';
+  const workspace = target.workspace?.repository?.url ?? 'an empty workspace';
+  const services = target.agent.services;
+  return `Visitors get an inline Agent from ${image} in ${workspace}${services.length === 0 ? '.' : ` with ${services.join(', ')} access.`}`;
 }
 
 export function placementError(label: string, source: string): string | undefined {

@@ -34,8 +34,14 @@ pub(super) async fn fence(
             resource_access::ReadError::Domain(_) => conflict(),
         })?;
     proof.validate_snapshot(&snapshot).map_err(|_| conflict())?;
-    validate_command_revival_transition(&snapshot.lineage.sandbox, candidate, at, event)
-        .map_err(ApplyError::Domain)?;
+    validate_command_revival_transition(
+        &snapshot.lineage.sandbox,
+        candidate,
+        at,
+        event,
+        store.managed_runtime_version.as_deref(),
+    )
+    .map_err(ApplyError::Domain)?;
     let command_id = proof.command().receipt.envelope.command_id.clone();
     let document = store
         .agent_commands

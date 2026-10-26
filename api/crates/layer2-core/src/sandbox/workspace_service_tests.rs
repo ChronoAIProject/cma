@@ -18,6 +18,9 @@ use super::*;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "workspace_lifecycle_tests.rs"]
+mod lifecycle;
+
 #[derive(Clone, Copy, Debug)]
 enum ProfileCorruption {
     AggregateId,
@@ -189,6 +192,7 @@ fn profile(
     setup_commands: Vec<String>,
 ) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: format!("{name} profile"),
@@ -256,6 +260,7 @@ fn sandbox(
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: Vec::new(),
@@ -274,6 +279,7 @@ fn sandbox(
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: Vec::new(),
             key_generation: 0,
             delivered: false,
@@ -363,6 +369,50 @@ async fn manual_admission_requires_the_current_digest_and_records_use_once() {
         }
     );
     assert_eq!(use_count(&profiles, &reference.id).await, 1);
+}
+
+#[tokio::test]
+async fn inline_admission_does_not_read_or_record_a_workspace_profile() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let parent = sandbox("sbx_inline_workspace", SandboxStatus::Active, Vec::new(), 4);
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let service = WorkspaceService::new(store, profiles.clone());
+
+    let workspace = service
+        .create_inline(
+            &caller("consumer"),
+            &parent.id,
+            CreateInlineWorkspace {
+                source: InlineWorkspaceSource::GitRepository {
+                    url: "https://github.com/ChronoAIProject/cma".into(),
+                    reference: Some("develop".into()),
+                },
+                name: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(workspace.profile.id.as_str().starts_with("wkp_"));
+    assert_eq!(workspace.profile.revision, 1);
+    assert_eq!(workspace.name, "cma");
+    assert_eq!(
+        workspace.source,
+        WorkspaceSource::GitRepository {
+            url: "https://github.com/ChronoAIProject/cma".into(),
+            reference: Some("develop".into()),
+        }
+    );
+    assert_eq!(
+        profiles
+            .list_workspace_profiles(None, false, &ProfilePageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        0
+    );
 }
 
 #[tokio::test]

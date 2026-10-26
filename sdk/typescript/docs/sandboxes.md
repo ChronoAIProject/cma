@@ -2,10 +2,11 @@
 
 <!-- nav: 4 Sandboxes -->
 
-`lifecycle.latest_snapshot` reports the latest completed snapshot's `epoch`,
-`saved_at`, and owner-authenticated `download_url`. Fetch the relative URL against
-the same CMA origin with the owner's credentials to download the whole-home
-archive. Old epoch URLs return 404 after replacement; snapshots are never public.
+Agent Sandbox persists a Sandbox on its attached persistent volume. CMA does not
+create, schedule, expose, download, or delete Sandbox snapshot archives. Pause,
+revive, and retirement delegate runtime and volume lifecycle to Agent Sandbox;
+the CMA lifecycle view reports only current transition eligibility and safe
+operation progress.
 
 A Trigger can cancel a pause before agent parking and teardown are admitted.
 The `pause` operation reports `resume_writers` until the exact hold is released.
@@ -62,10 +63,9 @@ pause, revival or runtime rotation.
 
 Read `lifecycle.pause` and `lifecycle.revive` for eligibility to begin a new
 transition. An active Sandbox can still be temporarily busy: `reason` distinguishes
-`checkpoint_in_progress` from `work_in_progress`. `lifecycle.checkpoint` records
-`capture` or `resume_writers`, its `started_at` timestamp and checkpoint `epoch`;
-`lifecycle.operation` records an admitted pause, revival or image rotation phase.
-These fields contain no worker or writer credentials. Older servers can omit
+`checkpoint_in_progress` from `work_in_progress` while Agent Sandbox persists the
+attached volume. `lifecycle.operation` records an admitted pause, revival or image
+rotation phase without worker or writer credentials. Older servers can omit
 `lifecycle`; treat that as unavailable eligibility, not permission inferred from
 `status`. A command can race with new work and return HTTP 409
 `sandbox_lifecycle_busy`; refresh before retrying. Idempotent command replays may
@@ -102,9 +102,9 @@ export async function inspectSandbox(id: string) {
 
 A narrow Agent grant cannot reveal any parent or its counts. Each hierarchy read
 requires current parent visibility; revoked, expired or unavailable authority
-can refuse a later request. Snapshot archives remain personal-only. The default
-Sandbox collection excludes explicit organization ownership before pagination;
-use `listAccessible({ organization })` for explicit organization discovery.
+can refuse a later request. The default Sandbox collection excludes explicit
+organization ownership before pagination; use `listAccessible({ organization })`
+for explicit organization discovery.
 
 ## Organization and Shared with me inventory
 
@@ -135,6 +135,45 @@ shared Agents remain discoverable through `agents.provenanceInventory({ shared: 
 without exposing their parents. `shared: true` and `organization` are mutually
 exclusive. Discovery refuses an incomplete result if organization authority is
 unavailable; each page revalidates all original membership evidence and grants.
+
+## Runtime updates
+
+Owner Sandbox reads may include `runtime_update`. Its `current_version` (nullable)
+and `latest_version` are exact runtime image references, not semantic versions.
+Use `can_update` for manual action eligibility and display `blocked_reason` when
+present. Shared projections omit this owner configuration.
+
+```ts
+import { Cma } from '@chronoai/cma-sdk';
+
+async function requestRuntimeUpdate(cma: Cma, id: string) {
+  const detail = await cma.sandboxes.read(id);
+  const update = detail.runtime_update;
+  if (!update?.can_update) return;
+  const body = {
+    target_version:
+      update.state === 'failed'
+        ? (update.target_version ?? update.latest_version)
+        : update.latest_version,
+  };
+  const key = crypto.randomUUID();
+  // Keep this exact body and key if the result is uncertain; do not retarget a retry.
+  return cma.sandboxes.updateRuntime(id, body, { idempotencyKey: key });
+}
+```
+
+`updateRuntime` uses `POST /api/v1/sandboxes/{id}/runtime-update`. A 202 response
+acknowledges scheduling; a 200 response may report an already-current runtime.
+Both return a base Sandbox view with `runtime_update`. Continue reading the
+existing detail to observe `queued`, `updating`, `failed` or `up_to_date` with a
+recorded `completed_at`. Acceptance does not mean rotation has finished.
+
+Automatic updates run daily at 02:00 Asia/Singapore. Active Agent turns, pending
+work and approvals defer rotation until idle. When `preserves_home` is true the
+same persistent home and retained conversations survive the update. A stale target
+is rejected with 409 rather than silently updating to a different runtime. A
+failed accepted update retains `target_version`; retry that target even if a
+newer deployment has become available.
 
 ## Shared lifecycle commands
 

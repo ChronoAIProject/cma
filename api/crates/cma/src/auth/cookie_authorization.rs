@@ -11,12 +11,14 @@ use super::{
     identity,
     permissions::PermissionEvidence,
     persistence::{DurableSubjectTokens, SecretDigest, SubjectAuthState},
+    verification_error::ProviderVerificationError,
     AuthState, RequestAuth,
 };
 
 const PROVIDER_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_VERIFICATION_FLIGHTS: usize = 256;
-type VerificationFlight = OnceCell<Result<Arc<identity::VerifiedSubject>, ()>>;
+type VerificationFlight =
+    OnceCell<Result<Arc<identity::VerifiedSubject>, ProviderVerificationError>>;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct VerificationKey {
@@ -79,26 +81,47 @@ pub(super) async fn request_for_cookie(
     request_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT).await
 }
 
+/// A definitive rejection of the current browser credential requires sign-in.
+/// Retained Agent work uses `request_for_cookie` and keeps its retryable outcome.
+pub(super) async fn request_for_browser_cookie(
+    auth: &AuthState,
+    owner: &SubjectId,
+    state: SubjectAuthState,
+) -> Result<Option<RequestAuth>, StoreError> {
+    verify_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT).await
+}
+
 async fn request_with_timeout(
     auth: &AuthState,
     owner: &SubjectId,
     state: SubjectAuthState,
     timeout: Duration,
 ) -> Result<RequestAuth, StoreError> {
+    verify_with_timeout(auth, owner, state, timeout)
+        .await?
+        .ok_or_else(unavailable)
+}
+
+async fn verify_with_timeout(
+    auth: &AuthState,
+    owner: &SubjectId,
+    state: SubjectAuthState,
+    timeout: Duration,
+) -> Result<Option<RequestAuth>, StoreError> {
     if &state.subject != owner {
         return Err(unavailable());
     }
     let Some(tokens) = state.tokens.as_ref().filter(|tokens| {
         tokens.expires_at > SystemTime::now() && !tokens.access_token.expose().trim().is_empty()
     }) else {
-        return Ok(RequestAuth {
+        return Ok(Some(RequestAuth {
             binding: None,
             credential_source: layer2_core::resource_access::CredentialSource::Retained,
             subject: state.subject,
             authorization: Authorization::none(),
             profile: state.profile,
             delegated_credential: None,
-        });
+        }));
     };
     let key = VerificationKey::new(&state, tokens);
     let flight = auth.cookie_verifications.acquire(&key).await;
@@ -111,12 +134,11 @@ async fn request_with_timeout(
                 let metadata = auth
                     .metadata()
                     .await
-                    .map_err(super::verification_error::ProviderVerificationError::Unavailable)?;
+                    .map_err(ProviderVerificationError::Unavailable)?;
                 identity::verify_subject(auth, &metadata, tokens.access_token.expose()).await
             }
             .await
             .map(Arc::new)
-            .map_err(|_| ())
         }),
     )
     .await
@@ -124,13 +146,24 @@ async fn request_with_timeout(
         Ok(result) => result.clone(),
         Err(_) => {
             identity::verification_failure("cookie", "deadline", None);
-            Err(())
+            Err(ProviderVerificationError::Unavailable(
+                "cookie verification deadline elapsed".into(),
+            ))
         }
     };
     if flight.initialized() {
         auth.cookie_verifications.release(&key, &flight).await;
     }
-    let verified = verified.map_err(|_| unavailable())?;
+    let verified = match verified {
+        Ok(verified) => verified,
+        Err(ProviderVerificationError::Rejected(_)) => {
+            // A refusal of a replaced token says nothing about the current login.
+            // Keep races retryable and never remove shared durable credentials.
+            require_current_custody(auth, &state).await?;
+            return Ok(None);
+        }
+        Err(ProviderVerificationError::Unavailable(_)) => return Err(unavailable()),
+    };
     if &verified.subject != owner {
         return Err(unavailable());
     }
@@ -144,14 +177,14 @@ async fn request_with_timeout(
         ),
         PermissionEvidence::Inactive => (Authorization::none(), None),
     };
-    Ok(RequestAuth {
+    Ok(Some(RequestAuth {
         binding: None,
         credential_source: layer2_core::resource_access::CredentialSource::Retained,
         subject: verified.subject.clone(),
         authorization,
         profile: verified.profile.clone(),
         delegated_credential,
-    })
+    }))
 }
 
 /// Recheck the exact selected credential after any subsequent authorization IO.

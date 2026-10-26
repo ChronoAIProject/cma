@@ -11,17 +11,36 @@ pub(crate) struct WarmSandboxClaim {
 }
 
 impl MongoSandboxStore {
+    pub(crate) async fn claim_legacy_warm_cleanup(
+        &self,
+        at: &str,
+        until: &str,
+    ) -> Result<Option<WarmSandboxClaim>, SandboxStoreError> {
+        self.claim_warm_work(at, until, &["retiring"]).await
+    }
+
+    #[cfg(test)]
     pub(crate) async fn claim_warmup_work(
         &self,
         at: &str,
         until: &str,
+    ) -> Result<Option<WarmSandboxClaim>, SandboxStoreError> {
+        self.claim_warm_work(at, until, &["preparing", "installing", "ready", "retiring"])
+            .await
+    }
+
+    async fn claim_warm_work(
+        &self,
+        at: &str,
+        until: &str,
+        states: &[&str],
     ) -> Result<Option<WarmSandboxClaim>, SandboxStoreError> {
         let token = uuid::Uuid::new_v4().to_string();
         let document = self
             .warm_sandboxes
             .find_one_and_update(
                 doc! {
-                    "state": { "$in": ["preparing", "installing", "ready", "retiring"] },
+                    "state": { "$in": states },
                     "lease_until": { "$lte": at }, "check_after": { "$lte": at },
                 },
                 doc! { "$set": { "lease_token": &token, "lease_until": until } },

@@ -23,15 +23,44 @@ pub(in crate::store) fn document(
         "revision": signed(record.revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)?,
         "record": record_bson(record).map_err(|_| CommandLedgerError::Corrupt)?,
     };
+    if let Some(input) = &record.queued_input {
+        document.insert(
+            "queued_input",
+            record_bson(input).map_err(|_| CommandLedgerError::Corrupt)?,
+        );
+    }
     if let Some(key) = envelope.external_event_key() {
         document.insert("external_event_key", key);
+    }
+    // Older binaries reject this strict-record marker before claiming the
+    // command. Ignoring the additive sidecar must never dispatch original text.
+    if guarded_input(record) {
+        document
+            .get_document_mut("record")
+            .map_err(|_| CommandLedgerError::Corrupt)?
+            .insert("queued_input_required", 1_i32);
     }
     Ok(document)
 }
 
 pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, CommandLedgerError> {
-    let record: AdmittedAgentCommand =
-        read_record(value).map_err(|_| CommandLedgerError::Corrupt)?;
+    let mut retained = value.clone();
+    let marker = retained
+        .get_document_mut("record")
+        .map_err(|_| CommandLedgerError::Corrupt)?
+        .remove("queued_input_required");
+    let mut record: AdmittedAgentCommand =
+        read_record(&retained).map_err(|_| CommandLedgerError::Corrupt)?;
+    record.queued_input = value
+        .get("queued_input")
+        .map(|input| {
+            mongodb::bson::deserialize_from_bson(input.clone())
+                .map_err(|_| CommandLedgerError::Corrupt)
+        })
+        .transpose()?;
+    if marker != guarded_input(&record).then_some(mongodb::bson::Bson::Int32(1)) {
+        return Err(CommandLedgerError::Corrupt);
+    }
     let expected = document(&record)?;
     if value.get("external_event_key") != expected.get("external_event_key")
         || expected
@@ -41,6 +70,10 @@ pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, C
         return Err(CommandLedgerError::Corrupt);
     }
     Ok(record)
+}
+
+fn guarded_input(record: &AdmittedAgentCommand) -> bool {
+    record.queued_input.is_some() && !record.status.is_terminal() && record.work.dispatch.is_none()
 }
 
 pub(in crate::store) async fn ensure_indexes(

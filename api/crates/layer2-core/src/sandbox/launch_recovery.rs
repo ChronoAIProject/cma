@@ -101,6 +101,7 @@ impl Sandbox {
         match &self.origin {
             SandboxOrigin::Manual => true,
             SandboxOrigin::Trigger { launch_id } => valid_launch_id(launch_id),
+            SandboxOrigin::Lifecycle { operation_id } => valid_launch_id(operation_id),
         }
     }
 

@@ -3,6 +3,47 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
+async fn signed_claims_remain_valid_when_the_clock_crosses_a_second_boundary() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    for (aud, kind, ttl, reply) in [
+        ("channel-relay/callback", "relay_callback", 300, false),
+        ("channel-relay/reply", "relay_reply", 1800, true),
+    ] {
+        let mut envelope = Envelope::new();
+        let mut tick = now();
+        let standard = claims_with_clock(aud, kind, ttl, || {
+            let sampled = tick;
+            tick += 1;
+            sampled
+        });
+        let claims = if reply {
+            &mut envelope.reply
+        } else {
+            &mut envelope.callback
+        };
+        claims
+            .as_object_mut()
+            .unwrap()
+            .extend(standard.as_object().unwrap().clone());
+        let response = fixture.send(&envelope).await;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(status, 202, "{body}");
+        assert_eq!(body["status"], "accepted", "{body}");
+
+        // Sampling the expiry a second later would exceed the real verifier's
+        // maximum lifetime. Keep that invalid control explicitly rejected.
+        let claims = if reply {
+            &mut envelope.reply
+        } else {
+            &mut envelope.callback
+        };
+        claims["exp"] = (claims["iat"].as_i64().unwrap() + ttl + 1).into();
+        problem(fixture.send(&envelope).await, 401, "token_time").await;
+    }
+}
+
+#[tokio::test]
 async fn rejects_each_callback_claim_binding_and_time_boundary() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let cases: Vec<(&str, Value, &str)> = vec![
@@ -214,4 +255,45 @@ async fn pending_route_binding_admits_no_delivery() {
     .await;
     problem(fixture.send(&Envelope::new()).await, 401, "route_denied").await;
     assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+}
+
+#[derive(Clone, Default)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Capture {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The server task runs on this current-thread runtime, so a thread-scoped
+/// subscriber captures its logs without touching any global state.
+#[tokio::test(flavor = "current_thread")]
+async fn rejected_envelopes_are_counted_and_log_only_the_field_name() {
+    use super::nyxid_shapes::counter;
+    let metrics = cmaeg::telemetry::install().unwrap();
+    let capture = Capture::default();
+    let writer = capture.clone();
+    let _logs = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish(),
+    );
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let series = "cmaeg_callback_invalid_total{source=\"nyxid_relay\",detail=\"payload_invalid\"}";
+    let before = counter(&metrics.render(), series);
+    let mut envelope = Envelope::new();
+    envelope.payload["surprise"] = "VALUE-SHOULD-NOT-LOG".into();
+    problem(fixture.send(&envelope).await, 401, "payload_invalid").await;
+    assert_eq!(counter(&metrics.render(), series), before + 1);
+    let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("relay callback envelope rejected"), "{logs}");
+    assert!(logs.contains("field=surprise"), "{logs}");
+    assert!(!logs.contains("VALUE-SHOULD-NOT-LOG"));
 }

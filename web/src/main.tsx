@@ -4,6 +4,7 @@ import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createNyxidAuthProvider } from './auth/nyxid';
 import { startAppearance } from './theme/appearance';
+import { startTextSize } from './theme/textSize';
 import { createClient } from '@chronoai/cma-sdk';
 import { CmaClientProvider } from './api/context';
 import { createRestWebClient } from './api/rest';
@@ -19,6 +20,7 @@ import { clearAgentTransport } from './agent/transport/journal';
  * corrects itself a frame later.
  */
 startAppearance();
+startTextSize();
 
 const container = document.getElementById('root');
 if (!container) {

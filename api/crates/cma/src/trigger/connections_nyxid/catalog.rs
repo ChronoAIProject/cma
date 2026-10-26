@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use layer2_core::trigger_domain::{ServiceConnectionMetadata, ServiceConnectionMode};
 
 use super::{
-    decode, malformed, matching_services, Deserialize, NyxidServiceConnectionBroker,
+    decode, malformed, selected_service, Deserialize, NyxidServiceConnectionBroker,
     ServiceConnectionError, ServiceId, SubjectId,
 };
 
@@ -35,16 +35,25 @@ impl NyxidServiceConnectionBroker {
             return Ok(Vec::new());
         }
         let credential = self.credential(owner).await?;
-        let response = self
-            .send(
-                self.http
-                    .get(self.endpoint(CATALOG_PATH))
-                    .bearer_auth(credential.expose()),
-                false,
-            )
-            .await?;
-        let catalog: Catalog = decode(response).await?;
-        let connections = self.user_services(&credential).await?;
+        // Both owner-bound reads use the same resolved credential. Neither
+        // depends on the other's response; retain catalog-first decode errors
+        // and validate both before projecting any connection metadata.
+        let (catalog, connections) = tokio::join!(
+            async {
+                let response = self
+                    .send(
+                        self.http
+                            .get(self.endpoint(CATALOG_PATH))
+                            .bearer_auth(credential.expose()),
+                        false,
+                    )
+                    .await?;
+                decode::<Catalog>(response).await
+            },
+            self.user_services(&credential),
+        );
+        let catalog = catalog?;
+        let connections = connections?;
         if catalog.services.len() > MAX_CATALOG_ROWS {
             return Err(malformed());
         }
@@ -67,11 +76,7 @@ impl NyxidServiceConnectionBroker {
         Ok(services
             .iter()
             .map(|service| {
-                let matches = matching_services(service, &connections);
-                let existing = match matches.as_slice() {
-                    [connection] => Some(*connection),
-                    _ => None,
-                };
+                let existing = selected_service(service, &connections);
                 let slug = existing.map_or(service.as_str(), |connection| connection.slug.as_str());
                 let row = by_slug.get(slug);
                 if let Some(connection) = existing {
@@ -110,3 +115,7 @@ impl NyxidServiceConnectionBroker {
             .collect())
     }
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;

@@ -1,0 +1,55 @@
+/*
+ * Skeleton geometry — `docs/Web_Style.md` §12.1. The shimmer and its
+ * reduced-motion stillness are the shared `.skeleton` class's.
+ */
+
+.skeleton-block {
+  display: block;
+  flex: none;
+  max-width: 100%;
+}
+
+.skeleton-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px;
+}
+
+.skeleton-rows__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shell-loading {
+  display: flex;
+  height: 100%;
+  background: var(--dsw-alias-bg-base);
+}
+
+.shell-loading__rail {
+  display: flex;
+  flex: 0 0 280px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.shell-loading__page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 24px 32px;
+}
+
+/* A phone has no rail (§9), so neither does its outline. */
+@media (max-width: 40rem) {
+  .shell-loading__rail {
+    display: none;
+  }
+}

@@ -1,8 +1,20 @@
+import {
+  warmPoolList,
+  warmPoolView,
+  validateWarmPoolTarget,
+  type ConfigureWarmPoolBody,
+  type ResizeWarmPoolBody,
+} from './warm-pools.js';
+export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
-import type { SandboxStatus } from '../instances/types.js';
+import { sandbox, type SandboxStatus } from '../instances/types.js';
+import {
+  updateSandboxRuntimeRequest,
+  type UpdateSandboxRuntimeRequest,
+} from '../instances/runtime-update.js';
 import { profileKind, type ProfileKind, type ProfileVisibility } from '../profiles/types.js';
 import {
   identity,
@@ -78,6 +90,42 @@ function bound(options: { readonly limit?: number; readonly cursor?: string }) {
 export class Administration {
   constructor(readonly config: ResolvedConfig) {}
 
+  listWarmPools(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/warm-pools', warmPoolList, options);
+  }
+  configureWarmPool(
+    body: ConfigureWarmPoolBody,
+    options: OperationOptions & { readonly idempotencyKey: string },
+  ) {
+    validateWarmPoolTarget(body);
+    if (
+      !options.idempotencyKey ||
+      options.idempotencyKey.length > 128 ||
+      !/^[\x21-\x7e]+$/.test(options.idempotencyKey)
+    )
+      throw new ValidationError('a valid Idempotency-Key is required');
+    return read(this.config, '/api/v1/admin/warm-pools', warmPoolView, {
+      ...options,
+      method: 'POST',
+      expectedStatus: 202,
+      body,
+      headers: { 'Idempotency-Key': options.idempotencyKey },
+    });
+  }
+  resizeWarmPool(id: string, body: ResizeWarmPoolBody, options: OperationOptions = {}) {
+    validateWarmPoolTarget(body);
+    return read(
+      this.config,
+      `/api/v1/admin/warm-pools/${segment(id)}`,
+      identity(warmPoolView, id),
+      {
+        ...options,
+        method: 'PUT',
+        expectedStatus: 202,
+        body,
+      },
+    );
+  }
   listSandboxes(options: AdminSandboxListOptions = {}) {
     bound(options);
     return read(
@@ -127,6 +175,29 @@ export class Administration {
       `/api/v1/admin/sandboxes/${segment(id)}/retire`,
       identity(adminSandbox, id),
       { ...options, method: 'POST' },
+    );
+  }
+  /** Queue the managed runtime update across owners without interrupting active work. */
+  updateSandboxRuntime(
+    id: string,
+    body: UpdateSandboxRuntimeRequest,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/runtime-update`,
+      (value) => {
+        const result = identity(sandbox, id)(value);
+        if (result.runtime_update === undefined)
+          throw new ProtocolError('Runtime update response omitted its status');
+        return { ...result, runtime_update: result.runtime_update };
+      },
+      {
+        ...options,
+        method: 'POST',
+        expectedStatus: 202,
+        body: input(updateSandboxRuntimeRequest, body),
+      },
     );
   }
   listProfiles(options: AdminProfileListOptions = {}) {

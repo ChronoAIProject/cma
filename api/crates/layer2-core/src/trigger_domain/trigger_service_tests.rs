@@ -151,16 +151,18 @@ async fn collections_require_publish_authority_while_owner_operations_use_owners
         vec![published.revision]
     );
     assert_eq!(
-        service.delete(&owner, &created.id).await,
-        Err(TriggerServiceError::AlreadyPublished)
-    );
-    assert_eq!(
         service
             .retire(&owner, &created.id)
             .await
             .unwrap()
             .availability,
         TriggerAvailability::Retired
+    );
+
+    service.delete(&owner, &created.id).await.unwrap();
+    assert_eq!(
+        service.read(&owner, &created.id).await,
+        Err(TriggerServiceError::NotFound)
     );
 
     let disposable = service

@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 use super::sandboxes::read_sandbox;
 use transaction::{apply, reconcile, ApplyError, MaintenanceRequest};
 
+mod consented;
 mod evidence;
 #[cfg(test)]
 pub(super) mod mongo_integration_tests;
@@ -31,7 +32,7 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let mut filter = doc! { "status": "active" };
+        let mut filter = doc! { "status": { "$in": ["active", "paused"] } };
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }

@@ -58,6 +58,11 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "POST /api/v1/admin/sandboxes/{id}/retire" => {
             c.check(admin.retire_sandbox(c.param("id")).await)
         }
+        "POST /api/v1/admin/sandboxes/{id}/runtime-update" => c.check(
+            admin
+                .update_sandbox_runtime(c.param("id"), &c.body()?)
+                .await,
+        ),
         "GET /api/v1/admin/profiles" => c.check(
             admin
                 .list_profiles(&ProfileListOptions {
@@ -74,6 +79,13 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .await,
         ),
         "GET /api/v1/admin/runtime-inventory" => c.check(admin.read_runtime_inventory().await),
+        "GET /api/v1/admin/warm-pools" => c.check(admin.list_warm_pools().await),
+        "POST /api/v1/admin/warm-pools" => {
+            c.check(admin.configure_warm_pool(&c.body()?, &c.key()?).await)
+        }
+        "PUT /api/v1/admin/warm-pools/{id}" => {
+            c.check(admin.resize_warm_pool(c.param("id"), &c.body()?).await)
+        }
         "GET /api/v1/admin/activity" => c.check(
             admin
                 .list_activity(&ActivityListOptions {

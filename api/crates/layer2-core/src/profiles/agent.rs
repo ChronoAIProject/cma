@@ -78,6 +78,9 @@ impl AgentProfileContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentProfile {
+    /// Immutable service-owned snapshot, excluded from profile management.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
     pub id: AgentProfileId,
     pub owner: SubjectId,
     pub name: String,
@@ -97,6 +100,12 @@ pub struct AgentProfile {
 
 impl AgentProfile {
     pub fn validate(&self) -> Result<(), ProfileError> {
+        if self.internal && self.visibility != ProfileVisibility::Private {
+            return Err(ProfileError::new(
+                "internal_profile_must_be_private",
+                "visibility",
+            ));
+        }
         validate_metadata(&self.name, &self.description)?;
         self.draft.validate()
     }
