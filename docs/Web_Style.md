@@ -3525,3 +3525,61 @@ the existing Presence notice transition and reduced-motion behavior.
 | 2026-10-26 | Keep Check saved request available after an uncertain initiated-message preparation when either write capability disappears. Recover only the retained exact request; new review and Send remain gated, while recovered status and cancellation stay available. |
 
 | 2026-10-26 | Return an initiated-message draft to editing after a definite first HTTP 413 preparation rejection. Preserve any earlier uncertain request and its key when a recovery attempt receives the same rejection. |
+
+### Event Gateway flow workspace (2026-10-27)
+
+The Event Gateway uses the Agent Manager's shared PortalFrame, sidebar rows,
+Geist typography, Button, Input, Picker, Modal, Alert, Presence and theme aliases.
+The following replaces the delivery map's adjacent inspector, table-first entry
+and prohibition on a graph library. It introduces no separate visual system.
+
+Channels and Consumers are expandable sidebar groups. Their retained lists sit
+directly beneath the group control and use the shared quiet navigation treatment.
+Rows show the authoritative name, creation time and creator; unavailable metadata
+reads "Not reported" instead of borrowing the current viewer's identity or time.
+The selected row remains visible through details and editor navigation. Lists
+retain loading, empty, error, explicit retry and bounded pagination controls.
+Before selection the main area contains one New channel or New consumer action
+and an illustrative React Flow diagram. Its copy clearly describes a possible
+event journey; it never represents sample activity as the owner's real data.
+
+A selected Channel's React Flow canvas fills the available main area below its
+compact PageHeader, without a reading-width cap. Producers occupy the left,
+the Channel the middle and Consumers the right. The canvas has the existing
+24px dotted ground and 24px edge clearance. Cards retain 12px radius, 12px
+insets, 32px icon seats, 14/20 medium names and 12/18 secondary metadata.
+They are 240px wide with an 88px minimum height; horizontal layout steps are
+360px and vertical steps 120px. Existing aliases supply all fills, borders,
+handles and connector colors. Fit, zoom and pan are accessible controls; nodes
+remain keyboard-activatable and connections are not editable by dragging.
+An accessible reading-order list exposes the same node actions on small screens
+and to assistive technology. Pan/zoom and selection never mutate configuration.
+
+Node activation opens the shared centered Modal. The configuration shell is
+fixed at min(960px,60vw) by 60dvh and never exceeds 60vw or 60dvh, including
+on narrow screens, preserving at least 20% page clearance on every edge.
+Its header and close control remain fixed. A 144px left section-title sidebar
+provides jump links to Overview, Configuration, Send message, Tests, Activity
+and Delete as applicable. The content scrolls internally; at 720px viewport
+width the section links wrap above the scroll area. Selected-node changes and
+closing/reopening the popup preserve drafts, exact uncertain requests, results
+and revisions. Hidden retained dialogs are inert, excluded from accessibility
+and release their focus trap and page scroll lock. Only one popup is interactive.
+
+Use the existing 200ms opacity/8px arrival motion, quiet hover background and
+border transitions, and shared easing. Illustrative connections may animate a
+slow 3s dash progression; real configuration connections remain static because
+they do not represent observed traffic. Reduced motion removes flow animation,
+viewport transitions, entrance transforms and smooth section scrolling.
+
+Channel Activity shows only public API evidence and receives live changes from
+the authenticated public event subscription. Initial history and live updates
+merge by event identity and sequence without periodic polling. Show recorded
+source receipt, target dispatch, producing agent/time and recipient delivery
+separately. Queued, accepted, delivered, failed and unknown retain their actual
+meaning; an absent delivery receipt is never displayed as sent. Live status uses
+the shared quiet status treatment, with explicit retry for a disconnected feed.
+Changing channel or identity closes the previous subscription and rejects its
+late responses. Opening Activity never sends an event or starts agent work.
+
+| 2026-10-27 | Standardize Event Gateway on Agent Manager primitives; introduce a full-area accessible React Flow workspace, expandable resource navigation, illustrative entry screens, retained centered node configuration with section navigation, and evidence-based live Channel Activity. |
