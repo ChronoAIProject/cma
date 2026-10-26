@@ -74,7 +74,6 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
   useEffect(() => {
     if (!active) return;
     let current = true;
-    let failures = 0;
     if (typeof EventSource === 'undefined') return;
     const stream = new EventSource(
       `/api/event-gateway/v1/channels/${segment(channelId)}/activity/stream`,
@@ -117,9 +116,9 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
         )
           throw new Error('Invalid activity snapshot');
         setStored({ scope, page });
-        failures = 0;
         setConnection({ scope, status: 'live' });
       } catch {
+        current = false;
         stream.close();
         setConnection({ scope, status: 'disconnected' });
       }
@@ -128,8 +127,8 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
     stream.addEventListener('reset', receive as EventListener);
     stream.onerror = () => {
       if (!current) return;
-      failures += 1;
-      if (stream.readyState === EventSource.CLOSED || failures >= 5) {
+      if (stream.readyState === EventSource.CLOSED) {
+        current = false;
         stream.close();
         setConnection({ scope, status: 'disconnected' });
       } else {
@@ -151,3 +150,5 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
     },
   };
 }
+
+export type ChannelActivityFeed = ReturnType<typeof useChannelActivity>;
