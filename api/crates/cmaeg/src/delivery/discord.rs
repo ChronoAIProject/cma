@@ -54,6 +54,10 @@ impl Sender {
             };
             return (receipt, effects);
         };
+        if let Err(error) = self.relay.discord.verify_bot(credential, bot_id).await {
+            receipt.delivery = outcome(error);
+            return (receipt, effects);
+        }
         let files = match outbound_media::prepare(&message.native_attachments).await {
             Ok(files) => files,
             Err(_) => {

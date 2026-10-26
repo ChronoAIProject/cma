@@ -63,6 +63,10 @@ impl DiscordFileSource {
         let deadline = request
             .deadline
             .min(Instant::now() + Duration::from_secs(30));
+        timeout_at(deadline, self.api.verify_bot(credential, bot_id))
+            .await
+            .map_err(|_| FetchError::TimedOut)?
+            .map_err(fetch_error)?;
         let message = timeout_at(
             deadline,
             self.api.message(credential, channel_id, message_id),

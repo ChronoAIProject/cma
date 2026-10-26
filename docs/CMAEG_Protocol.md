@@ -3260,6 +3260,10 @@ recover its existing routing plan rather than create a new plan on retry.
 Native replies seal `{"type":"discord","bot_id":"77","channel_id":"99",
 "message_id":"700"}` inside the event reference. They contain no relay token.
 The current channel must still configure that bot and its encrypted credential.
+Before any native write or inbound metadata retrieval, `/users/@me` binds the
+current token revision to that exact bot with `bot=true`; only the token hash and
+public bot ID are cached for at most five minutes. A rotated token for another
+bot is refused before sending, even if that bot can access the same channel.
 REST text sends target Discord API v10, split at 2,000 UTF-16 code units, disable
 all automatic mentions including replied-user pings, and use the existing send
 gate and route pacing. Explicit image/file/audio/video attachments support public
