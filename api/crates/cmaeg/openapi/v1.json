@@ -73,6 +73,82 @@
         ],
         "type": "object"
       },
+      "ActivityConsumer": {
+        "properties": {
+          "accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "consumer_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deliveries": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDelivery"
+            },
+            "type": "array"
+          },
+          "dispatched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "produced_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConsumerState"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "state",
+          "deliveries"
+        ],
+        "type": "object"
+      },
       "ActivityConversation": {
         "additionalProperties": false,
         "properties": {
@@ -92,6 +168,50 @@
         "required": [
           "id",
           "kind"
+        ],
+        "type": "object"
+      },
+      "ActivityDelivery": {
+        "properties": {
+          "confirmed_at": {
+            "description": "Present only for a confirmed platform/transport receipt.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination": {
+            "type": "string"
+          },
+          "observed_at": {
+            "description": "When the gateway observed the actual transport outcome.",
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "platform_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipients": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityRecipient"
+            },
+            "type": "array"
+          },
+          "step": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "destination",
+          "outcome",
+          "observed_at",
+          "recipients"
         ],
         "type": "object"
       },
@@ -221,6 +341,62 @@
           "event"
         ],
         "type": "string"
+      },
+      "ActivityPage": {
+        "properties": {
+          "cursor": {
+            "description": "Opaque channel-bound snapshot watermark, usable as Last-Event-ID.",
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelActivity"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "retention_days": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "cursor",
+          "retention_days",
+          "limit",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "ActivityRecipient": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "type": "object"
       },
       "ActivityRouting": {
         "additionalProperties": false,
@@ -628,6 +804,33 @@
       "AttachmentSource": {
         "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
         "oneOf": [
+          {
+            "description": "Exact native Discord message attachment; resolved with current bot custody.",
+            "properties": {
+              "attachment_id": {
+                "type": "string"
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel_id",
+              "message_id",
+              "attachment_id",
+              "type"
+            ],
+            "type": "object"
+          },
           {
             "description": "Position of the attachment in the NyxID relay callback.",
             "properties": {
@@ -1367,7 +1570,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NativeMediaCapabilities",
-                "description": "Explicit native attachments, absent until the relay deployment is verified."
+                "description": "Explicit native attachments; relay sources require deployment attestation."
               },
               {
                 "type": "null"
@@ -1467,6 +1670,46 @@
           "hop",
           "reply",
           "origin_source_id"
+        ],
+        "type": "object"
+      },
+      "ChannelActivity": {
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "consumers": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityConsumer"
+            },
+            "type": "array"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ActivityConversation"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
+            "type": "string"
+          },
+          "received_at": {
+            "description": "Gateway receive timestamp, persisted before provider launch.",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
+          }
+        },
+        "required": [
+          "event_id",
+          "source",
+          "actor",
+          "conversation",
+          "occurred_at",
+          "received_at",
+          "consumers"
         ],
         "type": "object"
       },
@@ -2012,6 +2255,20 @@
         },
         "type": "object"
       },
+      "ConsumerState": {
+        "enum": [
+          "received",
+          "queued",
+          "dispatching",
+          "accepted",
+          "produced",
+          "completed",
+          "refused",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
       "ConsumerSummary": {
         "description": "Which of a routed channel's consumers a context response was read for.",
         "properties": {
@@ -2184,6 +2441,16 @@
               }
             ]
           },
+          "discord_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hmac_secrets": {
             "items": {
               "$ref": "#/components/schemas/HmacSecretRequest"
@@ -2223,6 +2490,16 @@
             "$ref": "#/components/schemas/Secret"
           },
           "channel_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discord_bot_token": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Secret"
@@ -2363,7 +2640,7 @@
         "type": "object"
       },
       "DefaultReply": {
-        "description": "The channel's default reply destination. Never sealed: replies resolve it\nfrom the current definition when a message is sent.",
+        "description": "The channel's default reply destination. Routed preparation pins its exact\nnonsecret address; sends require the current definition to still authorize\nthat address and resolve credentials separately.",
         "oneOf": [
           {
             "description": "A chat of the native Telegram source.",
@@ -3198,7 +3475,7 @@
       "NativeMediaSource": {
         "oneOf": [
           {
-            "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+            "description": "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy.",
             "properties": {
               "type": {
                 "enum": [
@@ -4570,6 +4847,35 @@
             "type": "object"
           },
           {
+            "description": "Native Discord Gateway, independently owned by CMAEG.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
@@ -4728,7 +5034,7 @@
         "type": "string"
       },
       "SourceId": {
-        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
         "type": "string"
       },
       "SourceKind": {
@@ -4750,6 +5056,24 @@
             },
             "required": [
               "platform",
+              "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bot_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "bot_id",
               "type"
             ],
@@ -4818,6 +5142,35 @@
             },
             "required": [
               "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Native Discord Gateway. New writes require the native Discord write gate.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
               "admission",
               "type"
             ],
@@ -6177,6 +6530,138 @@
         ]
       }
     },
+    "/channels/{channel_id}/activity": {
+      "get": {
+        "operationId": "getChannelActivity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/stream": {
+      "get": {
+        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
+        "operationId": "streamChannelActivity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/consumers/{consumer_id}/test": {
       "post": {
         "operationId": "testChannelConsumer",
@@ -7075,6 +7560,21 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Optional stable operation ID of 1–128 visible ASCII bytes for durable routed replies. Keep the same key and message on retries; a different key permits a new send, even with identical content. Changed content under the same key conflicts. Never change keys to retry an unknown outcome. Legacy events retain their existing non-idempotent behavior.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],

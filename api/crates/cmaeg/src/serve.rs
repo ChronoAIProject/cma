@@ -43,6 +43,10 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    observers.activity = std::sync::Arc::new(crate::activity::ObservedActivity::new(
+        state.activity.clone(),
+        observers.activity.clone(),
+    ));
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -53,6 +57,7 @@ pub(crate) async fn serve(
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
+    state.native_discord_writes_enabled = config.native_discord_writes_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
@@ -68,6 +73,11 @@ pub(crate) async fn serve(
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
         std::sync::Arc::new(delivery::router::ShardedScheduler::new(inbound));
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+    let custom_delivery = delivery::custom::CustomDelivery::new(
+        config.management.public_url.clone(),
+        waiters.clone(),
+    )
+    .with_activity(observers.activity.clone());
     let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),
         state.master_keys.clone(),
@@ -91,10 +101,7 @@ pub(crate) async fn serve(
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
-        delivery::custom::CustomDelivery::new(
-            config.management.public_url.clone(),
-            waiters.clone(),
-        ),
+        custom_delivery.clone(),
         observers.activity.clone(),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
@@ -120,6 +127,17 @@ pub(crate) async fn serve(
             transformer,
         },
     )?;
+    let routed = crate::serve_routed::compose(
+        &config,
+        &state,
+        crate::serve_routed::Deps {
+            media: media.clone(),
+            tool_providers: tool_providers.clone(),
+            delivery: delivery.clone(),
+            tracker: tracker.clone(),
+            custom: custom_delivery,
+        },
+    )?;
     let runner = std::sync::Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
@@ -127,6 +145,7 @@ pub(crate) async fn serve(
             delivery.clone(),
             config.turns.clone(),
         )
+        .with_activity(observers.activity.clone())
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
@@ -140,14 +159,25 @@ pub(crate) async fn serve(
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        observers.launcher(runner.clone()),
+        std::sync::Arc::new(turns::observer::ObservedLauncher::new(
+            runner.clone(),
+            observers.activity.clone(),
+        )),
     )?
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_routed(
+        routed
+            .as_ref()
+            .map(|composition| composition.ingress.clone()),
+    )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        routed_replies: routed
+            .as_ref()
+            .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
         telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
             telegram,
@@ -176,6 +206,17 @@ pub(crate) async fn serve(
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let mut routed_worker = routed.map(|composition| {
+        crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
+    });
+    let mut native_discord = crate::discord::lifecycle::Worker::start(
+        &config.native_discord,
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        ingress.clone(),
+        state.readiness.clone(),
+    )
+    .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
@@ -207,8 +248,37 @@ pub(crate) async fn serve(
         wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
-        if !tracker.drain(deadline).await {
+        if let Some(worker) = &native_discord {
+            worker.stop();
+        }
+        if let Some(worker) = &routed_worker {
+            worker.stop_scheduling();
+        }
+        let (turns_drained, routed_drained, native_drained) = tokio::join!(
+            tracker.drain(deadline),
+            async {
+                match &mut routed_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            },
+            async {
+                match &mut native_discord {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            }
+        );
+        if !native_drained {
+            tracing::warn!(
+                "native Discord drain incomplete; durable inbox and lease fences retained"
+            );
+        }
+        if !turns_drained {
             tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
+        }
+        if !routed_drained {
+            tracing::warn!("routed execution drain incomplete; durable recovery retained");
         }
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(

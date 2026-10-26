@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { bot, botClient } from './bots/fixtures.test-support';
@@ -49,7 +49,11 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Retain this Agent draft' } });
   chooseService('Event Gateway');
-  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  fireEvent.click(
+    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    }),
+  );
   const editor = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(editor, { target: { value: 'Retained channel' } });
   fireEvent.change(screen.getByLabelText('Provider agent key'), {
@@ -86,7 +90,11 @@ it('discards retained private service drafts when the global account signs out',
     ),
   );
   show();
-  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  fireEvent.click(
+    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    }),
+  );
   const editor = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(editor, { target: { value: 'private draft' } });
   fireEvent.click(screen.getByRole('button', { name: /account menu/i }));
@@ -108,9 +116,13 @@ it('closes the narrow Gateway drawer after choosing New channel while keeping it
   );
   try {
     show();
-    await screen.findByRole('heading', { name: 'Event Gateway' });
+    await screen.findByRole('region', { name: 'Channel workspace' });
     fireEvent.click(await screen.findByRole('button', { name: 'Show navigation' }));
-    fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'Channels' })).getByRole('button', {
+        name: 'New channel',
+      }),
+    );
     expect(screen.getByRole('textbox', { name: 'Channel name' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
@@ -148,19 +160,27 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   const composer = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep my Agent draft' } });
   chooseService('Event Gateway');
-  fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
+  fireEvent.click(
+    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    }),
+  );
   const channelDraft = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
-  fireEvent.click(screen.getByRole('link', { name: 'Consumers' }));
-  await screen.findByRole('heading', { name: 'Consumers' });
+  fireEvent.click(screen.getByRole('button', { name: 'Consumers' }));
+  await screen.findByRole('region', { name: 'Consumer workspace' });
   expect(window.location.pathname).toBe('/bots');
   expect(currentService()).toBe('Service: Event Gateway');
-  expect(screen.getByRole('link', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');
-  fireEvent.click(await screen.findByRole('link', { name: bot.name }));
+  expect(screen.getByRole('button', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');
+  fireEvent.click(
+    await within(screen.getByRole('region', { name: 'Consumers' })).findByRole('button', {
+      name: new RegExp(bot.name),
+    }),
+  );
   await screen.findByRole('heading', { name: bot.name });
   expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
   expect(currentService()).toBe('Service: Event Gateway');
-  fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Channels' }));
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(channelDraft);
   expect(channelDraft).toHaveValue('Retained channel configuration');
   chooseService('Agent Manager');

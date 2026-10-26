@@ -10,6 +10,7 @@ use crate::ConfigError;
 
 const REQUIRED_BINDING: &str = "{binding_id}";
 const REQUIRED_CONVERSATION: &str = "{conversation_id}";
+const REQUIRED_RESPONSE: &str = "{response_id}";
 
 /// The provider protocol implemented by this client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -25,6 +26,15 @@ pub struct ProviderPaths {
     pub binding: String,
     pub conversation: String,
     pub responses: String,
+    /// Explicit opt-in to CMA Responses v2 snapshot/replay semantics.
+    pub recovery: Option<RecoveryPaths>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryPaths {
+    pub response: String,
+    pub events: String,
 }
 
 /// An operator-approved provider and its bounded concurrency.
@@ -44,6 +54,8 @@ pub enum ProviderPath {
     Binding,
     Conversation,
     Responses,
+    RecoveryResponse,
+    RecoveryEvents,
 }
 
 impl ProviderPath {
@@ -53,6 +65,8 @@ impl ProviderPath {
             Self::Binding => "binding",
             Self::Conversation => "conversation",
             Self::Responses => "responses",
+            Self::RecoveryResponse => "recovery_response",
+            Self::RecoveryEvents => "recovery_events",
         }
     }
 }
@@ -81,6 +95,16 @@ impl ProviderEntry {
             "binding" => &self.paths.binding,
             "conversation" => &self.paths.conversation,
             "responses" => &self.paths.responses,
+            "recovery_response" | "recovery_events" => {
+                let recovery = self.paths.recovery.as_ref().ok_or_else(|| {
+                    ProviderUrlError("provider response recovery is not configured".into())
+                })?;
+                if path_key == "recovery_response" {
+                    &recovery.response
+                } else {
+                    &recovery.events
+                }
+            }
             other => return Err(ProviderUrlError(format!("unknown provider path {other:?}"))),
         };
         let mut rendered = template.clone();
@@ -221,6 +245,8 @@ struct RawProviderPaths {
     binding: String,
     conversation: String,
     responses: String,
+    #[serde(default)]
+    recovery: Option<RecoveryPaths>,
 }
 
 impl TryFrom<RawProviderPaths> for ProviderPaths {
@@ -235,11 +261,20 @@ impl TryFrom<RawProviderPaths> for ProviderPaths {
             &[REQUIRED_BINDING, REQUIRED_CONVERSATION],
         )?;
         validate_path("responses", &value.responses, &[])?;
+        if let Some(recovery) = &value.recovery {
+            validate_path(
+                "recovery.response",
+                &recovery.response,
+                &[REQUIRED_RESPONSE],
+            )?;
+            validate_path("recovery.events", &recovery.events, &[REQUIRED_RESPONSE])?;
+        }
         Ok(Self {
             agent_card: value.agent_card,
             binding: value.binding,
             conversation: value.conversation,
             responses: value.responses,
+            recovery: value.recovery,
         })
     }
 }
@@ -370,6 +405,7 @@ fn required_parameters(path_key: &str) -> &'static [&'static str] {
     match path_key {
         "binding" => &["binding_id"],
         "conversation" => &["binding_id", "conversation_id"],
+        "recovery_response" | "recovery_events" => &["response_id"],
         _ => &[],
     }
 }
@@ -393,85 +429,5 @@ fn invalid(detail: String) -> ConfigError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn json(base_url: &str) -> String {
-        format!(
-            r#"[{{"slug":"cma_codex","base_url":"{base_url}","kind":"responses_http","paths":{{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{{binding_id}}","conversation":"/api/v1/cmaeg/bindings/{{binding_id}}/conversations/{{conversation_id}}","responses":"/api/v2/responses"}},"max_inflight":256}}]"#
-        )
-    }
-
-    #[test]
-    fn validates_loopback_and_cluster_hosts_but_rejects_metadata_http() {
-        assert_eq!(
-            ProviderRegistry::parse(&json("http://127.0.0.1:8080"))
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            ProviderRegistry::parse(&json("http://cma-api.chrono-bot.svc"))
-                .unwrap()
-                .len(),
-            1
-        );
-        assert!(ProviderRegistry::parse(&json("http://169.254.169.254")).is_err());
-    }
-
-    #[test]
-    fn url_construction_encodes_path_segments_and_never_escapes_the_origin() {
-        let registry = ProviderRegistry::parse(&json("https://provider.example/base/")).unwrap();
-        let entry = registry.iter().next().unwrap();
-        let url = entry
-            .url("binding", &[("binding_id", "../../etc/passwd")])
-            .unwrap();
-        assert_eq!(
-            url.origin().ascii_serialization(),
-            "https://provider.example"
-        );
-        assert!(url.as_str().contains("%2f"));
-        assert!(!url.as_str().contains(".."));
-    }
-
-    #[test]
-    fn rejects_duplicate_slugs_and_missing_placeholders() {
-        let duplicate = json("https://one.example").replacen(
-            "]",
-            &format!(",{}]", &json("https://two.example")[1..]),
-            1,
-        );
-        assert!(ProviderRegistry::parse(&duplicate).is_err());
-        let missing = json("https://one.example").replace("{binding_id}", "binding");
-        assert!(ProviderRegistry::parse(&missing).is_err());
-    }
-
-    #[test]
-    fn rejects_private_https_targets_and_unsafe_templates() {
-        assert!(ProviderRegistry::parse(&json("https://169.254.169.254")).is_err());
-        let unknown_placeholder = json("https://provider.example")
-            .replace("/api/v2/responses", "/api/{tenant}/responses");
-        assert!(ProviderRegistry::parse(&unknown_placeholder).is_err());
-        let traversal =
-            json("https://provider.example").replace("/api/v2/responses", "/api/../responses");
-        assert!(ProviderRegistry::parse(&traversal).is_err());
-    }
-    #[test]
-    fn path_templates_cannot_replace_the_allowlisted_origin() {
-        for path in ["//attacker.example/x", "/api/}/x", "/../x"] {
-            let value = json("https://provider.example").replace("/api/v2/responses", path);
-            assert!(ProviderRegistry::parse(&value).is_err());
-        }
-        let value = json("https://provider.example/base/")
-            .replace("/api/v2/responses", "/https://attacker.example/x");
-        let registry = ProviderRegistry::parse(&value).unwrap();
-        let entry = registry.iter().next().unwrap();
-        let url = entry.url("responses", &[]).unwrap();
-        assert_eq!(url.host_str(), Some("provider.example"));
-        assert_eq!(url.path(), "/https://attacker.example/x");
-        for value in ["", ".", ".."] {
-            assert!(entry.url("binding", &[("binding_id", value)]).is_err());
-        }
-        assert!(ProviderRegistry::parse(&json("https://[::ffff:169.254.169.254]")).is_err());
-    }
-}
+#[path = "registry_tests.rs"]
+mod tests;

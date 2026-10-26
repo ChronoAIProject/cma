@@ -99,28 +99,9 @@ it('puts channels in the sidebar and shows only the selected channel details', a
     />,
   );
   const sidebar = screen.getByRole('region', { name: 'Channels' });
-  // Nothing is opened for the reader: the page starts on the table of every channel.
-  const table = await screen.findByRole('table', { name: 'Your channels' });
-  expect(
-    within(table)
-      .getAllByRole('columnheader')
-      .map((header) => header.textContent),
-  ).toEqual(['Name', 'Provider', 'Level', 'Sources', 'Version']);
-  expect(
-    within(table)
-      .getAllByRole('row')
-      .slice(1)
-      .map((row) =>
-        within(row)
-          .getAllByRole('cell')
-          .map((cell) => cell.textContent),
-      ),
-  ).toEqual([
-    ['Existing channel', 'cma', 'L3', '1', '4'],
-    ['Modern channel', 'cma', 'L3', '0', '1'],
-  ]);
+  expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
-  await userEvent.click(within(table).getByRole('button', { name: 'Existing channel' }));
+  await userEvent.click(await within(sidebar).findByRole('button', { name: /Existing channel/ }));
   await screen.findByRole('heading', { name: 'Existing channel' });
   expect(
     await screen.findByRole('link', { name: 'Open existing channel console' }),
@@ -133,6 +114,8 @@ it('puts channels in the sidebar and shows only the selected channel details', a
   await userEvent.click(within(sidebar).getByRole('button', { name: /Modern channel/ }));
   expect(screen.queryByRole('heading', { name: 'Existing channel' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Modern channel' })).toBeVisible();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await userEvent.click(await screen.findByRole('button', { name: /Channel: Modern channel/ }));
   expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Delete channel' })).toBeEnabled();
   expect(within(sidebar).getByRole('button', { name: /Modern channel/ })).toHaveAttribute(
@@ -182,7 +165,8 @@ it.each(['completed', 'timeout'] as const)(
         denied={vi.fn()}
       />,
     );
-    await userEvent.click(await screen.findByRole('button', { name: 'Cold channel' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Cold channel/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Channel: Cold channel/ }));
     const send = await screen.findByRole('button', { name: 'Send test event' });
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {

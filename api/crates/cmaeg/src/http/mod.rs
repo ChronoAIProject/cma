@@ -1,5 +1,6 @@
 //! HTTP projections for CMAEG management operations.
 
+pub mod activity;
 pub mod callbacks;
 pub mod channel_nodes;
 mod chat_dispatch;

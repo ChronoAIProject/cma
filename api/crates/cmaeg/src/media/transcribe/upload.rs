@@ -202,6 +202,7 @@ async fn call(
 fn count_refusal(target: &MediaTarget, attachment: &Attachment, refusal: SpendRefusal) {
     let source = match target.activity.source {
         SourceKind::Telegram { .. } => "telegram",
+        SourceKind::Discord { .. } => "discord",
         SourceKind::NyxidRelay { .. } => "nyxid_relay",
         SourceKind::Custom => "custom",
     };

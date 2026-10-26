@@ -2,6 +2,8 @@
 mod boundaries;
 #[path = "delivery/complete.rs"]
 mod complete;
+#[path = "delivery/consumer_isolation.rs"]
+mod consumer_isolation;
 #[path = "delivery/consumer_refs.rs"]
 mod consumer_refs;
 #[path = "delivery/engine.rs"]

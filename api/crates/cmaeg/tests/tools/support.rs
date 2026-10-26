@@ -223,6 +223,7 @@ impl App {
             keys: fixture.state.master_keys.clone(),
             providers,
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
+            routed_replies: None,
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),

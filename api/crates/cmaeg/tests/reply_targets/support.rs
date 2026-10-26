@@ -114,6 +114,7 @@ impl App {
             keys: keys.clone(),
             providers,
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),

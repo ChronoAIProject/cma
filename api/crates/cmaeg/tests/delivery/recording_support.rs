@@ -146,6 +146,7 @@ impl Recording {
             public_origin: "https://gateway.example".into(),
             waiters: waiters.clone(),
             webhooks: WebhookClient::with_transport(hooks.clone()),
+            activity: Arc::new(cmaeg::turns::observer::NoopObserver),
         };
         let (commands, receiver) = mpsc::channel(256);
         let engine = DeliveryEngine::start(

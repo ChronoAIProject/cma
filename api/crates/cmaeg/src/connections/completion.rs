@@ -223,7 +223,9 @@ impl ConnectionService {
             .await
         {
             LaunchOutcome::Accepted { .. } => Ok(()),
-            LaunchOutcome::Deferred | LaunchOutcome::Refused(_) => Err(Error::Unavailable),
+            LaunchOutcome::Deferred
+            | LaunchOutcome::Refused(_)
+            | LaunchOutcome::Admitted { .. } => Err(Error::Unavailable),
         }
     }
 }

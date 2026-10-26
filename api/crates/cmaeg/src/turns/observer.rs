@@ -1,12 +1,10 @@
 //! What happens to a channel's events, reported to an observer.
 //!
 //! Ingress, launch and delivery call an [`ActivityObserver`] at each step an
-//! owner may want to inspect. Every call is synchronous and must return at
-//! once: the console's observer only queues with `try_send`, and the
-//! [`NoopObserver`] composed while the console is off does nothing at all.
-//! The arguments are the raw facts the caller already holds; an observer that
-//! keeps anything masks it before it leaves the call, so no observer can make
-//! a hot path wait or retain message content.
+//! owner may want to inspect. Durable receipt and lifecycle methods are awaited;
+//! retained console callbacks return at once and only queue with `try_send`.
+//! The arguments are the raw facts the caller already holds. Public Activity
+//! persistence keeps bounded identity and progress facts, never message content.
 use std::{sync::Arc, time::Instant};
 
 use cmaeg_core::{
@@ -35,7 +33,7 @@ pub enum LaunchClass {
 impl LaunchClass {
     pub fn of(outcome: &LaunchOutcome) -> Self {
         match outcome {
-            LaunchOutcome::Accepted { .. } => Self::Accepted,
+            LaunchOutcome::Accepted { .. } | LaunchOutcome::Admitted { .. } => Self::Accepted,
             LaunchOutcome::Deferred => Self::Deferred,
             LaunchOutcome::Refused(_) => Self::Refused,
         }
@@ -96,6 +94,34 @@ pub struct ProducerFacts<'a> {
 /// Receives the steps of a channel's events. Every method defaults to doing
 /// nothing, so an implementation observes only what it needs.
 pub trait ActivityObserver: Send + Sync {
+    /// Public activity admission is durably committed before provider launch.
+    /// The retained console callbacks below remain synchronous and lossy.
+    fn receive<'a>(&'a self, _request: &'a LaunchRequest) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Restore a source's immutable first receipt before deferred admission.
+    /// The timestamp comes from verified durable intake, never a replay clock.
+    fn receive_at<'a>(
+        &'a self,
+        _owner: &'a str,
+        _record: &'a RecordId,
+        _activity: &'a Activity,
+        _received_at: i64,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Persist an actual lifecycle fact. Observation failure must never cause
+    /// retrying an already accepted provider turn or confirmed platform effect.
+    fn checkpoint<'a>(
+        &'a self,
+        _record: &'a RecordId,
+        _event: &'a EventId,
+        _change: crate::activity::Change,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
     /// An authenticated event is about to launch.
     fn admitted(&self, _record: &RecordId, _activity: &Activity) {}
 
@@ -230,8 +256,12 @@ impl TurnLauncher for ObservedLauncher {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
         let launched = self.admit(&request);
         Box::pin(async move {
+            if self.observer.receive(&request).await.is_err() {
+                return activity_unavailable();
+            }
             let outcome = self.inner.launch(request).await;
             self.report(&launched, &outcome);
+            self.checkpoint(&launched, &outcome).await;
             outcome
         })
     }
@@ -243,9 +273,42 @@ impl TurnLauncher for ObservedLauncher {
     ) -> BoxFuture<'_, LaunchOutcome> {
         let launched = self.admit(&request);
         Box::pin(async move {
+            if self.observer.receive(&request).await.is_err() {
+                return activity_unavailable();
+            }
             let outcome = self.inner.launch_holding(request, hold).await;
             self.report(&launched, &outcome);
+            self.checkpoint(&launched, &outcome).await;
             outcome
         })
     }
+}
+
+impl ObservedLauncher {
+    async fn checkpoint(&self, launched: &Launched, outcome: &LaunchOutcome) {
+        use crate::activity::{Change, ConsumerState};
+        let (state, response) = match outcome {
+            LaunchOutcome::Accepted { response_id } => {
+                (ConsumerState::Accepted, Some(response_id.clone()))
+            }
+            LaunchOutcome::Admitted { .. } | LaunchOutcome::Deferred => {
+                (ConsumerState::Queued, None)
+            }
+            LaunchOutcome::Refused(_) => (ConsumerState::Refused, None),
+        };
+        self.observer
+            .checkpoint(
+                &launched.record,
+                &launched.event_id,
+                Change::state(launched.consumer.as_str(), state, response),
+            )
+            .await;
+    }
+}
+pub(crate) fn activity_unavailable() -> LaunchOutcome {
+    LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
+        cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+        503,
+        "channel_activity_unavailable",
+    ))
 }

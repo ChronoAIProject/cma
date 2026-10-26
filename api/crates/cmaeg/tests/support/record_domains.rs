@@ -9,6 +9,9 @@ use mongodb::{
     Database,
 };
 
+#[path = "activity_projection.rs"]
+mod activity_projection;
+
 pub async fn verify(
     db: &Database,
     records: MongoRecords,
@@ -146,6 +149,7 @@ pub async fn verify(
         .is_err());
     assert!(channels.delete(&id, 1).await?);
     verify_import(db, &records, expiry).await?;
+    activity_projection::verify(db, records).await?;
     Ok(())
 }
 
