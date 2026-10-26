@@ -384,7 +384,7 @@ impl Sender {
         TypingReceipt { outcome }
     }
 }
-fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
+pub(super) fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
     channel
         .definition
         .sources
@@ -393,7 +393,7 @@ fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
         .then_some(())?;
     channel.definition.secrets.telegram_bot_token.as_ref()
 }
-fn outcome(error: Error) -> DeliveryOutcome {
+pub(super) fn outcome(error: Error) -> DeliveryOutcome {
     match error {
         Error::Rejected => DeliveryOutcome::Rejected {
             reason: "telegram_rejected".into(),

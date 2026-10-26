@@ -121,6 +121,9 @@ pub enum SourceKind {
         platform: Platform,
         bot_id: String,
     },
+    Discord {
+        bot_id: String,
+    },
     NyxidRelay {
         platform: Platform,
         route_id: String,
@@ -149,6 +152,14 @@ impl Activity {
                 return Err(ValidationError::new(
                     "/source",
                     "native Telegram requires its positive bot ID and telegram platform",
+                ));
+            }
+        }
+        if let SourceKind::Discord { bot_id } = &self.source {
+            if !crate::channel::discord::valid_id(bot_id) {
+                return Err(ValidationError::new(
+                    "/source/bot_id",
+                    "must be a canonical Discord ID",
                 ));
             }
         }

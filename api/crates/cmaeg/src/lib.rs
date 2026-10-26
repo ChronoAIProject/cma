@@ -1,5 +1,6 @@
 //! CMA Event Gateway HTTP service.
 
+pub mod activity;
 mod audit;
 pub mod auth;
 pub mod channels;
@@ -7,6 +8,7 @@ mod config;
 pub mod connections;
 pub mod console;
 pub mod delivery;
+pub mod discord;
 pub mod hardening;
 pub mod http;
 pub mod ingress;
@@ -20,6 +22,7 @@ pub mod providers;
 pub mod records;
 pub mod runtime;
 mod serve;
+mod serve_routed;
 mod serve_storage;
 mod service_auth;
 pub mod telegram;
@@ -34,8 +37,8 @@ use utoipa::OpenApi;
 
 pub use config::{
     ChannelCacheConfig, Config, ConfigError, ConsoleConfig, ConsoleMemoryConfig, DeliveryConfig,
-    IngressConfig, ManagementConfig, MediaConfig, MediaToolProviders, RoutingConfig,
-    ServiceAccountConfig, SttConfig, SttEndpoint, TransformerConfig, TurnConfig,
+    IngressConfig, ManagementConfig, MediaConfig, MediaToolProviders, NativeDiscordConfig,
+    RoutingConfig, ServiceAccountConfig, SttConfig, SttEndpoint, TransformerConfig, TurnConfig,
     CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_ADVERTISE_PUBLIC_API_URL,
     CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
     CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,

@@ -27,7 +27,7 @@ use super::{
 /// One client pool per allowlisted provider.
 pub struct ProviderClient {
     providers: BTreeMap<ProviderSlug, ProviderHandle>,
-    request_timeout: Duration,
+    pub(super) request_timeout: Duration,
     pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
 }
 
@@ -368,7 +368,9 @@ impl ProviderClient {
     }
 }
 
-async fn acquire(semaphore: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, ProviderError> {
+pub(super) async fn acquire(
+    semaphore: &Arc<Semaphore>,
+) -> Result<OwnedSemaphorePermit, ProviderError> {
     tokio::time::timeout(MAX_SEMAPHORE_WAIT, semaphore.clone().acquire_owned())
         .await
         .map_err(|_| ProviderError::Busy {
@@ -377,7 +379,7 @@ async fn acquire(semaphore: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, Pro
         .map_err(|_| ProviderError::Unavailable("provider semaphore closed".into()))
 }
 
-fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), ProviderError> {
+pub(super) fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), ProviderError> {
     if metadata.len() > MAX_METADATA_KEYS {
         return Err(ProviderError::InvalidRequest(format!(
             "metadata has more than {MAX_METADATA_KEYS} keys"
@@ -402,7 +404,7 @@ fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), Provider
     Ok(())
 }
 
-fn transport_error(error: reqwest::Error) -> ProviderError {
+pub(super) fn transport_error(error: reqwest::Error) -> ProviderError {
     if error.is_timeout() {
         ProviderError::Unavailable("provider request timed out".into())
     } else {

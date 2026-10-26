@@ -37,6 +37,7 @@ pub(super) async fn forward_turn(
                 ResponsesEvent::Created {
                     response_id,
                     thread_reply,
+                    ..
                 } => {
                     if response_id.is_empty() || response_id.len() > 512 {
                         break;

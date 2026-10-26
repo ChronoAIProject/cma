@@ -14,6 +14,7 @@ pub struct IngressState {
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
     pub launcher: Arc<dyn TurnLauncher>,
+    pub routed: Option<Arc<super::routed::RoutedIngress>>,
     pub config: IngressConfig,
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
@@ -27,6 +28,10 @@ pub struct IngressState {
     pub activity: Arc<dyn ActivityObserver>,
 }
 impl IngressState {
+    pub fn with_routed(mut self, routed: Option<Arc<super::routed::RoutedIngress>>) -> Self {
+        self.routed = routed;
+        self
+    }
     pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
         self.telegram_effects_issuance_enabled = enabled;
         self
@@ -61,6 +66,7 @@ impl IngressState {
         launcher: Arc<dyn TurnLauncher>,
     ) -> Result<Self, reqwest::Error> {
         Ok(Self {
+            routed: None,
             interactions: None,
             telegram: None,
             receipt_observer: None,

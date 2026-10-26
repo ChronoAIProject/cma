@@ -18,6 +18,8 @@ use std::{
 };
 use tokio::sync::{Notify, RwLock};
 use tower::ServiceExt;
+#[path = "streaming_tests.rs"]
+mod streaming_tests;
 #[derive(Default)]
 struct Gate {
     reached: Notify,
@@ -123,6 +125,7 @@ impl Fixture {
                     StatusCode::NO_CONTENT
                 }),
             )
+            .merge(streaming_tests::routes(eg_auth.clone()))
             .with_state(control.clone())
             .merge(cma_service_auth::session::router(eg_auth));
         let (gateway, gateway_task) = serve(upstream).await;

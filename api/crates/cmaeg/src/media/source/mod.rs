@@ -6,6 +6,7 @@
 //! credential or allowlist removed since the event arrived is no longer used.
 //! No source puts a URL, token, file identifier, file name or message ID in an
 //! error, a log line or a span.
+pub mod discord;
 pub mod inline;
 pub mod nyxid;
 pub mod telegram;
@@ -51,6 +52,7 @@ pub fn configured(
     locator: Option<&AttachmentSource>,
 ) -> bool {
     match locator {
+        Some(AttachmentSource::Discord { .. }) => discord::configured(channel, &activity.source),
         Some(AttachmentSource::NyxidRelay { .. }) => nyxid::configured(channel, &activity.source),
         Some(AttachmentSource::Telegram { .. }) => {
             telegram::configured_token(channel, &activity.source).is_some()
@@ -98,6 +100,7 @@ pub trait MediaSource: Send + Sync {
 /// implementation without touching anything that fetches.
 #[derive(Clone)]
 pub struct SourceRegistry {
+    discord: Option<Arc<dyn MediaSource>>,
     nyxid: Arc<dyn MediaSource>,
     telegram: Arc<dyn MediaSource>,
     url: Arc<dyn MediaSource>,
@@ -112,11 +115,17 @@ impl SourceRegistry {
         inline: Arc<dyn MediaSource>,
     ) -> Self {
         Self {
+            discord: None,
             nyxid,
             telegram,
             url,
             inline,
         }
+    }
+
+    pub fn with_discord(mut self, source: Arc<dyn MediaSource>) -> Self {
+        self.discord = Some(source);
+        self
     }
 
     /// Read the attachment's whole body through the source its locator names.
@@ -167,6 +176,11 @@ impl SourceRegistry {
             return Err(FetchError::NotRetrievable);
         };
         let (label, source, matches) = match locator {
+            AttachmentSource::Discord { .. } => (
+                "discord",
+                self.discord.as_ref().ok_or(FetchError::NotRetrievable)?,
+                matches!(request.activity.source, SourceKind::Discord { .. }),
+            ),
             AttachmentSource::NyxidRelay { .. } => (
                 "nyxid",
                 &self.nyxid,

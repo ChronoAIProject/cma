@@ -72,6 +72,8 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            native_discord_writes_enabled: false,
+            native_discord: Default::default(),
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             multi_consumer_writes_enabled: false,
@@ -106,6 +108,7 @@ impl ConsumerGateway {
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
+            routed_replies: None,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
             lark_cards_enabled: false,

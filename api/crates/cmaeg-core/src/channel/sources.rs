@@ -33,6 +33,12 @@ pub(super) fn validate_legacy_sources(
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
         match source {
+            Source::Discord { .. } => {
+                return Err(ValidationError::new(
+                    &pointer,
+                    "native_discord_writes_disabled",
+                ));
+            }
             Source::Telegram { .. } => {
                 if !variants.insert("telegram") {
                     return Err(ValidationError::new(&pointer, DUPLICATED));
@@ -75,7 +81,7 @@ pub(super) fn validate_extended_sources(
             "must contain at most eight sources",
         ));
     }
-    let (mut telegram, mut custom) = (false, false);
+    let (mut telegram, mut discord, mut custom) = (false, false, false);
     let mut platforms = BTreeSet::<Platform>::new();
     let mut routes = BTreeSet::<&str>::new();
     let mut identity: Option<(&str, &str, &str)> = None;
@@ -83,6 +89,7 @@ pub(super) fn validate_extended_sources(
         let pointer = format!("/sources/{index}");
         let duplicated = match source {
             Source::Telegram { .. } => std::mem::replace(&mut telegram, true),
+            Source::Discord { .. } => std::mem::replace(&mut discord, true),
             Source::Custom { .. } => std::mem::replace(&mut custom, true),
             Source::NyxidRelay { .. } => false,
         };
@@ -168,6 +175,11 @@ fn validate_source(
         }
     }
     match source {
+        Source::Discord {
+            bot_id,
+            intents,
+            admission,
+        } => super::discord::validate(bot_id, *intents, admission, secrets, pointer),
         Source::Telegram {
             bot_id,
             bot_username,

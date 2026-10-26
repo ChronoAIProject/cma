@@ -95,6 +95,7 @@ impl App {
                 public_origin: "https://gateway.example".into(),
                 waiters: waiters.clone(),
                 webhooks: WebhookClient::with_transport(receiver.transport.clone()),
+                activity: Arc::new(cmaeg::turns::observer::NoopObserver),
             },
         );
         let provider = FakeProvider::start(provider_config).await;
@@ -131,6 +132,7 @@ impl App {
             keys: fixture.state.master_keys.clone(),
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),

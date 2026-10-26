@@ -273,14 +273,16 @@ fn publishing_needs_a_profile_target_and_other_consumers() {
             other,
         );
     }
-    expect(
-        |value| {
-            value["routing"]["default_consumer"]["publish"] =
-                json!({"enabled": true, "targets": ["default"]});
-        },
-        "/routing/default_consumer/publish/targets/0",
-        other,
-    );
+    for target in ["default", "csm_0000000000ff"] {
+        expect(
+            |value| {
+                value["routing"]["default_consumer"]["publish"] =
+                    json!({"enabled": true, "targets": [target]});
+            },
+            "/routing/default_consumer/publish/targets/0",
+            other,
+        );
+    }
     accept(|value| {
         first(value)["publish"] = json!({"enabled": true, "targets": ["default", NYX]});
         value["routing"]["default_consumer"]["publish"] =

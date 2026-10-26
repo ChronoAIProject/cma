@@ -22,7 +22,7 @@ const PLATFORMS: [Platform; 6] = [
 /// A source slot's stable id, derived from a configured source and never stored
 /// with it, though routing policies refer to slots by it: "telegram", "relay_<platform>"
 /// ("relay_telegram", "relay_lark", "relay_feishu", "relay_discord", "relay_slack",
-/// "relay_whatsapp"), "custom", or the reserved "agent" (hand-offs only; never configurable).
+/// "relay_whatsapp"), native "discord", "custom", or the reserved "agent" (hand-offs only; never configurable).
 ///
 /// An id names a slot rather than a source instance. A channel holds at most
 /// one source per variant and relay platform, so the id is unique within it,
@@ -36,7 +36,7 @@ impl SourceId {
     /// Accept exactly the grammar above; spellings such as NyxID's
     /// `telegram-new` or a capitalized variant are not ids.
     pub fn parse(value: &str) -> Result<Self, ValidationError> {
-        let known = matches!(value, "telegram" | "custom" | AGENT_SOURCE_ID)
+        let known = matches!(value, "telegram" | "discord" | "custom" | AGENT_SOURCE_ID)
             || value.strip_prefix(RELAY_PREFIX).is_some_and(|platform| {
                 PLATFORMS
                     .iter()
@@ -47,7 +47,7 @@ impl SourceId {
         } else {
             Err(ValidationError::new(
                 "/source_id",
-                "must be telegram, relay_<platform>, custom or agent",
+                "must be telegram, discord, relay_<platform>, custom or agent",
             ))
         }
     }
@@ -64,6 +64,10 @@ impl SourceId {
     /// The reserved hand-off id, recorded on events agents publish.
     pub fn agent() -> Self {
         Self(AGENT_SOURCE_ID.to_owned())
+    }
+
+    fn discord() -> Self {
+        Self("discord".to_owned())
     }
 
     fn telegram() -> Self {
@@ -97,6 +101,7 @@ impl Source {
     pub fn source_id(&self) -> SourceId {
         match self {
             Self::Telegram { .. } => SourceId::telegram(),
+            Self::Discord { .. } => SourceId::discord(),
             Self::NyxidRelay { platform, .. } => SourceId::relay(*platform),
             Self::Custom { .. } => SourceId::custom(),
         }
@@ -108,6 +113,7 @@ impl SourceKind {
     pub fn source_id(&self) -> SourceId {
         match self {
             Self::Telegram { .. } => SourceId::telegram(),
+            Self::Discord { .. } => SourceId::discord(),
             Self::NyxidRelay { platform, .. } => SourceId::relay(*platform),
             Self::Custom => SourceId::custom(),
         }

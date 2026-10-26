@@ -67,6 +67,7 @@ pub async fn expand_create(
     };
     if !request.sources.is_empty()
         || request.credentials.telegram_bot_token.is_some()
+        || request.credentials.discord_bot_token.is_some()
         || request.credentials.telegram_webhook_secret.is_some()
     {
         return Err(invalid(
@@ -125,7 +126,9 @@ pub async fn expand_update(
         return Err(invalid("connection_ref replaces platform sources"));
     }
     if request.credentials.as_ref().is_some_and(|patch| {
-        patch.telegram_bot_token.is_some() || patch.telegram_webhook_secret.is_some()
+        patch.telegram_bot_token.is_some()
+            || patch.discord_bot_token.is_some()
+            || patch.telegram_webhook_secret.is_some()
     }) {
         return Err(invalid("connection credentials are managed by the gateway"));
     }

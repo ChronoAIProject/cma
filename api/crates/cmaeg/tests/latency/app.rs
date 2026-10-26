@@ -161,6 +161,7 @@ impl App {
             keys,
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),

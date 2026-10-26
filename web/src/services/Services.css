@@ -210,3 +210,10 @@
   height: 100%;
   overflow: auto;
 }
+
+.service-page[data-layout='workspace'] {
+  padding: 0;
+}
+.service-page[data-layout='workspace'] > * {
+  max-width: none;
+}

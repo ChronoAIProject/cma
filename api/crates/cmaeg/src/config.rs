@@ -11,6 +11,7 @@ mod console;
 mod delivery;
 mod ingress;
 mod media;
+mod native_discord;
 mod routing;
 mod secrets;
 mod service;
@@ -29,6 +30,7 @@ pub use media::{
     CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
+pub use native_discord::NativeDiscordConfig;
 pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
 pub use stt::*;
@@ -147,6 +149,8 @@ pub struct Config {
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
+    pub native_discord_writes_enabled: bool,
+    pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
@@ -250,6 +254,9 @@ impl Config {
             dynamic_sources_writes_enabled: routing::write_flag(
                 "CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED",
             )?,
+            native_discord_writes_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_WRITES_ENABLED",
+            )?,
             relay_raw_verification_writes_enabled: routing::write_flag(
                 "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
             )?,
@@ -260,6 +267,7 @@ impl Config {
             turns,
             delivery: DeliveryConfig::from_env()?,
             media,
+            native_discord: native_discord::config_from_env(&routing)?,
             routing,
             stt,
             transformer,

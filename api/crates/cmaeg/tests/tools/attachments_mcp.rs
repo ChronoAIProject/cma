@@ -87,10 +87,8 @@ async fn mcp_lists_five_tools_when_media_enabled() {
     let app = App::with_media(MediaSetup::new(vec![relayed(0, AttachmentKind::Image)])).await;
     let listed = tools(&app).await;
     assert_eq!(listed.len(), 5);
-    // The original four are unchanged, schemas included.
-    let golden: Value =
-        serde_json::from_str(include_str!("../fixtures/mcp-tools-list.json")).unwrap();
-    assert_eq!(listed[..4], golden["tools"].as_array().unwrap()[..]);
+    // Media retains the old wire shape with reviewed additive key/docs updates.
+    super::rpc::assert_tools_with_reviewed_extensions(&mut json!({"tools":listed[..4]}));
     let tool = &listed[4];
     assert_eq!(tool["name"], "readEventAttachment");
     assert_eq!(tool["description"], DESCRIPTION);
