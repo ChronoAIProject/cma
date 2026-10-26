@@ -64,8 +64,10 @@ function Composer({ owner, channel, selection, denied }: Props) {
 
   async function act(action: 'prepare' | 'send' | 'read' | 'cancel') {
     if (active.current || journal.error) return;
-    if ((action === 'send' || action === 'prepare') && (!enabled || mediaUnavailable)) return;
-    if (action === 'prepare' && !draft && !canReview) return;
+    if (action === 'send' && (!enabled || mediaUnavailable)) return;
+    // A retained preparation recovers its exact existing operation. New writes
+    // still require current capabilities; a gate change cannot hide its status.
+    if (action === 'prepare' && !draft && (!enabled || !canReview)) return;
     const captured = draft ?? {
       key: crypto.randomUUID(),
       body: {
@@ -128,7 +130,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
         action === 'prepare' &&
         !draft &&
         cause instanceof ServiceError &&
-        [400, 422].includes(cause.status)
+        [400, 413, 422].includes(cause.status)
       )
         journal.retain();
       setError(
@@ -209,9 +211,7 @@ function Composer({ owner, channel, selection, denied }: Props) {
       <div className="channel-form-actions">
         {!receipt ? (
           <Button
-            disabled={
-              pending || !!journal.error || !enabled || mediaUnavailable || (!draft && !canReview)
-            }
+            disabled={pending || !!journal.error || (!draft && (!enabled || !canReview))}
             onClick={() => void act('prepare')}
           >
             {draft ? 'Check saved request' : 'Review message'}

@@ -176,3 +176,49 @@ it('does not discard unreadable storage or offer a fresh send', () => {
   expect(screen.getByRole('button', { name: 'Review message' })).toBeDisabled();
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it('allows editing after a definite first preparation body-size rejection', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(json({ detail: 'Message exceeds request size limit' }, 413))
+    .mockResolvedValueOnce(json(receipt(), 201));
+  vi.stubGlobal('fetch', fetch);
+  view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Large draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  await screen.findByText('Message exceeds request size limit');
+  expect(sessionStorage.getItem(outboundStorageKey('alice', 'record'))).toBeNull();
+  expect(screen.getByLabelText('Message text')).toHaveValue('Large draft');
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Shorter draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  await screen.findByRole('button', { name: 'Send message' });
+  expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string).message.text).toBe('Shorter draft');
+  expect(fetch.mock.calls[1]![1]!.headers).not.toEqual(fetch.mock.calls[0]![1]!.headers);
+  expect(fetch.mock.calls.every((call) => !String(call[0]).endsWith('/send'))).toBe(true);
+});
+
+it('retains an earlier uncertain preparation if a later recovery returns 413', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockRejectedValueOnce(new TypeError('lost preparation response'))
+    .mockResolvedValueOnce(json({ detail: 'Recovery request exceeds size limit' }, 413));
+  vi.stubGlobal('fetch', fetch);
+  const mounted = view();
+  fireEvent.change(screen.getByLabelText('Message text'), { target: { value: 'Original draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review message' }));
+  await screen.findByText('lost preparation response');
+  const original = sessionStorage.getItem(outboundStorageKey('alice', 'record'));
+  mounted.unmount();
+  const recovered = view();
+  fireEvent.click(screen.getByRole('button', { name: 'Check saved request' }));
+  await screen.findByText('Recovery request exceeds size limit');
+  expect(fetch.mock.calls[1]![1]!.body).toBe(fetch.mock.calls[0]![1]!.body);
+  expect(fetch.mock.calls[1]![1]!.headers).toEqual(fetch.mock.calls[0]![1]!.headers);
+  expect(sessionStorage.getItem(outboundStorageKey('alice', 'record'))).toBe(original);
+  recovered.unmount();
+  view();
+  expect(screen.getByText('Original draft')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Check saved request' })).toBeEnabled();
+  expect(screen.queryByLabelText('Message text')).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
