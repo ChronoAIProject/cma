@@ -186,6 +186,8 @@ pub struct TargetState {
     pub phase: Phase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<super::delivery_state::DeliveryCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) projection: Option<super::projection_store::ProjectionReference>,
     pub(super) body: Option<BodyReference>,
     pub(super) ownership: Ownership,
     #[serde(skip)]
