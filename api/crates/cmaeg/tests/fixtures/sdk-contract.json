@@ -110,9 +110,9 @@
       "completed_at": "2026-10-27T03:00:05Z",
       "deliveries": [
         {
-          "step": "reply",
-          "destination": "custom_webhook",
-          "outcome": "delivered",
+          "step": "answer",
+          "destination": "origin",
+          "outcome": "confirmed",
           "observed_at": "2026-10-27T03:00:05Z",
           "confirmed_at": "2026-10-27T03:00:05Z",
           "platform_message_id": "fixture-reply",
@@ -129,9 +129,9 @@
   ],
   "ActivityDelivery": [
     {
-      "step": "reply",
-      "destination": "custom_webhook",
-      "outcome": "delivered",
+      "step": "answer",
+      "destination": "origin",
+      "outcome": "confirmed",
       "observed_at": "2026-10-27T03:00:05Z",
       "confirmed_at": "2026-10-27T03:00:05Z",
       "platform_message_id": "fixture-reply",
@@ -186,9 +186,9 @@
               "completed_at": "2026-10-27T03:00:05Z",
               "deliveries": [
                 {
-                  "step": "reply",
-                  "destination": "custom_webhook",
-                  "outcome": "delivered",
+                  "step": "answer",
+                  "destination": "origin",
+                  "outcome": "confirmed",
                   "observed_at": "2026-10-27T03:00:05Z",
                   "confirmed_at": "2026-10-27T03:00:05Z",
                   "platform_message_id": "fixture-reply",
@@ -914,9 +914,9 @@
           "completed_at": "2026-10-27T03:00:05Z",
           "deliveries": [
             {
-              "step": "reply",
-              "destination": "custom_webhook",
-              "outcome": "delivered",
+              "step": "answer",
+              "destination": "origin",
+              "outcome": "confirmed",
               "observed_at": "2026-10-27T03:00:05Z",
               "confirmed_at": "2026-10-27T03:00:05Z",
               "platform_message_id": "fixture-reply",
