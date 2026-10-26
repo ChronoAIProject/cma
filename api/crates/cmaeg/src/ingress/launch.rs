@@ -25,7 +25,17 @@ pub struct LaunchRequest {
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {
-    Accepted { response_id: String },
+    /// Committed at the gateway; provider execution is recovered separately.
+    Admitted {
+        admission_id: String,
+        conversation_id: ConversationId,
+        /// Only this request's exact waiter is retained by the primary target.
+        /// Duplicate HTTP streams must not attach to a different/new waiter.
+        sync_waiter_attached: bool,
+    },
+    Accepted {
+        response_id: String,
+    },
     Deferred,
     Refused(Problem),
 }

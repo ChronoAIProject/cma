@@ -1,0 +1,341 @@
+# Durable routed execution journal
+
+This is a disabled execution foundation, following
+`docs/CMAEG_Routed_Admission.md`. The concrete HTTP execution adapter, production
+preparation builder, bounded scheduler, durable delivery receipts and
+replay/projection executor are implemented. HTTP ingress can use the durable
+admission adapter when explicitly composed with a channel-record selection.
+Service composition, recovery supervision and durable tool-reply suppression are
+integrated. Both runtime switches default off. No production fan-out or provider
+capability is enabled by this change. Combined deployment verification and the
+delivery equivalence limits below remain prerequisites for activation.
+
+## Verified HTTP ingress admission
+
+`CMAEG_ROUTED_CHANNEL_RECORDS` accepts at most 64 explicit record IDs, with no
+wildcard, and defaults to empty. `CMAEG_ROUTED_RECOVERY_ENABLED=true` installs the
+adapter, executor and supervised scheduler, and is required before selecting
+records. `CMAEG_ROUTED_ADMISSION_ENABLED=true` additionally permits new routed
+plans; leaving it false still accepts exact committed retries and recovers
+already admitted work. New routed events receive 503 while admission is paused.
+Both switches default false. Keep the selected record IDs and recovery enabled
+while retained admissions can be retried or executed; removing selection is not
+a safe rollback of those identities. Unselected channels retain their existing
+launcher and make no admission-store read. For selected
+ordinary events, native Telegram, relay and custom-event handlers capture the
+exact bytes only after authentication. The 256 KiB limit is checked without
+copying an oversized body; oversized selected requests receive 413. Interactive
+callbacks continue through their existing exact-consumer path.
+
+The adapter checks for an already committed identity before evaluating mutable
+routing. Exact retries restore its original targets; changed bytes under the same
+identity conflict. New plans require explicit provider replay support and a
+supported delivery destination before any write. An unavailable default reply
+address or unsupported synchronous waiter receives 422
+`routed_delivery_unsupported`; no plan or provider call is created. Committed
+retries keep their frozen delivery policy even when current authoring changes.
+The production preparation builder captures the exact default destination
+before creating a provider conversation. Binary custom-event attributes
+authenticated only by a body HMAC do not
+gain routing authority from unsigned headers. Missing bytes, unavailable storage
+and incomplete commits cannot fall back to the live launcher. A 202 admission is
+returned only after the immutable plan commits, with its actual primary
+conversation ID. Capacity remains bounded through that commit. A full local
+scheduler hint queue does not undo the durable acceptance.
+
+`Dispatcher::dispatch` accepts an original event identity and one target ID. It
+loads the committed admission and finds that ID in its immutable target list.
+Retries never evaluate routing again. The execution record uses that target ID,
+the original owner/root/request hash, the unchanged event expiry, and the same
+fixed retention boundary. All writes use the existing interaction-record API.
+
+Each execution claim has a random claim identity, worker name, increasing epoch,
+30-second lease, and CAS version. Even concurrent requests sharing a worker name
+cannot both claim the same target. A lost write response succeeds only after
+authenticated read-back of the exact expected next version and value. Expired
+workers cannot renew or change a later worker's record. These leases fence local
+record changes; they cannot revoke a network request already sent. This is not
+an exactly-once delivery claim.
+
+Preparation renders the provider input and seals its event reference once. The
+exact fields, metadata, reference, and delivery policy are frozen in encrypted
+24 KiB chunks, with a bounded 1 MiB total representation. Chunk identities bind
+the target, admission, request, full-body hash and index. The target CAS record
+references the complete body only after all immutable chunks are confirmed.
+Missing, modified or reordered chunks fail closed. Retried starts reuse the same
+body and idempotency key. Provider credentials are fetched from current authority
+and injected separately; credential rotation cannot rewrite the frozen body.
+`FrozenTurn::provider_body` exposes the canonical provider request representation.
+
+The fresh authority port bypasses the channel cache. Before starting, the
+dispatcher checks the channel owner and record, the exact admitted source policy,
+the original consumer's presence and readiness, credential availability, and the
+original provider binding. Source policy edits are conservatively refused rather
+than reinterpreted. A durable `Starting` CAS precedes the external call; authority,
+lease ownership and event expiry are checked again immediately before that call.
+Revocation can still race a network request, so the provider must independently
+validate its current credential. No atomic cross-service authorization is claimed.
+
+The execution port must await its start directly and must not spawn a detached
+start task or regenerate input, attachment URLs, nonces or event references.
+Providers lacking proved response replay are refused before starting. Recovery
+capabilities default to false and are configured only after evidence against the
+provider's actual contract. A provider slug alone is not evidence.
+
+`Starting` and `Unknown` mean the request may already have been accepted. They
+permit an exact-body retry only with proved provider idempotency. Otherwise they
+remain unknown without another POST. A proved nonacceptance permits a retry; a
+terminal provider refusal is retained. Network errors and 5xx responses are not
+proof of nonacceptance. An accepted response retains its exact response ID and
+durable cursor and is never posted again. Recovery returns a read/replay directive
+with an ownership lease and the original frozen body.
+
+The initial cursor is absent, so replay includes durable event zero. A cursor of
+zero is stored only after event zero has a confirmed durable downstream receipt.
+Adapters must not translate an absent cursor into `starting_after=0`.
+
+The delivery cursor advances only after a caller has confirmed durable downstream
+receipt of that numeric provider event. Merely reading an SSE frame is not a
+receipt. Response identity mismatches and backwards cursors are refused. The
+completion method requires all provider events and platform effects to have
+settled durably. Unknown platform sends need their own receipt/reconciliation
+logic and are never automatically resent by this journal. Provider replay may
+read retained history after the original event expiry; that does not renew the
+expired authority to send replies.
+
+Only the primary target's frozen reference may retain a legacy synchronous
+waiter. Secondary targets receive `ReplyAddress::None`. This prevents sibling
+consumers from racing to close one synchronous response. Durable asynchronous
+platform delivery uses the fenced receipts described in
+`docs/CMAEG_Durable_Delivery.md`; stream projection and worker composition remain
+separate integration work.
+
+Tests use the real `RecordClient` HTTP transport against a bounded record server
+that enforces create-only writes, CAS, expiry and lost-response faults. They cover
+competing claims, stale workers, unknown CAS confirmation, large bodies,
+credential rotation, corruption, authority changes, event expiry, unknown-start
+recovery, accepted replay, cursor fencing and synchronous waiter ownership.
+These tests do not replace a real database concurrency test or evidence for a
+concrete provider's idempotency and replay contract.
+
+## Concrete HTTP adapter and remaining activation work
+
+`HttpExecutionPort` composes the journal with the opt-in Responses v2 provider
+transport. Its `dispatcher()` factory shares the exact plan store, execution
+journal and fresh authority resolver used by `reattach()`. `FrozenTurnBuilder`
+is an injected preparation boundary; it must render and resolve input without
+starting a provider turn. It is called only for a pending target, before the
+journal commits the frozen body. `ProductionFrozenTurnBuilder` implements this
+boundary with the same preparation/rendering helpers used by `TurnRunner`.
+No ingress installation is included in this slice.
+
+Submission sends `FrozenTurn::provider_body()` bytes directly through the
+existing bounded provider transport, with the current credential supplied
+separately. It does not call the legacy `start_turn`, spawn a background start,
+retry automatically or reconstruct a stored request. Provider concurrency is
+held through acceptance. The acceptance wait is limited to the configured
+request timeout or 20 seconds, whichever is smaller, and at most 1 MiB of wire
+input. A successful acceptance requires one exact response identity header and
+an SSE `response.created` event at numeric ID and sequence zero, with queued
+status and the frozen metadata. Invalid or absent proof remains `Unknown`.
+
+A local provider-slot refusal proves no request was sent. CMA v2's explicit
+`400 invalid_json` occurs before command admission and is a terminal refusal.
+Other HTTP results, including 409, 429 and 503, are conservatively unknown:
+CMA's submit handler can durably admit a command before stream authorization or
+snapshot opening fails. This adapter therefore keeps exact-body idempotency
+capability false. It will not repeat an uncertain POST.
+
+Reattachment reloads the committed plan, verifies the supplied opaque lease
+belongs to that precise target, and authenticates the stored body. It obtains
+the response ID and optional cursor only from the accepted journal record.
+It revalidates owner, source, consumer, provider and lease immediately before
+the snapshot GET, then checks them again with a freshly resolved credential
+before the replay GET. The snapshot must match the accepted response and frozen
+metadata. Its native CMA Agent ID is pinned for replay and checked against an
+optional already-known native Agent ID; it is not compared to the gateway's
+conversation alias. There is no POST in this recovery path.
+
+The adapter returns observations and never advances a cursor simply because it
+read an event. The later delivery worker must renew and guard its lease, enforce
+current delivery authority and original reply expiry, record platform effects
+and durable receipts, and acknowledge events only after those effects are
+settled. Snapshot/replay failures must remain observation failures and must not
+turn an accepted execution into a command failure or trigger a fresh start.
+
+The new local HTTP tests cover exact frozen bytes, credential rotation, a
+restart with GET-only recovery, absent versus zero cursor, uncertain responses,
+cancelled acceptance, malformed acceptance, revoked authority between GETs,
+lease expiry during snapshot, and foreign target/native Agent substitution.
+They complement the record/CAS tests and provider recovery protocol fixtures.
+Before activation, the scheduler, durable receipt delivery worker and complete
+replay/projection behavior need combined integration evidence. Rollout
+must select only explicitly enabled channels; existing channels retain their
+current execution path while the new path is verified.
+
+## Bounded admission recovery scheduling
+
+The scheduler is installed only when recovery is explicitly enabled. New durable
+admissions can offer identity-only wake-ups through `ScheduleHandle`; a full
+queue does not retract an admission. The recovery scanner independently visits
+committed manifests through the existing interaction-record API. It scans all
+owners as a service, authenticates each manifest against its stored owner, and
+never exposes another owner's payload through an owner-scoped endpoint.
+
+The default queue holds 512 target identities and at most eight executions run
+concurrently. Recovery visits at most 32 record heads per page, waits 250 ms
+between pages and five seconds between complete sweeps or failed reads. Empty
+pages can contain unrelated record kinds and do not end a paginated sweep. A
+failed read retains its cursor; completed sweeps restart at the beginning so
+inserts behind an earlier cursor are eventually discovered. Damaged admissions
+are reported and skipped without repair writes. Each full sweep still costs
+reads for unrelated interaction records and reconstruction of admitted payloads;
+these bounds do not establish a five-second restart-recovery guarantee.
+
+Running targets are deduplicated locally; a bounded cooldown cache limits repeat
+hints after completion. Local deduplication is an optimization only: every
+executor must still use the durable lease and current authority before effects.
+Executor panics release the local slot for later journal-based recovery; a failed
+scanner is reported as an unhealthy scheduler instead of silently abandoning
+recovery. Shutdown stops new starts, cancels only the read-only scanner, and
+drains running tasks for the configured budget (600 seconds by default). A
+forced abort is counted and leaves the durable effect journal authoritative.
+The service starts it after startup checks and listener binding. Unexpected
+scanner exit immediately adds `routed_recovery_failed` to readiness; a worker
+panic or other unexpected exit does the same. The service stops new scheduling
+when shutdown begins and drains routed work alongside live turns under the same
+global deadline, before draining the delivery engine. Dropping the service also
+cancels its scanner, so startup failure or forced shutdown cannot detach it.
+
+## Production preparation and composition seam
+
+Construct `ProductionFrozenTurnBuilder::new(providers, keys)` and configure it
+with the same `with_media(media, prepare_config)` and
+`with_media_tool_providers(tool_providers)` values as the live runner. Inject it
+into `HttpExecutionPort`; the builder is not itself a launcher. It verifies the
+exact stored target, current owner/source/consumer/provider and explicit replay
+support before external preparation. The target's conversation, binding,
+idempotency key and consumer are never recomputed from current routing. A new
+sealed reference retains the admitted reference's payload, expiry and lineage,
+including the secondary-target synchronous-waiter restriction. Partition
+metadata comes from the admitted partition even if current channel partition
+settings have changed.
+
+The only provider preparation effect is one directly awaited idempotent
+`ensure_conversation` PUT. CMA's current API returns an existing binding
+conversation without replacing its Agent and uses a durable CAS create for a
+missing conversation. Source-user affinity is acknowledged without allocating
+an Agent. Preparation never probes with or submits a Responses POST and never
+creates a detached provider task. Failure/cancellation therefore cannot start a
+turn. An uncertain PUT may have created its durable conversation; a subsequent
+pending preparation safely uses the same get-or-create identity.
+
+Input rendering and media preparation are shared with the existing runner.
+Plain text, addressed messages, reply context, custom templates and bounded
+attachment blocks keep the same semantics. Eager transcripts/excerpts use the
+existing media service; pending results, failures and background cache warm-up
+retain that service's existing bounds and behavior. Provider tool instructions
+are advertised only to the same eligible profile bindings as before. The
+rendered nonce, attachment text, metadata and full EventRef are then frozen by
+the journal. Accepted/prepared retries use that stored body and never repeat
+rendering or conversation preparation. Credentials remain separate.
+
+Preparation is bounded by 20 seconds and the original event/retention expiry;
+media work also obeys its configured preparation budget. After the frozen body
+is authenticated, the dispatcher renews its still-owned lease before committing
+`Starting`, leaving the full lease interval for bounded POST acceptance. A
+failed renewal prevents the POST. Current authority and event expiry are checked
+again at the start boundary.
+
+The implemented bounded scheduler offers committed target identities to its
+`TargetExecutor`. The remaining executor composition must call
+`HttpExecutionPort::dispatcher` and hand accepted leases to a fenced
+replay/projection worker. The worker must persist its projection state and use
+`RoutedDelivery` to settle durable downstream receipts before journal
+acknowledgement. Existing `TurnRunner` launch,
+sequencing, acceptance, retries and delivery are not rerouted by the builder;
+its extraction only shares preparation and rendering functions.
+
+## Accepted-response replay executor
+
+`RoutedTargetExecutor::new(port, delivery, tracker, delivery_config)` implements
+`TargetExecutor`. Its port uses the production frozen builder above and an
+explicitly configured provider replay capability. The executor dispatches once,
+then reconnects accepted responses with GET only. It never converts an
+observation error, disconnect, timeout or uncertain platform send into another
+provider POST. Terminal completion requires the journal's settled terminal
+receipt and acknowledged cursor.
+
+Cumulative projection uses the same bounded message/tool assembly as the live
+runner. Text deltas accumulate; committed messages send once; completion uses
+snapshot text or the accumulated fallback only when no answer was already
+attempted. Generic failure text follows the existing failure convention. Tool
+arguments, reasoning, unknown output items and media locators are not converted
+into public text. Explicit tool media/card delivery remains its own receipt
+path. Ephemeral acknowledgement/heartbeat notifications are not replayed.
+
+Before any effect or no-effect acknowledgement, the executor persists the
+resulting projection, native Agent ID pin, frame hash, exact chosen effect and
+terminal flag. The encrypted snapshot is bounded to 1 MiB, split into 24 KiB
+chunks in two reusable slots (at most 86 records per target). Only the inactive
+slot is overwritten with exact per-chunk CAS versions; a target-record CAS
+publishes the complete new reference. The previous slot remains valid if a
+worker stops before publication. Chunk identities and sealed contents bind the
+original target, admission, request, response, slot, index and retention expiry.
+Readers verify every version, identity, length and aggregate hash. This avoids
+unbounded persisted delta history; it does not avoid per-frame storage costs.
+
+A snapshot may be at the acknowledged cursor or exactly one frame ahead. The
+latter is an interrupted pending effect: replay must match its exact frame hash
+and reuse its stored effect without projecting again. Existing settled delivery
+receipts reconcile a lost acknowledgement without resending. Pending/unknown
+sends cannot advance. A terminal snapshot already acknowledged can complete
+without reconnecting. A cursor without its projection, a foreign native Agent,
+or a changed pending frame fails closed.
+
+The executor renews its 30-second lease before observation and frame work and
+at ten-second idle intervals. Each combined snapshot/replay attachment is
+bounded to 15 seconds. One invocation observes at most 4,096 frames, makes at
+most three attachments, and yields after about 60 seconds (bounded in-flight
+operations may finish later). It releases ownership on normal exit; cancellation
+leaves the durable lease and effect journal authoritative. A later scheduler
+invocation continues from the retained cursor. These bounds limit worker and
+provider use; they are not a latency promise or an exactly-once external-delivery
+claim. This component alone does not enable production ingress.
+
+The executor consults durable tool-reply status before public reply decisions
+and every terminal frame. A confirmed tool receipt suppresses automatic output
+after restart even without the process tracker. Pending tool work retains the
+accepted response for retry; unknown tool delivery retains it for reconciliation.
+The delivery guard atomically arbitrates tool/automatic sends and closes before
+terminal acknowledgement, including terminal frames with no public effect. A
+lookup alone does not establish this exclusion.
+
+Direct replies accept an optional caller-supplied stable operation identity:
+`Idempotency-Key` on REST `POST /v1/events/{event_ref}/replies`, or
+`idempotency_key` in native MCP `replyToEvent`. The REST body remains the existing
+outbound message. Keys contain 1–128 visible ASCII bytes; malformed or duplicate
+REST headers are rejected. Reuse a key and the same canonical message on a retry.
+Different keys allow intentionally separate identical messages. Reusing a key
+with different content returns `409 reply_idempotency_conflict` before sending.
+The server never creates a new operation key to retry an uncertain outcome.
+
+On the opt-in durable routed lane, the shared reply guard reserves at most 64
+keyed operations per original target before creating operation records or
+sending. A 65th distinct key returns `429 reply_operation_limit` without a write
+or delivery; previous keys remain replayable. Encrypted operation records retain
+the original target's exact expiry and bind the target, owner, admission, key,
+canonical content, claim and actual receipt. Their receipts are persisted before
+the shared guard settles. Recovery reconciles a saved receipt before automatic
+output; ambiguous writes remain pending or unknown and cannot authorize a resend.
+Retries replay the original receipt, including rejected, unsupported or unknown
+outcomes, even after another keyed operation or terminal close. Authorization
+and event expiry checks still apply. An unknown result must not be retried with
+a newly invented key.
+
+Requests without a key keep the prior content-hash operation identity on the
+opt-in routed lane and do not allocate keyed operation records. Existing live
+channels preserve their non-idempotent delivery and storage behavior, including
+when a valid optional key is supplied. This additive extension fixes the
+identical-message distinction for callers supplying keys; it makes no broader
+routed delivery-equivalence claim and does not activate production ingress.

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { IconCloseOutline16 } from './icons';
 import { Button } from './Button';
 import { usePlateFocus } from './plate';
-import { Presence, presenceAttributes } from './Presence';
+import { Presence, presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Modal.css';
 
 /**
@@ -48,6 +48,10 @@ interface ModalProps {
   readonly headless?: boolean;
   /** Additional surface class; card sizing and placement remain shared. */
   readonly placement?: string;
+  /** Preserve an editor's draft while its closed dialog is hidden and inert. */
+  readonly keepMounted?: boolean;
+  /** A fixed viewport shell with independently scrolling configuration sections. */
+  readonly layout?: 'sections';
 }
 
 export function Modal({
@@ -60,10 +64,29 @@ export function Modal({
   dismissible = true,
   headless = false,
   placement,
+  keepMounted = false,
+  layout,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
-  return (
+  const content = (
+    <ModalBody
+      onClose={onClose}
+      title={title}
+      description={description}
+      footer={footer}
+      dismissible={dismissible}
+      headless={headless}
+      placement={placement}
+      layout={layout}
+      panelRef={panelRef}
+    >
+      {children}
+    </ModalBody>
+  );
+  return keepMounted ? (
+    <RetainedModal open={open} content={content} />
+  ) : (
     <Presence>
       {open ? (
         <ModalBody
@@ -74,12 +97,31 @@ export function Modal({
           dismissible={dismissible}
           headless={headless}
           placement={placement}
+          layout={layout}
           panelRef={panelRef}
         >
           {children}
         </ModalBody>
       ) : null}
     </Presence>
+  );
+}
+
+function RetainedModal({
+  open,
+  content,
+}: {
+  readonly open: boolean;
+  readonly content: React.ReactElement<React.ComponentProps<typeof ModalBody>>;
+}) {
+  const parentExiting = usePresenceExiting();
+  const { present, exiting } = usePresence(open && !parentExiting);
+  return (
+    <ModalBody
+      {...content.props}
+      hidden={!present}
+      data-presence={exiting ? 'exiting' : 'visible'}
+    />
   );
 }
 
@@ -99,21 +141,24 @@ function ModalBody({
   headless,
   placement,
   panelRef,
+  hidden = false,
+  layout,
   'data-presence': presence,
 }: Omit<ModalProps, 'open' | 'headless' | 'dismissible'> & {
   readonly headless: boolean;
   readonly dismissible: boolean;
   readonly panelRef: React.RefObject<HTMLDivElement | null>;
   readonly 'data-presence'?: 'visible' | 'exiting';
+  readonly hidden?: boolean;
 }) {
   const exiting = presence === 'exiting';
   const close = () => {
     if (dismissible && !exiting) onClose();
   };
-  usePlateFocus(panelRef, close, !exiting);
+  usePlateFocus(panelRef, close, !exiting && !hidden);
 
   useEffect(() => {
-    if (exiting) return;
+    if (exiting || hidden) return;
     /*
      * The page behind a modal does not scroll. Without this the mask stays
      * put while the page moves under it, which reads as the dialog sliding.
@@ -123,13 +168,14 @@ function ModalBody({
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [exiting]);
+  }, [exiting, hidden]);
 
   return createPortal(
-    <div className="modal" role="presentation" {...presenceAttributes(exiting)}>
+    <div className="modal" role="presentation" hidden={hidden} {...presenceAttributes(exiting)}>
       <div className="modal__mask" aria-hidden="true" onClick={close} />
       <div
         className={['modal__card', placement ?? ''].filter(Boolean).join(' ')}
+        data-layout={layout}
         role="dialog"
         aria-modal="true"
         aria-label={title}

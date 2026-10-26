@@ -11,6 +11,11 @@ import {
 } from './connections.js';
 import { CmaegEvents, type EventOptions } from './events.js';
 import { CmaegTools } from './tools.js';
+import {
+  CmaegActivity,
+  type ChannelActivityOptions,
+  type StreamChannelActivityOptions,
+} from './activity.js';
 import type {
   ChannelCreateRequest,
   ChannelUpdateRequest,
@@ -29,6 +34,7 @@ export interface CmaegConfig extends ClientConfig {
 /** CMAEG management, custom event and tool operations. No mutation is retried automatically. */
 export class Cmaeg {
   readonly #channels: CmaegChannels;
+  readonly #activity: CmaegActivity;
   readonly #outbound: CmaegOutbound;
   readonly #connections: CmaegConnections;
   readonly #events: CmaegEvents;
@@ -40,6 +46,7 @@ export class Cmaeg {
       fetch: (input, init) => resolved.fetch(input, { ...init, redirect: 'manual' }),
     };
     this.#channels = new CmaegChannels(transport);
+    this.#activity = new CmaegActivity(transport);
     this.#outbound = new CmaegOutbound(transport);
     this.#connections = new CmaegConnections(transport);
     this.#events = new CmaegEvents(transport);
@@ -96,6 +103,12 @@ export class Cmaeg {
   }
   getChannel(id: string, options?: OperationOptions) {
     return this.#channels.getChannel(id, options);
+  }
+  getChannelActivity(id: string, options?: ChannelActivityOptions) {
+    return this.#activity.getChannelActivity(id, options);
+  }
+  streamChannelActivity(id: string, options?: StreamChannelActivityOptions) {
+    return this.#activity.streamChannelActivity(id, options);
   }
   recoverChannel(id: string, options?: OperationOptions) {
     return this.#channels.recoverChannel(id, options);
@@ -170,6 +183,11 @@ export { signWebhook, type WebhookHeaders } from './signing.js';
 export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
 export type { EventOptions } from './events.js';
 export type { GatewayStreamEvent } from './stream.js';
+export type {
+  ChannelActivityOptions,
+  StreamChannelActivityOptions,
+  ChannelActivityEvent,
+} from './activity.js';
 export type * from './types.js';
 export type {
   ConnectionOptions,

@@ -479,6 +479,12 @@ client treats it: every reference stays opaque and at most 4,096 characters, and
 a reference issued for the `default` consumer is exactly the reference a channel
 without consumers has always been issued.
 
+The reference's recipient field omits `default`; a hand-off lineage's publisher
+path explicitly includes `default` when it published a hop. These are different
+roles. Each publisher, including `default`, can appear only once in the path;
+the path has exactly one publisher per hop, with at most four hops. Accepting
+this shape does not authorize a publish or widen the reference's recipient.
+
 ## 5. Management API
 
 All management operations return `Cache-Control: no-store`. Except rekey, they use
@@ -591,6 +597,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
+| `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
+| `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -660,6 +668,10 @@ public SHA-256 hashes, exactly as for `default`.
   `default_reply`. `publish` (`{enabled,targets}`) allows hand-off events to
   other consumers. A `pending` consumer is stored before its provider binding
   exists and never receives events.
+- A profile-backed `default` consumer may publish when its policy enables it,
+  using the same channel, target and chain constraints as a named publisher.
+  It cannot target itself or an unknown consumer. This policy and sealed-lineage
+  support does not supply a `publishEvent` execution endpoint.
 - Agent key hashes are unique across all consumers, `default` included, and an
   existing agent target serves at most one consumer. An existing agent
   requires automatic finalization and cannot publish.
@@ -911,7 +923,7 @@ supports a platform before any source for it is enabled.
 | Edit | Confirmed gateway interactive cards; gated ordinary relay text edits with an enriched reference | Gated ordinary single-part relay text edits | Gated ordinary single-part Discord relay text edits; Slack/WhatsApp unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
 | Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Gated native-card buttons and single/multi choices; exact actor, chat, message, platform and current revision required | Raw-verified WhatsApp: gated reply buttons / single-choice lists with durable authority; Discord/Slack unsupported |
-| Attachments | Inbound media with relay or Bot API locators while enabled; native outbound media through the NyxID relay when enabled, otherwise links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
+| Attachments | Inbound media with relay or Bot API locators while enabled; explicit native Bot API media, or NyxID relay media when enabled; legacy attachment blocks remain links | Inbound image, file, audio and media/video with relay locators while enabled; native outbound media when enabled, otherwise links | Discord/WhatsApp raw-verified inbound media and gated native outbound media; trusted-normalized input and Slack retain text/link behavior |
 
 Ordinary replies go through NyxID's generic `/api/v1/channel-relay/reply`;
 explicit native thread replies use the dedicated thread endpoint below. NyxID
@@ -1294,6 +1306,14 @@ Keepalive comments are not events. A slow consumer receives terminal
 There is no durable replay or Last-Event-ID contract. Disconnect removes the
 waiter without cancelling the admitted turn.
 
+On the durable routed lane, repeating an already-admitted event with
+`?mode=stream` returns the normal 202 accepted JSON body when the current request
+does not own the original primary waiter. This includes concurrent duplicate
+requests and retrying an event first submitted asynchronously. It does not
+start another provider turn, replace the original waiter, or promise replay.
+Only the request whose waiter was retained by the winning admission receives
+the live 200 SSE response.
+
 A `{type:"result_webhook",url,hmac_key_id}` sink receives structured CloudEvents
 of type `cmaeg.response.message`, `cmaeg.response.completed` or
 `cmaeg.response.failed`, with `specversion:"1.0"`, generated `id`, UTC `time`,
@@ -1315,6 +1335,12 @@ capacity includes `Retry-After: 2`. Custom authentication failure is 401.
 ## 7. Activity and partitioning
 
 A full activity is `{schema_version:1,event_id,kind,actor,conversation,occurred_at,source,routing?}`.
+`occurred_at` is a normalized event timestamp. It uses the source timestamp when
+supplied; custom CloudEvents without `time` use the gateway time at normalization.
+The fallback leaves the original CloudEvent's `time` absent, so `occurred_at`
+alone does not establish that a timestamp came from the source. In channel
+Activity snapshots, `received_at` separately records gateway receipt.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native
@@ -1540,11 +1566,26 @@ A transport success alone does not mean platform delivery succeeded.
 
 | Name | REST | MCP arguments |
 | --- | --- | --- |
-| `replyToEvent` | POST `/v1/events/{event_ref}/replies`, body message | `{event_ref,message}` |
+| `replyToEvent` | POST `/v1/events/{event_ref}/replies`, body message, optional `Idempotency-Key` header | `{event_ref,message,idempotency_key?}` |
 | `updateMessage` | POST `/v1/messages/{message_ref}/update`, body message | `{event_ref,message_ref,message}`; same event or verified callback for this exact card |
 | `sendTyping` | POST `/v1/events/{event_ref}/typing`, no body | `{event_ref}` |
 | `readEventContext` | GET `/v1/events/{event_ref}/context` | `{event_ref}` |
 | `readEventAttachment` | GET `/v1/events/{event_ref}/attachments/{index}` | `{event_ref,index,view?,page?}` |
+
+The direct-reply key is optional and accepts 1–128 visible ASCII bytes; REST
+rejects duplicate or malformed `Idempotency-Key` headers. On the durable routed
+lane, the key names one operation under the original target. The same key and
+canonical message replays its retained receipt; changed content returns
+`409 reply_idempotency_conflict` before delivery. Different keys may intentionally
+send identical content. The guard reserves at most 64 keyed operations before
+any effect or operation-record creation; a new key above this bound returns
+`429 reply_operation_limit`, while existing receipts remain replayable. These
+records use the original target's exact retention and never extend event
+capabilities. Pending or unknown outcomes fail closed; callers must preserve the
+key, and the server never invents a new retry identity. Receipts persist before
+shared-guard settlement, permitting reconciliation after a crash. No-key routed
+requests retain their earlier content-hash behavior. Legacy live replies retain
+their existing delivery/storage semantics even with a valid optional key.
 
 Native MCP preserves the four original names above, and lists
 `readEventAttachment` only when media is enabled. NyxID's OpenAPI discovery
@@ -2018,6 +2059,23 @@ not authenticate the Telegram sender as that owner.
 
 ## 9. Provider contract
 
+An operator may explicitly configure the CMA Responses v2 durable recovery
+dialect through `paths.recovery.response` and `paths.recovery.events`. This is
+optional and is not implied by ordinary Responses POST support. Recovery GETs
+authenticate with the current consumer agent key and address only the response
+ID already accepted into the gateway's sealed execution journal. The snapshot's
+native `conversation.id` identifies the CMA Agent; it is not the gateway's
+external conversation alias. Exact command metadata and any retained native
+Agent ID must also match.
+
+The replay response binds `x-cma-response-id` to that response. Durable frames
+carry matching numeric SSE IDs and `sequence_number` values with no gaps or
+duplicates after the requested `starting_after` cursor. Observation `error`
+frames have no SSE ID and cannot change the command outcome or advance the
+gateway's durable cursor. Recovery support grants no right to repeat a POST.
+See [recovery transport operations](CMAEG_Operations.md#provider-response-recovery-transport)
+for configuration, bounds and staged activation.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
@@ -2310,6 +2368,17 @@ when no committed/tool answer exists. A confirmed or unknown tool reply suppress
 later automatic answer delivery. A failure notice is attempted once unless a tool
 has already replied. Typing/acknowledgement alone does not mark an answer delivered.
 
+Delivery progress and suppression belong to the authenticated `(channel, event,
+consumer)` identity. A named consumer's tool reply, completion, failure or timer
+cannot suppress another consumer serving the same source event. Stream delivery
+checks the launch consumer and conversation against its sealed event reference
+before using that state. An omitted consumer and an internal `default` launch
+use the unchanged default lane. The existing eight workers, fixed queues and
+8,192-state cap per worker include all consumers; routing does not multiply those
+caps. Route pacing and single-use reply-token claims remain shared. This isolation
+does not enable fanout dispatch, change consumer reply destinations or add shared
+Sync-stream finalization; those require the routed execution contract.
+
 NyxID relay sends on every platform are paced at least three seconds apart per
 route. The first send may consume an unexpired single-use reply token; subsequent
 intentional sends use the channel key. Token selection happens after pacing; a
@@ -2447,6 +2516,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
+| `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
+| `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `PUT /v1/channels/{channel_id}` | `updateChannel` |
 | `POST /v1/channels/{channel_id}/outbound-messages` | `prepareOutboundMessage` |
 | `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` | `getOutboundMessage` |
@@ -2735,11 +2806,13 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. The capability is absent while
-`CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, on native Telegram sources and custom
-events, and on relay platforms outside Telegram, Lark/Feishu, Discord and WhatsApp.
-Disabled or unsupported delivery returns `delivery.outcome: "unsupported"`
-before any network send. The field does not enable a new native connection.
+before using native attachments. Native Telegram and native Discord advertise
+this capability independently of the NyxID-specific relay gate. For relay
+sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
+always absent on custom events and relay platforms outside Telegram,
+Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
+`delivery.outcome: "unsupported"` before any platform send. The field does not
+enable a new native connection.
 
 Platform presentation remains adapter-specific. NyxID's Lark/Feishu adapter
 uploads images as image messages and the other kinds, including audio and video,
@@ -2766,26 +2839,52 @@ are accepted. Sources are public HTTPS URLs up to 8192 bytes, or
 `{"type":"base64","data":"aGVsbG8="}` with standard padded base64. The total
 decoded inline data is at most 65536 bytes across the request. The existing
 128 KiB tool request limit still applies to text, blocks, media and JSON together.
-URL downloads use NyxID's configured byte limit; clients must not assume that
-every deployment permits the maximum. Filename and MIME type are optional and
+Relay URL downloads use NyxID's configured byte limit; clients must not assume
+that every deployment permits the maximum. Native Telegram and Discord prepare
+all attachments under a shared 30-second deadline and an aggregate 8 MiB cap;
+inline bytes count toward that cap. Filename and MIME type are optional and
 at most 255 bytes; filenames are a single component, MIME types have no parameters.
 Captions are optional and at most 1024 bytes. Controls in these metadata fields
 are rejected. Media-only replies are valid and do not manufacture placeholder text.
 
-The gateway validates the source before claiming the single-use reply token.
-Userinfo, fragments and private IP literals are rejected. NyxID revalidates and
-pins public DNS addresses at fetch time with no proxy or redirects. A caller's
+The gateway validates relay media sources before claiming the single-use reply
+token. Userinfo, fragments and private IP literals are rejected. NyxID revalidates
+and pins public DNS addresses at fetch time with no proxy or redirects. Native
+Telegram and Discord use CMAEG's bounded materializer with the same public-DNS,
+pinned-address, no-proxy and no-redirect policy, and send no platform credentials
+to the media origin. Platform file IDs and cross-platform resource locators are
+not accepted outbound sources; they must not be copied from inbound locators. A caller's
 URL or bytes never become a destination override: the original sealed event or
 durable reply target still determines the conversation, route, consumer and
 optional native thread. Explicit native thread sends use the dedicated endpoint.
 
-One logical media reply, including its text, is sent in one request even when
-legacy ordinary-text chunking remains enabled. The overall exchange is bounded
+One logical relay media reply, including its text, is sent in one NyxID request
+even when legacy ordinary-text chunking remains enabled. The overall exchange is bounded
 at 60 seconds and the tool waits at most 65 seconds. A 429, timeout, partial
 delivery, missing platform receipt or invalid receipt is not evidence that
 nothing was sent; CMA does not retry it automatically or downgrade it to a link.
 For retryable client requests, use the durable reply-target API with the same
 idempotency key. An uncertain claim remains uncertain and is never resent.
+
+Native Telegram first prepares every attachment and multipart body before any
+platform write, then sends rendered text parts followed by the attachments in
+request order. Image, file, audio and video use `sendPhoto`, `sendDocument`,
+`sendAudio` and `sendVideo` respectively. Each file keeps its filename, MIME and
+plain caption; media-only requests do not send placeholder text. The current
+native source, bot credential and the token's bot-ID prefix must match the sealed
+bot. Each effect independently passes the delivery gate and route pacing, and
+uses only the sealed chat and forum topic. A successful response must identify
+the exact chat, topic and a positive message ID. The whole native media batch is
+bounded at 60 seconds, including preparation and pacing; existing transport
+request timeouts and the routed delivery authority window can end it earlier.
+This capability does not widen a routed lease or send window. Native media calls
+are not automatically retried: an explicit first-call 429 is typed rate-limited,
+while a lost or malformed response is unknown. Any failure after a confirmed
+part is `unknown`/`partial_delivery`; a batch is not atomic. Confirmed media
+batches return a platform message ID but no editable/effect-bearing message
+reference. The existing native text, interactive and effect paths are unchanged.
+These adapter semantics are tested against local HTTP fixtures; this is not an
+assertion of live Telegram acceptance or deployment.
 
 Native attachments cannot be combined with interactive controls in this
 contract, and message updates reject attachments before any edit. Existing text,
@@ -3148,3 +3247,150 @@ non-deleted member. CMA's current direct sends are text/card messages.
 
 Official contracts: https://core.telegram.org/bots/api#deletemessage and
 https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).
+
+
+## Native Discord source reader and durable intake
+
+The additive source `{"type":"discord","bot_id":"<snowflake>","intents":37377,
+"admission":{"type":"all"}}` names a CMAEG-owned Discord Gateway connection.
+It is distinct from `nyxid_relay` with `platform=discord`; native socket events
+must never be wrapped in a NyxID callback or a custom-producer authority. Its
+stable source slot is `discord`, and its Activity source is
+`{"type":"discord","bot_id":"<snowflake>"}`. Existing source serializations
+are unchanged. At most one native Discord source is allowed per channel, within
+the existing eight-source reader limit. Native automated-bot mention admission
+is not supported by this slice and is refused.
+
+`credentials.discord_bot_token` is accepted by create and credential-patch
+requests, retained only in the encrypted channel blob, and omitted from public
+channel responses and diagnostics. An absent token field is omitted from old
+blobs and creation fingerprints. The source requires MESSAGE_CONTENT plus guild
+or direct-message intents; unsupported intent bits and malformed bot IDs or
+credentials are refused. `CMAEG_NATIVE_DISCORD_WRITES_ENABLED`, default `false`,
+is independent of dynamic source writes. It gates introduction and changes to
+native source metadata or its credential; unchanged retained settings and removal
+remain possible while the flag is off. All serving and rollback readers must
+support the shape before enabling new writes.
+
+Read-only connection acquisition calls Discord `GET /users/@me` and
+`GET /gateway/bot` using the sealed credential at the fixed Discord API origin.
+The bot must match the configured ID and `bot=true`; responses, redirects and
+Gateway origins are bounded and validated. Only single-shard bots are supported.
+These reads do not publish a message, register a webhook or create a resource.
+
+The concrete native journal uses encrypted CAS records, with a global per-bot
+source binding, owner, monotonically increasing worker fence and thirty-second
+lease. A connection renews its lease every ten seconds without blocking socket
+heartbeats; authority loss stops it. Every admission rereads the sealed channel
+without the process cache. Credential/source revision changes fence the old
+worker. Bot transfer to another channel is not implicit, even after lease expiry.
+
+A fresh connection reserves an Identify against Discord's observed remaining
+session-start quota before opening its socket. Reservations survive process
+restarts and uncertain outcomes, and bucket zero has a five-second minimum
+spacing. Resume requires the exact stored checkpoint and spends no Identify.
+A journal authorizes exactly one connection attempt. Quota exhaustion is an
+explicit refusal; a fresh observation cannot restore already reserved quota
+within its reset window.
+
+MESSAGE_CREATE is persisted in an immutable, encrypted native inbox before the
+resume checkpoint advances. Native source record + bot ID + Discord message ID
+is its deduplication identity, independent of Gateway session and sequence.
+Bounded chunks preserve the raw native event and the public channel/routing
+snapshot; no bot or provider credential is copied into that snapshot. A replay
+restores the original inbox record, including after a policy edit. Lost write
+responses are resolved by reading the exact immutable record. Partial chunks
+cannot advance the checkpoint. Retention is seven days from the message's native
+snowflake time; expired native IDs are refused after retention instead of being
+re-executed as new messages.
+
+`discord::InboxReader::load` restores the exact immutable inbox manifest/chunks,
+checks their hash, native source custody and retention, and yields either a
+`VerifiedInboxLaunch` or an explicit admission refusal. The verified result contains
+the `LaunchRequest`, exact authenticated stored payload bytes (serialized dispatch
+plus public channel snapshot, bounded to 2 MiB; not original WebSocket wire octets),
+and the immutable first durable receipt time. Routing admission must use those
+same stored bytes on every retry. Event authority expires thirty minutes after
+that receipt, capped by retention, and cannot be renewed by reloading the inbox.
+Loads after that expiry are refused while retained records remain available for
+inspection. Older, unactivated native inbox records without the receipt timestamp
+are explicitly refused; the reader never substitutes its current time.
+It normalizes real native
+MESSAGE_CREATE facts rather than constructing a relay callback: bots/webhooks,
+system messages, edits, malformed identities and unsupported content are refused.
+Guild membership comes from the native guild ID; mention and exact reply evidence
+use the same strict factual helpers as raw relay verification. Sender/chat/group
+admission runs before provider execution. Without proven thread metadata a thread
+partition is explicitly refused. Event identity is `discord:<bot_id>:<message_id>`.
+The original profile, routing and partition snapshot is retained; current source
+or credential revocation prevents replay, and consumer credentials must still
+match that snapshot. Application code must durably admit this launch once and
+recover its existing routing plan rather than create a new plan on retry.
+
+The native inbox dispatcher uses a durable-only admission entry point. Missing
+routing, unsupported delivery and oversized stored payloads are refused before
+any provider execution; they never fall back to the legacy launcher. Its bounded
+record scan authenticates each record kind, owner, manifest and original public
+channel handle, and restores current source authority without a cached definition.
+An immutable acknowledgement is written only after a durable `Admitted` result or
+a definite refusal. Lost acknowledgement responses are resolved by reading that
+exact acknowledgement; retrying an absent acknowledgement restores the original
+admission and stored source bytes. Transient failures stay pending, and elapsed
+reply authority is recorded as expired without renewing it or erasing retained
+intake data. Routed execution recovery continues independently after admission.
+
+Native runtime activation is separate from authoring: `CMAEG_NATIVE_DISCORD_ENABLED`
+defaults to false, and `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults to empty.
+This staged rollout accepts at most 64 explicit canonical channel records already
+selected for durable routed recovery. Without activation and selection, no native
+worker, scanner or Discord request starts. Each source must retain its original
+ready public channel identity and an explicit routing snapshot; normal-user source
+auto-discovery and native single-default-consumer planning are separate rollout work.
+Each supervised attempt reacquires its fenced lease and stored Resume checkpoint.
+Retryable disconnects back off and preserve Discord's Gateway and discovery REST
+cooldowns; terminal authentication/configuration errors wait for a changed source
+revision. Uncached eligibility checks stop an old connection when its source is
+revoked, rotated or loses routing. Service shutdown stops native intake before
+draining providers and deliveries; interrupted inbox work remains recoverable.
+
+Native replies seal `{"type":"discord","bot_id":"77","channel_id":"99",
+"message_id":"700"}` inside the event reference. They contain no relay token.
+The current channel must still configure that bot and its encrypted credential.
+Before any native write or inbound metadata retrieval, `/users/@me` binds the
+current token revision to that exact bot with `bot=true`; only the token hash and
+public bot ID are cached for at most five minutes. A rotated token for another
+bot is refused before sending, even if that bot can access the same channel.
+REST text sends target Discord API v10, split at 2,000 UTF-16 code units, disable
+all automatic mentions including replied-user pings, and use the existing send
+gate and route pacing. Explicit image/file/audio/video attachments support public
+HTTPS URLs and standard base64. The former use public-address resolution with
+pinned connections and no redirects; the latter retain the shared 64 KiB inline
+aggregate bound. At most four files and 8 MiB of aggregate prepared bytes are
+accepted. Multipart metadata preserves filenames, MIME types and descriptions.
+Native media delivery does not depend on NyxID relay-media deployment flags.
+Native controls, message edits, deletion and reactions remain unsupported;
+structured blocks use the established text fallback.
+
+Native inbound media uses `{"type":"discord","channel_id":"99",
+"message_id":"700","attachment_id":"500"}`. This nonsecret locator is
+bound into the activity digest. Every retrieval verifies the exact native reply
+address and current bot custody, fetches that exact message's current attachment
+metadata, then accepts only an official Discord CDN attachment URL whose channel
+and attachment IDs match. The bot credential is sent only to the fixed Discord
+API origin, never to the CDN. Response size, download size and deadlines are
+bounded; redirects and arbitrary origins are refused. Removing the source or
+credential revokes subsequent downloads. The existing inbound-media flag and
+per-consumer media audience still apply.
+
+REST 429 and exhausted quota headers apply a conservative cooldown. Ambiguous
+write transport failures, lost/malformed success responses and partial multi-part
+delivery remain `unknown`; this adapter never retries an uncertain send. Local
+HTTP fixtures cover native text/multipart delivery, admission, immutable inbox
+restoration, custody, CDN origin/identity restrictions, caps, rate limits and lost
+responses without sending messages to any external user.
+
+These readers and adapters do **not** themselves activate application startup or
+schedule inbox records. Source discovery/reconnection/revocation, durable inbox
+scheduling and routed recovery must be composed before enabling native messaging.
+The source write flag stays off in the deployment manifest. Relay Discord
+behavior and retained serialization remain compatible.

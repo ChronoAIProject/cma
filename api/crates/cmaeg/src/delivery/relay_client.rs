@@ -115,6 +115,7 @@ pub struct RelayClient {
     consumer_interactions: bool,
     telegram_effects: bool,
     pub telegram: crate::telegram::TelegramClient,
+    pub discord: crate::discord::DiscordRest,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
 #[derive(Deserialize)]
@@ -231,6 +232,7 @@ impl RelayClient {
             telegram_effects: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
+            discord: crate::discord::DiscordRest::new()?,
         })
     }
     pub async fn send(

@@ -82,7 +82,7 @@ describe('the channels table', () => {
   });
 });
 
-it('returns from a channel to the table through its breadcrumb', async () => {
+it('returns from a channel to the welcome screen through its breadcrumb', async () => {
   vi.stubGlobal(
     'fetch',
     vi.fn().mockResolvedValue(
@@ -114,13 +114,15 @@ it('returns from a channel to the table through its breadcrumb', async () => {
     />,
   );
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Build assistant' }));
+  await user.click(await screen.findByRole('button', { name: /^Build assistant/ }));
   const detail = screen.getByRole('region', { name: 'Build assistant details' });
-  expect(within(detail).getByText(endpoints.custom_event_url)).toBeVisible();
+  await user.click(await screen.findByRole('button', { name: /Channel: Build assistant/ }));
+  expect(screen.getByText(endpoints.custom_event_url)).toBeVisible();
   // Read-only access sees the channel but none of the commands it cannot use.
   expect(screen.queryByRole('button', { name: 'Edit channel' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Close' }));
   await user.click(within(detail).getByRole('link', { name: 'Channels' }));
-  expect(screen.getByRole('table', { name: 'Your channels' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
   expect(detail).not.toBeVisible();
 });

@@ -162,6 +162,9 @@ pub struct CredentialPatch {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Discord bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_bot_token: Option<Secret>,
     /// Native Telegram bot credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_bot_token: Option<Secret>,
@@ -181,6 +184,9 @@ pub struct CredentialsRequest {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Discord bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_bot_token: Option<Secret>,
     /// Native Telegram bot credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_bot_token: Option<Secret>,

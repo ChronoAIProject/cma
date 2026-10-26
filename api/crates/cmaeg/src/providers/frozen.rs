@@ -1,0 +1,125 @@
+//! Direct, bounded submission of an already frozen request. No detached start,
+//! input reconstruction or automatic retry is allowed at this boundary.
+use super::{client::acquire, parse_sse, ProviderClient, ProviderError, RecoveryIdentity};
+use cmaeg_core::{
+    channel::Secret,
+    ids::{IdempotencyKey, ProviderSlug},
+};
+use futures_util::StreamExt;
+use serde_json::Value;
+use std::{collections::BTreeMap, time::Duration};
+
+pub(crate) enum FrozenSubmission {
+    Accepted(String),
+    NotAccepted,
+    Rejected(String),
+    Unknown,
+}
+impl ProviderClient {
+    pub(crate) async fn submit_frozen(
+        &self,
+        provider: &ProviderSlug,
+        bytes: Vec<u8>,
+        idempotency: &IdempotencyKey,
+        metadata: &BTreeMap<String, String>,
+        credential: &Secret,
+    ) -> FrozenSubmission {
+        let Ok(handle) = self.handle(provider) else {
+            return FrozenSubmission::Rejected("provider_not_configured".into());
+        };
+        if handle.entry.paths.recovery.is_none() {
+            return FrozenSubmission::Rejected("provider_recovery_required".into());
+        }
+        if bytes.len() > 1024 * 1024 {
+            return FrozenSubmission::Rejected("provider_body_too_large".into());
+        }
+        let Ok(url) = handle.entry.url("responses", &[]) else {
+            return FrozenSubmission::Rejected("provider_path_invalid".into());
+        };
+        let Ok(_permit) = acquire(&handle.inflight).await else {
+            return FrozenSubmission::NotAccepted;
+        };
+        // Any timeout after entering the transport is uncertain, even if no
+        // response headers arrived. Cancellation drops this awaited future.
+        let deadline = self.request_timeout.min(Duration::from_secs(20));
+        tokio::time::timeout(deadline, async {
+            let observed = match handle
+                .responses
+                .send(url, credential.as_str(), idempotency.as_str(), bytes, None)
+                .await
+            {
+                Ok(response) => response,
+                Err(_) => return FrozenSubmission::Unknown,
+            };
+            let response = match super::recovery::checked(observed.response).await {
+                Ok(response) => response,
+                Err(ProviderError::Busy { .. }) => return FrozenSubmission::Unknown,
+                // This precise CMA v2 refusal precedes durable admission.
+                Err(ProviderError::Rejected { status: 400, code }) if code == "invalid_json" => {
+                    return FrozenSubmission::Rejected(code)
+                }
+                Err(_) => return FrozenSubmission::Unknown,
+            };
+            let Some(response_id) = response
+                .headers()
+                .get("x-cma-response-id")
+                .and_then(|header| header.to_str().ok())
+                .map(str::to_owned)
+            else {
+                return FrozenSubmission::Unknown;
+            };
+            if response
+                .headers()
+                .get_all("x-cma-response-id")
+                .iter()
+                .count()
+                != 1
+                || response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.split(';').next())
+                    .map(str::trim)
+                    != Some("text/event-stream")
+            {
+                return FrozenSubmission::Unknown;
+            }
+            let identity = RecoveryIdentity {
+                response_id: response_id.clone(),
+                native_agent_id: None,
+                metadata: metadata.clone(),
+            };
+            let mut total = 0usize;
+            let wire = response.bytes_stream().map(move |chunk| {
+                let chunk = chunk.map_err(|_| "transport")?;
+                total = total.saturating_add(chunk.len());
+                if total > 1024 * 1024 {
+                    return Err("acceptance prefix exceeds byte limit");
+                }
+                Ok(chunk)
+            });
+            let mut frames = Box::pin(parse_sse(wire));
+            let Some(Ok(frame)) = frames.next().await else {
+                return FrozenSubmission::Unknown;
+            };
+            let Ok(value) = serde_json::from_str::<Value>(&frame.data) else {
+                return FrozenSubmission::Unknown;
+            };
+            if frame.id.as_deref() != Some("0")
+                || frame
+                    .event
+                    .as_deref()
+                    .is_some_and(|event| event != "response.created")
+                || value["type"] != "response.created"
+                || value["sequence_number"].as_u64() != Some(0)
+                || value["response"]["status"] != "queued"
+                || identity.snapshot(value["response"].clone()).is_err()
+            {
+                return FrozenSubmission::Unknown;
+            }
+            FrozenSubmission::Accepted(response_id)
+        })
+        .await
+        .unwrap_or(FrozenSubmission::Unknown)
+    }
+}

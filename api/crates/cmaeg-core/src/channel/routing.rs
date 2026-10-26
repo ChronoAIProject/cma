@@ -89,10 +89,12 @@ pub fn default_receives_all(
         return true;
     };
     let includes_default = |targets: &[ConsumerId]| targets.iter().any(ConsumerId::is_default);
-    let chat = def
-        .sources
-        .iter()
-        .any(|source| matches!(source, Source::Telegram { .. } | Source::NyxidRelay { .. }));
+    let chat = def.sources.iter().any(|source| {
+        matches!(
+            source,
+            Source::Telegram { .. } | Source::Discord { .. } | Source::NyxidRelay { .. }
+        )
+    });
     let custom = def
         .sources
         .iter()
@@ -281,8 +283,9 @@ pub enum ReplyLabel {
     Never,
 }
 
-/// The channel's default reply destination. Never sealed: replies resolve it
-/// from the current definition when a message is sent.
+/// The channel's default reply destination. Routed preparation pins its exact
+/// nonsecret address; sends require the current definition to still authorize
+/// that address and resolve credentials separately.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum DefaultReply {

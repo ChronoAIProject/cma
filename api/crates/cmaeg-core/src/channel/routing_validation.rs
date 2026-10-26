@@ -73,7 +73,7 @@ impl RoutingPolicy {
                 Source::Telegram { bot_username, .. } | Source::NyxidRelay { bot_username, .. } => {
                     bot_username.as_deref().map(str::to_ascii_lowercase)
                 }
-                Source::Custom { .. } => None,
+                Source::Custom { .. } | Source::Discord { .. } => None,
             })
             .collect();
         let known: BTreeSet<&ConsumerId> = self.consumers.iter().map(|c| &c.id).collect();

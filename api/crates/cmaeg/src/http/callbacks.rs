@@ -97,9 +97,9 @@ pub async fn callback(
 
 /// Verifies and normalizes one relay callback into an admitted chat turn.
 ///
-/// Taking `request` by value means `parts`, `body`, the verified envelope and
-/// every parsed copy are dropped when this returns, before the caller waits for
-/// acceptance. Every early return is the handler's final response.
+/// Headers, the verified envelope and parsed copies are dropped when this
+/// returns. Selected durable ingress retains bounded authenticated wire bytes
+/// through commit; legacy ingress releases its body before acceptance waits.
 async fn admit_callback(
     state: &IngressState,
     channel_id: &str,
@@ -349,7 +349,9 @@ async fn admit_callback(
     };
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
+    let routed_source = state.capture_routed(&request, &body, true);
     Ok(AdmittedChat {
+        routed_source,
         request,
         callback,
         route,

@@ -14,6 +14,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub activity: Arc<crate::activity::ActivityStore>,
     pub resolver: super::resolver::ChannelResolver,
     pub readiness: crate::http::readiness::Readiness,
     pub providers: Arc<ProviderClient>,
@@ -38,6 +39,7 @@ pub struct ManagementState {
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
+    pub native_discord_writes_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
     pub outbound_relay: Option<crate::delivery::relay_client::RelayClient>,
     /// Receives every record head management writes or deletes; a no-op
@@ -62,6 +64,7 @@ impl ManagementState {
             multi_consumer: self.multi_consumer_writes_enabled,
             dynamic_sources: self.dynamic_sources_writes_enabled,
             relay_raw_verification: self.relay_raw_verification_writes_enabled,
+            native_discord: self.native_discord_writes_enabled,
         }
     }
 
@@ -106,6 +109,10 @@ impl ManagementState {
             index.clone(),
         );
         Self {
+            activity: Arc::new(crate::activity::ActivityStore::new(
+                (*records).clone(),
+                config.master_keys.clone(),
+            )),
             resolver,
             readiness: crate::http::readiness::Readiness::initialized(),
             providers,
@@ -125,6 +132,7 @@ impl ManagementState {
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
+            native_discord_writes_enabled: false,
             outbound_messages_writes_enabled: false,
             outbound_relay: None,
             index,

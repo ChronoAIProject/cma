@@ -132,16 +132,69 @@ async fn mcp_update_requires_both_references_to_name_the_same_event() {
 const TOOLS_LIST_GOLDEN: &str = include_str!("../fixtures/mcp-tools-list.json");
 
 #[tokio::test]
-async fn tools_list_matches_the_pre_refactor_golden_document() {
+async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     let app = App::new().await;
-    let list = app
+    let mut list = app
         .rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
         .await
         .json::<Value>()
         .await
         .unwrap();
+    assert_tools_with_reviewed_extensions(&mut list["result"]);
+}
+
+/// Preserve recorded schemas apart from the optional key and native media docs.
+pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
-    assert_eq!(list["result"], golden);
+    for (tool, previous) in list["tools"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(golden["tools"].as_array().unwrap())
+    {
+        let media_description =
+            &mut tool["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
+        let previous_description =
+            &previous["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
+        assert!(
+            media_description == previous_description
+                || media_description
+                    == "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy."
+        );
+        *media_description = previous_description.clone();
+        let key = tool["inputSchema"]["$defs"]["ReplyArguments"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("idempotency_key")
+            .unwrap();
+        assert_eq!(key["minLength"], 1);
+        assert_eq!(key["maxLength"], 128);
+        assert_eq!(key["pattern"], "^[!-~]+$");
+        if tool["name"] == "replyToEvent" {
+            let direct = tool["inputSchema"]["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("idempotency_key")
+                .unwrap();
+            assert_eq!(direct, key);
+            assert_eq!(
+                tool["inputSchema"]["required"],
+                json!(["event_ref", "message"])
+            );
+            let description = tool["description"].as_str().unwrap();
+            for phrase in [
+                "keep the same key and message",
+                "new key for a new send",
+                "different content is refused",
+                "Legacy events",
+            ] {
+                assert!(description.contains(phrase));
+            }
+            assert_eq!(tool["annotations"]["idempotentHint"], false);
+            tool["description"] = previous["description"].clone();
+        }
+    }
+    assert_eq!(*list, golden);
 }
 
 #[tokio::test]

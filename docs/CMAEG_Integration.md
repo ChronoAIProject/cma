@@ -30,6 +30,22 @@ bridge remains at `/api/event-gateway`. External REST and MCP clients use bearer
 or channel credentials directly; the browser-cookie bridge is not a general API
 proxy. The public OpenAPI document advertises the full canonical `/v1` base.
 
+The browser bridge also permits the editor's exact capability/connection list
+reads, routing update, and outbound-message preparation, status, cancellation
+and send operations. These retain the same origin check for mutations and the
+Gateway's owner and operation permission checks; arbitrary service routes and
+connection creation are not exposed by that bridge.
+
+Owner-authorized Channel Activity uses `GET /v1/channels/{channel_id}/activity`
+and its `/stream` SSE companion. The browser bridge allows those exact read
+routes and forwards SSE immediately, including `Last-Event-ID` on reconnect.
+It never buffers the feed until completion. It checks the retained browser
+credential before releasing each chunk, strips cookies and identity headers,
+and bounds each connection by the existing 125-second transport lifetime.
+Clients reconnect and atomically apply the server's latest activity snapshot;
+no periodic history polling is needed.
+
+
 Existing `https://bot-gateway.chrono-ai.fun` API, webhook and setup URLs continue
 to work. Keep retained callback URLs and signatures unchanged during migration;
 an installed Telegram webhook on the old host is preserved. Newly generated
@@ -46,6 +62,67 @@ The proxy already maps to the gateway's `/v1` base. For example, direct
 NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
+
+## Live channel activity
+
+`GET /v1/channels/{channel_id}/activity` reads the owner's recent channel
+activity immediately. Verified incoming events are recorded before provider
+launch, so opening the channel after sending an event does not depend on an
+in-memory console queue or a refresh interval. The response is
+`{items,cursor,retention_days,limit,has_more}`. It contains at most 50 events
+across the current and previous six UTC days; the encrypted byte budget may
+retain fewer. `has_more=true` explicitly indicates truncation. This is recent
+operational activity, not a complete audit history.
+
+Native Discord receipts become visible after durable inbox persistence, before
+dispatch capacity or provider execution. Inbox recovery preserves that original
+receipt time, including when the reply capability has expired; recording the
+receipt never renews the capability or starts expired work.
+
+For live updates, connect to
+`GET /v1/channels/{channel_id}/activity/stream`. Each SSE `activity` event carries
+a complete replacement snapshot with the same shape; its `id` is the opaque
+cursor. Every connection sends the current snapshot first. Reconnect with
+`Last-Event-ID` or the `cursor` query parameter. A cursor older than retention
+receives an SSE `reset` event containing the current full snapshot. Apply each
+snapshot atomically. The service subscribes before reading, and commits changes
+before publishing update notifications. Local commits notify the stream
+immediately. While connected, a one-second server-side consistency refresh also
+observes commits from another Gateway process during rolling deployment; unchanged
+cursors do not emit duplicate activity frames. The refresh interval excludes
+record/authentication latency and does not replace normal immediate notifications.
+With the configured Gateway-owned Mongo store, unchanged refreshes use one indexed
+metadata query for the seven bucket versions, plus the channel ownership check;
+they do not load or decrypt the complete snapshots. No client polling is required.
+
+Activity names the source, actor, source conversation/thread, selected consumer,
+provider and provider conversation. Consumer display names and native agent IDs
+are present only when recorded authority supplies them. `occurred_at` is the
+normalized event timestamp: the source timestamp when supplied, or the gateway
+time at normalization for custom CloudEvents without `time`. The fallback leaves
+the original CloudEvent's `time` absent; `occurred_at` alone does not establish
+that a timestamp came from the source. `received_at` is the gateway's receipt
+timestamp.
+`dispatched_at` starts an attempt, `accepted_at` records actual provider
+acceptance, `produced_at` records committed response output, and `completed_at`
+records terminal response observation or recovered processing completion.
+`failed` means a provider reported failure or incomplete output. A completed
+processing checkpoint alone never proves a successful response: recovery retains
+the recorded terminal outcome, or reports `unknown` when that evidence is absent.
+Missing evidence remains null.
+
+Delivery entries identify their origin/default destination and recorded
+recipient. Platform confirmation and local HTTP buffering are distinct:
+`outcome=buffered` has no `confirmed_at`, while a confirmed platform or webhook
+receipt has one. Each legacy Custom HTTP webhook keeps its own result, including
+mixed success and failure. Webhook identities expose the destination origin,
+excluding credentials, path, query and fragments. Message bodies, raw attachment
+locators and channel credentials are excluded from activity snapshots.
+
+Reads and streams use the same owner authorization as channel management.
+Streams revalidate their credential and channel access before updated snapshots
+under the existing authentication cache policy, and reconnect after a bounded
+connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 ## Choose your integration
 
@@ -280,10 +357,19 @@ JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 | Native tool | Arguments | Purpose |
 | --- | --- | --- |
 | `readEventContext` | `{event_ref}` | Read full activity and actual transport capabilities |
-| `replyToEvent` | `{event_ref,message:{text}}` | Send a reply |
+| `replyToEvent` | `{event_ref,message:{text},idempotency_key?}` | Send a reply |
 | `updateMessage` | `{event_ref,message_ref,message:{text}}` | Edit when supported |
 | `sendTyping` | `{event_ref}` | Typing indicator when supported |
 | `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page, or get a single-use download command; listed only when media is enabled |
+
+For durable routed replies, pass a stable `idempotency_key` (1–128 visible ASCII
+bytes); the REST equivalent is one optional `Idempotency-Key` header with the
+unchanged outbound-message body. Keep the key and message unchanged on retries.
+Use a new key for an intentional new send, including identical content. Changed
+content under an existing key conflicts before delivery. At most 64 keyed
+operations are retained per original target, until its original expiry; existing
+keys remain replayable at that bound. Unknown receipts do not authorize retrying
+with a new key. Legacy live events retain their existing non-idempotent behavior.
 
 `readEventAttachment` returns a text item with the view JSON followed by MCP
 image items, and no `structuredContent`. In code mode the model must call
@@ -541,3 +627,20 @@ terminal SSE/webhook outcomes, wrong-key rejection and context retrieval after a
 replica restart. `POST /channels/{channel_id}/test` runs a real provider turn; use
 a dedicated channel. Channel updates and deletes require the current
 `expected_version`; see the protocol for their exact request shapes.
+
+### Native Telegram outbound attachment verification
+
+Native Telegram context now advertises the existing `native_media` capability
+for explicit `native_attachments`, independently of the NyxID relay media flag.
+The four kinds map to Bot API `sendPhoto`, `sendDocument`, `sendAudio` and
+`sendVideo`; sources remain public HTTPS or bounded canonical base64. Legacy
+attachment blocks still render as links. No new deployment configuration,
+connection, native file-ID reuse or media-edit authority is introduced.
+
+Local HTTP fixtures exercise actual multipart transport for every method,
+filename/MIME/caption and forum-topic preservation, URL and inline bytes,
+preparation-before-write, aggregate byte limits, unsafe URL rejection,
+wrong destination receipts, 429/5xx, response loss/truncation and partial delivery.
+Existing text and effect tests remain the regression boundary. A confirmed
+local fixture is not live Telegram acceptance; an authorized platform smoke
+test is still required for an operational rollout claim.
