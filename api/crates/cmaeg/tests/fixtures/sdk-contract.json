@@ -1095,7 +1095,13 @@
             {
               "type": "source"
             }
-          ]
+          ],
+          "thread_contract": {
+            "follow_chat_ids": [
+              "fixture"
+            ],
+            "version": 1
+          }
         },
         "schema_version": 1,
         "secrets": {
@@ -1372,7 +1378,13 @@
                 {
                   "type": "source"
                 }
-              ]
+              ],
+              "thread_contract": {
+                "follow_chat_ids": [
+                  "fixture"
+                ],
+                "version": 1
+              }
             },
             "schema_version": 1,
             "secrets": {
@@ -1648,7 +1660,13 @@
                 {
                   "type": "source"
                 }
-              ]
+              ],
+              "thread_contract": {
+                "follow_chat_ids": [
+                  "fixture"
+                ],
+                "version": 1
+              }
             },
             "schema_version": 1,
             "secrets": {
@@ -1926,7 +1944,13 @@
             {
               "type": "source"
             }
-          ]
+          ],
+          "thread_contract": {
+            "follow_chat_ids": [
+              "fixture"
+            ],
+            "version": 1
+          }
         },
         "schema_version": 1,
         "secrets": {
@@ -2119,7 +2143,10 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "thread_contract_versions": [
+        1
+      ]
     },
     {
       "channel_id": "fixture",
@@ -2202,7 +2229,13 @@
             {
               "type": "source"
             }
-          ]
+          ],
+          "thread_contract": {
+            "follow_chat_ids": [
+              "fixture"
+            ],
+            "version": 1
+          }
         },
         "schema_version": 1,
         "secrets": {
