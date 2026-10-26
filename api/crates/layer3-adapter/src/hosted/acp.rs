@@ -102,6 +102,21 @@ pub(super) struct OpenedBridge {
     pub(super) relay: tokio::task::JoinHandle<()>,
 }
 
+struct OpeningTasks {
+    reader: tokio::task::AbortHandle,
+    relay: tokio::task::AbortHandle,
+    armed: bool,
+}
+
+impl Drop for OpeningTasks {
+    fn drop(&mut self) {
+        if self.armed {
+            self.reader.abort();
+            self.relay.abort();
+        }
+    }
+}
+
 impl Bridge {
     #[cfg(test)]
     pub(super) async fn open(
@@ -165,6 +180,12 @@ impl Bridge {
                 "prompt recovery requires a held conversation".into(),
             ));
         }
+        // Quiet recovery already has an exact durable identity. Its receipts
+        // must be available even before initialize replies: a failed load may
+        // have left a full retained backlog on this same bridge.
+        let startup_session = resume_conversation
+            .clone()
+            .filter(|_| recovered_prompt.is_none());
         let (sink, mut source) = stream.split();
         let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
             .await
@@ -194,6 +215,10 @@ impl Bridge {
             context_goal: Mutex::new(None),
         });
         let (updates, relay) = super::update_relay::spawn(updates_tx);
+        if let Some(session) = &startup_session {
+            bridge.activate_session(session.clone(), &updates).await?;
+            bridge.activate_output(session, &updates).await?;
+        }
         let writer = Arc::clone(&bridge);
         let writer_updates = updates.clone();
         let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
@@ -204,6 +229,11 @@ impl Bridge {
         .with_settings_support(bridge.clone());
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
+        let mut opening_tasks = OpeningTasks {
+            reader: reader_task.abort_handle(),
+            relay: relay.abort_handle(),
+            armed: true,
+        };
 
         if let Err(error) = bridge
             .handshake(resume_conversation, cwd, settings, &updates)
@@ -233,6 +263,7 @@ impl Bridge {
             relay.abort();
             return Err(error);
         }
+        opening_tasks.armed = false;
         Ok(OpenedBridge {
             channel: ConversationChannel {
                 input,
@@ -327,11 +358,40 @@ impl Bridge {
         params: serde_json::Value,
         deadline: Duration,
     ) -> crate::Result<serde_json::Value> {
-        let waiting = self.begin(method, params).await?;
-        let frame = tokio::time::timeout(deadline, waiting)
+        let progress = if matches!(method, "initialize" | "session/load") {
+            self.output_progress().await
+        } else {
+            None
+        };
+        let mut waiting = self.begin(method, params).await?;
+        let waiting = async {
+            let lost = |_| AdapterError::Unavailable(format!("{method} lost its answer"));
+            let Some(mut progress) = progress else {
+                return tokio::time::timeout(deadline, waiting)
+                    .await
+                    .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
+                    .map_err(lost);
+            };
+            let idle = tokio::time::sleep(deadline);
+            tokio::pin!(idle);
+            loop {
+                tokio::select! {
+                    result = &mut waiting => return result.map_err(lost),
+                    _ = &mut idle => return Err(AdapterError::Unavailable(format!("{method} made no durable output progress"))),
+                    result = progress.changed() => {
+                        if result.is_err() { return waiting.await.map_err(lost); }
+                        idle.as_mut().reset(tokio::time::Instant::now() + deadline);
+                    }
+                }
+            }
+        };
+        // Progress is durable ACK progress, never merely producer activity. An
+        // absolute bound still limits a peer that keeps emitting output forever.
+        let frame = tokio::time::timeout(SIGN_IN_DEADLINE, waiting)
             .await
-            .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
-            .map_err(|_| AdapterError::Unavailable(format!("{method} lost its answer")))?;
+            .map_err(|_| {
+                AdapterError::Unavailable(format!("{method} exceeded its recovery deadline"))
+            })??;
         if let Some(error) = frame.get("error") {
             return Err(AdapterError::Rejected(format!("{method}: {error}")));
         }
