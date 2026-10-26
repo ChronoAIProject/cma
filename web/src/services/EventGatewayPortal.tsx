@@ -14,6 +14,8 @@ import { EventGateway } from './EventGateway';
 import { ServiceBody } from './ServiceBody';
 import { ServicePage } from './ServicePage';
 import './EventGateway.css';
+import { GatewayConsumers } from './GatewayConsumers';
+import { GatewayWelcome } from './GatewayWelcome';
 
 /** Keep channel editors and consumer forms mounted when switching Gateway sections. */
 export function EventGatewayPortal({
@@ -39,47 +41,65 @@ export function EventGatewayPortal({
   if (!consumers && !visitedChannels) setVisitedChannels(true);
   if (consumers && consumerRoute !== route) setConsumerRoute(route);
   const canManage = state.status === 'authenticated' && canManageBots(state.user, client);
-  const navigation = (selected: 'channels' | 'consumers') => (
+  const [channelsExpanded, setChannelsExpanded] = useState(true);
+  const [consumersExpanded, setConsumersExpanded] = useState(true);
+  const navigation = (selected: 'channels' | 'consumers', channels?: ReactNode) => (
     <nav className="gateway-navigation" aria-label="Event Gateway navigation">
-      {(
-        [
-          ['channels', 'Channels', { kind: 'event_gateway' }],
-          ...(canManage ? [['consumers', 'Consumers', { kind: 'bots' }] as const] : []),
-        ] as const
-      ).map(([id, label, next]) => (
-        <a
-          key={id}
-          href={routePath(next)}
-          aria-current={selected === id ? 'page' : undefined}
-          onClick={(event) => {
-            if (
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
-            event.preventDefault();
-            if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE) onSidebarCollapsedChange(true);
-            onNavigate(next);
-          }}
-        >
-          {label}
-        </a>
-      ))}
+      <button
+        type="button"
+        className="sidebar__link"
+        aria-expanded={selected === 'channels' && channelsExpanded}
+        onClick={() => {
+          if (selected === 'channels') setChannelsExpanded((value) => !value);
+          else {
+            setChannelsExpanded(true);
+            onNavigate({ kind: 'event_gateway' });
+          }
+        }}
+      >
+        <span>Channels</span>
+        <span aria-hidden="true">{selected === 'channels' && channelsExpanded ? '⌄' : '›'}</span>
+      </button>
+      <div hidden={selected !== 'channels' || !channelsExpanded}>{channels}</div>
+      {canManage ? (
+        <>
+          <button
+            type="button"
+            className="sidebar__link"
+            aria-expanded={selected === 'consumers' && consumersExpanded}
+            onClick={() => {
+              if (selected === 'consumers') setConsumersExpanded((value) => !value);
+              else {
+                setConsumersExpanded(true);
+                onNavigate({ kind: 'bots' });
+              }
+            }}
+          >
+            <span>Consumers</span>
+            <span aria-hidden="true">
+              {selected === 'consumers' && consumersExpanded ? '⌄' : '›'}
+            </span>
+          </button>
+          {selected === 'consumers' && client.botViews ? (
+            <div hidden={!consumersExpanded}>
+              <GatewayConsumers
+                key={state.status === 'authenticated' ? state.user.id : ''}
+                client={client.botViews}
+                selected={consumerRoute?.kind === 'bot' ? consumerRoute.botId : undefined}
+                onNavigate={onNavigate}
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </nav>
   );
   const frame = (content: ReactNode, channels?: ReactNode) => (
     <PortalFrame
+      fullWidth
       route={{ kind: 'event_gateway' }}
       onNavigate={onNavigate}
-      navigation={
-        <>
-          {navigation('channels')}
-          {channels}
-        </>
-      }
+      navigation={navigation('channels', channels)}
       sidebarCollapsed={sidebarCollapsed}
       onSidebarCollapsedChange={onSidebarCollapsedChange}
     >
@@ -95,6 +115,7 @@ export function EventGatewayPortal({
               <EventGateway
                 session={session}
                 denied={denied}
+                active={visible && !consumers}
                 onNavigate={() => {
                   if (window.innerWidth < SIDEBAR_AUTO_COLLAPSE) onSidebarCollapsedChange(true);
                 }}
@@ -116,13 +137,18 @@ export function EventGatewayPortal({
       {consumerRoute ? (
         <ServiceBody visible={visible && consumers}>
           <PortalFrame
+            fullWidth
             route={consumerRoute}
             onNavigate={onNavigate}
             navigation={navigation('consumers')}
             sidebarCollapsed={sidebarCollapsed}
             onSidebarCollapsedChange={onSidebarCollapsedChange}
           >
-            <Consumers route={consumerRoute} onNavigate={onNavigate} />
+            {consumerRoute.kind === 'bots' && canManage ? (
+              <GatewayWelcome kind="consumer" onCreate={() => onNavigate({ kind: 'bot_new' })} />
+            ) : (
+              <Consumers route={consumerRoute} onNavigate={onNavigate} />
+            )}
           </PortalFrame>
         </ServiceBody>
       ) : null}

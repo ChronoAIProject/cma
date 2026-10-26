@@ -22,6 +22,8 @@ import {
 } from './channelForm/model';
 export type { EditorSection } from './channelForm/model';
 export interface Channel {
+  created_at?: string;
+  owner?: unknown;
   channel_id: string;
   record_id: string;
   version: number;

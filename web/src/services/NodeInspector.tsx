@@ -1,6 +1,7 @@
-import { useId, type ReactNode } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
 import type { Channel } from './ChannelEditor';
 import { ChannelEndpoints } from './ChannelEndpoints';
+import { Modal } from '../ui/Modal';
 import {
   admissionSummary,
   channelNodes,
@@ -107,13 +108,33 @@ export function NodeInspector({
   selection,
   id,
   children,
+  open = true,
+  onClose = () => {},
+  initialSection = 'overview',
+  send,
+  tests,
+  activity,
+  danger,
 }: {
   readonly channel: Channel;
   readonly selection: ChannelSelection;
   readonly id: string;
   readonly children: ReactNode;
+  readonly open?: boolean;
+  readonly onClose?: () => void;
+  readonly initialSection?: 'overview' | 'activity';
+  readonly send?: ReactNode;
+  readonly tests?: ReactNode;
+  readonly activity?: ReactNode;
+  readonly danger?: ReactNode;
 }) {
   const heading = useId();
+  const selectionId = selectionKey(selection);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => jumpToSection(id, initialSection, false, false));
+    return () => cancelAnimationFrame(frame);
+  }, [id, open, initialSection, selectionId]);
   const { producers, consumers } = channelNodes(channel);
   const selected = [...producers, ...consumers].find(
     (node) => node.key === selectionKey(selection),
@@ -126,52 +147,101 @@ export function NodeInspector({
       : newProducer
         ? 'New producer'
         : (selected?.title ?? 'Node unavailable');
+  const sections = [
+    ['overview', 'Overview', true],
+    ['configuration', 'Configuration', children],
+    ['send', 'Send message', send],
+    ['tests', 'Tests', tests],
+    ['activity', 'Activity', activity],
+    ['delete', 'Delete', danger],
+  ] as const;
   return (
-    <section className="channel-inspector" id={id} aria-labelledby={heading}>
-      <div className="channel-inspector__heading">
-        <span>
-          {selection.kind === 'channel'
-            ? 'CHANNEL'
-            : selection.kind === 'producer'
-              ? 'PRODUCER'
-              : 'CONSUMER'}
-        </span>
-        <h2 id={heading}>{title}</h2>
-        <p>
-          {selection.kind === 'channel'
-            ? 'Shared routing, conversation and reply settings.'
-            : selection.kind === 'producer'
-              ? 'How this source sends events into the channel.'
-              : 'The agent that receives and responds to events.'}
-        </p>
+    <Modal open={open} onClose={onClose} title={title} layout="sections" keepMounted>
+      <div className="channel-config-layout">
+        <nav className="channel-config-nav" aria-label="Configuration sections">
+          {sections
+            .filter(([, , content]) => Boolean(content))
+            .map(([key, label]) => (
+              <button type="button" key={key} onClick={() => jumpToSection(id, key, true)}>
+                {label}
+              </button>
+            ))}
+        </nav>
+        <section className="channel-inspector" id={id} aria-labelledby={heading}>
+          <section id={`${id}-overview`} tabIndex={-1} className="channel-inspector__section">
+            <div className="channel-inspector__heading">
+              <span>
+                {selection.kind === 'channel'
+                  ? 'CHANNEL'
+                  : selection.kind === 'producer'
+                    ? 'PRODUCER'
+                    : 'CONSUMER'}
+              </span>
+              <h2 id={heading}>{title}</h2>
+              <p>
+                {selection.kind === 'channel'
+                  ? 'Shared routing, conversation and reply settings.'
+                  : selection.kind === 'producer'
+                    ? 'How this source sends events into the channel.'
+                    : 'The agent that receives and responds to events.'}
+              </p>
+            </div>
+            <div className="channel-inspector__summary" key={selectionKey(selection)}>
+              {newProducer ? (
+                <p className="channel-field-hint">
+                  Configure and save this producer before checking its delivery settings.
+                </p>
+              ) : selection.kind === 'producer' ? (
+                <ProducerFacts channel={channel} index={selection.index} />
+              ) : selection.kind === 'consumer' ? (
+                <ConsumerFacts channel={channel} id={selection.id} />
+              ) : (
+                <>
+                  <Facts
+                    facts={[
+                      ['Conversation grouping', words(object(channel.definition.partition).key)],
+                      [
+                        'Default recipients',
+                        readableList(routing(channel).default_targets, 'Default consumer'),
+                      ],
+                      ['Routing rules', String(list(routing(channel).rules).length)],
+                      ['Configuration version', String(channel.version)],
+                    ]}
+                  />
+                  <ChannelEndpoints endpoints={channel.endpoints} />
+                </>
+              )}
+            </div>
+          </section>
+          {sections.slice(1).map(([key, label, content]) =>
+            content ? (
+              <section
+                key={key}
+                id={`${id}-${key}`}
+                tabIndex={-1}
+                className="channel-inspector__section"
+                aria-label={label}
+                data-section={key}
+              >
+                <h3>{label}</h3>
+                {content}
+              </section>
+            ) : null,
+          )}
+        </section>
       </div>
-      <div className="channel-inspector__summary" key={selectionKey(selection)}>
-        {newProducer ? (
-          <p className="channel-field-hint">
-            Configure and save this producer before checking its delivery settings.
-          </p>
-        ) : selection.kind === 'producer' ? (
-          <ProducerFacts channel={channel} index={selection.index} />
-        ) : selection.kind === 'consumer' ? (
-          <ConsumerFacts channel={channel} id={selection.id} />
-        ) : (
-          <>
-            <Facts
-              facts={[
-                ['Conversation grouping', words(object(channel.definition.partition).key)],
-                [
-                  'Default recipients',
-                  readableList(routing(channel).default_targets, 'Default consumer'),
-                ],
-                ['Routing rules', String(list(routing(channel).rules).length)],
-                ['Configuration version', String(channel.version)],
-              ]}
-            />
-            <ChannelEndpoints endpoints={channel.endpoints} />
-          </>
-        )}
-      </div>
-      {children}
-    </section>
+    </Modal>
   );
+}
+
+function jumpToSection(id: string, key: string, animate: boolean, focus = true) {
+  const target = document.getElementById(`${id}-${key}`);
+  target?.scrollIntoView?.({
+    block: 'start',
+    behavior:
+      animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'smooth'
+        : 'instant',
+  });
+  if (focus) target?.focus({ preventScroll: true });
 }
