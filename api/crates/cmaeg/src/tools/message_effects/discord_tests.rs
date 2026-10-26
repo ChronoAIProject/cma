@@ -130,6 +130,7 @@ impl App {
         };
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
+            discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
             whatsapp_templates_enabled: false,

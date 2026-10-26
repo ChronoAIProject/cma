@@ -1,4 +1,5 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+mod discord;
 mod initiated;
 mod media;
 pub use media::supported as native_media_supported;
@@ -127,29 +128,6 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
-    pub fn with_native_discord_effects(mut self, enabled: bool) -> Self {
-        self.native_discord_effects = enabled;
-        self
-    }
-    pub(super) fn native_discord_effects_enabled(&self) -> bool {
-        self.native_discord_effects
-    }
-    /// Issue native edit references only after every reader supports their authority.
-    /// Disabling issuance does not revoke already issued references.
-    pub fn with_native_discord_edits(mut self, enabled: bool) -> Self {
-        self.native_discord_edits = enabled;
-        self
-    }
-    pub(super) fn native_discord_edits_enabled(&self) -> bool {
-        self.native_discord_edits
-    }
-    pub fn with_discord_interactions(mut self, enabled: bool) -> Self {
-        self.discord_interactions = enabled;
-        self
-    }
-    pub(super) fn discord_interactions_enabled(&self) -> bool {
-        self.discord_interactions
-    }
     /// Gate named-consumer cards until all readers support retained owner bindings.
     pub fn with_consumer_interactions(mut self, enabled: bool) -> Self {
         self.consumer_interactions = enabled;
