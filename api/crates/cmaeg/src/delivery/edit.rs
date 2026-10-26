@@ -75,13 +75,51 @@ impl Sender {
         let Some(store) = &self.relay.interactions else {
             return (unsupported(), effects);
         };
+        let lark = if let Some(Source::NyxidRelay { platform, .. }) = channel
+            .definition
+            .relay_source_for_route(&reference.route_id)
+        {
+            if crate::interactions::lark::supported(*platform) {
+                let Some(id) = reference.interaction_record_id.as_deref() else {
+                    return (unsupported(), effects);
+                };
+                let Ok((card, _)) = store.load(id).await else {
+                    return (unsupported(), effects);
+                };
+                if card
+                    .lark
+                    .as_ref()
+                    .is_none_or(|identity| identity.platform != *platform)
+                {
+                    return (unsupported(), effects);
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         if reference.interaction_record_id.is_none()
-            || !replaces_telegram_cards(&channel.definition, &reference.route_id)
+            || (!lark && !replaces_telegram_cards(&channel.definition, &reference.route_id))
         {
             return (unsupported(), effects);
         }
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
-        if parts.len() != 1 {
+        let capabilities = if lark {
+            crate::interactions::lark::capabilities()
+        } else {
+            Capabilities::telegram()
+        };
+        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        if lark {
+            let Ok((_, report)) =
+                crate::interactions::lark::render(message, "00000000000000000000000000000000", 1)
+            else {
+                return (unsupported(), effects);
+            };
+            rendering = report;
+        }
+        if !lark && parts.len() != 1 {
             return (
                 IntentReceipt {
                     message_ref: None,
@@ -130,10 +168,15 @@ impl Sender {
             Ok(permit) => permit,
             Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
-        let delivery = self
-            .relay
-            .edit(key, &destination, &parts[0].text, &prepared.markup)
-            .await;
+        let delivery = if lark {
+            self.relay
+                .edit_lark_card(key, &destination, &prepared.markup)
+                .await
+        } else {
+            self.relay
+                .edit(key, &destination, &parts[0].text, &prepared.markup)
+                .await
+        };
         let mut result = IntentReceipt {
             message_ref: None,
             rendering,

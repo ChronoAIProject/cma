@@ -8,6 +8,7 @@ mod generic;
 pub mod jwks;
 mod jwt;
 pub(crate) mod lark;
+mod lark_callback;
 mod lark_media;
 mod lark_post;
 pub mod payload;

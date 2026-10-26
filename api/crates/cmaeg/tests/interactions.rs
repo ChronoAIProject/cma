@@ -7,6 +7,8 @@ mod consumer_support;
 pub mod fake_cma;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
+#[path = "interaction_lark/callbacks.rs"]
+mod lark_cards;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 /// The media helpers the shared tools app is built with.

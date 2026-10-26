@@ -274,6 +274,13 @@ pub(super) fn project(
             }
         }
     };
+    crate::interactions::lark::project(
+        &mut capabilities,
+        &activity,
+        event,
+        activity_verified,
+        state.lark_cards_enabled,
+    );
     // A hand-off's actor is the publishing consumer, so no human click could
     // ever match a card prepared from it; its controls are refused, and the
     // projection says so up front so agents can plan around it.

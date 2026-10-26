@@ -151,6 +151,7 @@ impl App {
         let tools = ToolsState {
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: state.resolver.clone(),
             keys,
             providers,

@@ -18,6 +18,7 @@ pub(crate) async fn serve(
     complete_replies: bool,
     native_media: bool,
     relay_text_edits: bool,
+    lark_cards: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -67,6 +68,7 @@ pub(crate) async fn serve(
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_lark_cards(lark_cards)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -128,6 +130,7 @@ pub(crate) async fn serve(
     let tools_state = tools::ToolsState {
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
+        lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
         providers,
