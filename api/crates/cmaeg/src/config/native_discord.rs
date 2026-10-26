@@ -5,6 +5,8 @@ use std::{collections::BTreeSet, env};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NativeDiscordConfig {
     pub enabled: bool,
+    /// Discover explicit native sources in the current sealed channel index.
+    pub discovery_enabled: bool,
     pub records: BTreeSet<String>,
 }
 pub(super) fn config_from_env(routing: &RoutingConfig) -> Result<NativeDiscordConfig, ConfigError> {
@@ -18,6 +20,7 @@ pub(super) fn config_from_env(routing: &RoutingConfig) -> Result<NativeDiscordCo
         })?;
     let config = NativeDiscordConfig {
         enabled: super::routing::write_flag("CMAEG_NATIVE_DISCORD_ENABLED")?,
+        discovery_enabled: super::routing::write_flag("CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED")?,
         records: parse_records(value.as_deref())?,
     };
     config.validate(routing)?;
@@ -28,6 +31,11 @@ impl NativeDiscordConfig {
         if self.records.len() > 64 || self.records.iter().any(|record| !canonical(record)) {
             return Err(ConfigError::Routing(
                 "native Discord requires at most 64 canonical UUID v4 channel records".into(),
+            ));
+        }
+        if self.discovery_enabled && (!self.enabled || !routing.recovery_enabled) {
+            return Err(ConfigError::Routing(
+                "native Discord discovery requires native runtime and routed recovery".into(),
             ));
         }
         if self.enabled
@@ -60,6 +68,20 @@ fn parse_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
 mod tests {
     use super::*;
     #[test]
+    fn discovery_needs_native_runtime_and_recovery_but_no_http_record_expansion() {
+        let mut config = NativeDiscordConfig {
+            discovery_enabled: true,
+            ..Default::default()
+        };
+        let mut routing = RoutingConfig::default();
+        assert!(config.validate(&routing).is_err());
+        config.enabled = true;
+        assert!(config.validate(&routing).is_err());
+        routing.recovery_enabled = true;
+        config.validate(&routing).unwrap();
+        assert!(routing.execution_records.is_empty());
+    }
+    #[test]
     fn activation_is_explicit_bounded_and_requires_durable_recovery() {
         assert!(!NativeDiscordConfig::default().enabled);
         assert!(parse_records(None).unwrap().is_empty());
@@ -69,6 +91,7 @@ mod tests {
         let record = "11111111-1111-4111-8111-111111111111";
         let config = NativeDiscordConfig {
             enabled: true,
+            discovery_enabled: false,
             records: parse_records(Some(record)).unwrap(),
         };
         let mut routing = RoutingConfig::default();

@@ -78,6 +78,9 @@ pub struct ChannelCreation {
 /// CMAEG `ChannelResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelResponse {
+    /// Native intake eligibility; selection does not attest connection health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<NativeDiscordActivation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Versions this channel can explicitly negotiate; absent means unsupported.
     pub thread_contract_versions: Option<Vec<u16>>,
@@ -98,6 +101,9 @@ pub struct ChannelResponse {
 /// Owned channel metadata, including legacy records without a recoverable original ID.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelListItem {
+    /// Native intake eligibility; selection does not attest connection health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_activation: Option<NativeDiscordActivation>,
     /// Original retained channel ID; never regenerated for a legacy record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
@@ -443,4 +449,17 @@ impl BotMessageAdmission {
     fn is_deny(&self) -> bool {
         *self == Self::Deny
     }
+}
+
+/// Owner-visible native Discord activation state. Future state identifiers are retained.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeDiscordActivation {
+    /// Selected, pending_discovery, capacity_exceeded, or a configuration refusal.
+    pub state: String,
+    /// Safe explanation without credentials or other channel identities.
+    pub detail: String,
+    /// Maximum records selected by this process.
+    pub capacity: usize,
+    /// Current process selection count, not a socket count.
+    pub selected_records: usize,
 }

@@ -28,3 +28,5 @@ pub use definition::{
     ChannelCreateRequest, ChannelUpdateRequest, CredentialPatch, CredentialsRequest,
     HmacSecretRequest, ProviderRequest, SourceRequest,
 };
+
+mod native_discord;

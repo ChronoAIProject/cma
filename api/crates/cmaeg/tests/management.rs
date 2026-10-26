@@ -239,3 +239,6 @@ mod nodes;
 
 #[path = "management/outbound.rs"]
 mod outbound;
+
+#[path = "management/native_discord.rs"]
+mod native_discord;

@@ -60,6 +60,8 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
+    state.native_discord_admission_enabled = config.routing.admission_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
@@ -220,6 +222,7 @@ pub(crate) async fn serve(
     });
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
+        state.native_discord.clone(),
         (*state.records).clone(),
         state.master_keys.clone(),
         ingress.clone(),

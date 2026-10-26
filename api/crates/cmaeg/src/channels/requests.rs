@@ -12,7 +12,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreateRequest {
-    /// Optional UUID reserved by a durable creator before issuing the request.
+    /// Stable UUID reserved by a durable creator before issuing the request.
+    /// Required as a canonical UUID v4 when authoring a native Discord source;
+    /// optional for existing non-native creation contracts.
     #[serde(default)]
     pub record_id: Option<RecordId>,
     pub schema_version: u16,

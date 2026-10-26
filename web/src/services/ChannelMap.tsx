@@ -53,6 +53,11 @@ export function ChannelMap({
           ) : null}
         </div>
       </div>
+      {channel.native_discord_activation ? (
+        <p className="channel-field-hint" role="status" aria-label="Native Discord activation">
+          {channel.native_discord_activation.detail}
+        </p>
+      ) : null}
       <DeliveryFlow
         groups={groups}
         selected={selectionKey(selection)}

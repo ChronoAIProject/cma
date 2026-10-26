@@ -47,12 +47,19 @@ pub struct Setup {
     pub state: IngressState,
     pub dispatcher: InboxDispatcher,
     pub plans: PlanStore,
+    pub selection: super::selection::Selection,
     pub trap: Arc<Trap>,
     pub channel: cmaeg_core::channel::ChannelDefinition,
     _scheduler: Scheduler,
 }
 impl Setup {
     pub async fn new(routed: bool) -> Self {
+        Self::configured(routed, false).await
+    }
+    pub async fn discovered() -> Self {
+        Self::configured(true, true).await
+    }
+    async fn configured(routed: bool, discovery: bool) -> Self {
         let fixture = Fixture::new().await;
         let mut channel = journal_fixture::definition();
         if routed {
@@ -87,14 +94,24 @@ impl Setup {
         )
         .unwrap();
         let selected = BTreeSet::from([fixture.record.clone()]);
+        let selection = super::selection::Selection::new(&crate::NativeDiscordConfig {
+            enabled: true,
+            discovery_enabled: discovery,
+            records: selected.clone(),
+        });
         let routing = RoutedIngress::new(
             plans.clone(),
             handle,
             keys.clone(),
-            selected.clone(),
+            if discovery {
+                BTreeSet::new()
+            } else {
+                selected.clone()
+            },
             BTreeSet::new(),
             BTreeSet::from([channel.provider.slug.to_string()]),
         )
+        .with_native_discovery(selection.clone())
         .with_clock(clock);
         let trap = Arc::new(Trap(AtomicUsize::new(0)));
         let state = IngressState::new(
@@ -109,11 +126,11 @@ impl Setup {
         )
         .unwrap()
         .with_routed(Some(Arc::new(routing)));
-        let dispatcher = InboxDispatcher::new(
+        let dispatcher = InboxDispatcher::with_selection(
             fixture.store.channels.clone(),
             keys,
             state.clone(),
-            selected,
+            selection.clone(),
         );
         Self {
             fixture,
@@ -121,6 +138,7 @@ impl Setup {
             state,
             dispatcher,
             plans,
+            selection,
             trap,
             channel,
             _scheduler: scheduler,
@@ -140,11 +158,11 @@ impl Setup {
         ));
         Arc::get_mut(&mut self.journal).unwrap().activity = observer.clone();
         self.state = self.state.clone().with_activity_observer(observer);
-        self.dispatcher = InboxDispatcher::new(
+        self.dispatcher = InboxDispatcher::with_selection(
             self.fixture.store.channels.clone(),
             self.fixture.store.keys.clone(),
             self.state.clone(),
-            BTreeSet::from([self.fixture.record.clone()]),
+            self.selection.clone(),
         );
         activity
     }
