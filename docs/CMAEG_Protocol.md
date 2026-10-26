@@ -3281,6 +3281,18 @@ or credential revocation prevents replay, and consumer credentials must still
 match that snapshot. Application code must durably admit this launch once and
 recover its existing routing plan rather than create a new plan on retry.
 
+The native inbox dispatcher uses a durable-only admission entry point. Missing
+routing, unsupported delivery and oversized stored payloads are refused before
+any provider execution; they never fall back to the legacy launcher. Its bounded
+record scan authenticates each record kind, owner, manifest and original public
+channel handle, and restores current source authority without a cached definition.
+An immutable acknowledgement is written only after a durable `Admitted` result or
+a definite refusal. Lost acknowledgement responses are resolved by reading that
+exact acknowledgement; retrying an absent acknowledgement restores the original
+admission and stored source bytes. Transient failures stay pending, and elapsed
+reply authority is recorded as expired without renewing it or erasing retained
+intake data. Routed execution recovery continues independently after admission.
+
 Native replies seal `{"type":"discord","bot_id":"77","channel_id":"99",
 "message_id":"700"}` inside the event reference. They contain no relay token.
 The current channel must still configure that bot and its encrypted credential.

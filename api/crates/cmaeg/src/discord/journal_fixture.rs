@@ -1,7 +1,7 @@
 use super::{discovery::DiscordApi, journal::DurableJournal, record_store::Store, GatewayError};
 use crate::{channels::routing_fixture, records::RecordClient};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -12,6 +12,7 @@ use cmaeg_core::{
     channel::ChannelDefinition,
     seal::{seal_blob, MasterKeyRing},
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -83,6 +84,7 @@ impl Fixture {
                 "/api/v1/gateway/interaction-records/{id}",
                 get(load).put(save),
             )
+            .route("/api/v1/gateway/interaction-records", get(list))
             .route("/api/v10/users/@me", get(user))
             .route("/api/v10/gateway/bot", get(gateway))
             .with_state(memory.clone());
@@ -151,6 +153,27 @@ async fn gateway(State(state): State<Arc<Memory>>) -> Response {
 async fn channel(State(state): State<Arc<Memory>>) -> Response {
     Json(json!({"version":1,"blob":STANDARD.encode(state.channel.lock().unwrap().as_slice())}))
         .into_response()
+}
+#[derive(Deserialize)]
+struct PageQuery {
+    owner: Option<String>,
+    after: Option<String>,
+    limit: Option<usize>,
+}
+async fn list(State(state): State<Arc<Memory>>, Query(query): Query<PageQuery>) -> Response {
+    let now = state.now.load(Ordering::SeqCst) / 1000;
+    let rows = state.rows.lock().unwrap();
+    let items: Vec<_> = rows
+        .iter()
+        .filter(|(id, row)| {
+            row.expiry.is_some_and(|expiry| expiry > now)
+                && query.after.as_ref().is_none_or(|after| *id > after)
+                && query.owner.as_ref().is_none_or(|owner| &row.owner == owner)
+        })
+        .take(query.limit.unwrap_or(32))
+        .map(|(id, row)| json!({"record_id":id,"owner":row.owner,"version":row.version}))
+        .collect();
+    Json(json!({"items":items})).into_response()
 }
 async fn load(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Response {
     let rows = state.rows.lock().unwrap();

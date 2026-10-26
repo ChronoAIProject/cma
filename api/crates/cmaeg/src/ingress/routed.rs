@@ -164,6 +164,52 @@ impl RoutedIngress {
 }
 
 impl IngressState {
+    /// Native inbox work is acknowledged only by durable routed admission.
+    /// In particular, missing/disabled routing must never reach the legacy launcher.
+    pub(crate) async fn launch_native_verified(
+        &self,
+        verified: crate::discord::VerifiedInboxLaunch,
+        _hold: OwnedSemaphorePermit,
+    ) -> LaunchOutcome {
+        let request = verified.request;
+        if !matches!(
+            request.activity.source,
+            cmaeg_core::activity::SourceKind::Discord { .. }
+        ) {
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::InvalidRequest,
+                400,
+                "native_discord_source_required",
+            ));
+        }
+        let Some(routing) = self.routed.as_ref().filter(|routing| {
+            routing.selected(&request.channel.definition.record_id) && ordinary(&request)
+        }) else {
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "native_discord_durable_admission_unavailable",
+            ));
+        };
+        let source = VerifiedIngress {
+            oversized: verified.source_bytes.len() > MAX_SOURCE_BYTES,
+            body: verified.source_bytes,
+            attributes_signed: true,
+        };
+        match routing
+            .admit(&request, source, self.activity.as_ref())
+            .await
+        {
+            Ok(Some(outcome @ LaunchOutcome::Admitted { .. })) => outcome,
+            Ok(_) => LaunchOutcome::Refused(Problem::new(
+                ProblemCode::AdmissionRefused,
+                422,
+                "native_discord_routing_required",
+            )),
+            Err(problem) => LaunchOutcome::Refused(problem),
+        }
+    }
+
     pub fn capture_routed(
         &self,
         request: &LaunchRequest,
