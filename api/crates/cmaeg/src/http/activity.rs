@@ -153,14 +153,14 @@ pub async fn stream(
                 // shared records. Local notifications give immediate delivery;
                 // a bounded server-side refresh also observes the other process.
                 // Browsers keep one SSE connection and never poll snapshots.
-                let reset = tokio::select! {
+                let (reset, refresh) = tokio::select! {
                     biased;
                     _ = tokio::time::sleep_until(deadline) => return None,
-                    _ = tokio::time::sleep_until(refresh_at) => false,
+                    _ = tokio::time::sleep_until(refresh_at) => (false, true),
                     update = updates.recv() => match update {
-                        Ok(updated) if updated == record => false,
+                        Ok(updated) if updated == record => (false, false),
                         Ok(_) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => true,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (true, false),
                         Err(_) => return None,
                     },
                 };
@@ -173,11 +173,20 @@ pub async fn stream(
                         return None;
                     }
                     management::load(&state, &creator, &id).await.ok()?;
-                    state.activity.latest(&creator.subject, &record).await.ok()
+                    state
+                        .activity
+                        .latest_if_changed(
+                            &creator.subject,
+                            &record,
+                            refresh.then_some(cursor.as_str()),
+                        )
+                        .await
+                        .ok()
                 };
                 let bound = deadline.min(tokio::time::Instant::now() + Duration::from_secs(5));
                 let page = tokio::time::timeout_at(bound, read).await.ok()??;
                 refresh_at = tokio::time::Instant::now() + Duration::from_secs(1);
+                let Some(page) = page else { continue };
                 if !reset && page.cursor == cursor {
                     continue;
                 }
