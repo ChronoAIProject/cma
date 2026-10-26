@@ -37,8 +37,18 @@ pub struct Memory {
     pub channels: Mutex<BTreeMap<String, Row>>,
     pub fault: Mutex<Option<Fault>>,
     pub clock: Arc<AtomicI64>,
+    realtime: bool,
     pub unavailable_reads: AtomicUsize,
     pub writes: AtomicUsize,
+}
+impl Memory {
+    fn now(&self) -> i64 {
+        if self.realtime {
+            time::OffsetDateTime::now_utc().unix_timestamp()
+        } else {
+            self.clock.load(Ordering::SeqCst)
+        }
+    }
 }
 pub struct Server {
     pub memory: Arc<Memory>,
@@ -52,11 +62,19 @@ impl Drop for Server {
 }
 impl Server {
     pub async fn start() -> Self {
+        Self::with_clock(false).await
+    }
+    /// Use when the client under test uses an advancing wall clock.
+    pub async fn start_realtime() -> Self {
+        Self::with_clock(true).await
+    }
+    async fn with_clock(realtime: bool) -> Self {
         let memory = Arc::new(Memory {
             rows: Mutex::new(BTreeMap::new()),
             channels: Mutex::new(BTreeMap::new()),
             fault: Mutex::new(None),
             clock: Arc::new(AtomicI64::new(fixture::NOW)),
+            realtime,
             unavailable_reads: AtomicUsize::new(0),
             writes: AtomicUsize::new(0),
         });
@@ -85,8 +103,8 @@ impl Server {
     }
     pub fn store(&self) -> PlanStore {
         let mut store = PlanStore::new(self.records.clone(), Arc::new(fixture::keys()));
-        let clock = self.memory.clock.clone();
-        store.clock = Arc::new(move || clock.load(Ordering::SeqCst));
+        let memory = self.memory.clone();
+        store.clock = Arc::new(move || memory.now());
         store
     }
     pub fn fault(&self, id: String, store: bool, lose_read: bool) {
@@ -134,7 +152,7 @@ async fn write(
     Path(id): Path<String>,
     Json(input): Json<Put>,
 ) -> Response {
-    let now = state.clock.load(Ordering::SeqCst);
+    let now = state.now();
     let Ok(blob) = STANDARD.decode(input.blob) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
@@ -199,10 +217,7 @@ async fn read(State(state): State<Arc<Memory>>, Path(id): Path<String>) -> Respo
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let rows = state.rows.lock().unwrap();
-    match rows
-        .get(&id)
-        .filter(|row| row.expiry > state.clock.load(Ordering::SeqCst))
-    {
+    match rows.get(&id).filter(|row| row.expiry > state.now()) {
         Some(row) => {
             Json(json!({"version":row.version,"blob":STANDARD.encode(&row.blob)})).into_response()
         }
@@ -216,7 +231,7 @@ struct List {
     limit: usize,
 }
 async fn list(State(state): State<Arc<Memory>>, Query(query): Query<List>) -> Response {
-    let now = state.clock.load(Ordering::SeqCst);
+    let now = state.now();
     let rows = state.rows.lock().unwrap();
     let items = rows
         .iter()

@@ -71,11 +71,7 @@ async fn live_auth(state: &mut ManagementState, creator: &mut Creator) -> AuthFi
 }
 
 async fn fixture_app() -> (Server, ManagementState, LaunchRequest, Creator) {
-    let server = Server::start().await;
-    server.memory.clock.store(
-        time::OffsetDateTime::now_utc().unix_timestamp(),
-        Ordering::SeqCst,
-    );
+    let server = Server::start_realtime().await;
     let mut request = fixture::request(
         |value| value["record_id"] = uuid::Uuid::new_v4().to_string().into(),
         fixture::message("not copied into activity"),
