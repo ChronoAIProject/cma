@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/part-of: cma
 data:
   # Enable new native-thread policies only after all readers and NyxID support them.
-  CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "false"
+  CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"
   CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "false"
   CMAEG_MONGODB_DATABASE: "chrono-bot"
   CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
