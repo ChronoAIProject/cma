@@ -217,6 +217,7 @@ async fn raw_message_is_durable_before_checkpoint_and_replay_preserves_original_
     let (retained, _) = f.store.load::<Inbox>(&id, true).await.unwrap().unwrap();
     assert_eq!(retained.payload_hash, original.payload_hash);
     assert_eq!(retained.parts, original.parts);
+    assert_eq!(retained.received_at, original.received_at);
 }
 
 #[tokio::test]

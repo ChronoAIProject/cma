@@ -140,20 +140,61 @@ async fn durable_inbox_restores_original_snapshot_and_stable_activity_across_rep
     let InboxLaunch::Launch(first) = reader.load(&id, channel(), now).await.unwrap() else {
         panic!()
     };
-    let opened = first.event_ref.open(&f.store.keys, now).unwrap().payload;
-    assert!(opened.verifies_activity(&first.activity));
+    assert_eq!(first.received_at, now);
+    let stored: Value = serde_json::from_slice(&first.source_bytes).unwrap();
+    assert_eq!(stored["dispatch"], dispatch.data);
+    assert_eq!(stored["channel"], channel().definition.to_public_json());
+    let opened = first
+        .request
+        .event_ref
+        .open(&f.store.keys, now)
+        .unwrap()
+        .payload;
+    assert!(opened.verifies_activity(&first.request.activity));
+    assert_eq!(opened.expires_at, now + 1800);
     assert!(
         matches!(opened.reply,ReplyAddress::Discord{bot_id,channel_id,..} if bot_id=="77" && channel_id=="99")
     );
     let mut changed = channel();
     Arc::get_mut(&mut changed).unwrap().definition.partition.key =
         cmaeg_core::channel::PartitionKey::Conversation;
-    let InboxLaunch::Launch(second) = reader.load(&id, changed, now).await.unwrap() else {
+    f.advance(60_000);
+    let mut redelivery = dispatch;
+    redelivery.data["content"] = "replacement must not change stored bytes".into();
+    journal
+        .persist_message(&journal.authority, &redelivery)
+        .await
+        .unwrap();
+    let InboxLaunch::Launch(second) = reader.load(&id, changed, now + 60).await.unwrap() else {
         panic!()
     };
-    assert_eq!(first.activity, second.activity);
-    assert_eq!(first.conversation_id, second.conversation_id);
-    assert_eq!(first.idempotency_key, second.idempotency_key);
+    assert_eq!(first.source_bytes, second.source_bytes);
+    assert_eq!(first.received_at, second.received_at);
+    assert_eq!(first.request.activity, second.request.activity);
+    assert_eq!(
+        first.request.conversation_id,
+        second.request.conversation_id
+    );
+    assert_eq!(
+        first.request.idempotency_key,
+        second.request.idempotency_key
+    );
+    assert_eq!(
+        second
+            .request
+            .event_ref
+            .open(&f.store.keys, now + 60)
+            .unwrap()
+            .payload
+            .expires_at,
+        now + 1800
+    );
+    assert!(matches!(
+        reader.load(&id, channel(), now + 1800).await,
+        Err(GatewayError::Authority)
+    ));
+    // Expired reply authority does not erase the retained record for inspection.
+    assert!(f.store.load::<Value>(&id, true).await.unwrap().is_some());
     let mut rotated = channel();
     Arc::get_mut(&mut rotated)
         .unwrap()
@@ -165,6 +206,77 @@ async fn durable_inbox_restores_original_snapshot_and_stable_activity_across_rep
         Err(GatewayError::Authority)
     ));
     assert!(reader.load(&id, channel(), now + 8 * 86400).await.is_err());
+}
+
+#[tokio::test]
+async fn inbox_without_original_receipt_time_is_never_granted_new_authority() {
+    let f = Fixture::new().await;
+    let journal = f.acquire().await.unwrap();
+    let mut event = raw();
+    event["id"] = f.message_id().into();
+    let dispatch = Dispatch {
+        name: "MESSAGE_CREATE".into(),
+        sequence: 1,
+        data: event,
+    };
+    journal
+        .persist_message(&journal.authority, &dispatch)
+        .await
+        .unwrap();
+    let id = index_id(
+        "discord-native-message-v1",
+        &[&f.record, "77", dispatch.message_id().unwrap()],
+    );
+    let (mut legacy, _) = f.store.load::<Value>(&id, true).await.unwrap().unwrap();
+    legacy.as_object_mut().unwrap().remove("received_at");
+    f.memory.rows.lock().unwrap().get_mut(&id).unwrap().blob = cmaeg_core::seal::seal_interaction(
+        &f.store.keys,
+        &id,
+        &serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    let reader = InboxReader::new(f.store.channels.clone(), f.store.keys.clone());
+    assert!(matches!(
+        reader.load(&id, channel(), (f.store.clock)() / 1000).await,
+        Err(GatewayError::Protocol)
+    ));
+    assert_eq!(
+        journal.persist_message(&journal.authority, &dispatch).await,
+        Err(GatewayError::Protocol)
+    );
+    assert!(f.store.load::<Value>(&id, true).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn native_inbox_refuses_thread_partition_without_proven_thread_metadata() {
+    let f = Fixture::new().await;
+    let mut original = definition();
+    original.partition.key = cmaeg_core::channel::PartitionKey::Thread;
+    f.replace(&original);
+    let journal = f.acquire().await.unwrap();
+    let mut event = raw();
+    event["id"] = f.message_id().into();
+    let dispatch = Dispatch {
+        name: "MESSAGE_CREATE".into(),
+        sequence: 1,
+        data: event,
+    };
+    journal
+        .persist_message(&journal.authority, &dispatch)
+        .await
+        .unwrap();
+    let id = index_id(
+        "discord-native-message-v1",
+        &[&f.record, "77", dispatch.message_id().unwrap()],
+    );
+    let reader = InboxReader::new(f.store.channels.clone(), f.store.keys.clone());
+    assert!(matches!(
+        reader
+            .load(&id, channel(), (f.store.clock)() / 1000)
+            .await
+            .unwrap(),
+        InboxLaunch::Refused(Refusal::ThreadEvidenceUnavailable)
+    ));
 }
 
 #[test]

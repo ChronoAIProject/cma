@@ -80,6 +80,8 @@ pub(super) struct Inbox {
     pub source_revision: String,
     pub payload_hash: String,
     pub parts: Vec<String>,
+    /// Immutable first durable receipt; old native records without it are refused.
+    pub received_at: i64,
     pub retained_until: i64,
 }
 #[derive(Serialize, Deserialize)]

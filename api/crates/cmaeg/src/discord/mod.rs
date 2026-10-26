@@ -4,7 +4,7 @@
 pub(crate) mod facts;
 mod inbox_reader;
 mod normalize;
-pub use inbox_reader::{InboxLaunch, InboxReader};
+pub use inbox_reader::{InboxLaunch, InboxReader, VerifiedInboxLaunch};
 pub(crate) mod outbound_media;
 pub(crate) mod rest;
 pub use rest::{DiscordRest, RestError};
