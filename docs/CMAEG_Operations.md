@@ -2358,3 +2358,18 @@ bytes and locator formats remain unchanged. No rollout may claim real-platform
 acceptance until the authorized live acceptance checks above are recorded.
 
 The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+## Owner-initiated delivery rollout
+
+Owner-initiated delivery is disabled by default with
+`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED=false`. Enable only after all gateway
+readers include the owner outbound operation kind and deployed NyxID supports
+`POST /api/v1/channel-relay/send` with its assigned-key, allow-initiation and
+addressable-conversation checks. This does not create or broaden upstream routes.
+Media/templates require their existing independent rollout flags. Turning the
+writer gate off stops new preparation and commit, while retained receipts and
+pre-commit cancellation stay available. There is no background outbound scheduler;
+prepared operations require explicit commit. Never retry an unknown send under a
+new key. Operation records use the existing encrypted interaction collection and
+immutable seven-day TTL; no database migration or additional credentials are needed.
+

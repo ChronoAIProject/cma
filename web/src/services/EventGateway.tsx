@@ -15,6 +15,7 @@ import {
 import { ChannelMap } from './ChannelMap';
 import { NodeInspector } from './NodeInspector';
 import { ChannelNodeTests } from './ChannelNodeTests';
+import { ChannelOutboundMessage } from './ChannelOutboundMessage';
 import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
 import { ChannelTable } from './ChannelTable';
 import { ExistingChannel } from './ExistingChannel';
@@ -319,6 +320,14 @@ function AddressedChannel({
         ) : (
           <p className="channel-field-hint">You have read-only access to this configuration.</p>
         )}
+        {editable ? (
+          <ChannelOutboundMessage
+            owner={session.subject}
+            channel={current}
+            selection={selected}
+            denied={denied}
+          />
+        ) : null}
         {can(session, 'event-gateway', 'channels:test') ? (
           <div hidden={newProducer}>
             <ChannelNodeTests

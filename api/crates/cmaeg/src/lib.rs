@@ -15,6 +15,7 @@ pub mod mcp;
 pub mod media;
 pub mod net;
 pub mod openapi;
+pub mod outbound;
 pub mod providers;
 pub mod records;
 pub mod runtime;

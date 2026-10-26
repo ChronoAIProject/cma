@@ -14,6 +14,7 @@ pub mod management;
 mod management_responses;
 pub mod media;
 pub mod metrics;
+pub mod outbound;
 pub mod problems;
 pub(crate) mod public_urls;
 pub mod readiness;

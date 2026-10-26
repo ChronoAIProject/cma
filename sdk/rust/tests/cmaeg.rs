@@ -422,3 +422,6 @@ async fn connection_operations_keep_owner_and_origin_authority_local_to_the_requ
     assert_eq!(server.request_count(), 5);
     server.assert_drained();
 }
+
+#[path = "cmaeg/outbound.rs"]
+mod outbound;

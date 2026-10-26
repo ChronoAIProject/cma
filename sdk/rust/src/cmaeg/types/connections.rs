@@ -90,6 +90,9 @@ pub struct RelayAuthoringCapabilities {
     pub dynamic_sources_writes_enabled: bool,
     /// Enables Discord/WhatsApp raw-event verification writes independently.
     pub relay_raw_verification_writes_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Whether owner-initiated message preparation and commit are enabled.
+    pub outbound_messages_writes_enabled: Option<bool>,
     /// Enables new additional-consumer routing writes.
     pub multi_consumer_writes_enabled: bool,
     /// Enables new native-bot mention policy writes.

@@ -2964,3 +2964,75 @@ is retryable; it does not consume the card. Controls expire after 24 hours.
 new message. Templates and initiated sends have independent contracts/gates.
 
 The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+## Owner-initiated outbound messages
+
+An owner with `cma-eg:channels:update` may send without an incoming event through
+an existing configured NyxID relay source. `cma-eg:channels:read` permits receipt
+reads. This is separate from the consumer-key event/reply-target tools; an event
+reference is not fabricated. The deployment must enable
+`CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED`; capability discovery exposes the current
+value as optional `relay_authoring.outbound_messages_writes_enabled`.
+
+1. `POST /v1/channels/{channel_id}/outbound-messages`, with a required 1–128 visible
+   ASCII byte `Idempotency-Key`, accepts `{source_id, route_id, message}`. `message`
+   is the existing `OutboundMessage`. It returns 201 `OutboundReceipt`, initially
+   `status: prepared`. Preparation has no external delivery effect.
+2. `POST /v1/channels/{channel_id}/outbound-messages/{delivery_id}/send` accepts the
+   **same OutboundMessage** and commits at most one upstream attempt. The message
+   must match the canonical hash admitted at preparation. No automatic retry occurs.
+3. `GET /v1/channels/{channel_id}/outbound-messages/{delivery_id}` reads the saved
+   receipt. `DELETE` cancels only a prepared operation; after commit it returns
+   409 `outbound_already_committed`. Concurrent commit/cancel uses one durable CAS.
+
+`route_id` must be the exact conversation UUID already present in the chosen
+source's persisted `route_ids`. There is no caller-supplied recipient, bot id,
+credential, arbitrary metadata or NyxID URL. Sending uses only that channel's
+stored channel key. The operation pins owner, channel record, exact source
+configuration and credential fingerprint. Unrelated record revision changes,
+including master-key resealing, do not revoke it. Current ownership and that
+authority are checked again at commit and immediately before dispatch. An
+authority change requires a fresh
+preparation; deletion, ownership transfer and credential rotation revoke pending
+use. NyxID independently requires an active addressable conversation, its assigned
+active agent key, `allow_agent_initiated`, an active bot with matching owner and
+platform, and platform support. Wildcard routes cannot initiate sends.
+
+Prepared operations expire after 24 hours. Encrypted, content-free operation
+records retain their original expiry for seven days, matching the existing
+interaction store. Their deterministic idempotency identity is domain-separated
+from reply receipts and callback interactions and includes the owner, channel
+record and key. Reusing a key with different content is a conflict. Use a fresh
+key only for a deliberately new message; after `retained_until`, the old key no
+longer has a replay guarantee. A restart preserves prepared operations for an
+explicit commit with the original body. Committed records without receipts return
+`delivery.outcome: unknown`; they never dispatch again, including after timeout,
+partial acceptance, restart, or receipt persistence failure. Read status after
+an ambiguous HTTP failure. `confirmed` means platform acceptance, not recipient
+read/delivery confirmation. Cancellation never retracts an accepted message.
+
+The request uses the shared bounded native image/file/audio/video types (public
+HTTPS URLs or up to 64 KiB aggregate decoded inline data, at most four attachments)
+and approved WhatsApp templates, controlled by the existing respective rollout
+flags. These preserve the corresponding typed NyxID `/channel-relay/send` body.
+The HTTP body limit is 128 KiB and the rendered relay envelope limit is 2 MiB;
+records store only hashes, so attachment contents are not squeezed into the 64 KiB
+record limit. NyxID owns remote URL validation, platform media limits, complete
+message splitting and template approval. CMA also applies its public URL policy
+before commit. Existing blocks render using their explicit `RenderingReport`;
+buttons, choices and forms use the recorded text fallback because unsolicited
+messages lack an admitted event's consumer callback lineage. Native interactive
+callbacks are not advertised. `thread_reply` and `reply_to` are refused: neither
+may manufacture inbound/thread authority. Templates never become arbitrary
+metadata or recipient input.
+
+The channel producer inspector exposes a text composer with explicit preparation,
+review, send, cancellation and status checks. The exact request/key and receipt
+are saved before network effects in per-tab, owner/channel-scoped session storage,
+without credentials. Reload offers an explicit status check using the same delivery
+ID, or recovery of an uncertain preparation with its original key. It never sends
+automatically. Unreadable/unwritable storage blocks new effects; changing account
+resets visible state without erasing another owner's unsettled request. SDK/API
+callers can use the full shared message type. SDK convenience helpers prepare once and commit once; an
+ambiguous commit carries the delivery reference for a read, never a hidden resend.
+

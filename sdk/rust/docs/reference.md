@@ -364,3 +364,22 @@ WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
 to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
 
 The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+### Owner-initiated messages
+
+`prepare_outbound_message(channel_id, &PrepareOutboundMessage, key)` durably
+prepares without delivery. `commit_outbound_message(channel_id, delivery_id,
+&OutboundMessage)` repeats the exact message and commits at most once.
+`get_outbound_message` reads its receipt and `cancel_outbound_message` cancels only
+before commit. The owner needs channel update permission and an enabled deployment
+writer gate. Destinations must already exist in the owned channel configuration.
+The shared typed message supports native media and approved WhatsApp templates;
+thread/reply-to authority is never inferred from a caller's metadata.
+
+`send_outbound_message` prepares and commits once. It returns `OutboundSendError`
+on failure: a present `delivery_id` means commit was attempted and the caller
+must inspect that durable receipt before acting again. Neither this helper nor
+any other mutation retries automatically. A committed unknown result never causes
+another send. Keep the original message with the original key for recovery;
+preparations expire in 24 hours and idempotency is retained for seven days.
+

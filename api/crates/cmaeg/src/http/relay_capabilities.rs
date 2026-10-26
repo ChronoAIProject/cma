@@ -6,6 +6,8 @@ use utoipa::ToSchema;
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
     pub dynamic_sources_writes_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outbound_messages_writes_enabled: Option<bool>,
     pub relay_raw_verification_writes_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
@@ -52,6 +54,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     .collect();
     RelayAuthoringCapabilities {
         dynamic_sources_writes_enabled: state.dynamic_sources_writes_enabled,
+        outbound_messages_writes_enabled: Some(state.outbound_messages_writes_enabled),
         relay_raw_verification_writes_enabled: state.relay_raw_verification_writes_enabled,
         multi_consumer_writes_enabled: state.multi_consumer_writes_enabled,
         native_bot_mentions_writes_enabled: state.native_bot_mentions_writes_enabled,

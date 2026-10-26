@@ -3469,3 +3469,29 @@ NyxID relay routes are never labelled as CMA-managed connection references,
 and platform verification support is never presented as native bot creation.
 
 | 2026-10-26 | Add capability-aware relay verification and platform setup guidance, preserving drafts and exact retries; distinguish owned Telegram connection setup from NyxID relay onboarding with explicit admission and no background polling. |
+
+
+### Owner-initiated channel messages (2026-10-26)
+
+The existing producer inspector may include a structured message composer only
+when the owner has update permission and the gateway advertises initiated sends.
+Use the existing Choice, TextField, Button, Alert and Presence primitives and
+inspector section styling. Show saved route choices only; never ask for arbitrary
+recipient metadata or credentials. Preparing retains the exact destination and
+message for review before the separate Send action. Keep that snapshot and its
+idempotency key while changing inspected nodes or recovering an uncertain request.
+No polling or automatic resend is permitted. Confirmed, cancelled and unknown
+outcomes use plain language; unknown offers an explicit status check and retains
+its delivery reference. The existing Presence transition respects reduced motion.
+
+| 2026-10-26 | Add explicit prepare, review, send, cancel and status recovery in the existing producer inspector for owner-initiated messages, retaining uncertain operations and their exact destination. |
+
+
+Owner-initiated message recovery retains the exact request, key and receipt in
+per-tab session storage scoped to the current owner and stable channel record.
+Save before network effects. A reload offers an explicit status check, never an
+automatic send, and account changes reset the visible composer. Storage failure
+blocks sending with an inline explanation. Use “Review message”, “Send message”
+and “Cancel” for the explicit actions; avoid internal preparation terminology.
+
+| 2026-10-26 | Retain owner/channel message recovery across reloads with original keys, explicit status checks and plain review/send labels. |

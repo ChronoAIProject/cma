@@ -8,3 +8,4 @@ export * from './types/connections.js';
 export * from './types/media.js';
 export * from './types/nodes.js';
 export * from './types/whatsapp-template.js';
+export * from './types/outbound.js';

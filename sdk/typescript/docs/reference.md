@@ -645,3 +645,25 @@ WhatsApp `updateMessage` is unsupported. Unknown receipts are not permission
 to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
 
 The existing public option-label bound of 64 UTF-8 bytes also applies.
+
+
+### Owner-initiated messages
+
+`prepareOutboundMessage(channelId, { source_id, route_id, message },
+{ idempotencyKey })` creates a durable preparation without sending. The route
+must already be configured in that owner's channel. `message` is the shared
+`OutboundMessage`, including supported native media and approved WhatsApp templates.
+`commitOutboundMessage(channelId, deliveryId, message)` repeats the exact message
+and commits one send. `getOutboundMessage` reads the receipt;
+`cancelOutboundMessage` cancels only before commitment. Preparation lasts 24 hours;
+idempotency records remain for seven days. The deployment authoring flag must be on.
+
+`sendOutboundMessage` is the convenience prepare-then-commit helper. It performs
+no automatic mutation retry. A failed commit throws
+`cmaeg.OutboundCommitUncertainError` with `deliveryId` and `isRetryable: false`;
+use `getOutboundMessage` to inspect the record. A replayed committed/unknown or
+cancelled preparation never causes another send. Never replace the key after an
+unknown outcome. The original message stays with the caller; CMA stores its hash,
+not the content. Thread/reply-to references cannot create unproven destination
+authority, and interactive blocks use the explicit text rendering report.
+
