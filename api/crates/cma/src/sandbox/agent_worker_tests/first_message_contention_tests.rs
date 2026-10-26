@@ -28,7 +28,9 @@ async fn first_message_write_conflicts_retry_without_retaining_eighteen_minute_l
             .admit_with_first_message("write-conflict", Vec::new(), Some("Run checks once"))
             .await;
         for _ in 0..5 {
-            harness.run(&agent.id, harness.now).await;
+            // Real Mongo claims advance ready_at by elapsed IO time. Use a
+            // fresh observation for each step, as the production scheduler does.
+            harness.run(&agent.id, SystemTime::now()).await;
         }
         let dispatching = harness.stored(&agent.id).await;
         assert_eq!(dispatching.work.step, AgentWorkStep::DispatchFirstMessage);
