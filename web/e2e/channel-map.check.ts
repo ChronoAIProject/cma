@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
@@ -5,6 +6,29 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   page,
   baseURL,
 }, info) => {
+  const themeEvidence: Record<string, unknown>[] = [];
+  const capture = async (file: string, theme: 'light' | 'dark') => {
+    const expected = {
+      darkAttribute: theme === 'dark',
+      colorScheme: theme,
+      pageBackground: theme === 'dark' ? 'rgb(9, 9, 11)' : 'rgb(255, 255, 255)',
+      canvasBackground: theme === 'dark' ? 'rgb(24, 24, 27)' : 'rgb(250, 250, 250)',
+    };
+    const rendered = () =>
+      page.evaluate(() => ({
+        darkAttribute: document.body.hasAttribute('data-ds-dark-theme'),
+        colorScheme: getComputedStyle(document.documentElement).colorScheme,
+        pageBackground: getComputedStyle(document.querySelector('.service-page')!).backgroundColor,
+        canvasBackground: getComputedStyle(document.querySelector('.delivery-flow')!)
+          .backgroundColor,
+      }));
+    await expect.poll(rendered).toEqual(expected);
+    themeEvidence.push({ file, theme, ...(await rendered()) });
+    await page.screenshot({ path: info.outputPath(file), fullPage: true, animations: 'disabled' });
+  };
+  // The product intentionally defaults to dark. A light screenshot must explicitly
+  // select light before bootstrap, rather than merely use a light filename.
+  await page.addInitScript(() => localStorage.setItem('cma:appearance', 'light'));
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
   const channel = {
@@ -140,10 +164,7 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(
     page.getByLabel('Illustrative event journey').locator('.channel-map__node'),
   ).toHaveCount(4);
-  await page.screenshot({
-    path: info.outputPath('channel-welcome-light-1600.png'),
-    animations: 'disabled',
-  });
+  await capture('channel-welcome-light-1600.png', 'light');
   await page
     .getByRole('region', { name: 'Channels' })
     .getByRole('button', { name: /^Team workspace/ })
@@ -172,11 +193,12 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   expect(await editor.evaluate((element, previous) => element === previous, retained)).toBe(true);
   await page.getByRole('button', { name: 'Close', exact: true }).click();
-  for (const theme of ['light', 'dark']) {
-    await page.evaluate(
-      (value) => document.body.toggleAttribute('data-ds-dark-theme', value === 'dark'),
-      theme,
-    );
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate((value) => {
+      localStorage.setItem('cma:appearance', value);
+      document.body.toggleAttribute('data-ds-dark-theme', value === 'dark');
+      document.documentElement.style.colorScheme = value;
+    }, theme);
     for (const width of [1600, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect
@@ -205,11 +227,7 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
           }),
         )
         .toBeLessThan(3);
-      await page.screenshot({
-        path: info.outputPath(`channel-map-${theme}-${width}.png`),
-        fullPage: true,
-        animations: 'disabled',
-      });
+      await capture(`channel-map-${theme}-${width}.png`, theme);
       await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
       const inspector = page.locator('.channel-inspector');
       const bounds = await page.getByRole('dialog').boundingBox();
@@ -232,11 +250,7 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
           ),
         )
         .toBe(true);
-      await page.screenshot({
-        path: info.outputPath(`channel-inspector-${theme}-${width}.png`),
-        fullPage: true,
-        animations: 'disabled',
-      });
+      await capture(`channel-inspector-${theme}-${width}.png`, theme);
       await page.getByRole('button', { name: 'Close', exact: true }).click();
     }
   }
@@ -255,10 +269,8 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
       }),
     )
     .toBeLessThan(32);
-  await page.screenshot({
-    path: info.outputPath('channel-activity-dark-1600.png'),
-    animations: 'disabled',
-  });
+  await capture('channel-activity-dark-1600.png', 'dark');
+  writeFileSync(info.outputPath('theme-evidence.json'), JSON.stringify(themeEvidence, null, 2));
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.emulateMedia({ reducedMotion: 'reduce' });
   expect(
