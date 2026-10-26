@@ -48,6 +48,7 @@ export function EventGatewayPortal({
       <button
         type="button"
         className="sidebar__link"
+        aria-current={selected === 'channels' ? 'page' : undefined}
         aria-expanded={selected === 'channels' && channelsExpanded}
         onClick={() => {
           if (selected === 'channels') setChannelsExpanded((value) => !value);
@@ -66,6 +67,7 @@ export function EventGatewayPortal({
           <button
             type="button"
             className="sidebar__link"
+            aria-current={selected === 'consumers' ? 'page' : undefined}
             aria-expanded={selected === 'consumers' && consumersExpanded}
             onClick={() => {
               if (selected === 'consumers') setConsumersExpanded((value) => !value);
