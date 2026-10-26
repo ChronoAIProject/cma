@@ -7,6 +7,7 @@ mod native_mentions;
 pub mod receipts;
 pub mod relay;
 pub mod routing_plan;
+pub mod routing_store;
 pub mod telegram;
 
 mod state;

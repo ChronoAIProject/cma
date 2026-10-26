@@ -1,0 +1,185 @@
+use super::{codec, types::*};
+use crate::ingress::{launch::LaunchRequest, routing_plan::RoutedPlan};
+use cmaeg_core::{
+    activity::ActivityKind,
+    seal::{event_ref::activity_digest, MasterKeyRing},
+};
+use std::collections::BTreeSet;
+
+/// An uncommitted, bounded upload. Reuse it unchanged after an uncertain write.
+/// It carries sensitive source bytes and deliberately has no Debug formatter.
+pub struct Candidate {
+    pub(super) manifest: Manifest,
+    pub(super) bytes: Vec<u8>,
+    pub(super) event_expires_at: i64,
+}
+impl Candidate {
+    pub fn prepare(
+        request: &LaunchRequest,
+        plan: &RoutedPlan,
+        source_body: &[u8],
+        keys: &MasterKeyRing,
+        now: i64,
+    ) -> Result<Self, AdmissionError> {
+        if source_body.len() > MAX_SOURCE_BYTES {
+            return Err(AdmissionError::TooLarge);
+        }
+        let original = request
+            .event_ref
+            .open(keys, now)
+            .map_err(|error| match error {
+                cmaeg_core::seal::OpenError::Expired => AdmissionError::Expired,
+                _ => AdmissionError::Invalid,
+            })?
+            .payload;
+        let mut incoming = plan.activity.clone();
+        incoming.routing = None;
+        let identity = EventIdentity {
+            owner: request.channel.definition.owner.subject.clone(),
+            channel_id: request.channel.id.clone(),
+            record_id: request.channel.pointer.record_id.clone(),
+            event_id: request.activity.event_id.clone(),
+        };
+        identity.validate()?;
+        if incoming != request.activity
+            || request.consumer.is_some()
+            || matches!(incoming.kind, ActivityKind::Interaction(_))
+            || original.consumer.is_some()
+            || original.lineage.is_some()
+            || !original.verifies_activity(&incoming)
+            || original.channel_id != identity.channel_id
+            || original.record_id != identity.record_id
+            || request.channel.definition.record_id != identity.record_id
+            || original.conversation_id != request.conversation_id
+            || request.channel.definition.source_of(&incoming.source) != Some(&plan.source)
+            || plan.targets.iter().any(|target| {
+                target.event.expires_at != original.expires_at
+                    || target.event.reply != original.reply
+                    || request
+                        .channel
+                        .consumer(Some(&target.consumer))
+                        .is_none_or(|consumer| {
+                            consumer.pending
+                                || consumer.credential.is_none()
+                                || consumer.provider != &target.provider
+                        })
+            })
+        {
+            return Err(AdmissionError::Invalid);
+        }
+        let admission_id = identity.admission_id();
+        let payload = AdmittedPlan {
+            kind: PAYLOAD_KIND.into(),
+            admission_id: admission_id.clone(),
+            identity,
+            request_hash: codec::request_hash(&incoming, source_body)?,
+            admitted_at: now,
+            retained_until: now
+                .checked_add(RETENTION_SECONDS)
+                .ok_or(AdmissionError::Invalid)?,
+            activity: plan.activity.clone(),
+            source: plan.source.clone(),
+            targets: plan
+                .targets
+                .iter()
+                .map(|launch| StoredTarget {
+                    id: codec::identifier(
+                        "ordinary-route-target-v1",
+                        &(&admission_id, &launch.consumer),
+                    ),
+                    launch: launch.clone(),
+                })
+                .collect(),
+            source_body: source_body.to_vec(),
+        };
+        payload.validate()?;
+        let bytes = codec::canonical(&payload)?;
+        if bytes.len() > MAX_PAYLOAD_BYTES {
+            return Err(AdmissionError::TooLarge);
+        }
+        let manifest = Manifest {
+            kind: ROOT_KIND.into(),
+            id: payload.admission_id.clone(),
+            identity: payload.identity,
+            request_hash: payload.request_hash,
+            payload_hash: codec::hash(&bytes),
+            payload_len: bytes.len(),
+            chunk_hashes: bytes.chunks(CHUNK_BYTES).map(codec::hash).collect(),
+            admitted_at: now,
+            retained_until: payload.retained_until,
+        };
+        manifest.validate(now)?;
+        codec::encode(&manifest)?;
+        Ok(Self {
+            manifest,
+            bytes,
+            event_expires_at: original.expires_at,
+        })
+    }
+    pub fn identity(&self) -> &EventIdentity {
+        &self.manifest.identity
+    }
+    pub fn request_hash(&self) -> &str {
+        &self.manifest.request_hash
+    }
+    pub fn admission_id(&self) -> &str {
+        &self.manifest.id
+    }
+    pub(super) fn live(&self, now: i64) -> Result<(), AdmissionError> {
+        self.manifest.validate(now)?;
+        if self.event_expires_at <= now {
+            return Err(AdmissionError::Expired);
+        }
+        Ok(())
+    }
+}
+
+impl AdmittedPlan {
+    pub(super) fn validate(&self) -> Result<(), AdmissionError> {
+        self.identity.validate()?;
+        let routing = self
+            .activity
+            .routing
+            .as_ref()
+            .ok_or(AdmissionError::Corrupt)?;
+        if self.kind != PAYLOAD_KIND
+            || self.admission_id != self.identity.admission_id()
+            || self.activity.validate().is_err()
+            || matches!(self.activity.kind, ActivityKind::Interaction(_))
+            || self.activity.event_id != self.identity.event_id
+            || self.targets.len() != routing.targets.len()
+            || self.targets.is_empty()
+            || self.targets.len() > usize::from(cmaeg_core::channel::MAX_TARGETS)
+            || self.source_body.len() > MAX_SOURCE_BYTES
+            || codec::request_hash(&self.activity, &self.source_body)? != self.request_hash
+        {
+            return Err(AdmissionError::Corrupt);
+        }
+        let mut seen = BTreeSet::new();
+        for (target, selected) in self.targets.iter().zip(&routing.targets) {
+            let launch = &target.launch;
+            let event = &launch.event;
+            let expected_consumer = (!launch.consumer.is_default()).then_some(&launch.consumer);
+            if target.id
+                != codec::identifier(
+                    "ordinary-route-target-v1",
+                    &(&self.admission_id, &launch.consumer),
+                )
+                || !seen.insert(&target.id)
+                || launch.consumer != selected.id
+                || event.consumer.as_ref() != expected_consumer
+                || event.lineage.is_some()
+                || event.validate().is_err()
+                || event.channel_id != self.identity.channel_id
+                || event.record_id != self.identity.record_id
+                || event.event_id != self.identity.event_id
+                || event.activity_sha256.as_ref() != Some(&activity_digest(&self.activity))
+                || event.expires_at <= self.admitted_at
+                || event.expires_at > self.retained_until
+            {
+                return Err(AdmissionError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+}

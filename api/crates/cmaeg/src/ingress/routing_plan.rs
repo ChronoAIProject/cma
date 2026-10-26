@@ -13,6 +13,7 @@ use cmaeg_core::{
     routing::{self, Resolution, RouteError, RouteInput, Trace},
     seal::{event_ref::activity_digest, EventRefPayload, MasterKeyRing},
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Authentication facts are supplied by the ingress verifier, never the event.
@@ -43,7 +44,8 @@ pub struct RoutedPlan {
     pub trace: Trace,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConsumerLaunch {
     pub consumer: ConsumerId,
     /// A binding snapshot, not a credential or permission to execute later.
@@ -174,3 +176,7 @@ pub fn plan(
 #[cfg(test)]
 #[path = "routing_plan/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "routing_plan/fixture.rs"]
+pub(crate) mod fixture;
