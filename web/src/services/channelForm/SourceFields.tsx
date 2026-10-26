@@ -40,7 +40,12 @@ export function SourceFields({
                 onChange(
                   ['discord', 'whatsapp'].includes(platform)
                     ? updated
-                    : without(updated, ['verify_raw_event']),
+                    : without(
+                        updated,
+                        platform === 'slack'
+                          ? ['verify_raw_event']
+                          : ['verify_raw_event', 'trust_normalized'],
+                      ),
                 );
               }}
             />

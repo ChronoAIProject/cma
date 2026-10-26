@@ -74,6 +74,8 @@ impl ConsumerGateway {
         let config = cmaeg::Config {
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
+            multi_consumer_writes_enabled: false,
+            dynamic_sources_writes_enabled: false,
             listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(),
             providers: cmaeg::providers::ProviderRegistry::parse(&json!([{
                 "slug":"cma_codex","base_url":server.base,"kind":"responses_http","max_inflight":8,

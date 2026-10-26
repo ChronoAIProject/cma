@@ -29,7 +29,7 @@ fn media(message_type: &str, content: Value, items: Value) -> LarkMedia {
 }
 
 #[test]
-fn only_image_file_audio_and_media_messages_are_media() {
+fn only_image_file_audio_media_and_video_messages_are_media() {
     let content = json!({"image_key": "img_v3_k", "file_key": "file_v3_k"});
     for other in ["text", "post", "sticker", "share_chat", "IMAGE", ""] {
         assert!(extract(other, &content, &RelayAttachments::default()).is_none());
@@ -39,6 +39,7 @@ fn only_image_file_audio_and_media_messages_are_media() {
         ("file", AttachmentKind::File, MediaVariant::File, "file"),
         ("audio", AttachmentKind::Audio, MediaVariant::Audio, "audio"),
         ("media", AttachmentKind::Video, MediaVariant::Media, "video"),
+        ("video", AttachmentKind::Video, MediaVariant::Media, "video"),
     ] {
         let media = media(message_type, content.clone(), json!([]));
         assert_eq!(media.attachment.kind, kind);
@@ -137,8 +138,10 @@ fn filenames_prefer_the_raw_name_and_are_normalized() {
         json!({"file_key": "file_v3_r"}),
         json!({"file_key": "file_v3_r", "file_name": 7}),
     ] {
-        let fallback = named("media", content).attachment;
-        assert_eq!(fallback.filename.as_deref(), Some("envelope.pdf"));
+        for message_type in ["media", "video"] {
+            let fallback = named(message_type, content.clone()).attachment;
+            assert_eq!(fallback.filename.as_deref(), Some("envelope.pdf"));
+        }
     }
     let long = named(
         "file",
@@ -318,7 +321,7 @@ fn extractor_output_always_validates() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let (mut located, mut keyed) = (0, 0);
     for case in 0..2_000 {
-        let message_type = rng.pick(&["image", "file", "audio", "media"]);
+        let message_type = rng.pick(&["image", "file", "audio", "media", "video"]);
         let content = content(&mut rng, &pool);
         let list = entries(&mut rng, &pool);
         let media = extract(message_type, &content, &list).unwrap();
