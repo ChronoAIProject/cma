@@ -34,3 +34,6 @@ mod runner_process;
 
 #[path = "relay/managed_creation.rs"]
 mod managed_creation;
+
+#[path = "relay/thread_follow.rs"]
+mod thread_follow;

@@ -146,6 +146,7 @@ mod tests {
             channel: Arc::new(channel),
             event,
             message: OutboundMessage {
+                thread_reply: false,
                 text: Some(text.into()),
                 blocks: vec![],
                 reply_to: None,

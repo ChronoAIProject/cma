@@ -257,6 +257,7 @@ fn activities() -> Vec<Activity> {
     .unwrap();
     vec![
         Activity {
+            thread: None,
             schema_version: 1,
             event_id: EventId::new("evt-message").unwrap(),
             kind: ActivityKind::Message {
@@ -273,6 +274,7 @@ fn activities() -> Vec<Activity> {
             routing: None,
         },
         Activity {
+            thread: None,
             schema_version: 1,
             event_id: EventId::new("evt-ce").unwrap(),
             kind: ActivityKind::Event {

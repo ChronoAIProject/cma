@@ -165,6 +165,7 @@ fn relayed_turn(edit: impl FnOnce(&mut Activity)) -> (LaunchRequest, i64) {
         Some(message(vec![attachment(AttachmentKind::Image, None)])),
     );
     let mut payload = event(ReplyAddress::NyxidRelay {
+        thread_reply: false,
         message_id: "nyx-message-9".into(),
         route_id: "route-1".into(),
         platform: Platform::Telegram,
@@ -231,6 +232,7 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 fn config(media: MediaConfig) -> Config {
     Config {
         native_bot_mentions_writes_enabled: false,
+        thread_contract_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),
         metrics_listen: "127.0.0.1:0".parse().unwrap(),
         providers: Default::default(),

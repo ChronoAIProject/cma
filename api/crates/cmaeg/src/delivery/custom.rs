@@ -75,6 +75,7 @@ impl CustomDelivery {
                     event,
                     Some(text),
                     Some(&OutboundMessage {
+                        thread_reply: false,
                         text: Some(text.clone()),
                         blocks: vec![],
                         reply_to: None,
@@ -262,6 +263,7 @@ mod tests {
 
     fn message() -> OutboundMessage {
         OutboundMessage {
+            thread_reply: false,
             text: Some("hello".into()),
             blocks: vec![],
             reply_to: None,

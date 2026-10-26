@@ -23,6 +23,7 @@ pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(super) struct PreparedReply {
     body: Vec<u8>,
     message_id: String,
+    thread_reply: bool,
 }
 
 pub enum Credential<'a> {
@@ -166,29 +167,43 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> (DeliveryOutcome, Option<String>) {
-        let ReplyAddress::NyxidRelay { message_id, .. } = address else {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
             return (DeliveryOutcome::Unsupported, None);
         };
         let secret = match credential_secret(credential) {
             Ok(secret) => secret,
             Err(outcome) => return (outcome, None),
         };
-        tokio::time::timeout(self.timeout, self.post(message_id, secret, text, markup))
-            .await
-            .unwrap_or_else(|_| (unknown("response_lost"), None))
+        tokio::time::timeout(
+            self.timeout,
+            self.post(message_id, secret, text, markup, *thread_reply),
+        )
+        .await
+        .unwrap_or_else(|_| (unknown("response_lost"), None))
     }
     pub(super) fn prepare(
         address: &ReplyAddress,
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> Result<PreparedReply, DeliveryOutcome> {
-        let ReplyAddress::NyxidRelay { message_id, .. } = address else {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
             return Err(DeliveryOutcome::Unsupported);
         };
-        let body =
-            serialize_reply(message_id, text, markup).map_err(|_| DeliveryOutcome::Rejected {
+        let body = serialize_reply(message_id, text, markup, *thread_reply).map_err(|_| {
+            DeliveryOutcome::Rejected {
                 reason: "relay_request_invalid".into(),
-            })?;
+            }
+        })?;
         if body.len() > REQUEST_MAX_BYTES {
             return Err(DeliveryOutcome::Rejected {
                 reason: "relay_request_too_large".into(),
@@ -197,6 +212,7 @@ impl RelayClient {
         Ok(PreparedReply {
             body,
             message_id: message_id.clone(),
+            thread_reply: *thread_reply,
         })
     }
     pub(super) async fn send_prepared(
@@ -252,14 +268,16 @@ impl RelayClient {
         secret: &Secret,
         text: &str,
         markup: Option<&serde_json::Value>,
+        thread_reply: bool,
     ) -> (DeliveryOutcome, Option<String>) {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
         };
-        let Ok(body) = serialize_reply(message_id, text, markup) else {
+        let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
             return (unknown("response_lost"), None);
         };
-        self.post_serialized(message_id, headers, body).await
+        self.post_serialized(message_id, headers, body, thread_reply)
+            .await
     }
     async fn post_prepared(
         &self,
@@ -269,18 +287,29 @@ impl RelayClient {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
         };
-        self.post_serialized(&prepared.message_id, headers, prepared.body.clone())
-            .await
+        self.post_serialized(
+            &prepared.message_id,
+            headers,
+            prepared.body.clone(),
+            prepared.thread_reply,
+        )
+        .await
     }
     async fn post_serialized(
         &self,
         message_id: &str,
         headers: HeaderMap,
         body: Vec<u8>,
+        thread_reply: bool,
     ) -> (DeliveryOutcome, Option<String>) {
+        let mut endpoint = self.endpoint.clone();
+        if thread_reply {
+            // Old NyxID replicas must fail before sending, never ignore the flag.
+            endpoint.set_path("/api/v1/channel-relay/thread-reply");
+        }
         let reply = match self
             .transport
-            .post(self.endpoint.clone(), headers, body, self.timeout)
+            .post(endpoint, headers, body, self.timeout)
             .await
         {
             Ok(reply) => reply,
@@ -335,10 +364,13 @@ fn serialize_reply(
     message_id: &str,
     text: &str,
     markup: Option<&serde_json::Value>,
+    thread_reply: bool,
 ) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(
-        &serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}}),
-    )
+    let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
+    if thread_reply {
+        body["thread_reply"] = true.into();
+    }
+    serde_json::to_vec(&body)
 }
 /// The bearer and JSON headers reqwest's `bearer_auth` and `json` set, with the
 /// credential marked sensitive. `None` when the credential is not a header value.

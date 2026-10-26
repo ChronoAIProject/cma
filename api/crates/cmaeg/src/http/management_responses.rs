@@ -19,6 +19,13 @@ pub(super) fn channel_response(
     record_id: &cmaeg_core::ids::RecordId,
 ) -> Result<ChannelResponse, ManagementError> {
     Ok(ChannelResponse {
+        thread_contract_versions: if state.thread_contract_writes_enabled
+            && cmaeg_core::thread::supported(definition)
+        {
+            vec![1]
+        } else {
+            Vec::new()
+        },
         channel_id: channel_id.to_string(),
         record_id: record_id.to_string(),
         version,

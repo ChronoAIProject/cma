@@ -25,16 +25,20 @@ use std::{
 };
 
 #[derive(Default)]
-struct Transport(Mutex<Vec<usize>>);
+struct Transport(Mutex<Vec<usize>>, Mutex<Vec<(Url, serde_json::Value)>>);
 impl RelayTransport for Transport {
     fn post(
         &self,
-        _: Url,
+        url: Url,
         _: HeaderMap,
         body: Vec<u8>,
         _: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         self.0.lock().unwrap().push(body.len());
+        self.1
+            .lock()
+            .unwrap()
+            .push((url, serde_json::from_slice(&body).unwrap()));
         Box::pin(async {
             Ok(HttpReply::new(
                 StatusCode::OK,
@@ -77,6 +81,7 @@ fn setup() -> (
         conversation_id: "conversation-1".parse().unwrap(),
         expires_at: i64::MAX,
         reply: ReplyAddress::NyxidRelay {
+            thread_reply: false,
             message_id: "inbound\\\"中文".into(),
             route_id: "route-1".into(),
             platform: Platform::Telegram,
@@ -105,6 +110,7 @@ fn setup() -> (
 }
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
+        thread_reply: false,
         text: Some(text),
         blocks: vec![],
         reply_to: None,
@@ -185,4 +191,64 @@ async fn a_cancelled_commit_refuses_before_token_claim_and_http() {
     assert_eq!(gate.calls(), ["enter_route", "attempt", "commit"]);
     assert!(sender.consumed.lock().unwrap().is_empty());
     assert!(transport.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn complete_replies_keep_thread_choice_and_sealed_target_independent() {
+    for (available, requested) in [(true, true), (true, false), (false, true)] {
+        let (sender, transport, channel, mut event) = setup();
+        if let ReplyAddress::NyxidRelay {
+            thread_reply,
+            platform,
+            ..
+        } = &mut event.reply
+        {
+            *thread_reply = available;
+            *platform = Platform::Lark;
+        }
+        let trace = tracing::Span::none();
+        let gate = RecordingGate::new(true);
+        let ctx = SendContext {
+            trace: &trace,
+            channel: &channel,
+            first_send_done: false,
+            gate: &gate,
+        };
+        let mut message = message("long complete response ".repeat(1000));
+        message.thread_reply = requested;
+        let (receipt, effects) = sender.reply(&ctx, &event, &message).await;
+        if !available {
+            assert_eq!(
+                receipt.delivery,
+                DeliveryOutcome::Rejected {
+                    reason: "thread_target_unavailable".into()
+                }
+            );
+            assert!(!effects.first_send_done);
+            assert!(gate.calls().is_empty());
+            assert!(sender.consumed.lock().unwrap().is_empty());
+            assert!(transport.1.lock().unwrap().is_empty());
+            continue;
+        }
+        assert!(matches!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed { .. }
+        ));
+        let requests = transport.1.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let (url, body) = &requests[0];
+        assert_eq!(
+            url.path(),
+            if requested {
+                "/api/v1/channel-relay/thread-reply"
+            } else {
+                "/api/v1/channel-relay/reply"
+            }
+        );
+        assert_eq!(
+            body.get("thread_reply"),
+            requested.then_some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(body["reply"]["text"], message.text.unwrap());
+    }
 }

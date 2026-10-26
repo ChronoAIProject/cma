@@ -10,6 +10,8 @@ use super::ChannelDefinition;
 pub struct Extensions {
     /// Optional native automated-group admission, unreadable by older readers.
     pub native_bot_mentions: bool,
+    /// Verified native thread contract, unreadable by older readers.
+    pub thread_contract: bool,
     /// Multi-consumer routing.
     pub routing: bool,
     /// Source and partition shapes beyond today's rules.
@@ -24,6 +26,7 @@ impl Extensions {
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
             native_bot_mentions: def.sources.iter().any(super::Source::native_bot_mentions),
+            thread_contract: def.reply.thread_contract.is_some(),
             routing: def.routing.is_some() || !def.secrets.consumer_keys.is_empty(),
             sources: def.validate_legacy_sources_and_partition().is_err()
                 || def.partition.custom_key.is_some(),
@@ -32,6 +35,6 @@ impl Extensions {
 
     /// Whether an image that predates every extension can read the definition.
     pub fn legacy_compatible(&self) -> bool {
-        !self.routing && !self.sources && !self.native_bot_mentions
+        !self.routing && !self.sources && !self.native_bot_mentions && !self.thread_contract
     }
 }

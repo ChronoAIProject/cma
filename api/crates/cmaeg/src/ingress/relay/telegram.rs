@@ -168,6 +168,7 @@ pub fn observe(
         .map(|media| (media.attachments, media.album_id))
         .unwrap_or_default();
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: None,
         conversation,
@@ -262,6 +263,7 @@ fn observe_callback(
         .map(|id| numeric(Some(id)))
         .transpose()?;
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: Some(CallbackFacts {
             id,
