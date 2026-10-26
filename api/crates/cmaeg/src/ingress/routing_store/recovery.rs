@@ -25,15 +25,43 @@ impl PlanStore {
         after: Option<&str>,
         limit: usize,
     ) -> Result<RecoveryPage, AdmissionError> {
-        if owner.is_empty() || owner.len() > 512 || !(1..=32).contains(&limit) {
+        if owner.is_empty() || owner.len() > 512 {
+            return Err(AdmissionError::Invalid);
+        }
+        self.scan_page(Some(owner), after, limit).await
+    }
+
+    /// Service-owned recovery across tenants. Each opened manifest must match
+    /// its stored owner; this does not grant an owner access to another tenant.
+    pub async fn recover_all_page(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<RecoveryPage, AdmissionError> {
+        self.scan_page(None, after, limit).await
+    }
+
+    async fn scan_page(
+        &self,
+        owner: Option<&str>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<RecoveryPage, AdmissionError> {
+        if !(1..=32).contains(&limit) {
             return Err(AdmissionError::Invalid);
         }
         let heads = self
             .records
-            .list(Some(owner), after, limit)
+            .list(owner, after, limit)
             .await
             .map_err(|_| AdmissionError::Unavailable)?;
-        if heads.len() > limit || heads.iter().any(|head| head.owner != owner) {
+        if heads.len() > limit
+            || heads.iter().any(|head| {
+                head.owner.is_empty()
+                    || head.owner.len() > 512
+                    || owner.is_some_and(|owner| head.owner != owner)
+            })
+        {
             return Err(AdmissionError::Corrupt);
         }
         let mut previous = after;
@@ -50,7 +78,7 @@ impl PlanStore {
             next_cursor,
         };
         for head in heads {
-            let result = self.recover_head(owner, &head.record_id).await;
+            let result = self.recover_head(&head.owner, &head.record_id).await;
             match result {
                 Ok(Some(plan)) => page.plans.push(plan),
                 Ok(None) => {}
