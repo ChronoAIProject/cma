@@ -26,6 +26,7 @@ struct Inner {
     registry_loaded: AtomicBool,
     cma_reachable: AtomicBool,
     draining: AtomicBool,
+    routed_recovery_failed: AtomicBool,
     /// Set once `/readyz` first answered ready; background work that must
     /// never compete with startup waits for it.
     served_ready: AtomicBool,
@@ -46,6 +47,7 @@ impl Readiness {
                 registry_loaded: true.into(),
                 cma_reachable: false.into(),
                 draining: false.into(),
+                routed_recovery_failed: false.into(),
                 served_ready: false.into(),
                 served: Notify::new(),
             }),
@@ -73,8 +75,16 @@ impl Readiness {
     pub fn start_draining(&self) {
         self.inner.draining.store(true, Ordering::Release);
     }
+    pub fn routed_recovery_failed(&self) {
+        self.inner
+            .routed_recovery_failed
+            .store(true, Ordering::Release);
+    }
     pub fn report(&self) -> ReadinessReport {
         let mut reasons = Vec::new();
+        if self.inner.routed_recovery_failed.load(Ordering::Acquire) {
+            reasons.push("routed_recovery_failed");
+        }
         if self.inner.draining.load(Ordering::Acquire) {
             reasons.push("draining");
         }

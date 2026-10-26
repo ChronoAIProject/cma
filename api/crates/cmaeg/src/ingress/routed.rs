@@ -34,6 +34,7 @@ pub struct RoutedIngress {
     records: BTreeSet<String>,
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
+    admission_enabled: bool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -53,12 +54,18 @@ impl RoutedIngress {
             records,
             non_human_providers,
             replay_providers,
+            admission_enabled: true,
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
     }
 
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
+    }
+
+    pub fn with_admissions_enabled(mut self, enabled: bool) -> Self {
+        self.admission_enabled = enabled;
+        self
     }
 
     async fn admit(
@@ -94,6 +101,13 @@ impl RoutedIngress {
                 let OrdinaryPlan::Routed(plan) = decision else {
                     return Ok(None);
                 };
+                if !self.admission_enabled || !self.schedule.accepting() {
+                    return Err(Problem::new(
+                        ProblemCode::ProviderUnavailable,
+                        503,
+                        "routed_admission_paused",
+                    ));
+                }
                 if plan.targets.iter().any(|target| {
                     !self
                         .replay_providers

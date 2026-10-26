@@ -121,6 +121,16 @@ pub(crate) async fn serve(
             transformer,
         },
     )?;
+    let routed = crate::serve_routed::compose(
+        &config,
+        &state,
+        crate::serve_routed::Deps {
+            media: media.clone(),
+            tool_providers: tool_providers.clone(),
+            delivery: delivery.clone(),
+            tracker: tracker.clone(),
+        },
+    )?;
     let runner = std::sync::Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
@@ -147,8 +157,16 @@ pub(crate) async fn serve(
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_routed(
+        routed
+            .as_ref()
+            .map(|composition| composition.ingress.clone()),
+    )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        routed_replies: routed
+            .as_ref()
+            .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
         telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
             telegram,
@@ -163,7 +181,6 @@ pub(crate) async fn serve(
         keys: state.master_keys.clone(),
         providers,
         delivery,
-        routed_replies: None,
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
         public_api_url: config.management.public_api_url.clone(),
@@ -178,6 +195,9 @@ pub(crate) async fn serve(
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let mut routed_worker = routed.map(|composition| {
+        crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
+    });
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
@@ -209,8 +229,20 @@ pub(crate) async fn serve(
         wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
-        if !tracker.drain(deadline).await {
+        if let Some(worker) = &routed_worker {
+            worker.stop_scheduling();
+        }
+        let (turns_drained, routed_drained) = tokio::join!(tracker.drain(deadline), async {
+            match &mut routed_worker {
+                Some(worker) => worker.drain(deadline).await,
+                None => true,
+            }
+        },);
+        if !turns_drained {
             tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
+        }
+        if !routed_drained {
+            tracing::warn!("routed execution drain incomplete; durable recovery retained");
         }
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(
