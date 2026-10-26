@@ -1365,6 +1365,13 @@
           },
           "typing": {
             "type": "boolean"
+          },
+          "whatsapp_templates": {
+            "description": "Approved WhatsApp template replies only; no callbacks or initiated sends.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1380,10 +1387,22 @@
       "CapabilityView": {
         "properties": {
           "platforms": {
+            "description": "Native connection setup workflows; separate from NyxID relay ingestion.",
             "items": {
               "$ref": "#/components/schemas/PlatformCapability"
             },
             "type": "array"
+          },
+          "relay_authoring": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RelayAuthoringCapabilities",
+                "description": "Additive relay authoring discovery; older gateways omit this field."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_features": {
             "items": {
@@ -3205,6 +3224,17 @@
           "thread_reply": {
             "description": "Request the verified source thread; never fall back when unavailable.",
             "type": "boolean"
+          },
+          "whatsapp_template": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhatsappTemplate",
+                "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
@@ -3782,6 +3812,40 @@
         ],
         "type": "object"
       },
+      "RelayAuthoringCapabilities": {
+        "properties": {
+          "dynamic_sources_writes_enabled": {
+            "type": "boolean"
+          },
+          "multi_consumer_writes_enabled": {
+            "type": "boolean"
+          },
+          "native_bot_mentions_writes_enabled": {
+            "type": "boolean"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/RelayPlatformCapability"
+            },
+            "type": "array"
+          },
+          "relay_raw_verification_writes_enabled": {
+            "type": "boolean"
+          },
+          "thread_contract_writes_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dynamic_sources_writes_enabled",
+          "relay_raw_verification_writes_enabled",
+          "multi_consumer_writes_enabled",
+          "native_bot_mentions_writes_enabled",
+          "thread_contract_writes_enabled",
+          "platforms"
+        ],
+        "type": "object"
+      },
       "RelayContent": {
         "additionalProperties": false,
         "properties": {
@@ -3826,6 +3890,28 @@
         ],
         "type": "object"
       },
+      "RelayPlatformCapability": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "verification_modes": {
+            "items": {
+              "$ref": "#/components/schemas/RelayVerificationCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "verification_modes"
+        ],
+        "type": "object"
+      },
       "RelaySender": {
         "additionalProperties": false,
         "properties": {
@@ -3841,6 +3927,23 @@
         },
         "required": [
           "platform_id"
+        ],
+        "type": "object"
+      },
+      "RelayVerificationCapability": {
+        "properties": {
+          "id": {
+            "description": "native_event, raw_event or trusted_normalized. Not a delivery-health claim.",
+            "type": "string"
+          },
+          "writes_enabled": {
+            "description": "Whether this deployment accepts new writes selecting this mode.\nExisting exact settings may be retained even while this is false.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "writes_enabled"
         ],
         "type": "object"
       },
@@ -4798,6 +4901,146 @@
           "keyframes"
         ],
         "type": "string"
+      },
+      "WhatsappTemplate": {
+        "additionalProperties": false,
+        "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/WhatsappTemplateComponent"
+            },
+            "type": "array"
+          },
+          "language": {
+            "$ref": "#/components/schemas/WhatsappTemplateLanguage"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "language"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateButtonType": {
+        "enum": [
+          "url"
+        ],
+        "type": "string"
+      },
+      "WhatsappTemplateComponent": {
+        "description": "This initial contract deliberately supports only positional text parameters.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+        "oneOf": [
+          {
+            "properties": {
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "header"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "body"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "index": {
+                "type": "string"
+              },
+              "parameters": {
+                "items": {
+                  "$ref": "#/components/schemas/WhatsappTemplateParameter"
+                },
+                "type": "array"
+              },
+              "sub_type": {
+                "$ref": "#/components/schemas/WhatsappTemplateButtonType"
+              },
+              "type": {
+                "enum": [
+                  "button"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "sub_type",
+              "index",
+              "parameters",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WhatsappTemplateLanguage": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "WhatsappTemplateParameter": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       }
     },
     "securitySchemes": {

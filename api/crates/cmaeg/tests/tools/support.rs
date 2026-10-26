@@ -63,27 +63,31 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
-        Self::build("telegram", text, None, None).await
+        Self::build("telegram", text, None, None, false).await
     }
     /// A group message on `platform` carrying the envelope's default text.
     pub async fn on(platform: &str) -> Self {
-        Self::build(platform, "hello", None, None).await
+        Self::build(platform, "hello", None, None, false).await
+    }
+    pub async fn on_private(platform: &str) -> Self {
+        Self::build(platform, "hello", None, None, true).await
     }
     /// A message carrying `setup`'s attachments, with a media service over
     /// its fakes. `event_ref` is the media event's reference.
     pub async fn with_media(setup: MediaSetup) -> Self {
-        Self::build("telegram", "hello", Some(setup), None).await
+        Self::build("telegram", "hello", Some(setup), None, false).await
     }
     /// A message whose stored activity carries `routing`, bound into its
     /// event_ref's digest as routed ingress binds it.
     pub async fn routed(routing: ActivityRouting) -> Self {
-        Self::build("telegram", "hello", None, Some(routing)).await
+        Self::build("telegram", "hello", None, Some(routing), false).await
     }
     async fn build(
         platform: &str,
         text: &str,
         media: Option<MediaSetup>,
         routing: Option<ActivityRouting>,
+        private: bool,
     ) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
         let edit = media.as_ref().map(|setup| setup.edit);
@@ -101,7 +105,9 @@ impl App {
         )
         .await;
         let mut envelope = Envelope::on(platform);
-        envelope.group();
+        if !private {
+            envelope.group();
+        }
         if platform == "telegram" {
             envelope.payload["content"]["text"] = text.into();
             envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
@@ -196,8 +202,10 @@ impl App {
         );
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
+            whatsapp_templates_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,

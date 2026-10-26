@@ -18,6 +18,8 @@ pub(crate) async fn serve(
     complete_replies: bool,
     native_media: bool,
     relay_text_edits: bool,
+    lark_cards: bool,
+    whatsapp_templates: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -46,6 +48,7 @@ pub(crate) async fn serve(
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
+    state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
@@ -67,6 +70,8 @@ pub(crate) async fn serve(
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_lark_cards(lark_cards)
+        .with_whatsapp_templates(whatsapp_templates)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -126,8 +131,10 @@ pub(crate) async fn serve(
     .with_media_enabled(config.media.enabled)
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        whatsapp_templates_enabled: whatsapp_templates,
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
+        lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
         providers,

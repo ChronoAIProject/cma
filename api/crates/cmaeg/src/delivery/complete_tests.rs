@@ -5,6 +5,7 @@ use super::{
     relay_client::{RelayClient, RelayTransport, REQUEST_MAX_BYTES},
     send::{SendContext, Sender},
 };
+mod whatsapp;
 use crate::{
     channels::resolver::ResolvedChannel,
     net::exchange::{HttpReply, TransportError},
@@ -110,6 +111,7 @@ fn setup() -> (
 }
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
+        whatsapp_template: None,
         native_attachments: Vec::new(),
         thread_reply: false,
         text: Some(text),

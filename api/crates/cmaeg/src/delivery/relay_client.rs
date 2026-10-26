@@ -2,6 +2,8 @@
 mod media;
 pub use media::supported as native_media_supported;
 mod edit;
+mod lark;
+mod whatsapp;
 
 use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
@@ -106,6 +108,8 @@ pub struct RelayClient {
     complete_replies: bool,
     native_media: bool,
     text_edits: bool,
+    lark_cards: bool,
+    whatsapp_templates: bool,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
@@ -115,6 +119,23 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Enable only after the deployed relay preserves approved template metadata.
+    pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
+        self.whatsapp_templates = enabled;
+        self
+    }
+    pub(super) fn whatsapp_templates_enabled(&self) -> bool {
+        self.whatsapp_templates
+    }
+
+    /// Gate new card issuance until every reader understands retained Lark cards.
+    pub fn with_lark_cards(mut self, enabled: bool) -> Self {
+        self.lark_cards = enabled;
+        self
+    }
+    pub(super) fn lark_cards_enabled(&self) -> bool {
+        self.lark_cards
+    }
     /// Issue enriched text references only after every gateway reader supports them.
     /// Retained references remain editable when issuance is disabled again.
     pub fn with_text_edits(mut self, enabled: bool) -> Self {
@@ -174,6 +195,8 @@ impl RelayClient {
             complete_replies: false,
             native_media: false,
             text_edits: false,
+            lark_cards: false,
+            whatsapp_templates: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
         })
