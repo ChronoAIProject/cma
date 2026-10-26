@@ -75,6 +75,7 @@ impl CustomDelivery {
                     event,
                     Some(text),
                     Some(&OutboundMessage {
+                        whatsapp_template: None,
                         native_attachments: Vec::new(),
                         thread_reply: false,
                         text: Some(text.clone()),
@@ -264,6 +265,7 @@ mod tests {
 
     fn message() -> OutboundMessage {
         OutboundMessage {
+            whatsapp_template: None,
             native_attachments: Vec::new(),
             thread_reply: false,
             text: Some("hello".into()),

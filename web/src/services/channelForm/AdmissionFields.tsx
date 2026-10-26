@@ -1,3 +1,4 @@
+import { useRelayCapabilities } from '../RelayCapabilities';
 import { Choice, Section, StringList } from './Fields';
 import { object, strings, type Fields } from './model';
 function IdentityFields({
@@ -37,6 +38,7 @@ export function AdmissionFields({
   onChange: (v: Fields) => void;
   label?: string;
 }) {
+  const discovery = useRelayCapabilities();
   const admission = object(value);
   return (
     <Section title={label}>
@@ -93,7 +95,13 @@ export function AdmissionFields({
             value={admission.bot_messages ?? 'deny'}
             options={[
               { value: 'deny', label: 'Ignore bots' },
-              { value: 'native_mentions', label: 'Verified mentions only' },
+              {
+                value: 'native_mentions',
+                label: 'Verified mentions only',
+                ...(discovery.authoring?.native_bot_mentions_writes_enabled === false
+                  ? { unavailable: 'New native bot mention writes are disabled on this gateway.' }
+                  : {}),
+              },
             ]}
             onChange={(bot_messages) => onChange({ ...admission, bot_messages })}
           />

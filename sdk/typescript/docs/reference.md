@@ -586,3 +586,42 @@ never appended to a URL. The caller generates a random 256-bit token for
 `createLink` and keeps it in the application URL fragment. CMA returns link
 metadata without the token. Revocation is effective on subsequent source reads,
 including downloads that were in progress when authority was revoked.
+
+## Gateway native cards and relay authoring
+
+### Lark and Feishu native cards
+
+Discover the event context before using interactive blocks. When the operator
+enables native Lark cards, eligible contexts return `buttons: "native_card"` and
+`cards: "native_card"`; the SDK uses the existing button/choice/card/link message
+shapes. Button callbacks return the stored option IDs and selected set, never
+arbitrary client callback data. Retain the returned message reference for a
+replacement after the click. Disabled, threaded and non-default-consumer contexts
+retain their advertised fallback capabilities. Native forms and media mixed with
+cards are unsupported; inspect rendering and delivery outcomes. An unknown send
+or edit may have reached the platform and must not be blindly retried.
+
+### Approved WhatsApp templates
+
+Approved WhatsApp templates use the optional `whatsapp_template` field on
+`OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
+before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+`WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the bounded
+name/language and positional text parameters. Templates are exclusive of ordinary
+text, blocks, native attachments and thread/reply targets. They reuse the event's
+authorized recipient, cannot be edited, and do not enable interactive callbacks
+or initiated sends. Templates must already be approved in the WhatsApp account;
+see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
+ordinary message behavior. An unknown receipt must not be retried automatically.
+
+### Relay authoring capabilities
+
+`getChannelCapabilities` also returns optional `relay_authoring`: relay platform verification
+modes and their `writes_enabled` status, plus independent raw-verification,
+dynamic-source, multi-consumer, native-mention and thread-contract writer gates.
+The existing `platforms` list remains native connection setup (Telegram only).
+Absent metadata means older discovery, not permission to opt into raw
+verification. Retain saved settings without silently switching to normalized
+trust. These capabilities do not attest upstream transport health or provide
+NyxID bot provisioning. Cache per authenticated owner context, not globally;
+the server still validates every write.

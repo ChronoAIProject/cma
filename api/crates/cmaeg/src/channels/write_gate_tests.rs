@@ -359,7 +359,7 @@ fn native_threads_require_writes_flag_but_retained_contracts_and_removal_keep_wo
 }
 
 #[test]
-fn verified_relay_mode_requires_dynamic_sources_writes_and_retains_exact_existing_sources() {
+fn verified_relay_mode_requires_its_own_writes_and_retains_exact_existing_sources() {
     for platform in ["discord", "whatsapp"] {
         let mut raw = relay(platform, "retained-route");
         raw["verify_raw_event"] = true.into();
@@ -370,7 +370,7 @@ fn verified_relay_mode_requires_dynamic_sources_writes_and_retains_exact_existin
         assert!(!Extensions::of(&opted).legacy_compatible());
         let refused = Err(ValidationError::new(
             "/sources/0/verify_raw_event",
-            "dynamic_sources_disabled",
+            "relay_raw_verification_writes_disabled",
         ));
         assert_eq!(check(None, &opted, WriteFlags::default()), refused);
         assert_eq!(
@@ -392,7 +392,7 @@ fn verified_relay_mode_requires_dynamic_sources_writes_and_retains_exact_existin
             None,
             &opted,
             WriteFlags {
-                dynamic_sources: true,
+                relay_raw_verification: true,
                 ..Default::default()
             },
         )

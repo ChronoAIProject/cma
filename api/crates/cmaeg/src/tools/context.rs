@@ -48,6 +48,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Approved WhatsApp template replies only; no callbacks or initiated sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_templates: Option<bool>,
     pub edit: bool,
     pub typing: bool,
     pub buttons: String,
@@ -98,6 +101,7 @@ impl Capabilities {
             max_text_chars: 32768,
             inbound_media: None,
             native_media: None,
+            whatsapp_templates: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -116,6 +120,7 @@ impl Capabilities {
             max_text_chars: 4000,
             inbound_media: None,
             native_media: None,
+            whatsapp_templates: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -130,6 +135,7 @@ impl Capabilities {
             max_text_chars: 4000,
             inbound_media: None,
             native_media: None,
+            whatsapp_templates: None,
         }
     }
     /// Legacy capabilities before ordinary relay text-edit issuance is enabled.
@@ -261,6 +267,15 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        whatsapp_templates: (state.whatsapp_templates_enabled
+            && matches!(
+                event.reply,
+                cmaeg_core::seal::ReplyAddress::NyxidRelay {
+                    platform: Platform::Whatsapp,
+                    ..
+                }
+            ))
+        .then_some(true),
         native_media: NativeMediaCapabilities::for_source(
             &activity.source,
             state.native_media_enabled,
@@ -274,6 +289,13 @@ pub(super) fn project(
             }
         }
     };
+    crate::interactions::lark::project(
+        &mut capabilities,
+        &activity,
+        event,
+        activity_verified,
+        state.lark_cards_enabled,
+    );
     // A hand-off's actor is the publishing consumer, so no human click could
     // ever match a card prepared from it; its controls are refused, and the
     // projection says so up front so agents can plan around it.
@@ -327,153 +349,5 @@ pub(super) fn unavailable() -> Problem {
     )
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::channels::routing_fixture;
-    use cmaeg_core::{ids::ChannelId, seal::ChannelPointer};
-
-    #[test]
-    fn relay_text_edit_discovery_preserves_legacy_shape_and_limits_supported_platforms() {
-        for platform in [
-            Platform::Telegram,
-            Platform::Lark,
-            Platform::Feishu,
-            Platform::Discord,
-            Platform::Whatsapp,
-            Platform::Slack,
-        ] {
-            let disabled = Capabilities::relay_with_text_edits(platform, false);
-            assert_eq!(
-                serde_json::to_value(disabled).unwrap(),
-                serde_json::to_value(Capabilities::relay(platform)).unwrap()
-            );
-            let enabled = Capabilities::relay_with_text_edits(platform, true);
-            assert_eq!(
-                enabled.edit,
-                matches!(
-                    platform,
-                    Platform::Telegram | Platform::Lark | Platform::Feishu | Platform::Discord
-                )
-            );
-            assert_eq!(
-                enabled.max_text_chars,
-                if platform == Platform::Discord {
-                    2000
-                } else {
-                    4000
-                }
-            );
-            assert!(!enabled.typing);
-            assert_eq!(
-                enabled.buttons,
-                if platform == Platform::Telegram {
-                    "inline_keyboard"
-                } else {
-                    "numbered_text"
-                }
-            );
-        }
-        assert!(!Capabilities::custom().edit);
-        assert!(Capabilities::native_telegram().edit);
-    }
-
-    #[test]
-    fn native_media_discovery_requires_deployment_attestation_and_a_supported_relay() {
-        for platform in [
-            Platform::Telegram,
-            Platform::Lark,
-            Platform::Feishu,
-            Platform::Discord,
-            Platform::Whatsapp,
-        ] {
-            let source = SourceKind::NyxidRelay {
-                platform,
-                route_id: "route".into(),
-            };
-            assert!(NativeMediaCapabilities::for_source(&source, false).is_none());
-            let capability = NativeMediaCapabilities::for_source(&source, true).unwrap();
-            assert_eq!(capability.kinds, ["image", "file", "audio", "video"]);
-            assert_eq!(capability.sources, ["url", "base64"]);
-            assert_eq!(capability.max_inline_bytes, 65536);
-        }
-        for source in [
-            SourceKind::Custom,
-            SourceKind::Telegram {
-                platform: Platform::Telegram,
-                bot_id: "77".into(),
-            },
-            SourceKind::NyxidRelay {
-                platform: Platform::Slack,
-                route_id: "route".into(),
-            },
-        ] {
-            assert!(NativeMediaCapabilities::for_source(&source, true).is_none());
-        }
-        assert!(serde_json::to_value(Capabilities::telegram())
-            .unwrap()
-            .get("native_media")
-            .is_none());
-    }
-
-    fn resolved(value: serde_json::Value) -> ResolvedChannel {
-        let definition = routing_fixture::definition(value);
-        ResolvedChannel {
-            id: ChannelId::new("cmaeg1.ch.context-fixture").unwrap(),
-            pointer: ChannelPointer {
-                v: 1,
-                record_id: definition.record_id.clone(),
-                record_url: "https://cma.example/api/v1/gateway/channel-records/record-1".into(),
-            },
-            definition,
-            agent_key_hash: [7; 32],
-            consumer_keys: Vec::new(),
-            loaded_at: std::time::Instant::now(),
-            version: 1,
-        }
-    }
-
-    fn id(value: &str) -> ConsumerId {
-        ConsumerId::parse(value).unwrap()
-    }
-
-    #[test]
-    fn a_routed_channel_summarizes_the_calling_consumer() {
-        let channel = resolved(routing_fixture::routed());
-        let summarize = |consumer: &ConsumerId| {
-            summary(&channel, &consumer_view(&channel, consumer).unwrap()).unwrap()
-        };
-        let lead = summarize(&ConsumerId::default_consumer());
-        assert_eq!(
-            (lead.id.as_str(), lead.name.as_str(), lead.label.as_str()),
-            ("default", "lead", "lead")
-        );
-        let reviewer = summarize(&id(routing_fixture::REVIEWER));
-        assert_eq!(
-            (
-                reviewer.id.as_str(),
-                reviewer.name.as_str(),
-                reviewer.label.as_str()
-            ),
-            (routing_fixture::REVIEWER, "reviewer", "reviewer")
-        );
-    }
-
-    #[test]
-    fn an_unrouted_channel_has_no_summary() {
-        let mut value = routing_fixture::routed();
-        value.as_object_mut().unwrap().remove("routing");
-        let channel = resolved(value);
-        let default = consumer_view(&channel, &ConsumerId::default_consumer()).unwrap();
-        assert_eq!(summary(&channel, &default), None);
-    }
-
-    #[test]
-    fn a_removed_consumer_is_answered_as_an_expired_reference() {
-        let channel = resolved(routing_fixture::routed());
-        let removed = consumer_view(&channel, &id("csm_0000000000ff")).unwrap_err();
-        assert_eq!(
-            (removed.code, removed.status, removed.detail.as_deref()),
-            (ProblemCode::EventRefExpired, 410, Some("consumer_removed"))
-        );
-    }
-}
+#[path = "context_tests.rs"]
+mod tests;

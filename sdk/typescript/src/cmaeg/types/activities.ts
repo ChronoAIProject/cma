@@ -237,6 +237,7 @@ export const ActivitySchema = object({
 export type Activity = Output<typeof ActivitySchema>;
 
 export const CapabilitiesSchema = object({
+  whatsapp_templates: optional(nullable(boolean)),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
   buttons: text,

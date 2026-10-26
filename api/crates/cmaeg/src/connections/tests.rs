@@ -139,8 +139,10 @@ impl Fixture {
             public_origin: management.public_url.clone(),
             public_api_url: management.public_url.clone(),
             advertise_public_api_url: true,
+            whatsapp_templates_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             media: None,
             downloads: Default::default(),
         };

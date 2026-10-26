@@ -113,7 +113,8 @@ applies with all media flags off.**
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED` | `true` or `false` | `false` | Allows new scoped `bot_messages: native_mentions` policies and advertises `native_bot_mentions_v1` through authenticated channel capability discovery. Only exact `true`/`false` are accepted. Upgrade all gateway readers and consuming applications before enabling it. Turning it off prevents new opt-ins but retains existing policy execution; see [Native bot mention rollout](#native-bot-mention-rollout). |
 | `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | `true` or `false` | `false` | Allows policy-only routing edits after all replicas and rollback targets understand stored routing. Does not provision consumers or enable fanout execution. |
-| `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED` | `true` or `false` | `false` | Allows extended source lists and explicit Discord/WhatsApp raw verification after all readers support them. Existing settings may carry through unchanged. Raw verification cannot be silently downgraded during rollback. |
+| `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` | `true` or `false` | `false` | Allows new or changed Discord/WhatsApp raw verification independently from dynamic source topology. Enable only after all readers and rollback targets support it. Exact retained settings remain usable when disabled; no automatic trust downgrade. |
+| `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED` | `true` or `false` | `false` | Allows extended source lists and partition shapes after all readers support them. Existing settings may carry through unchanged. Does not enable Discord/WhatsApp raw verification. |
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
@@ -175,7 +176,9 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
+| `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. No threaded or named-consumer cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2185,6 +2188,41 @@ chat or stale revision is refused, duplicate delivery creates no second provider
 turn, and two chats with equal platform message IDs edit their exact own message.
 Neither transport acknowledgment nor a confirmed card send proves child-bot
 provisioning succeeded; verify the provider's creation receipt separately.
+
+## Lark and Feishu card rollout
+
+Keep `CMAEG_LARK_CARDS_ENABLED=false` through the reader deployment. This preserves
+existing numbered-text replies and does not alter Telegram cards. Enable it only
+after every gateway reader supports the optional `lark` identity in sealed
+interaction records and the deployed NyxID relay accepts `metadata.card` for
+sends/edits and authenticated `card.action.trigger` callbacks. The upstream
+adapter contract is present in production NyxID `d102570afaab`; the same source
+blobs are present in fetched main `2ab239cecbda8`. Source compatibility does not
+prove a real bot's event subscription, scopes or actual platform rendering.
+
+Before activation, use an explicitly authorized test chat to verify a choice,
+replacement and link; restart a gateway between displaying and clicking a card.
+Verify private callbacks without `chat_type`, current chat/sender/group revocation,
+another actor, a copied message and stale revision. A single successful click
+must have one stable event ID and provider idempotency key across redelivery.
+Test both Lark and Feishu bot configurations before claiming both work live.
+No upstream deployment or new upstream feature is required by this CMA change.
+
+Disabling the gate stops new issuance; retained current cards still resolve and
+edit. Their records keep the normal 24-hour expiry and original expiry across
+replacement. Keep compatible readers and encryption keys until all issued Lark
+cards expire. A rollback that removes the callback reader before expiry abandons
+those controls. Existing Telegram record bytes and callback IDs are unchanged.
+
+Cards are limited to 4,000 displayed text characters, 100 elements/actions and
+28 KiB serialized card JSON (32 KiB relay request), without truncation. A card
+cannot combine native media or a native thread reply. Thread contexts and named
+consumers are refused because the existing callback contract does not retain
+thread evidence or route non-default consumer clicks. Native forms are not
+advertised; their fields stay plain text. Image URLs in a card become an explicit
+link with a degraded rendering report; they are never invented platform image
+handles. A malformed/lost edit receipt stays unknown, and an old revision remains
+fenced even if its replacement is not confirmed.
 
 ## Coordinated complete-reply rollout
 

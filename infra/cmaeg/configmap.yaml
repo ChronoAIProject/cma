@@ -10,6 +10,7 @@ data:
   # Enable new native-thread policies only after all readers and NyxID support them.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "false"
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "false"
+  CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "false"
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"
   CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "false"
   CMAEG_MONGODB_DATABASE: "chrono-bot"
@@ -71,6 +72,10 @@ data:
   CMAEG_NYXID_NATIVE_MEDIA_ENABLED: "false"
   # Enable only after all gateway replicas can read enriched relay message references.
   CMAEG_RELAY_TEXT_EDITS_ENABLED: "false"
+  # Enable new Lark/Feishu cards only after every interaction reader is upgraded.
+  CMAEG_LARK_CARDS_ENABLED: "false"
+  # Enable only after typed WhatsApp template replies are verified against NyxID.
+  CMAEG_WHATSAPP_TEMPLATES_ENABLED: "false"
   CMAEG_ACK_TEXT: "Working on it…"
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."

@@ -23,3 +23,5 @@ mod routing;
 pub use routing::*;
 mod nodes;
 pub use nodes::*;
+mod whatsapp_template;
+pub use whatsapp_template::*;

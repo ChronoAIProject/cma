@@ -33,7 +33,11 @@ pub fn router(service: ConnectionService) -> Router {
 pub struct CapabilityView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_features: Vec<String>,
+    /// Native connection setup workflows; separate from NyxID relay ingestion.
     pub platforms: Vec<PlatformCapability>,
+    /// Additive relay authoring discovery; older gateways omit this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_authoring: Option<super::relay_capabilities::RelayAuthoringCapabilities>,
 }
 #[derive(Serialize, ToSchema)]
 pub struct PlatformCapability {
@@ -51,6 +55,7 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
             } else {
                 Vec::new()
             },
+            relay_authoring: Some(super::relay_capabilities::view(&service.management)),
             platforms: vec![PlatformCapability {
                 id: "telegram".into(),
                 label: "Telegram".into(),

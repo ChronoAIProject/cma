@@ -3449,3 +3449,23 @@ around a single setting group. Test outcomes retained after a configuration
 change explicitly say that settings changed since that test was requested.
 
 | 2026-10-26 | Keep scoped setting groups visually quiet within the inspector and distinguish retained test results from verification of subsequently changed settings. |
+
+
+### Relay onboarding and capability discovery (2026-10-26)
+
+The structured producer editor keeps the same Section, Picker, Input and Button
+primitives. Verification choices that this gateway cannot currently write stay
+visible and disabled with an inline reason. Saved and drafted choices remain
+visible; loading capabilities never rewrites them or selects normalized trust.
+Explain the platform's NyxID setup and exact route identifiers beneath its
+fields. A failed capability check offers one explicit retry, with no polling.
+All editors share discovery within the current owner/permission context.
+
+Creation offers an explicit existing CMA-managed Telegram connection choice.
+Its owner-scoped list loads only when selected, supports manual pagination,
+and labels unavailable connection states. Switching back restores manual
+producer drafts and credentials. Admission starts with an empty allowlist.
+NyxID relay routes are never labelled as CMA-managed connection references,
+and platform verification support is never presented as native bot creation.
+
+| 2026-10-26 | Add capability-aware relay verification and platform setup guidance, preserving drafts and exact retries; distinguish owned Telegram connection setup from NyxID relay onboarding with explicit admission and no background polling. |

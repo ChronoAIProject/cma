@@ -18,23 +18,28 @@ import { ChannelNodeTests } from './ChannelNodeTests';
 import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
 import { ChannelTable } from './ChannelTable';
 import { ExistingChannel } from './ExistingChannel';
+import { RelayCapabilitiesProvider } from './RelayCapabilities';
 import './EventGateway.css';
 
 export interface EventGatewaySlots {
   readonly sidebar: ReactNode;
   readonly content: ReactNode;
 }
-export function EventGateway({
-  session,
-  denied,
-  children,
-  onNavigate,
-}: {
+interface EventGatewayProps {
   readonly session: ServiceSession;
   readonly denied: Denied;
   readonly children?: (slots: EventGatewaySlots) => ReactNode;
   readonly onNavigate?: () => void;
-}) {
+}
+export function EventGateway(props: EventGatewayProps) {
+  const identity = JSON.stringify([props.session.subject, [...props.session.permissions].sort()]);
+  return (
+    <RelayCapabilitiesProvider key={identity} denied={props.denied}>
+      <EventGatewayBody {...props} />
+    </RelayCapabilitiesProvider>
+  );
+}
+function EventGatewayBody({ session, denied, children, onNavigate }: EventGatewayProps) {
   const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
   const [selected, setSelected] = useState<string>();
   const [visited, setVisited] = useState<readonly string[]>([]);
