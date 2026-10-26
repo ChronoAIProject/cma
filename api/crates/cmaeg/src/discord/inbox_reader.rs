@@ -36,9 +36,9 @@ pub struct InboxReader {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Body {
-    dispatch: serde_json::Value,
-    channel: ChannelDefinition,
+pub(super) struct Body {
+    pub dispatch: serde_json::Value,
+    pub channel: ChannelDefinition,
 }
 impl InboxReader {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
@@ -52,17 +52,58 @@ impl InboxReader {
         current: Arc<ResolvedChannel>,
         now: i64,
     ) -> Result<InboxLaunch, GatewayError> {
+        let (inbox, body, bytes) = self.restore(id, &current, now).await?;
+        let expires_at = inbox
+            .received_at
+            .checked_add(1800)
+            .ok_or(GatewayError::Protocol)?
+            .min(inbox.retained_until);
+        if expires_at <= now {
+            return Err(GatewayError::Authority);
+        }
+        let activity = match body.activity(&inbox.bot_id)? {
+            Normalized::Activity(activity) => *activity,
+            Normalized::Refused(reason) => return Ok(InboxLaunch::Refused(reason)),
+        };
+        self.launch(current, inbox, body, bytes, activity)
+    }
+
+    /// Receipt recovery does not renew or require an unexpired reply capability.
+    /// Its payload and current source authority are verified before observation.
+    pub(super) async fn observe(
+        &self,
+        id: &str,
+        current: &ResolvedChannel,
+        now: i64,
+        observer: &dyn crate::turns::observer::ActivityObserver,
+    ) -> Result<(), GatewayError> {
+        let (inbox, body, _) = self.restore(id, current, now).await?;
+        if let Ok(Normalized::Activity(activity)) = body.activity(&inbox.bot_id) {
+            observer
+                .receive_at(
+                    &body.channel.owner.subject,
+                    &body.channel.record_id,
+                    &activity,
+                    inbox.received_at,
+                )
+                .await
+                .map_err(|_| GatewayError::Unavailable)?;
+        }
+        Ok(())
+    }
+
+    async fn restore(
+        &self,
+        id: &str,
+        current: &ResolvedChannel,
+        now: i64,
+    ) -> Result<(Inbox, Body, Vec<u8>), GatewayError> {
         let (inbox, version) = self
             .store
             .load::<Inbox>(id, true)
             .await?
             .ok_or(GatewayError::Unavailable)?;
         let authority = Authority::from_definition(&current.definition)?;
-        let expires_at = inbox
-            .received_at
-            .checked_add(1800)
-            .ok_or(GatewayError::Protocol)?
-            .min(inbox.retained_until);
         if version != 1
             || inbox.kind != "discord_inbox_v1"
             || inbox.channel_record != authority.record
@@ -71,7 +112,6 @@ impl InboxReader {
             || inbox.received_at < 0
             || inbox.received_at > now
             || inbox.received_at >= inbox.retained_until
-            || expires_at <= now
             || inbox.retained_until <= now
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
@@ -129,18 +169,22 @@ impl InboxReader {
             .map_err(|_| GatewayError::Authority)?;
         crate::channels::definition::validate_consumer_keys(&body.channel)
             .map_err(|_| GatewayError::Authority)?;
-        let Source::Discord { admission, .. } = body.channel.sources.iter()
-            .find(|source| matches!(source, Source::Discord { bot_id, .. } if *bot_id == inbox.bot_id))
-            .ok_or(GatewayError::Authority)? else { unreachable!() };
-        let activity = match normalize(&body.dispatch, &inbox.bot_id, admission)? {
-            Normalized::Activity(activity) => *activity,
-            Normalized::Refused(reason) => return Ok(InboxLaunch::Refused(reason)),
-        };
-        if body.channel.partition.key_for(&activity.source)
-            == cmaeg_core::channel::PartitionKey::Thread
-        {
-            return Ok(InboxLaunch::Refused(Refusal::ThreadEvidenceUnavailable));
-        }
+        Ok((inbox, body, bytes))
+    }
+
+    fn launch(
+        &self,
+        current: Arc<ResolvedChannel>,
+        inbox: Inbox,
+        body: Body,
+        bytes: Vec<u8>,
+        activity: cmaeg_core::activity::Activity,
+    ) -> Result<InboxLaunch, GatewayError> {
+        let expires_at = inbox
+            .received_at
+            .checked_add(1800)
+            .ok_or(GatewayError::Protocol)?
+            .min(inbox.retained_until);
         let partition_key = activity.partition_key(&body.channel.partition);
         let conversation_id = ConversationId::derive(
             &self.store.keys,
@@ -184,6 +228,8 @@ impl InboxReader {
             activity,
             conversation_id,
             event_ref,
+            // Local processing latency has a monotonic timer; the immutable
+            // UTC receipt below survives restarts with a different clock epoch.
             received_at: Instant::now(),
             trace: tracing::Span::current(),
             timing: None,
@@ -194,5 +240,28 @@ impl InboxReader {
             source_bytes: bytes,
             received_at: inbox.received_at,
         })))
+    }
+}
+
+impl Body {
+    pub(super) fn activity(&self, bot: &str) -> Result<Normalized, GatewayError> {
+        let Source::Discord { admission, .. } = self
+            .channel
+            .sources
+            .iter()
+            .find(|source| matches!(source, Source::Discord { bot_id, .. } if bot_id == bot))
+            .ok_or(GatewayError::Authority)?
+        else {
+            unreachable!()
+        };
+        let activity = normalize(&self.dispatch, bot, admission)?;
+        if let Normalized::Activity(activity) = &activity {
+            if self.channel.partition.key_for(&activity.source)
+                == cmaeg_core::channel::PartitionKey::Thread
+            {
+                return Ok(Normalized::Refused(Refusal::ThreadEvidenceUnavailable));
+            }
+        }
+        Ok(activity)
     }
 }

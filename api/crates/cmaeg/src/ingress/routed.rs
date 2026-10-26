@@ -25,6 +25,7 @@ pub struct VerifiedIngress {
     body: Vec<u8>,
     oversized: bool,
     attributes_signed: bool,
+    received_at: Option<i64>,
 }
 
 pub struct RoutedIngress {
@@ -85,7 +86,20 @@ impl RoutedIngress {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
         }
-        observer.receive(request).await.map_err(|_| {
+        let receipt = match source.received_at {
+            Some(received_at) => {
+                observer
+                    .receive_at(
+                        &request.channel.definition.owner.subject,
+                        &request.channel.definition.record_id,
+                        &request.activity,
+                        received_at,
+                    )
+                    .await
+            }
+            None => observer.receive(request).await,
+        };
+        receipt.map_err(|_| {
             Problem::new(
                 ProblemCode::ProviderUnavailable,
                 503,
@@ -244,6 +258,7 @@ impl IngressState {
             oversized: verified.source_bytes.len() > MAX_SOURCE_BYTES,
             body: verified.source_bytes,
             attributes_signed: true,
+            received_at: Some(verified.received_at),
         };
         match routing
             .admit(&request, source, self.activity.as_ref())
@@ -277,6 +292,7 @@ impl IngressState {
                 },
                 oversized: body.len() > MAX_SOURCE_BYTES,
                 attributes_signed,
+                received_at: None,
             })
     }
 

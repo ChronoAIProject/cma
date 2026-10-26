@@ -25,6 +25,7 @@ struct Production {
     keys: Arc<MasterKeyRing>,
     resolver: ChannelResolver,
     api: DiscordApi,
+    activity: Arc<dyn crate::turns::observer::ActivityObserver>,
 }
 impl SourcePort for Production {
     fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>> {
@@ -48,6 +49,7 @@ impl SourcePort for Production {
                 self.keys.clone(),
                 record,
                 self.api.clone(),
+                self.activity.clone(),
             )
             .await
             {
@@ -103,6 +105,7 @@ impl Worker {
             keys: keys.clone(),
             resolver: ingress.resolver.clone(),
             api: DiscordApi::new()?,
+            activity: ingress.activity.clone(),
         });
         let dispatcher = InboxDispatcher::new(records, keys, ingress, selected.clone());
         let (stop, stopped) = watch::channel(false);

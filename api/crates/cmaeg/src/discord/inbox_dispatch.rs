@@ -87,6 +87,16 @@ impl InboxDispatcher {
         {
             return Err(GatewayError::Authority);
         }
+        // Repair a crash between inbox commit and Activity persistence before
+        // checking launch capacity or expiring the original reply authority.
+        self.reader
+            .observe(
+                &entry.id,
+                &current.channel,
+                now,
+                self.ingress.activity.as_ref(),
+            )
+            .await?;
         let disposition = if entry.expired(now) {
             Disposition::Expired
         } else {

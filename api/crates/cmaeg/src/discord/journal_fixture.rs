@@ -111,7 +111,15 @@ impl Fixture {
         }
     }
     pub async fn acquire(&self) -> Result<Arc<DurableJournal>, GatewayError> {
-        DurableJournal::acquire_store(self.store.clone(), &self.record, self.api.clone()).await
+        self.acquire_observed(Arc::new(crate::turns::observer::NoopObserver))
+            .await
+    }
+    pub async fn acquire_observed(
+        &self,
+        activity: Arc<dyn crate::turns::observer::ActivityObserver>,
+    ) -> Result<Arc<DurableJournal>, GatewayError> {
+        DurableJournal::acquire_store(self.store.clone(), &self.record, self.api.clone(), activity)
+            .await
     }
     pub fn advance(&self, millis: i64) {
         self.memory.now.fetch_add(millis, Ordering::SeqCst);

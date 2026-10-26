@@ -8,6 +8,7 @@ use super::{
 use crate::{
     connections::store::index_id,
     records::{RecordClient, RecordError},
+    turns::observer::ActivityObserver,
 };
 use cmaeg_core::{
     channel::ChannelDefinition,
@@ -21,6 +22,7 @@ pub struct DurableJournal {
     pub(super) store: Store,
     pub(super) authority: Authority,
     pub(super) id: String,
+    pub(super) activity: Arc<dyn ActivityObserver>,
     worker: String,
     epoch: u64,
     api: DiscordApi,
@@ -34,13 +36,15 @@ impl DurableJournal {
         keys: Arc<MasterKeyRing>,
         record: &str,
         api: DiscordApi,
+        activity: Arc<dyn ActivityObserver>,
     ) -> Result<Arc<Self>, GatewayError> {
-        Self::acquire_store(Store::new(records, keys), record, api).await
+        Self::acquire_store(Store::new(records, keys), record, api, activity).await
     }
     pub(super) async fn acquire_store(
         store: Store,
         record: &str,
         api: DiscordApi,
+        activity: Arc<dyn ActivityObserver>,
     ) -> Result<Arc<Self>, GatewayError> {
         let authority = load_authority(&store, record).await?;
         let observed = api.discover(&authority.token, &authority.bot_id).await?;
@@ -105,6 +109,7 @@ impl DurableJournal {
             store,
             authority,
             id,
+            activity,
             worker,
             epoch,
             api,

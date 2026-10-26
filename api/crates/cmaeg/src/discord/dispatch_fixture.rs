@@ -125,6 +125,25 @@ impl Setup {
     pub fn now(&self) -> i64 {
         (self.fixture.store.clock)() / 1000
     }
+    pub fn observe(&mut self) -> Arc<crate::activity::ActivityStore> {
+        let activity = Arc::new(crate::activity::ActivityStore::new(
+            self.fixture.store.channels.clone(),
+            self.fixture.store.keys.clone(),
+        ));
+        let observer = Arc::new(crate::activity::ObservedActivity::new(
+            activity.clone(),
+            Arc::new(crate::turns::observer::NoopObserver),
+        ));
+        Arc::get_mut(&mut self.journal).unwrap().activity = observer.clone();
+        self.state = self.state.clone().with_activity_observer(observer);
+        self.dispatcher = InboxDispatcher::new(
+            self.fixture.store.channels.clone(),
+            self.fixture.store.keys.clone(),
+            self.state.clone(),
+            BTreeSet::from([self.fixture.record.clone()]),
+        );
+        activity
+    }
     pub async fn message(&self, edit: impl FnOnce(&mut serde_json::Value)) -> String {
         let mut data = raw();
         data["id"] = self.fixture.message_id().into();

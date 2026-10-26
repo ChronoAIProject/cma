@@ -17,6 +17,7 @@ mod connection;
 mod discovery;
 mod gateway;
 mod inbox;
+mod inbox_activity;
 mod journal;
 mod journal_model;
 mod protocol;
@@ -33,6 +34,8 @@ pub use protocol::{
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod activity_tests;
 #[cfg(test)]
 mod journal_fixture;
 #[cfg(test)]
