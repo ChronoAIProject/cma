@@ -3,7 +3,7 @@
 #[path = "../../../tests/fake_cma.rs"]
 mod fake_cma;
 use super::*;
-use crate::channels::routing_fixture;
+use crate::channels::{definition::fixture as definition_fixture, routing_fixture};
 use crate::{
     auth::AgentCaller,
     channels::resolver::ChannelResolver,
@@ -24,7 +24,7 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg_core::{
     activity::{Activity, SourceKind},
-    channel::{AdmissionPolicy, ChannelDefinition, Secret, Source},
+    channel::{AdmissionPolicy, ChannelDefinition, Source},
     seal::{
         event_ref::activity_digest, seal_blob, ChannelPointer, EventRef, EventRefPayload,
         MasterKeyRing, ReplyAddress,
@@ -66,10 +66,7 @@ impl App {
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([3; 32]))).unwrap());
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
-        let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
-            "../../../../cmaeg-core/tests/fixtures/channel.json"
-        ))
-        .unwrap();
+        let mut definition = definition_fixture::with_agent_key(&key);
         definition.record_id = uuid::Uuid::new_v4().to_string().parse().unwrap();
         definition.sources = vec![Source::Discord {
             bot_id: "77".into(),
@@ -77,9 +74,6 @@ impl App {
             admission: AdmissionPolicy::All {},
         }];
         definition.secrets.discord_bot_token = Some(platform.token.clone());
-        definition.secrets.agent_key_hash = format!("sha256:{:x}", Sha256::digest(key.as_bytes()));
-        definition.secrets.provider_credential = Some(Secret::new(&key));
-        definition.profile_digest = definition.profile.digest();
         definition.partition.key = cmaeg_core::channel::PartitionKey::ConversationAndSender;
         definition.validate().unwrap();
         let pointer = ChannelPointer {
@@ -421,7 +415,10 @@ async fn cached_authority_cannot_survive_source_binding_owner_or_key_changes() {
                     };
                 }
             }
-            "provider" => app.definition.provider.binding_id = "bnd_changed".parse().unwrap(),
+            "provider" => definition_fixture::replace_default_binding(
+                &mut app.definition,
+                "bnd_changed".parse().unwrap(),
+            ),
             "owner" => app.definition.owner.subject = "another-owner".into(),
             "key" => app.definition.secrets.agent_key_hash = format!("sha256:{}", "1".repeat(64)),
             "token_removed" => app.definition.secrets.discord_bot_token = None,

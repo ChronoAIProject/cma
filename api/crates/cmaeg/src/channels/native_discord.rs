@@ -20,9 +20,12 @@ pub(super) fn initialize(
     if !state.native_discord_writes_enabled || !state.multi_consumer_writes_enabled {
         return Err(ManagementError::Invalid(ValidationError::new("/sources", "native Discord self-service creation requires native source and routing authoring support")));
     }
+    let consumer = definition
+        .consumer(None)
+        .ok_or_else(|| ManagementError::Internal("default consumer is unavailable".into()))?;
     if !state
         .providers
-        .supports_response_replay(&definition.provider.slug)
+        .supports_response_replay(&consumer.provider.slug)
         .unwrap_or(false)
     {
         return Err(ManagementError::Invalid(ValidationError::new(

@@ -394,3 +394,28 @@ impl ChannelCreateRequest {
 #[cfg(test)]
 #[path = "definition_tests.rs"]
 mod tests;
+
+/// Stored-definition construction and mutation for service test fixtures.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use super::{hash_secret, BindingId, ChannelDefinition, Secret};
+
+    pub(crate) fn with_agent_key(agent_key: &str) -> ChannelDefinition {
+        let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
+            "../../../cmaeg-core/tests/fixtures/channel.json"
+        ))
+        .unwrap();
+        definition.secrets.agent_key_hash = hash_secret(agent_key);
+        definition.secrets.provider_credential = Some(Secret::new(agent_key));
+        definition.profile_digest = definition.profile.digest();
+        definition
+    }
+
+    /// Model a stored binding replacement to test revocation of old authority.
+    pub(crate) fn replace_default_binding(
+        definition: &mut ChannelDefinition,
+        binding_id: BindingId,
+    ) {
+        definition.provider.binding_id = binding_id;
+    }
+}
