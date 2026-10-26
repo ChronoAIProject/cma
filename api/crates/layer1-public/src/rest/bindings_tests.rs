@@ -12,6 +12,7 @@ use layer2_core::{Authorization, Capability, CoreError, SandboxId, ServiceId, Su
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
+mod readiness;
 
 struct Registry;
 #[async_trait::async_trait]
@@ -211,6 +212,7 @@ async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retireme
     binding
         .advance_revision(layer2_core::now_rfc3339())
         .unwrap();
+    readiness::create_backing_resources(&store, &binding).await;
     store.save_binding(Some(revision), binding).await.unwrap();
     let conversation = format!("{path}/conversations/conversation_one");
     let created = app
@@ -404,6 +406,7 @@ async fn source_user_transport_lifecycle_never_reserves_or_retires_an_agent() {
         .advance_revision(layer2_core::now_rfc3339())
         .unwrap();
     let generation = binding.generation;
+    readiness::create_backing_resources(&store, &binding).await;
     store.save_binding(Some(revision), binding).await.unwrap();
     for transport in ["chat_one", "chat_two", "cma_user_untrusted_alias"] {
         let target = format!("{path}/conversations/{transport}");
