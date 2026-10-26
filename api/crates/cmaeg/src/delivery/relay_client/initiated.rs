@@ -85,7 +85,11 @@ impl RelayClient {
         Ok((
             PreparedInitiated {
                 body,
-                native_media: !message.native_attachments.is_empty(),
+                native_media: !message.native_attachments.is_empty()
+                    || message
+                        .whatsapp_template
+                        .as_ref()
+                        .is_some_and(|template| template.has_media()),
             },
             rendering,
         ))

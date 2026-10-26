@@ -91,13 +91,35 @@ pub async fn prepare(
     key: &str,
     request: PrepareOutboundMessage,
 ) -> Result<OutboundReceipt, Problem> {
-    let relay = enabled(state)?;
     if key.is_empty() || key.len() > 128 || !key.bytes().all(|b| (33..=126).contains(&b)) {
         return Err(invalid(
             "a_1_to_128_byte_printable_idempotency_key_is_required",
         ));
     }
     let channel = channel(state, creator, id).await?;
+    let store = records(state);
+    // An exact replay only recovers a receipt. It must survive disabled writers
+    // and removed source settings so a lost prepare response remains cancellable.
+    let existing_id =
+        Operation::identifier(&creator.subject, channel.definition.record_id.as_str(), key);
+    match store.load(&existing_id).await {
+        Ok(existing) => {
+            if existing.owner != creator.subject
+                || existing.record_id != channel.definition.record_id.as_str()
+                || existing.request_hash != hash(&request)
+            {
+                return Err(Problem::new(
+                    ProblemCode::Conflict,
+                    409,
+                    "outbound_idempotency_conflict",
+                ));
+            }
+            return Ok(existing.public());
+        }
+        Err(error) if error.status == 404 => {}
+        Err(error) => return Err(error),
+    }
+    let relay = enabled(state)?;
     let (source, _, digest) = authority(&channel, &request.source_id, &request.route_id)?;
     let Source::NyxidRelay { platform, .. } = source else {
         unreachable!()
@@ -113,7 +135,6 @@ pub async fn prepare(
         rendering,
         now(),
     );
-    let store = records(state);
     match store.save(&op, None).await {
         Ok(version) => {
             op.version = version;

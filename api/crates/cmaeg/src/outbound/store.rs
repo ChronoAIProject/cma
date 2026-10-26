@@ -73,6 +73,15 @@ impl Store {
     }
 }
 impl Operation {
+    pub fn identifier(owner: &str, record_id: &str, key: &str) -> String {
+        let digest = Sha256::digest(format!(
+            "cmaeg.owner-outbound.v1\0{owner}\0{record_id}\0{key}"
+        ));
+        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        uuid::Uuid::from_bytes(bytes).to_string()
+    }
     pub fn new(
         owner: &str,
         record_id: &str,
@@ -82,13 +91,7 @@ impl Operation {
         rendering: RenderingReport,
         now: i64,
     ) -> Self {
-        let digest = Sha256::digest(format!(
-            "cmaeg.owner-outbound.v1\0{owner}\0{record_id}\0{key}"
-        ));
-        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let id = uuid::Uuid::from_bytes(bytes).to_string();
+        let id = Self::identifier(owner, record_id, key);
         Self {
             kind: KIND.into(),
             id: id.clone(),
