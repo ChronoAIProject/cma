@@ -143,6 +143,7 @@ export const SourceRequestSchema = tagged(
       platform: PlatformSchema,
       route_ids: array(text),
       trust_normalized: optional(boolean),
+      verify_raw_event: optional(boolean),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -345,6 +346,7 @@ export const SourceSchema = tagged(
       platform: PlatformSchema,
       route_ids: array(text),
       trust_normalized: optional(boolean),
+      verify_raw_event: optional(boolean),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({

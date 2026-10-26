@@ -168,6 +168,7 @@ async fn replace_unknown(sources: Value, route: &str) -> DeliveryOutcome {
         platform_message_id: "100".into(),
         route_id: route.into(),
         interaction_record_id: Some("card-1".into()),
+        relay_message: None,
         consumer: None,
     };
     let receipt = recording

@@ -9,6 +9,9 @@ import {
   ChannelResponseSchema,
   TestChannelResponseSchema,
   RekeyResponseSchema,
+  SourceCheckResponseSchema,
+  RoutingUpdateRequestSchema,
+  type RoutingUpdateRequest,
   type ChannelCreateRequest,
   type ChannelUpdateRequest,
 } from './types.js';
@@ -83,6 +86,36 @@ export class CmaegChannels {
       // Allow the Gateway's 90-second startup and 30-second completion windows.
       timeoutMs: options.timeoutMs ?? 125_000,
       method: 'POST',
+    });
+  }
+
+  testChannelSource(channelId: string, index: number, options: OperationOptions = {}) {
+    if (!Number.isSafeInteger(index) || index < 0)
+      throw new ValidationError('source index must be a nonnegative integer');
+    return read(
+      this.config,
+      `/v1/channels/${segment(channelId)}/sources/${index}/test`,
+      SourceCheckResponseSchema,
+      { ...options, method: 'POST' },
+    );
+  }
+  testChannelConsumer(channelId: string, consumerId: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/v1/channels/${segment(channelId)}/consumers/${segment(consumerId)}/test`,
+      TestChannelResponseSchema,
+      { ...options, timeoutMs: options.timeoutMs ?? 125_000, method: 'POST' },
+    );
+  }
+  updateChannelRouting(
+    channelId: string,
+    body: RoutingUpdateRequest,
+    options: OperationOptions = {},
+  ) {
+    return read(this.config, `/v1/channels/${segment(channelId)}/routing`, ChannelResponseSchema, {
+      ...options,
+      method: 'PUT',
+      body: input(RoutingUpdateRequestSchema, body),
     });
   }
 

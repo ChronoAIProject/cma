@@ -172,7 +172,17 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         Causation,
         ConsumerSummary,
         ConsumerTarget,
-        RouteResolution
+        RouteResolution,
+        NativeAttachment,
+        NativeMediaKind,
+        NativeMediaSource,
+        NativeMediaCapabilities,
+        SourceCheckResponse,
+        SourceCheck,
+        SourceCheckStatus,
+        RoutingUpdateRequest,
+        RoutingPolicyRequest,
+        ConsumerPolicyRequest
     );
     inventory.sort_unstable();
     assert_eq!(

@@ -19,6 +19,7 @@ spec:
   template:
     metadata:
       annotations:
+        cma.chronoai.dev/thread-contract-writes: "v1"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
         cma.chronoai.dev/candidate: "966e7b238d454339a61f6994124727470740c889"
         cma.chronoai.dev/image-digest: "sha256:632250bf8c3f5b25ef3f1788da292651beeef006e43d71228eec9a5b645f25ea"

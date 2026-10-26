@@ -5,7 +5,6 @@ use super::{
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
     render::{RelayText, Renderer},
-    telegram::replaces_telegram_cards,
 };
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -87,6 +86,23 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if !message.native_attachments.is_empty()
+            && (!self.relay.native_media_enabled()
+                || !matches!(
+                    event.reply,
+                    ReplyAddress::NyxidRelay {
+                        platform: Platform::Telegram
+                            | Platform::Lark
+                            | Platform::Feishu
+                            | Platform::Discord
+                            | Platform::Whatsapp,
+                        ..
+                    }
+                )
+                || crate::interactions::has_controls(message))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if message.thread_reply
             && !matches!(
                 event.reply,
@@ -118,7 +134,7 @@ impl Sender {
         if interactive && crate::interactions::has_controls(message) {
             return self.interactive_reply(ctx, event, message).await;
         }
-        if self.relay.complete_replies() {
+        if self.relay.complete_replies() || !message.native_attachments.is_empty() {
             return self.complete_reply(ctx, event, message, interactive).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.
@@ -199,7 +215,10 @@ impl Sender {
                 break;
             };
             first_send_done = true;
-            let mut outcome = self.relay.send(&address, credential, &part.text).await;
+            let (mut outcome, mut outbound) = self
+                .relay
+                .send_rich(&address, credential, &part.text, None)
+                .await;
             drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
@@ -212,15 +231,18 @@ impl Sender {
                     }
                 };
                 // The single-use credential is never presented twice, even after a 429.
-                outcome = match ctx.channel.definition.secrets.channel_key.as_ref() {
+                (outcome, outbound) = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
                         self.relay
-                            .send(&address, Credential::ChannelKey(key), &part.text)
+                            .send_rich(&address, Credential::ChannelKey(key), &part.text, None)
                             .await
                     }
-                    None => DeliveryOutcome::Rejected {
-                        reason: "no_credential".into(),
-                    },
+                    None => (
+                        DeliveryOutcome::Rejected {
+                            reason: "no_credential".into(),
+                        },
+                        None,
+                    ),
                 };
                 drop(retry);
                 if let DeliveryOutcome::RateLimited { retry_after } = outcome {
@@ -247,6 +269,16 @@ impl Sender {
                             platform_message_id: id.clone(),
                             route_id: route_id.clone(),
                             interaction_record_id: None,
+                            relay_message: (self.relay.text_edits_enabled() && parts.len() == 1)
+                                .then(|| {
+                                    super::edit::destination(
+                                        *platform,
+                                        message,
+                                        &part.text,
+                                        outbound.clone(),
+                                    )
+                                })
+                                .flatten(),
                             consumer: event.consumer.clone(),
                         },
                         &self.keys,
@@ -384,99 +416,6 @@ impl Sender {
                 )
                 .await
             {
-                Ok(reference) => result.message_ref = Some(reference),
-                Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
-            }
-        }
-        (result, effects)
-    }
-    pub async fn update(
-        &self,
-        ctx: &SendContext<'_>,
-        reference: &MessageRefPayload,
-        message: &OutboundMessage,
-    ) -> (IntentReceipt, SendEffects) {
-        // A replacement answers no event, so it never marks a first send.
-        let effects = SendEffects::default();
-        let channel = ctx.channel;
-        if reference.route_id.starts_with("telegram:")
-            && channel
-                .definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-        {
-            return self.native_update(ctx, reference, message).await;
-        }
-        let Some(store) = &self.relay.interactions else {
-            return (unsupported(), effects);
-        };
-        if reference.interaction_record_id.is_none()
-            || !replaces_telegram_cards(&channel.definition, &reference.route_id)
-        {
-            return (unsupported(), effects);
-        }
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
-        if parts.len() != 1 {
-            return (
-                IntentReceipt {
-                    message_ref: None,
-                    rendering,
-                    delivery: DeliveryOutcome::Rejected {
-                        reason: "interactive_message_must_fit_one_part".into(),
-                    },
-                },
-                effects,
-            );
-        }
-        let Some(key) = channel.definition.secrets.channel_key.as_ref() else {
-            return (unsupported(), effects);
-        };
-        let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
-            Ok(ticket) => ticket,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        // Commit point (Amendment R3 §R3.1): fencing the old card is this
-        // send's first side effect.
-        if !ctx.gate.commit() {
-            return (refused(rendering, expired()), effects);
-        }
-        let mut prepared = match store.replacement(channel, reference, message).await {
-            Ok(p) => p,
-            Err(_) => {
-                return (
-                    IntentReceipt {
-                        message_ref: None,
-                        rendering,
-                        delivery: DeliveryOutcome::Rejected {
-                            reason: "interaction_expired_or_invalid".into(),
-                        },
-                    },
-                    effects,
-                )
-            }
-        };
-        let Some(destination) = prepared.card.destination.clone() else {
-            return (unsupported(), effects);
-        };
-        let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
-            return (unsupported(), effects);
-        };
-        let _permit = match ctx.gate.attempt().await {
-            Ok(permit) => permit,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        let delivery = self
-            .relay
-            .edit(key, &destination, &parts[0].text, &prepared.markup)
-            .await;
-        let mut result = IntentReceipt {
-            message_ref: None,
-            rendering,
-            delivery,
-        };
-        if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
-            match store.bind(&mut prepared, destination).await {
                 Ok(reference) => result.message_ref = Some(reference),
                 Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
             }

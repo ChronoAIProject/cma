@@ -1,6 +1,7 @@
 //! NyxID relay authentication and per-platform event normalization.
 pub mod activity;
 pub mod attachments;
+mod discord;
 mod envelope_errors;
 pub mod facts;
 mod generic;
@@ -15,7 +16,9 @@ mod seeded_rng;
 pub(crate) mod telegram;
 mod telegram_managed;
 pub(crate) mod telegram_media;
+mod verified_media;
 pub mod verify;
+mod whatsapp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerificationError(pub &'static str);

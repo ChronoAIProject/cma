@@ -358,3 +358,28 @@ describe('custom event streams', () => {
     ).rejects.toBeInstanceOf(TimeoutError);
   });
 });
+
+describe('native relay media', () => {
+  it('preserves explicit native attachments in the public reply request', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(json(sample('IntentReceipt')));
+    const client = new Cmaeg({
+      baseUrl: 'https://gateway.example',
+      credential: () => 'fixture-custody',
+      fetch,
+    });
+    const message = {
+      text: 'Report',
+      native_attachments: [
+        {
+          kind: 'file' as const,
+          source: { type: 'url' as const, url: 'https://files.example/report.pdf' },
+          filename: 'report.pdf',
+          mime_type: 'application/pdf',
+          caption: 'Final report',
+        },
+      ],
+    };
+    await client.replyToEvent('opaque-event-reference', message);
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual(message);
+  });
+});

@@ -357,3 +357,69 @@ fn native_threads_require_writes_flag_but_retained_contracts_and_removal_keep_wo
     );
     assert!(!Extensions::of(&opted).legacy_compatible());
 }
+
+#[test]
+fn verified_relay_mode_requires_dynamic_sources_writes_and_retains_exact_existing_sources() {
+    for platform in ["discord", "whatsapp"] {
+        let mut raw = relay(platform, "retained-route");
+        raw["verify_raw_event"] = true.into();
+        let opted = definition(json!([raw]));
+        opted.validate().unwrap();
+        opted.validate_legacy_sources_and_partition().unwrap();
+        assert!(Extensions::of(&opted).sources);
+        assert!(!Extensions::of(&opted).legacy_compatible());
+        let refused = Err(ValidationError::new(
+            "/sources/0/verify_raw_event",
+            "dynamic_sources_disabled",
+        ));
+        assert_eq!(check(None, &opted, WriteFlags::default()), refused);
+        assert_eq!(
+            check(Some(&legacy()), &opted, WriteFlags::default()),
+            refused
+        );
+        assert_eq!(
+            check(
+                None,
+                &opted,
+                WriteFlags {
+                    multi_consumer: true,
+                    ..Default::default()
+                }
+            ),
+            refused
+        );
+        check(
+            None,
+            &opted,
+            WriteFlags {
+                dynamic_sources: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut renamed = opted.clone();
+        renamed.name = "renamed without changing verification".into();
+        check(Some(&opted), &renamed, WriteFlags::default()).unwrap();
+        let mut changed = opted.clone();
+        if let cmaeg_core::channel::Source::NyxidRelay { route_ids, .. } = &mut changed.sources[0] {
+            route_ids.push("new-route".into());
+        }
+        assert_eq!(
+            check(Some(&opted), &changed, WriteFlags::default()),
+            refused
+        );
+        let mut rotated = opted.clone();
+        rotated.secrets.channel_key = Some(Secret::new("rotated-test-credential"));
+        assert_eq!(
+            check(Some(&opted), &rotated, WriteFlags::default()),
+            refused
+        );
+        // An explicit owner-selected return to a retained legacy policy is
+        // allowed; the automatic rollback audit never makes this decision.
+        let mut legacy_source = relay(platform, "retained-route");
+        legacy_source["trust_normalized"] = true.into();
+        let restored = definition(json!([legacy_source]));
+        assert!(Extensions::of(&restored).legacy_compatible());
+        check(Some(&opted), &restored, WriteFlags::default()).unwrap();
+    }
+}

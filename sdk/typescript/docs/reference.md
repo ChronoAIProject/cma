@@ -417,7 +417,8 @@ Provider binding management uses `client.providerBindings.put/get/delete/ensureC
 
 `Cmaeg` is an independent client configured with the gateway origin, without a
 `/v1` suffix. Its operations are `createChannel`, `getChannel`, `recoverChannel`,
-`updateChannel`, `deleteChannel`, `testChannel`, `rekeyChannel`, `postEvent`,
+`updateChannel`, `deleteChannel`, `testChannel`, `testChannelSource`,
+`testChannelConsumer`, `updateChannelRouting`, `rekeyChannel`, `postEvent`,
 `streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
 Gateway wire types and `signWebhook` are exported under `cmaeg`.
 
@@ -432,8 +433,8 @@ creation/update accepts `connection_ref` and `connection_admission`. Native
 Telegram source, credential and webhook endpoint fields are typed as well.
 A channel read with several consumers carries the read-only
 `definition.routing` (`cmaeg.RoutingPolicy`), with each consumer's public key
-hash and never a key; it is absent on every other channel, and no request type
-sets it. A routed event's `cmaeg.Activity`, and the `cmaeg.PublicActivity` that
+hash and never a key; it is absent on every other channel. A routed event's
+`cmaeg.Activity`, and the `cmaeg.PublicActivity` that
 `readEventContext` returns, carry `routing` (`cmaeg.ActivityRouting`): the source
 slot, how the targets were resolved, the targets with the primary consumer first
 and, on a hand-off, its `cmaeg.Causation`. It is absent on every unrouted event.
@@ -466,6 +467,28 @@ replicas. Keep the complete request after uncertainty and reconcile with
 requires `expected_version`; `deleteChannel(id, expectedVersion)` sends that
 version in the query. Omitted/null update credentials retain their current values.
 A stale mutation throws `ApiError` with `code === 'conflict'`.
+
+`testChannelSource(id, sourceIndex)` checks the saved producer configuration;
+it reports `scope: 'configuration_only'` and `external_delivery_tested: false`.
+It does not contact the platform or send a message. `testChannelConsumer(id,
+consumerId)` runs an isolated provider turn for that exact consumer, with a
+125-second timeout and no external reply. `updateChannelRouting(id, body)` takes
+`expected_version` and editable routing policy while preserving every consumer
+ID, order, binding and credential. Adding or removing consumers is not supported
+by this operation. Extended policy writes require deployment support. After a
+lost success, an exact retry can confirm the immediately following revision;
+other stale revisions return a conflict. The SDK never retries mutations itself.
+
+`OutboundMessage.native_attachments` explicitly requests native image, file,
+audio or video delivery using an HTTPS URL or bounded base64. Read event
+`capabilities.native_media` before using it; deployment support must be enabled.
+The limit is four attachments and 64 KiB of total decoded inline data within the
+existing tool-body limit. Ordinary attachment blocks remain links. Exact relay
+text editing also depends on deployment support and a retained message reference;
+inspect the event's edit capability and the update receipt rather than assuming
+every platform can edit every message. For Discord and WhatsApp sources,
+`verify_raw_event: true` opts into signed raw-event correlation and requires the
+deployment's extended-source writer support; omission preserves existing trust.
 
 `postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
 `{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the

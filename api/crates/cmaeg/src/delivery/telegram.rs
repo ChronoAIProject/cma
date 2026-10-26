@@ -171,6 +171,7 @@ impl Sender {
                                 platform_message_id: platform_id,
                                 route_id: route.clone(),
                                 interaction_record_id: None,
+                                relay_message: None,
                                 consumer: event.consumer.clone(),
                             },
                             &self.keys,

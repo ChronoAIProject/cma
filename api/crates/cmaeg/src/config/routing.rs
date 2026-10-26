@@ -102,6 +102,17 @@ fn default_set(registry: &ProviderRegistry) -> BTreeSet<String> {
     }
 }
 
+/// Reader-first authoring gate; an unset value never enables a new stored shape.
+pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
+    match std::env::var(name).as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => Err(super::ConfigError::InvalidManagement {
+            detail: format!("{name} must be true or false"),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

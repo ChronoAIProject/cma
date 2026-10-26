@@ -103,8 +103,30 @@ pub(crate) fn check(
     let error = if !sources {
         match next.validate_legacy() {
             Err(error) => error,
-            // Only `custom_key` makes a legacy-valid definition extended.
-            Ok(()) => ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED),
+            // Both fields are accepted by current validation but unreadable
+            // by an image that predates their introduction.
+            Ok(()) if next.partition.custom_key.is_some() => {
+                ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED)
+            }
+            Ok(()) => {
+                let index = next
+                    .sources
+                    .iter()
+                    .position(|source| {
+                        matches!(
+                            source,
+                            Source::NyxidRelay {
+                                verify_raw_event: true,
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap_or(0);
+                ValidationError::new(
+                    format!("/sources/{index}/verify_raw_event"),
+                    DYNAMIC_SOURCES_DISABLED,
+                )
+            }
         }
     } else if next.routing.is_some() {
         ValidationError::new("/routing", MULTI_CONSUMER_DISABLED)

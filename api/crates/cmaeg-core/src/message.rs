@@ -10,12 +10,22 @@ use crate::{
     ValidationError,
 };
 
+#[path = "media_message.rs"]
+mod media;
+pub use media::{
+    validate as validate_native_attachments, NativeAttachment, NativeMediaKind, NativeMediaSource,
+    MAX_NATIVE_ATTACHMENTS, MAX_NATIVE_INLINE_BYTES,
+};
+
 pub const MAX_MESSAGE_TEXT_BYTES: usize = 32 * 1_024;
 pub const MAX_BLOCKS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutboundMessage {
+    /// Explicit native media delivery. Legacy attachment blocks remain links.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_attachments: Vec<NativeAttachment>,
     /// Request the verified source thread; never fall back when unavailable.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub thread_reply: bool,
@@ -148,12 +158,13 @@ pub struct BlockRendering {
 impl OutboundMessage {
     /// Validate a provider response before handing it to a delivery adapter.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.text.is_none() && self.blocks.is_empty() {
+        if self.text.is_none() && self.blocks.is_empty() && self.native_attachments.is_empty() {
             return Err(ValidationError::new(
                 "/",
                 "text or at least one block is required",
             ));
         }
+        media::validate(&self.native_attachments)?;
         if let Some(text) = &self.text {
             require_string(text, "/text", 0, MAX_MESSAGE_TEXT_BYTES)?;
         }

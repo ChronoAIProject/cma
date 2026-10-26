@@ -607,7 +607,21 @@
         "visuals": "keyframes"
       },
       "max_text_chars": 1,
-      "typing": true
+      "typing": true,
+      "native_media": {
+        "kinds": [
+          "image",
+          "file",
+          "audio",
+          "video"
+        ],
+        "max_attachments": 4,
+        "max_inline_bytes": 65536,
+        "sources": [
+          "url",
+          "base64"
+        ]
+      }
     }
   ],
   "ChannelCreateRequest": [
@@ -712,7 +726,8 @@
             "fixture"
           ],
           "trust_normalized": false,
-          "type": "nyxid_relay"
+          "type": "nyxid_relay",
+          "verify_raw_event": false
         }
       ],
       "connection_admission": {
@@ -840,7 +855,8 @@
               "fixture"
             ],
             "trust_normalized": false,
-            "type": "nyxid_relay"
+            "type": "nyxid_relay",
+            "verify_raw_event": false
           }
         ],
         "version": 1,
@@ -1122,7 +1138,8 @@
               "fixture"
             ],
             "trust_normalized": false,
-            "type": "nyxid_relay"
+            "type": "nyxid_relay",
+            "verify_raw_event": false
           }
         ],
         "version": 1,
@@ -1405,7 +1422,8 @@
                   "fixture"
                 ],
                 "trust_normalized": false,
-                "type": "nyxid_relay"
+                "type": "nyxid_relay",
+                "verify_raw_event": false
               }
             ],
             "version": 1,
@@ -1687,7 +1705,8 @@
                   "fixture"
                 ],
                 "trust_normalized": false,
-                "type": "nyxid_relay"
+                "type": "nyxid_relay",
+                "verify_raw_event": false
               }
             ],
             "version": 1,
@@ -1971,7 +1990,8 @@
               "fixture"
             ],
             "trust_normalized": false,
-            "type": "nyxid_relay"
+            "type": "nyxid_relay",
+            "verify_raw_event": false
           }
         ],
         "version": 1,
@@ -2256,7 +2276,8 @@
               "fixture"
             ],
             "trust_normalized": false,
-            "type": "nyxid_relay"
+            "type": "nyxid_relay",
+            "verify_raw_event": false
           }
         ],
         "version": 1,
@@ -2533,7 +2554,8 @@
             "fixture"
           ],
           "trust_normalized": false,
-          "type": "nyxid_relay"
+          "type": "nyxid_relay",
+          "verify_raw_event": false
         }
       ],
       "connection_admission": {
@@ -2674,7 +2696,21 @@
           "visuals": "keyframes"
         },
         "max_text_chars": 1,
-        "typing": true
+        "typing": true,
+        "native_media": {
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "max_attachments": 4,
+          "max_inline_bytes": 65536,
+          "sources": [
+            "url",
+            "base64"
+          ]
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -2772,7 +2808,21 @@
           "visuals": "keyframes"
         },
         "max_text_chars": 1,
-        "typing": true
+        "typing": true,
+        "native_media": {
+          "kinds": [
+            "image",
+            "file",
+            "audio",
+            "video"
+          ],
+          "max_attachments": 4,
+          "max_inline_bytes": 65536,
+          "sources": [
+            "url",
+            "base64"
+          ]
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3172,7 +3222,8 @@
       ],
       "reply_to": "fixture",
       "text": "fixture",
-      "thread_reply": true
+      "thread_reply": true,
+      "native_attachments": []
     }
   ],
   "PartitionKey": [
@@ -3480,7 +3531,8 @@
             "fixture"
           ],
           "trust_normalized": false,
-          "type": "nyxid_relay"
+          "type": "nyxid_relay",
+          "verify_raw_event": false
         }
       ],
       "version": 1,
@@ -3799,7 +3851,8 @@
         "fixture"
       ],
       "trust_normalized": false,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "admission": {
@@ -3815,7 +3868,8 @@
         "fixture"
       ],
       "trust_normalized": false,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "admission": {
@@ -3831,7 +3885,8 @@
         "fixture"
       ],
       "trust_normalized": true,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "attachments": {
@@ -3891,7 +3946,8 @@
         "fixture"
       ],
       "trust_normalized": false,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "admission": {
@@ -3906,7 +3962,8 @@
         "fixture"
       ],
       "trust_normalized": false,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "admission": {
@@ -3921,7 +3978,8 @@
         "fixture"
       ],
       "trust_normalized": true,
-      "type": "nyxid_relay"
+      "type": "nyxid_relay",
+      "verify_raw_event": false
     },
     {
       "attachments": {
@@ -4867,5 +4925,283 @@
   ],
   "ThreadKind": [
     "native"
+  ],
+  "ConsumerPolicyRequest": [
+    {
+      "id": "csm_00000000000a",
+      "label": "Reviewer",
+      "mentionable": false,
+      "name": "reviewer",
+      "non_human": true,
+      "publish": {
+        "enabled": true,
+        "targets": [
+          "default"
+        ]
+      },
+      "reply": {
+        "auto_final": false,
+        "destination": "default"
+      }
+    }
+  ],
+  "NativeAttachment": [
+    {
+      "caption": "Image",
+      "filename": "image.png",
+      "kind": "image",
+      "mime_type": "image/png",
+      "source": {
+        "type": "url",
+        "url": "https://media.example/image.png"
+      }
+    }
+  ],
+  "NativeMediaCapabilities": [
+    {
+      "kinds": [
+        "image",
+        "file",
+        "audio",
+        "video"
+      ],
+      "max_attachments": 4,
+      "max_inline_bytes": 65536,
+      "sources": [
+        "url",
+        "base64"
+      ]
+    }
+  ],
+  "NativeMediaKind": [
+    "image",
+    "file",
+    "audio",
+    "video"
+  ],
+  "NativeMediaSource": [
+    {
+      "type": "url",
+      "url": "https://media.example/image.png"
+    },
+    {
+      "data": "aGVsbG8=",
+      "type": "base64"
+    }
+  ],
+  "RoutingPolicyRequest": [
+    {
+      "addressing": {
+        "command": false,
+        "event_field": false,
+        "mentions": true,
+        "unknown_target_notice": true
+      },
+      "agent_events": {
+        "max_hops": 3,
+        "per_channel_per_minute": 20,
+        "per_consumer_per_minute": 5
+      },
+      "consumers": [
+        {
+          "id": "csm_00000000000a",
+          "label": "Reviewer",
+          "mentionable": false,
+          "name": "reviewer",
+          "non_human": true,
+          "publish": {
+            "enabled": true,
+            "targets": [
+              "default"
+            ]
+          },
+          "reply": {
+            "auto_final": false,
+            "destination": "default"
+          }
+        }
+      ],
+      "default_consumer": {
+        "label": "Lead",
+        "mentionable": false,
+        "name": "lead",
+        "non_human": true,
+        "publish": {
+          "enabled": true,
+          "targets": [
+            "csm_00000000000a"
+          ]
+        },
+        "reply": {
+          "auto_final": true,
+          "destination": "origin"
+        }
+      },
+      "default_reply": {
+        "chat_id": "-100",
+        "source_id": "telegram",
+        "thread_id": "7",
+        "type": "telegram_chat"
+      },
+      "default_targets": [
+        "default"
+      ],
+      "max_targets": 2,
+      "reply_label": "always",
+      "rules": [
+        {
+          "id": "lark-ops",
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ],
+          "when": {
+            "chats": [
+              "fixture"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "sources": [
+              "relay_lark"
+            ]
+          }
+        }
+      ],
+      "version": 1
+    }
+  ],
+  "RoutingUpdateRequest": [
+    {
+      "expected_version": 1,
+      "routing": {
+        "addressing": {
+          "command": false,
+          "event_field": false,
+          "mentions": true,
+          "unknown_target_notice": true
+        },
+        "agent_events": {
+          "max_hops": 3,
+          "per_channel_per_minute": 20,
+          "per_consumer_per_minute": 5
+        },
+        "consumers": [
+          {
+            "id": "csm_00000000000a",
+            "label": "Reviewer",
+            "mentionable": false,
+            "name": "reviewer",
+            "non_human": true,
+            "publish": {
+              "enabled": true,
+              "targets": [
+                "default"
+              ]
+            },
+            "reply": {
+              "auto_final": false,
+              "destination": "default"
+            }
+          }
+        ],
+        "default_consumer": {
+          "label": "Lead",
+          "mentionable": false,
+          "name": "lead",
+          "non_human": true,
+          "publish": {
+            "enabled": true,
+            "targets": [
+              "csm_00000000000a"
+            ]
+          },
+          "reply": {
+            "auto_final": true,
+            "destination": "origin"
+          }
+        },
+        "default_reply": {
+          "chat_id": "-100",
+          "source_id": "telegram",
+          "thread_id": "7",
+          "type": "telegram_chat"
+        },
+        "default_targets": [
+          "default"
+        ],
+        "max_targets": 2,
+        "reply_label": "always",
+        "rules": [
+          {
+            "id": "lark-ops",
+            "targets": [
+              "default",
+              "csm_00000000000a"
+            ],
+            "when": {
+              "chats": [
+                "fixture"
+              ],
+              "event_sources": [
+                "urn:fixture"
+              ],
+              "event_types": [
+                "com.example.*"
+              ],
+              "kinds": [
+                "message",
+                "event"
+              ],
+              "senders": [
+                "fixture"
+              ],
+              "sources": [
+                "relay_lark"
+              ]
+            }
+          }
+        ],
+        "version": 1
+      }
+    }
+  ],
+  "SourceCheck": [
+    {
+      "detail": "The saved definition is valid.",
+      "id": "configuration",
+      "label": "Saved configuration",
+      "status": "passed"
+    }
+  ],
+  "SourceCheckResponse": [
+    {
+      "checks": [
+        {
+          "detail": "External delivery was not tested.",
+          "id": "external_delivery",
+          "label": "External delivery",
+          "status": "unavailable"
+        }
+      ],
+      "external_delivery_tested": false,
+      "platform": "lark",
+      "scope": "configuration_only",
+      "source_index": 0
+    }
+  ],
+  "SourceCheckStatus": [
+    "passed",
+    "unavailable"
   ]
 }

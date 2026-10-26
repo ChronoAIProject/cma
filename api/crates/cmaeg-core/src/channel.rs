@@ -132,6 +132,9 @@ pub enum Source {
         // Explicit opt-in to admit a platform without a raw-event verifier.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         trust_normalized: bool,
+        /// Verify Discord/WhatsApp raw facts; omitted on retained normalized sources.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        verify_raw_event: bool,
         admission: AdmissionPolicy,
     },
     Custom {

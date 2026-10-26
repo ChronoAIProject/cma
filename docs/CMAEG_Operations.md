@@ -112,6 +112,8 @@ applies with all media flags off.**
 | `CMAEG_METRICS_LISTEN` | socket address | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED` | `true` or `false` | `false` | Allows new scoped `bot_messages: native_mentions` policies and advertises `native_bot_mentions_v1` through authenticated channel capability discovery. Only exact `true`/`false` are accepted. Upgrade all gateway readers and consuming applications before enabling it. Turning it off prevents new opt-ins but retains existing policy execution; see [Native bot mention rollout](#native-bot-mention-rollout). |
+| `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | `true` or `false` | `false` | Allows policy-only routing edits after all replicas and rollback targets understand stored routing. Does not provision consumers or enable fanout execution. |
+| `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED` | `true` or `false` | `false` | Allows extended source lists and explicit Discord/WhatsApp raw verification after all readers support them. Existing settings may carry through unchanged. Raw verification cannot be silently downgraded during rollback. |
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_NON_HUMAN_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; repeated slugs collapse, and startup fails otherwise, naming the key. Whose agents answer custom events and hand-offs by default: a consumer of a channel with routing that has no `non_human` field answers them only when its provider slug is listed here. A consumer's `non_human` field overrides this per consumer. A CMA consumer bound with `source_user` session affinity needs `non_human:false`, because CMA selects its agent from the verified human sender, which a custom event or hand-off does not have. Aevatar (D-c): add its slug only once its endpoint answers non-human activities. Set it to the empty string to name no provider. The routing audit reads it to decide whether `default` answers custom events (see [Rolling back below multi-consumer routing](#rolling-back-below-multi-consumer-routing)). A separate key because provider entries refuse unknown fields. |
@@ -172,6 +174,8 @@ applies with all media flags off.**
 | `CMAEG_TURN_TIMEOUT_MS` | positive integer, ms | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
+| `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
+| `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2229,3 +2233,33 @@ exactly-once platform effects are promised. Local fake transport and paused-time
 integration tests establish the CMAEG contract only. They do not establish that
 a deployed NyxID, proxy or IM platform satisfies it. Record actual deployment
 versions, all-parts platform observations and timing evidence before activation.
+
+
+### Relay text edit rollout
+
+`CMAEG_RELAY_TEXT_EDITS_ENABLED` defaults to `false` in code and the deployment
+ConfigMap. Absent or exact `false` preserves the legacy serialized message
+reference payload for both legacy chunking and complete replies. Empty, padded,
+non-Unicode or other boolean spellings fail startup. This flag is independent
+of complete replies and native media.
+
+1. Deploy compatible readers to **all** gateway replicas with the flag false.
+   Older readers reject the new optional `relay_message` field because their
+   sealed payload uses strict unknown-field rejection.
+2. Verify the deployed NyxID text update endpoint and its correlated receipt
+   for each advertised platform, then explicitly enable the flag. Only confirmed,
+   single-part, bounded ordinary text receives edit authority: Telegram,
+   Lark/Feishu (4,000 UTF-16 code units) and Discord (2,000). Native attachments,
+   interactive controls, multipart replies and unsupported platforms do not
+   acquire this authority. Context retains Telegram's existing editing capability;
+   Lark/Feishu/Discord advertise editing only when the flag is enabled.
+3. To stop new issuance, set the flag false. Compatible readers continue to
+   accept and execute previously issued enriched references; legacy native
+   Telegram and interactive-card edits retain their existing behavior.
+
+**Rollback floor:** once an enriched reference has been issued, disabling the
+flag does not make it readable by an older gateway binary. `message_ref` has no
+embedded expiry, so there is no timed wait after which downgrading is safe.
+Keep a reader-compatible release until an explicit audit proves no enriched
+references remain usable. Do not use event-reference TTL as a rollback window.
+No reader, platform or destination authority is weakened by disabling issuance.
