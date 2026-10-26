@@ -53,12 +53,9 @@ it('retains an uncertain edit while switching channels and retries the original 
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
   await select('Alpha');
-  await userEvent.click(await screen.findByRole('button', { name: 'Edit channel' }));
   fireEvent.change(
-    within(screen.getByRole('region', { name: 'Alpha details' })).getByLabelText(
-      'Channel configuration JSON',
-    ),
-    { target: { value: JSON.stringify({ name: 'Renamed Alpha', sources: [] }) } },
+    within(screen.getByRole('region', { name: 'Alpha details' })).getByLabelText('Channel name'),
+    { target: { value: 'Renamed Alpha' } },
   );
   await userEvent.click(screen.getByRole('button', { name: 'Save channel' }));
   await screen.findByRole('button', { name: 'Retry same request' });
@@ -79,7 +76,8 @@ it('retains an uncertain edit while switching channels and retries the original 
     expected_version: 7,
     name: 'Renamed Alpha',
   });
-  expect(screen.queryByRole('button', { name: 'Save channel' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Save channel' })).toBeEnabled();
+  expect(screen.getByText('Changes saved.')).toBeVisible();
 });
 
 it('retains an uncertain create across navigation and removes a freshly created channel after deletion', async () => {
@@ -102,15 +100,26 @@ it('retains an uncertain create across navigation and removes a freshly created 
   await screen.findByRole('heading', { name: 'Existing' });
   await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
   const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
-  fireEvent.change(within(form).getByLabelText('Channel configuration JSON'), {
-    target: { value: JSON.stringify({ name: 'Created', sources: [] }) },
+  fireEvent.change(within(form).getByLabelText('Channel name'), {
+    target: { value: 'Created' },
   });
-  fireEvent.change(within(form).getByLabelText('Agent key'), { target: { value: 'fixture-key' } });
+  fireEvent.change(within(form).getByLabelText('Provider agent key'), {
+    target: { value: 'fixture-key' },
+  });
+  fireEvent.change(within(form).getByLabelText('NyxID issuer'), {
+    target: { value: 'https://nyx.example' },
+  });
+  fireEvent.change(within(form).getByLabelText('Signing key ID'), {
+    target: { value: 'fixture-kid' },
+  });
+  fireEvent.change(within(form).getByLabelText('Route IDs 1'), {
+    target: { value: 'fixture-route' },
+  });
   await userEvent.click(screen.getByRole('button', { name: 'Create channel' }));
   await screen.findByRole('button', { name: 'Retry same request' });
   await select('Existing');
   await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
-  expect(within(form).getByLabelText('Channel configuration JSON')).toBeDisabled();
+  expect(within(form).getByLabelText('Channel name')).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
   await screen.findByRole('heading', { name: 'Created' });
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
@@ -192,7 +201,7 @@ it('recovers legacy endpoints automatically when the original creation record is
   vi.stubGlobal('fetch', fetcher);
   render(<EventGateway session={session} denied={vi.fn()} />);
   await select('Recovered');
-  expect(await screen.findByRole('button', { name: 'Edit channel' })).toBeEnabled();
+  expect(await screen.findByLabelText('Channel name')).toBeEnabled();
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
