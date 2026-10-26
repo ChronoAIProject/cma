@@ -63,3 +63,6 @@ mod executor_tests;
 mod projection_store_tests;
 #[cfg(test)]
 mod tool_reply_tests;
+
+#[cfg(test)]
+mod executor_tool_tests;

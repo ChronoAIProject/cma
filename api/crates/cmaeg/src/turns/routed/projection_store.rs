@@ -45,7 +45,11 @@ impl Journal {
         if encoded.is_empty() || encoded.len() > MAX_BODY {
             return Err(ExecutionError::Invalid);
         }
-        let slot = lease.state.projection.as_ref().map_or(0, |v| 1 - v.slot);
+        let slot = match &lease.state.projection {
+            None => 0,
+            Some(previous) if previous.slot <= 1 => 1 - previous.slot,
+            Some(_) => return Err(ExecutionError::Corrupt),
+        };
         let mut reference = ProjectionReference {
             slot,
             hash: hash(&encoded),

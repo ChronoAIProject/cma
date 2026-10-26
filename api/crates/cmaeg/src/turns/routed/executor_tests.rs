@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-fn executor(
+pub(super) fn executor(
     setup: &Setup,
     http: &HttpServer,
 ) -> (
@@ -54,7 +54,7 @@ fn executor(
 fn lifecycle(sequence: u64, kind: &str, status: &str) -> Value {
     json!({"type":kind,"sequence_number":sequence,"response":{"id":"resp_accepted","object":"response","status":status,"conversation":{"id":"agt_native"},"metadata":{},"output":[]}})
 }
-fn frames() -> Vec<Value> {
+pub(super) fn frames() -> Vec<Value> {
     vec![
         lifecycle(0, "response.created", "queued"),
         json!({"type":"response.output_text.delta","sequence_number":1,"item_id":"m","delta":"hello "}),
