@@ -18,6 +18,7 @@ pub(super) async fn consume(
     turn: Arc<LaunchRequest>,
     provider: &str,
     delivery: &dyn DeliverySink,
+    activity: &dyn super::observer::ActivityObserver,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
@@ -37,6 +38,17 @@ pub(super) async fn consume(
             }
             event = stream.events.recv() => {
                 let Some(event) = event else {return Err("stream_lost");};
+                if let crate::providers::ResponsesEvent::Created {
+                    response_id, native_agent_id: Some(agent_id), ..
+                } = &event {
+                    let mut change = crate::activity::Change::state(
+                        turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                        crate::activity::ConsumerState::Accepted, Some(response_id.clone()),
+                    );
+                    change.agent_id = Some(agent_id.clone());
+                    activity.checkpoint(&turn.channel.definition.record_id,
+                        &turn.activity.event_id, change).await;
+                }
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
