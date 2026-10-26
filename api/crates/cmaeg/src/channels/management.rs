@@ -7,8 +7,7 @@ pub use super::lifecycle::{delete, rekey};
 pub use super::state::{
     CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
 };
-pub use super::test_turn::{test_turn, TestResult};
-use super::write_gate::WriteFlags;
+pub use super::test_turn::{test_consumer, test_turn, TestResult};
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ToolsAdvertisement},
@@ -59,11 +58,7 @@ pub async fn create(
         record_id.clone(),
         binding_id.clone(),
         ConformanceLevel::L1,
-        WriteFlags {
-            native_bot_mentions: state.native_bot_mentions_writes_enabled,
-            thread_contract: state.thread_contract_writes_enabled,
-            ..Default::default()
-        },
+        state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
     let pointer =
@@ -263,16 +258,8 @@ pub async fn update(
     }
     state.resolver.invalidate(channel_id.as_str());
     // The write gate runs inside the build, before the provider sees anything.
-    let mut definition = build_update(
-        &request,
-        &current.definition,
-        WriteFlags {
-            native_bot_mentions: state.native_bot_mentions_writes_enabled,
-            thread_contract: state.thread_contract_writes_enabled,
-            ..Default::default()
-        },
-    )
-    .map_err(ManagementError::Invalid)?;
+    let mut definition = build_update(&request, &current.definition, state.write_flags())
+        .map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;

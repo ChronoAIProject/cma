@@ -22,6 +22,8 @@ mod telegram_media;
 mod transport;
 #[path = "relay/verification.rs"]
 mod verification;
+#[path = "relay/verified_platforms.rs"]
+mod verified_platforms;
 
 #[path = "fake_nyxid_reply.rs"]
 pub mod fake_nyxid_reply;

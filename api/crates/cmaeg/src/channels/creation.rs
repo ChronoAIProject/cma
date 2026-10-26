@@ -45,11 +45,7 @@ pub async fn create(
                 record_id.clone(),
                 binding_id,
                 ConformanceLevel::L1,
-                super::write_gate::WriteFlags {
-                    native_bot_mentions: state.native_bot_mentions_writes_enabled,
-                    thread_contract: state.thread_contract_writes_enabled,
-                    ..Default::default()
-                },
+                state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
             definition.creation = Some(ChannelCreation {

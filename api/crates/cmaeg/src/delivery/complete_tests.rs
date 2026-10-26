@@ -110,6 +110,7 @@ fn setup() -> (
 }
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
+        native_attachments: Vec::new(),
         thread_reply: false,
         text: Some(text),
         blocks: vec![],

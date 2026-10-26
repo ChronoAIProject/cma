@@ -233,3 +233,6 @@ async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {
         task.await.unwrap();
     }
 }
+
+#[path = "management/nodes.rs"]
+mod nodes;

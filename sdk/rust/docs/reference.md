@@ -127,7 +127,8 @@ Provider binding management uses `client.provider_bindings().put/get/delete/ensu
 
 `cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,
 without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
-`update_channel`, `delete_channel`, `test_channel`, `rekey_channel`, `post_event`,
+`update_channel`, `delete_channel`, `test_channel`, `test_channel_source`,
+`test_channel_consumer`, `update_channel_routing`, `rekey_channel`, `post_event`,
 `stream_event`, `reply_to_event`, `update_message`, `send_typing` and
 `read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
 
@@ -155,7 +156,7 @@ compatible.
 
 A channel read with several consumers carries the read-only
 `definition.routing` (`RoutingPolicy`), with each consumer's public key hash and
-never a key; it is `None` on every other channel, and no request type sets it.
+never a key; it is `None` on every other channel.
 A routed event's `Activity`, and the `PublicActivity` that `read_event_context`
 returns, carry `routing` (`ActivityRouting`): the source slot, how the targets
 were resolved, the targets with the primary consumer first and, on a hand-off,
@@ -172,6 +173,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        native_attachments: None,
         thread_reply: None,
         text: Some("Received".into()), blocks: None, reply_to: None,
     }).await?;
@@ -193,6 +195,29 @@ response, retain the complete request and reconcile with `recover_channel`.
 Updates require the complete policy and `expected_version`; deletes require the
 observed `u64` version. Omitted update credentials retain their values. HTTP
 problems use `Error::Api`, preserving `code`, status and retry metadata.
+
+`test_channel_source(id, source_index)` checks saved producer configuration only:
+`scope` is `configuration_only` and `external_delivery_tested` is false. It sends
+no platform request or message. `test_channel_consumer(id, consumer_id)` runs an
+isolated turn for that exact consumer with a 125-second timeout and no external
+reply. `update_channel_routing(id, &body)` takes `expected_version` and editable
+policy; every consumer ID, order, binding and credential must remain unchanged.
+It does not provision or remove consumers, and extended policy writes require
+deployment support. An exact retry after lost success can confirm the immediately
+following revision; other stale revisions conflict. The SDK never retries it.
+
+`OutboundMessage::native_attachments` requests native image, file, audio or video
+delivery from an HTTPS URL or bounded base64. Check
+`ContextResponse.capabilities.native_media` first: support is deployment-gated.
+There may be at most four attachments and 64 KiB of total decoded inline data
+within the existing tool-body limit. Ordinary attachment blocks remain links.
+Text edits require the advertised edit capability and a retained message
+reference; inspect the update receipt. `verify_raw_event: true` on a Discord or
+WhatsApp relay source requests signed raw-event correlation and requires the
+deployment's extended-source writer support; omission preserves existing trust.
+When constructing these Rust types directly, add `native_attachments: None`,
+`native_media: None`, or `verify_raw_event: false` to the respective old literals.
+These are source-construction changes; existing JSON remains compatible.
 
 Custom events use structured CloudEvents. `EventOptions::default()` uses the
 configured source-key bearer; `EventOptions { webhook: Some(WebhookAuth { ... }) }`

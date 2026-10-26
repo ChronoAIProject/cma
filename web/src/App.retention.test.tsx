@@ -50,11 +50,16 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   fireEvent.change(composer, { target: { value: 'Retain this Agent draft' } });
   chooseService('Event Gateway');
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
-  const editor = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
-  fireEvent.change(editor, { target: { value: '{"name":"Retained channel","sources":[]}' } });
-  fireEvent.change(screen.getByLabelText('Agent key'), {
+  const editor = screen.getByRole('textbox', { name: 'Channel name' });
+  fireEvent.change(editor, { target: { value: 'Retained channel' } });
+  fireEvent.change(screen.getByLabelText('Provider agent key'), {
     target: { value: 'test-only-credential' },
   });
+  fireEvent.change(screen.getByLabelText('NyxID issuer'), {
+    target: { value: 'https://nyxid.example.test' },
+  });
+  fireEvent.change(screen.getByLabelText('Signing key ID'), { target: { value: 'fixture-key' } });
+  fireEvent.change(screen.getByLabelText('Route IDs 1'), { target: { value: 'fixture-route' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
   await waitFor(() => expect(writes).toHaveLength(1));
   chooseService('Agent Manager');
@@ -63,8 +68,8 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   expect(composer).toHaveValue('Retain this Agent draft');
   await act(async () => rejectWrite(new TypeError('Gateway response interrupted')));
   chooseService('Event Gateway');
-  expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(editor);
-  expect(editor).toHaveValue('{"name":"Retained channel","sources":[]}');
+  expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
+  expect(editor).toHaveValue('Retained channel');
   fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1]?.body).toBe(writes[0]?.body);
@@ -82,7 +87,7 @@ it('discards retained private service drafts when the global account signs out',
   );
   show();
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
-  const editor = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
+  const editor = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(editor, { target: { value: 'private draft' } });
   fireEvent.click(screen.getByRole('button', { name: /account menu/i }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
@@ -106,7 +111,7 @@ it('closes the narrow Gateway drawer after choosing New channel while keeping it
     await screen.findByRole('heading', { name: 'Event Gateway' });
     fireEvent.click(await screen.findByRole('button', { name: 'Show navigation' }));
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
-    expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'New channel' })).not.toBeInTheDocument();
   } finally {
@@ -144,7 +149,7 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   fireEvent.change(composer, { target: { value: 'Keep my Agent draft' } });
   chooseService('Event Gateway');
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
-  const channelDraft = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
+  const channelDraft = screen.getByRole('textbox', { name: 'Channel name' });
   fireEvent.change(channelDraft, { target: { value: 'Retained channel configuration' } });
   fireEvent.click(screen.getByRole('link', { name: 'Consumers' }));
   await screen.findByRole('heading', { name: 'Consumers' });
@@ -156,7 +161,7 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   expect(window.location.pathname).toBe('/bots/' + bot.bot_id);
   expect(currentService()).toBe('Service: Event Gateway');
   fireEvent.click(screen.getByRole('link', { name: 'Channels' }));
-  expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(channelDraft);
+  expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(channelDraft);
   expect(channelDraft).toHaveValue('Retained channel configuration');
   chooseService('Agent Manager');
   expect(window.location.pathname).toBe('/agents/agt_1');

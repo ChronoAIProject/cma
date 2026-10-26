@@ -15,6 +15,7 @@ import type {
   CloudEvent,
   CreateConnection,
   OutboundMessage,
+  RoutingUpdateRequest,
 } from './types.js';
 
 /** Independent gateway deployment configuration; baseUrl names the origin, without /v1. */
@@ -74,6 +75,15 @@ export class Cmaeg {
   }
   testChannel(id: string, options?: OperationOptions) {
     return this.#channels.testChannel(id, options);
+  }
+  testChannelSource(id: string, index: number, options?: OperationOptions) {
+    return this.#channels.testChannelSource(id, index, options);
+  }
+  testChannelConsumer(id: string, consumerId: string, options?: OperationOptions) {
+    return this.#channels.testChannelConsumer(id, consumerId, options);
+  }
+  updateChannelRouting(id: string, body: RoutingUpdateRequest, options?: OperationOptions) {
+    return this.#channels.updateChannelRouting(id, body, options);
   }
   rekeyChannel(id: string, options?: OperationOptions) {
     return this.#channels.rekeyChannel(id, options);

@@ -182,6 +182,7 @@ fn validate_source(
             bot_username,
             bot_id,
             trust_normalized,
+            verify_raw_event,
             admission,
         } => {
             require_string(issuer, &format!("{pointer}/issuer"), 1, 512)?;
@@ -200,6 +201,7 @@ fn validate_source(
                 bot_username.as_deref(),
                 bot_id.as_deref(),
                 *trust_normalized,
+                *verify_raw_event,
                 pointer,
             )?;
             validate_admission(admission, pointer)

@@ -197,6 +197,8 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         public_origin: "https://gateway.example".into(),
         public_api_url: "https://gateway.example".into(),
         advertise_public_api_url: true,
+        native_media_enabled: false,
+        relay_text_edits_enabled: false,
         media: None,
         downloads: Default::default(),
     }

@@ -75,8 +75,8 @@ it('fades a retained Event Gateway on re-entry while preserving its form and avo
     </AuthContextProvider>,
   );
   fireEvent.click(await screen.findByRole('button', { name: 'New channel' }));
-  const field = screen.getByRole('textbox', { name: 'Channel configuration JSON' });
-  const draft = '{"name":"Retained channel draft","sources":[]}';
+  const field = screen.getByRole('textbox', { name: 'Channel name' });
+  const draft = 'Retained channel draft';
   fireEvent.change(field, { target: { value: draft } });
   const surface = field.closest('.service-shell__body');
   const gatewayReads = () =>
@@ -93,7 +93,7 @@ it('fades a retained Event Gateway on re-entry while preserving its form and avo
   );
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
   chooseService('Event Gateway');
-  expect(screen.getByRole('textbox', { name: 'Channel configuration JSON' })).toBe(field);
+  expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(field);
   expect(field).toHaveValue(draft);
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(2);
   expect(gatewayReads()).toHaveLength(reads);

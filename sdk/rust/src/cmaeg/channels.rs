@@ -80,6 +80,37 @@ impl Cmaeg {
         request.timeout = Some(self.test_timeout);
         self.client.request(request).await
     }
+    /// Check a saved producer's configuration without external delivery.
+    pub async fn test_channel_source(&self, id: &str, index: u64) -> Result<SourceCheckResponse> {
+        let index = index.to_string();
+        let segments = ["v1", "channels", id, "sources", &index, "test"];
+        let mut request = Request::operation(Method::POST, &segments, None::<&()>, StatusCode::OK)?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Run an isolated test turn for the selected consumer; no external reply.
+    pub async fn test_channel_consumer(
+        &self,
+        id: &str,
+        consumer_id: &str,
+    ) -> Result<TestChannelResponse> {
+        let segments = ["v1", "channels", id, "consumers", consumer_id, "test"];
+        let mut request = Request::operation(Method::POST, &segments, None::<&()>, StatusCode::OK)?;
+        request.root = true;
+        request.timeout = Some(self.test_timeout);
+        self.client.request(request).await
+    }
+    /// Update policy without changing consumer identities or provider bindings.
+    pub async fn update_channel_routing(
+        &self,
+        id: &str,
+        body: &RoutingUpdateRequest,
+    ) -> Result<ChannelResponse> {
+        let segments = ["v1", "channels", id, "routing"];
+        let mut request = Request::operation(Method::PUT, &segments, Some(body), StatusCode::OK)?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Re-encrypt the record. Requires a dedicated CMA service credential.
     pub async fn rekey_channel(&self, id: &str) -> Result<RekeyResponse> {
         let segments = ["v1", "channels", id, "rekey"];

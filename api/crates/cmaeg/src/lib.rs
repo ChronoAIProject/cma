@@ -53,9 +53,10 @@ pub use config::{
     CMAEG_MEDIA_VIDEO_FRAMES, CMAEG_METRICS_LISTEN, CMAEG_MONGODB_AUTHORITY_MODE,
     CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI, CMAEG_NON_HUMAN_PROVIDERS, CMAEG_NYXID_BASE_URL,
     CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET, CMAEG_NYXID_COMPLETE_REPLIES,
-    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL,
-    CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
+    CMAEG_NYXID_NATIVE_MEDIA_ENABLED, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL, CMAEG_PUBLIC_URL,
+    CMAEG_RELAY_TEXT_EDITS_ENABLED, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
     CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
 };
 
@@ -132,8 +133,10 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 /// Run CMAEG until a process termination signal arrives.
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let complete_replies = config::nyxid_complete_replies_from_env()?;
+    let native_media = config::nyxid_native_media_from_env()?;
+    let relay_text_edits = config::relay_text_edits_from_env()?;
     let config = Config::from_env()?;
-    serve::serve(config, complete_replies).await
+    serve::serve(config, complete_replies, native_media, relay_text_edits).await
 }
 
 /// Replace Rust's default panic hook, which prints the panic payload to

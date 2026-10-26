@@ -1,3 +1,4 @@
+import { NativeMediaCapabilitiesSchema } from './messages.js';
 import {
   AcceptedStatusSchema,
   ActorKindSchema,
@@ -236,6 +237,7 @@ export const ActivitySchema = object({
 export type Activity = Output<typeof ActivitySchema>;
 
 export const CapabilitiesSchema = object({
+  native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
   buttons: text,
   cards: text,

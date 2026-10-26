@@ -63,6 +63,7 @@ fn message() -> MessageRefPayload {
         platform_message_id: "42".into(),
         route_id: "route-1".into(),
         interaction_record_id: None,
+        relay_message: None,
         consumer: Some(consumer("csm_00000000000a")),
     }
 }
