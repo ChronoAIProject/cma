@@ -15,15 +15,30 @@ mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
+mod agent_access_requests;
+pub use agent_access_requests::agent_access_requests_router;
+#[cfg(test)]
+mod agent_access_requests_tests;
 mod agent_artifacts;
+mod agent_attachments;
+pub use agent_attachments::agent_attachments_router;
+mod agent_filesystem;
+pub use agent_filesystem::agent_filesystem_router;
+mod agent_observation_shapes;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
 mod agent_command_admission;
+mod agent_models;
 mod agent_operate;
+mod agent_preferences;
+mod agent_settings;
+mod agent_skills;
+mod message_feedback;
 pub use agent_channel_usage::agent_channel_usage_router;
+pub use agent_skills::AgentSkillRuntimeSupport;
 #[cfg(test)]
 mod agent_channel_usage_tests;
 mod agent_provenance;
@@ -35,8 +50,11 @@ mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
 pub use agent_provenance::agent_provenance_router;
+mod agent_history;
+mod agent_lifecycle;
 #[cfg(test)]
 mod agent_provenance_tests;
+mod agent_share_links;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
@@ -45,6 +63,8 @@ mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 mod defaults;
+mod documents;
+pub use documents::documents_router;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
@@ -87,7 +107,9 @@ mod trigger_assets_test_support;
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
-pub use bindings::{binding_router, binding_router_with_native_tools};
+pub use bindings::{
+    binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
+};
 mod gateway_connections;
 mod gateway_interactions;
 mod gateway_records;
@@ -110,6 +132,7 @@ mod public_names;
 mod sandbox_commands;
 #[cfg(test)]
 mod sandbox_commands_tests;
+mod sandbox_runtime_update;
 mod sandbox_service_access;
 pub use sandbox_commands::sandbox_commands_router;
 mod sandboxes;
@@ -124,6 +147,14 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
+pub use agent_lifecycle::{
+    AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
+    AgentLifecycleEventView, AgentLifecycleImageReference, AgentLifecycleOperationReadError,
+    AgentLifecycleOperationReader, AgentLifecycleOperationView, AgentLifecyclePermissions,
+    AgentLifecycleProfile, AgentLifecycleProvisioner, AgentLifecycleProvisioningError,
+    AgentLifecycleRepository, AgentLifecycleSkill,
+};
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
@@ -362,11 +393,19 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     Json(openapi::document())
 }
 
+async fn agent_manager_openapi_document() -> Json<serde_json::Value> {
+    Json(openapi::agent_manager_document())
+}
+
 /// Public router for health-independent discovery infrastructure.
 pub fn router() -> Router {
     Router::new()
         .route("/api/v1/conformance", get(conformance))
         .route("/openapi.json", get(openapi_document))
+        .route(
+            "/agent-manager/openapi.json",
+            get(agent_manager_openapi_document),
+        )
 }
 
 #[cfg(test)]
@@ -405,3 +444,8 @@ mod tests {
 }
 
 pub mod event_workers;
+
+pub use agent_models::{
+    agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelRuntimeSupport,
+    AgentModelView, AgentModelsView,
+};

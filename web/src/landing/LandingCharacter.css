@@ -12,7 +12,7 @@ body {
   width: min(100%, clamp(220px, 50vmin, 520px));
   padding: 0;
   aspect-ratio: 1;
-  color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-static-lime-400);
   background: transparent;
   border: 0;
   isolation: isolate;
@@ -63,6 +63,13 @@ body {
 }
 .landing__character-fallback svg * {
   stroke: currentColor;
+}
+.landing__character-fallback svg rect {
+  fill: var(--dsw-static-zinc-950);
+  stroke: var(--dsw-static-zinc-950);
+}
+.landing__character-fallback svg path:last-child {
+  stroke: var(--dsw-static-zinc-950);
 }
 .landing__character[data-ready] .landing__character-fallback {
   visibility: hidden;

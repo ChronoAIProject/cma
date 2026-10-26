@@ -7,6 +7,7 @@ const { createInterface } = require("node:readline");
 const { test } = require("node:test");
 const { bridgePath, persistConversations } = require("./persist_conversations.cjs");
 const { subscriptionAuth } = require("./subscription_auth.cjs");
+const { managedModelCatalog } = require("./managed_model_catalog.cjs");
 
 test("native subscription handoff preserves a credential-free warm session and blocks warm prompts", { timeout: 60000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), "cma-subscription-contract-"));
@@ -16,7 +17,7 @@ test("native subscription handoff preserves a credential-free warm session and b
   let program = bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
     program = join(directory, "bridge.mjs");
-    writeFileSync(program, subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8"))));
+    writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));
   }
   assert.throws(() => subscriptionAuth(readFileSync(program, "utf8")), /Unexpected Codex ACP source/);
   writeFileSync(join(home, "config.toml"), 'model = "gpt-5.6-sol"\nweb_search = "disabled"\ncli_auth_credentials_store = "file"\n', {mode: 0o600});

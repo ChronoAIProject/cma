@@ -11,7 +11,7 @@ import { useAgentController } from './controller';
 
 afterEach(() => vi.useRealTimers());
 
-it('waits for the shared live Sandbox observation and never polls resources for a paused runtime', async () => {
+it('retains usage and drafts across lifecycle changes without polling machine resources from the conversation', async () => {
   vi.useFakeTimers();
   let sandbox: SandboxDetail = { ...sandboxFixture('paused'), runtimeVersion: undefined };
   let acceptInitial: (value: SandboxDetail) => void = () => {};
@@ -69,29 +69,17 @@ it('waits for the shared live Sandbox observation and never polls resources for 
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(readSandbox).toHaveBeenCalledTimes(3);
   expect(readAgentResources).not.toHaveBeenCalled();
-  expect(
-    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
-  ).toBeInTheDocument();
-  expect(screen.getByText('RAM · paused')).toBeInTheDocument();
-  expect(screen.getByText('CPU · paused')).toBeInTheDocument();
-  expect(screen.getByText('Network · paused')).toBeInTheDocument();
-  expect(screen.getByText('Tokens · 120 input · 60 output')).toBeInTheDocument();
-  expect(screen.getByRole('progressbar', { name: 'Context' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
+  const ring = screen.getByRole('button', { name: 'Context usage' });
+  expect(ring).toHaveAccessibleDescription(/Total tokens.*120 input · 60 output/);
+  expect(ring.querySelector('.context-ring__arc')).not.toBeNull();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Preserve this draft' } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   sandbox = sandboxFixture('active');
   await act(() => vi.advanceTimersByTimeAsync(5000));
-  expect(readAgentResources).toHaveBeenCalledOnce();
-  expect(screen.getByText('RAM · 1 GiB / 8 GiB')).toBeInTheDocument();
-  expect(screen.getByText('CPU · measuring')).toBeInTheDocument();
-  expect(
-    screen.getByText('Sandbox paused. Live resources resume when it is active.'),
-  ).toHaveAttribute('inert');
-  await act(() => vi.advanceTimersByTimeAsync(200));
-  expect(
-    screen.queryByText('Sandbox paused. Live resources resume when it is active.'),
-  ).not.toBeInTheDocument();
+  expect(readAgentResources).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(draft).toHaveValue('Preserve this draft');
   expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
   expect(runAgent).not.toHaveBeenCalled();
@@ -135,24 +123,40 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
     ['pausing', 'pause', 'capture_and_publish_checkpoint', 'Pausing'],
     ['pausing', 'pause', 'teardown_runtime', 'Pausing'],
     ['reviving', 'revive', 'home_restore', 'Resuming'],
-    ['rotating', 'image_rotation', 'publish_active', 'Resuming'],
+    ['rotating', 'image_rotation', 'publish_active', 'Updating runtime'],
   ] as const) {
     sandbox = {
       ...sandboxFixture(status),
       lifecycle: {
         ...sandboxFixture(status).lifecycle!,
         operation: { purpose, phase, startedAt: '2026-09-08T00:00:00Z' },
+        interruption:
+          status === 'reviving'
+            ? {
+                cause: 'out_of_memory',
+                detectedAt: '2026-09-08T00:00:00Z',
+                memoryLimitMib: 8192,
+              }
+            : undefined,
       },
     };
     await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(draft).toBeEnabled();
     expect(draft).toHaveValue('Keep this unsubmitted draft');
     expect(draft).toHaveAccessibleDescription(new RegExp(label));
+    expect(screen.queryByRole('region', { name: 'Sandbox progress' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     fireEvent.keyDown(draft, { key: 'Enter' });
     fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
     expect(runAgent).not.toHaveBeenCalled();
     expect(screen.getAllByText('The repository is ready.')).toHaveLength(1);
+    if (status === 'reviving') {
+      expect(screen.getByRole('region', { name: 'Sandbox recovery' })).toHaveTextContent(
+        'Recovering your sandbox',
+      );
+      expect(screen.getByText(/ran out of memory. Configured memory: 8 GiB/)).toBeInTheDocument();
+      expect(screen.getByText('Reconnecting your saved home')).toBeInTheDocument();
+    }
   }
 
   unavailable = true;

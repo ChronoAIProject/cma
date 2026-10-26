@@ -34,6 +34,8 @@ pub enum AgentOperationKind {
     Steer,
     Interrupt,
     AnswerApproval,
+    UpdateSettings,
+    RefreshContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +52,18 @@ pub enum AgentOperationDelivery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOperationIntent {
+    RefreshContext {
+        revision: u64,
+        readiness_receipt: String,
+        guidance: String,
+        previous_guidance: Vec<String>,
+        settings: super::AgentSettings,
+        working_directory: Option<String>,
+    },
+    UpdateSettings {
+        settings: super::AgentSettings,
+        previous: Option<super::AgentSettings>,
+    },
     SendMessage {
         payload_sha256: String,
     },
@@ -90,6 +104,8 @@ impl AgentOperationIntent {
 
     pub const fn kind(&self) -> AgentOperationKind {
         match self {
+            Self::RefreshContext { .. } => AgentOperationKind::RefreshContext,
+            Self::UpdateSettings { .. } => AgentOperationKind::UpdateSettings,
             Self::SendMessage { .. } => AgentOperationKind::SendMessage,
             Self::Steer { .. } => AgentOperationKind::Steer,
             Self::Interrupt => AgentOperationKind::Interrupt,
@@ -99,6 +115,34 @@ impl AgentOperationIntent {
 
     fn validate(&self) -> Result<(), SandboxModelError> {
         let valid = match self {
+            Self::RefreshContext {
+                revision,
+                readiness_receipt,
+                guidance,
+                previous_guidance,
+                settings,
+                working_directory,
+            } => {
+                *revision > 0
+                    && valid_sha256(readiness_receipt)
+                    && !guidance.is_empty()
+                    && guidance.len() <= 16 * 1024
+                    && !guidance.contains('\0')
+                    && previous_guidance.len() <= 8
+                    && previous_guidance
+                        .iter()
+                        .all(|p| !p.is_empty() && p.len() <= 16 * 1024 && !p.contains('\0'))
+                    && settings.validate().is_ok()
+                    && working_directory.as_ref().is_none_or(|cwd| {
+                        cwd.starts_with('/') && cwd.len() <= 4096 && !cwd.contains('\0')
+                    })
+            }
+            Self::UpdateSettings { settings, previous } => {
+                settings.validate().is_ok()
+                    && previous
+                        .as_ref()
+                        .is_none_or(|value| value.validate().is_ok())
+            }
             Self::SendMessage { payload_sha256 } | Self::Steer { payload_sha256 } => {
                 valid_sha256(payload_sha256)
             }

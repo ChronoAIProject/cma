@@ -8,6 +8,7 @@ use cmaeg::{
         engine::DeliveryEngine,
         intents::{DeliveryCommand, IntentReceipt, ReplySource},
         relay_client::RelayClient,
+        router::ShardedScheduler,
     },
     http,
     ingress::{launch::LaunchRequest, IngressState},
@@ -15,7 +16,11 @@ use cmaeg::{
     providers::{ProviderClient, ProviderRegistry},
     records::RecordClient,
     tools::ToolsState,
-    turns::{outcomes::TurnOutcome, TurnRunner, TurnTracker},
+    turns::{
+        observer::{ActivityObserver, NoopObserver},
+        outcomes::TurnOutcome,
+        TurnRunner, TurnTracker,
+    },
     DeliveryConfig, TurnConfig,
 };
 use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
@@ -56,12 +61,25 @@ impl App {
     ) -> Self {
         Self::build(
             "telegram",
-            false,
-            false,
+            (false, false),
             replies,
             ack_ms,
             config,
             provider_config,
+            Arc::new(NoopObserver),
+        )
+        .await
+    }
+    /// [`App::standard`] whose delivery engine reports to `observer`.
+    pub async fn observed(ack_ms: u32, observer: Arc<dyn ActivityObserver>) -> Self {
+        Self::build(
+            "telegram",
+            (false, false),
+            vec![],
+            ack_ms,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+            observer,
         )
         .await
     }
@@ -71,36 +89,37 @@ impl App {
     pub async fn on(platform: &str, interactive: bool) -> Self {
         Self::build(
             platform,
-            interactive,
-            false,
+            (interactive, false),
             vec![],
             0,
             DeliveryConfig::default(),
             FakeProviderConfig::default(),
+            Arc::new(NoopObserver),
         )
         .await
     }
     pub async fn threaded_lark() -> Self {
         Self::build(
             "lark",
-            false,
-            true,
+            (false, true),
             vec![],
             0,
             DeliveryConfig::default(),
             FakeProviderConfig::default(),
+            Arc::new(NoopObserver),
         )
         .await
     }
     async fn build(
         platform: &str,
-        interactive: bool,
-        threaded: bool,
+        mode: (bool, bool),
         replies: Vec<Reply>,
         ack_ms: u32,
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
+        observer: Arc<dyn ActivityObserver>,
     ) -> Self {
+        let (interactive, threaded) = mode;
         let fake = FakeReply::start(replies).await;
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
         let mut fixture = Fixture::on(
@@ -149,7 +168,7 @@ impl App {
                 providers.clone(),
             )));
         }
-        let engine = DeliveryEngine::start(
+        let engine = DeliveryEngine::start_observed(
             receiver,
             fixture.state.master_keys.clone(),
             relay,
@@ -159,11 +178,12 @@ impl App {
                 "https://gateway.example".into(),
                 Arc::default(),
             ),
+            observer,
         );
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),
-            commands.clone(),
+            Arc::new(ShardedScheduler::new(commands.clone())),
             TurnConfig::default(),
         ));
         let ingress = IngressState::new(
@@ -177,9 +197,13 @@ impl App {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
-            delivery: commands.clone(),
+            delivery: Arc::new(ShardedScheduler::new(commands.clone())),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
+            media: None,
+            downloads: Default::default(),
         };
         let router = http::callbacks::router(ingress).merge(http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertAgentShellPath, assertCheckpointHoldReceipt, checks, diagnosticStages, installedCodexVersion, installRequest, waitForWriterProgress } from './runtime-image-probe.mjs';
-import { campaign, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
+import { assertAgentShellPath, assertCheckpointHoldReceipt, assertPublicHomeSeed, checks as legacyChecks, diagnosticStages, installedCodexVersion, installRequest, sha256, waitForWriterProgress } from './runtime-image-probe.mjs';
+import { campaign, checks, combineProofs, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
+import { assignmentDigest, assertAssignmentReceipt, assignRuntime, assertRuntimeStatus, assertInstallReceipt, assertInstallReplay, bootstrapChecks, bootstrapStages, statusRequest, waitingEnvironment } from './runtime-bootstrap-probe.mjs';
 
 const commit = 'c'.repeat(40);
 const expected = pins(readFileSync(new URL('../../infra/runtime/Dockerfile', import.meta.url), 'utf8'));
@@ -14,6 +16,8 @@ const image = {
     'org.opencontainers.image.revision': commit,
     'org.opencontainers.image.source': source,
     'dev.chrono.cma.runtime-contract': '3',
+    'dev.chrono.cma.runtime-bootstrap': '1',
+    'dev.chrono.cma.home-layout': '2',
   } },
 };
 const proof = { checks, artifacts: {
@@ -23,6 +27,35 @@ const proof = { checks, artifacts: {
   gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
 } };
 const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
+
+test('public seed requires materialized NyxID aliases and preserves their exact content', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cma-public-seed-test-'));
+  const source = join(root, 'image-home');
+  const seed = join(root, 'public-seed');
+  const skill = join(source, '.codex', 'skills', 'nyxid');
+  try {
+    mkdirSync(join(skill, 'references'), { recursive: true });
+    mkdirSync(join(skill, 'scripts'));
+    writeFileSync(join(skill, 'references', 'post-install.md'), 'public install instructions');
+    writeFileSync(join(skill, 'scripts', 'inspect.sh'), 'public executable script', { mode: 0o755 });
+    symlinkSync('references/post-install.md', join(skill, 'POST_INSTALL.md'));
+    symlinkSync('scripts', join(skill, 'tools'));
+    assert.throws(() => assertPublicHomeSeed(source), /public home seed must contain only ordinary entries/);
+    execFileSync('cp', ['-aL', source, seed], { stdio: ['ignore', 'pipe', 'pipe'] });
+    assertPublicHomeSeed(seed);
+    assert.ok(lstatSync(join(skill, 'POST_INSTALL.md')).isSymbolicLink());
+    assert.ok(lstatSync(join(skill, 'tools')).isSymbolicLink());
+    const copied = join(seed, '.codex', 'skills', 'nyxid');
+    // GNU cp may preserve alias hardlinks; replace one entry to simulate drift.
+    rmSync(join(copied, 'POST_INSTALL.md'));
+    writeFileSync(join(copied, 'POST_INSTALL.md'), 'changed instructions');
+    assert.throws(() => assertPublicHomeSeed(seed));
+    writeFileSync(join(copied, 'POST_INSTALL.md'), readFileSync(join(skill, 'references', 'post-install.md')));
+    rmSync(join(copied, 'tools', 'inspect.sh'));
+    writeFileSync(join(copied, 'tools', 'inspect.sh'), readFileSync(join(skill, 'scripts', 'inspect.sh')), { mode: 0o644 });
+    assert.throws(() => assertPublicHomeSeed(seed));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('writer progress waits for scheduling and refuses stopped or truncated counters', async () => {
   let value = '1';
@@ -45,6 +78,7 @@ test('closed runtime evidence requires every real probe and exact cleanup', () =
   for (const mutate of [
     (v) => { v.result = 'skipped'; }, (v) => { v.proof = null; },
     (v) => { v.proof.checks.pop(); }, (v) => { v.proof.checks = []; },
+    (v) => { v.proof.checks = legacyChecks; },
     (v) => { v.proof.artifacts.native = '0'.repeat(64); },
     (v) => { v.proof.artifacts.runtime = ''; },
     (v) => { v.proof.artifacts.gh = ''; },
@@ -77,6 +111,10 @@ test('image admission refuses another architecture, user or runtime contract', (
   for (const mutate of [
     (v) => { v.Architecture = 'arm64'; }, (v) => { v.Config.User = 'root'; },
     (v) => { v.Config.Labels['dev.chrono.cma.runtime-contract'] = '2'; },
+    (v) => { v.Config.Labels['dev.chrono.cma.runtime-bootstrap'] = '0'; },
+    (v) => { delete v.Config.Labels['dev.chrono.cma.runtime-bootstrap']; },
+    (v) => { v.Config.Labels['dev.chrono.cma.home-layout'] = '1'; },
+    (v) => { delete v.Config.Labels['dev.chrono.cma.home-layout']; },
   ]) {
     const changed = structuredClone(image);
     mutate(changed);
@@ -103,6 +141,131 @@ test('probe failure diagnostics emit only known static stages', () => {
   ]) assert.equal(safeFailureStage('probe', { stderr }), 'probe');
   assert.equal(safeFailureStage('probe', Error('raw child error')), 'probe');
   assert.equal(safeFailureStage('image-admission', { stderr: 'raw image data' }), 'image-admission');
+  for (const stage of bootstrapStages) {
+    assert.equal(safeFailureStage('bootstrap-probe', { stderr: `runtime bootstrap probe failed at ${stage}; raw runtime data withheld\n` }), `bootstrap-probe:${stage}`);
+  }
+  for (const stderr of [
+    'raw credential data',
+    'runtime bootstrap probe failed at secret-value; raw runtime data withheld',
+    'runtime bootstrap probe failed at bootstrap-retained-installation; raw runtime data withheld SECRET',
+    'prefix runtime bootstrap probe failed at bootstrap-install-once; raw runtime data withheld',
+  ]) assert.equal(safeFailureStage('bootstrap-probe', { stderr }), 'bootstrap-probe');
+});
+
+const assignment = () => ({ version: 1, pod_uid: 'original-pod', environment: {
+  CHRONO_SANDBOX_ID: 'sbx_original', CHRONO_RUNTIME_GENERATION: '1',
+  CHRONO_RUNTIME_HOME_IDENTITY: 'a'.repeat(43), CHRONO_RUNTIME_CONTROL_TOKEN: 'b'.repeat(64),
+  CHRONO_RUNTIME_HOME: '/volume/home', CHRONO_RUNTIME_STATE_ROOT: '/volume/state', TMPDIR: '/volume/transfer',
+} });
+const assignmentReceipt = (request) => ({ version: 1, pod_uid: request.pod_uid, request_sha256: assignmentDigest(request) });
+
+test('bootstrap receipt binds canonical assignment, Pod identity and every environment value', () => {
+  const request = assignment();
+  const receipt = assignmentReceipt(request);
+  // Fixed vector for the Rust serde field order, sorted environment and domain prefix.
+  assert.equal(receipt.request_sha256, '16252bf0b874804890d33e014e105b62e7291ec458c0a19339d8a667325a26c1');
+  assertAssignmentReceipt(receipt, request);
+  assert.equal(assignmentDigest({ ...request, environment: Object.fromEntries(Object.entries(request.environment).reverse()) }), receipt.request_sha256);
+  for (const mutate of [
+    (v) => { v.pod_uid = 'replacement-pod'; },
+    ...Object.keys(request.environment).map((name) => (v) => { v.environment[name] += '-changed'; }),
+  ]) {
+    const changed = structuredClone(request);
+    mutate(changed);
+    assert.notEqual(assignmentDigest(changed), receipt.request_sha256);
+    assert.throws(() => assertAssignmentReceipt(receipt, changed));
+  }
+  for (const changed of [
+    { ...receipt, version: 2 }, { ...receipt, pod_uid: 'other' },
+    { ...receipt, request_sha256: '0'.repeat(64) }, { ...receipt, untrusted: true },
+    { pod_uid: receipt.pod_uid, request_sha256: receipt.request_sha256 },
+  ]) assert.throws(() => assertAssignmentReceipt(changed, request));
+});
+
+test('assignment is sent only through stdin and waiting process environment excludes tenant credentials', () => {
+  const request = assignment();
+  const environment = waitingEnvironment(request.pod_uid, '/runtime/assignment.sock', '/tmp/fresh-boot-one');
+  assert.deepEqual(Object.keys(environment).sort(), ['CHRONO_RUNTIME_BOOTSTRAP_SOCKET', 'CHRONO_RUNTIME_POD_UID', 'LANG', 'PATH', 'TMPDIR']);
+  const second = waitingEnvironment('replacement-pod', environment.CHRONO_RUNTIME_BOOTSTRAP_SOCKET, '/tmp/fresh-boot-two');
+  assert.notEqual(second.TMPDIR, environment.TMPDIR);
+  const success = { status: 0, signal: null, stdout: JSON.stringify(assignmentReceipt(request)), stderr: '' };
+  const command = (program, args, options) => {
+    assert.equal(program, '/usr/local/bin/layer4-runtime');
+    assert.deepEqual(args, ['--assign-runtime']);
+    assert.deepEqual(options.env, environment);
+    assert.deepEqual(JSON.parse(options.input), request);
+    assert.deepEqual(options.stdio, ['pipe', 'pipe', 'pipe']);
+    assert.ok(!JSON.stringify([args, options.env]).includes(request.environment.CHRONO_RUNTIME_CONTROL_TOKEN));
+    return success;
+  };
+  assertAssignmentReceipt(assignRuntime(request, environment, true, command), request);
+  assignRuntime(request, environment, false, () => ({ status: 2, signal: null, stdout: '', stderr: 'runtime assignment was rejected' }));
+  for (const result of [
+    { ...success, error: Error('timeout') }, { ...success, signal: 'SIGKILL' },
+    { ...success, status: null }, { ...success, stdout: '{}' },
+    { ...success, stderr: request.environment.CHRONO_RUNTIME_CONTROL_TOKEN },
+    { ...success, stderr: 'CHRONO_RUNTIME_CONTROL_TOKEN' },
+  ]) assert.throws(() => assignRuntime(request, environment, true, () => result));
+  for (const result of [
+    success, { status: 2, stdout: '', stderr: 'runtime assignment socket is unavailable' },
+    { status: 2, stdout: 'untrusted', stderr: 'runtime assignment was rejected' },
+  ]) assert.throws(() => assignRuntime(request, environment, false, () => result));
+});
+
+test('restart status requires installed state, changed boot and exact clean runtime identity', () => {
+  const request = assignment();
+  request.environment.CHRONO_RUNTIME_GENERATION = '2';
+  const status = { ...statusRequest(request), boot_id: '2'.repeat(32), installation_ready: true,
+    credential_ready: false, restore_pending: false, agent_processes: 0, agent_skill_install: true, agent_model_catalog: true };
+  assert.equal(assertRuntimeStatus(status, request, true, '1'.repeat(32)), status.boot_id);
+  for (const mutate of [
+    (v) => { v.installation_ready = false; }, (v) => { v.boot_id = '1'.repeat(32); },
+    (v) => { v.boot_id = 'invalid'; }, (v) => { v.sandbox_id = 'other'; },
+    (v) => { v.generation = 1; }, (v) => { v.home_identity = 'b'.repeat(43); },
+    (v) => { v.credential_ready = true; }, (v) => { v.restore_pending = true; },
+    (v) => { v.agent_processes = 1; }, (v) => { v.extra = true; },
+    (v) => { v.agent_skill_install = false; }, (v) => { delete v.agent_skill_install; },
+    (v) => { v.agent_model_catalog = false; }, (v) => { delete v.agent_model_catalog; },
+  ]) {
+    const changed = structuredClone(status);
+    mutate(changed);
+    assert.throws(() => assertRuntimeStatus(changed, request, true, '1'.repeat(32)));
+  }
+  assert.throws(() => assertRuntimeStatus(status, request, false));
+});
+
+test('installation proof refuses failed commands, receipt drift and rerun marker', () => {
+  const request = installRequest(['true']);
+  const receipt = { t: 'install', operation_id: request.operation_id, request_sha256: request.request_sha256,
+    commands: [{ index: 0, exit_code: 0, stdout_sha256: sha256(''), stderr_sha256: sha256('') }] };
+  assertInstallReceipt(receipt, request);
+  assertInstallReplay(structuredClone(receipt), receipt, 'installed\n');
+  for (const mutate of [
+    (v) => { v.t = 'failure'; }, (v) => { v.operation_id = 'other'; },
+    (v) => { v.request_sha256 = '0'.repeat(64); }, (v) => { v.commands = []; },
+    (v) => { v.commands[0].index = 1; }, (v) => { v.commands[0].exit_code = 1; },
+    (v) => { v.commands[0].stdout_sha256 = 'raw output'; }, (v) => { v.extra = true; },
+  ]) {
+    const changed = structuredClone(receipt);
+    mutate(changed);
+    assert.throws(() => assertInstallReceipt(changed, request));
+    assert.throws(() => assertInstallReplay(changed, receipt, 'installed\n'));
+  }
+  for (const marker of ['', 'installed', 'installed\ninstalled\n']) {
+    assert.throws(() => assertInstallReplay(receipt, receipt, marker));
+  }
+});
+
+test('combined image evidence requires bootstrap and restart proof from the same executable', () => {
+  const legacy = { ...proof, checks: legacyChecks };
+  const bootstrap = { checks: bootstrapChecks, runtime: proof.artifacts.runtime };
+  assert.deepEqual(combineProofs(legacy, bootstrap, expected), proof);
+  for (const check of bootstrapChecks) {
+    assert.throws(() => combineProofs(legacy, { ...bootstrap, checks: bootstrapChecks.filter((value) => value !== check) }, expected));
+  }
+  assert.throws(() => combineProofs(legacy, { ...bootstrap, runtime: '9'.repeat(64) }, expected));
+  assert.throws(() => combineProofs(legacy, { ...bootstrap, raw: 'unreviewed data' }, expected));
+  assert.throws(() => combineProofs(proof, bootstrap, expected));
 });
 
 test('Codex version inspection isolates helper symlinks and preserves the sandbox home', () => {
@@ -193,8 +356,8 @@ test('checkpoint diagnostics distinguish refusal, receipt and writer stages with
   }
 });
 
-test('campaign pins the execution ID and refuses probe, deletion and inventory failures', () => {
-  for (const failure of ['', 'probe', 'cleanup', 'inventory']) {
+test('campaign pins the execution ID and refuses either probe, incomplete restart, deletion and inventory failures', () => {
+  for (const failure of ['', 'probe', 'bootstrap', 'missing-restart', 'runtime-mismatch', 'cleanup', 'inventory']) {
     const directory = mkdtempSync(join(tmpdir(), 'cma-runtime-evidence-test-'));
     let container = false;
     let volume = false;
@@ -204,9 +367,25 @@ test('campaign pins the execution ID and refuses probe, deletion and inventory f
       calls.push(args);
       if (args[0] === 'image') return JSON.stringify([image]);
       if (args[0] === 'volume' && args[1] === 'create') { name = args.at(-1); volume = true; return name; }
-      if (args[0] === 'create') { assert.equal(args.at(-1), image.Id); container = true; return 'a'.repeat(64); }
+      if (args[0] === 'create') {
+        assert.equal(args.at(-1), image.Id);
+        assert.ok(args.some((value) => value.endsWith('target=/opt/runtime-bootstrap-probe.mjs,readonly')));
+        container = true;
+        return 'a'.repeat(64);
+      }
       if (args[0] === 'start') return name;
-      if (args[0] === 'exec') { if (failure === 'probe') throw Error('probe failed'); return JSON.stringify(proof); }
+      if (args[0] === 'exec') {
+        assert.equal(args[1], name);
+        assert.equal(args[2], 'node');
+        if (args[3] === '/opt/runtime-image-probe.mjs') {
+          if (failure === 'probe') throw Error('probe failed');
+          return JSON.stringify({ ...proof, checks: legacyChecks });
+        }
+        assert.equal(args[3], '/opt/runtime-bootstrap-probe.mjs');
+        if (failure === 'bootstrap') throw Error('bootstrap failed');
+        return JSON.stringify({ checks: failure === 'missing-restart' ? bootstrapChecks.slice(0, -1) : bootstrapChecks,
+          runtime: failure === 'runtime-mismatch' ? '9'.repeat(64) : proof.artifacts.runtime });
+      }
       if (args[0] === 'ps') { if (failure === 'inventory') throw Error('inventory unavailable'); return container ? 'a'.repeat(12) : ''; }
       if (args[0] === 'rm') { if (failure === 'cleanup') throw Error('delete ambiguous'); container = false; return ''; }
       if (args[0] === 'volume' && args[1] === 'ls') return volume ? name : '';
@@ -220,8 +399,9 @@ test('campaign pins the execution ID and refuses probe, deletion and inventory f
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
       assert.equal(evidence.result, failure ? 'fail' : 'pass');
       assert.ok(calls.find((args) => args[0] === 'ps'));
-      if (failure === 'probe') assert.deepEqual(evidence.cleanup, { containers: 0, volumes: 0 });
+      if (['probe', 'bootstrap', 'missing-restart', 'runtime-mismatch'].includes(failure)) assert.deepEqual(evidence.cleanup, { containers: 0, volumes: 0 });
       if (failure === 'cleanup' || failure === 'inventory') assert.equal(evidence.cleanup, null);
+      if (!failure) assert.equal(calls.filter((args) => args[0] === 'exec').length, 2);
     } finally { rmSync(directory, { recursive: true }); }
   }
 });

@@ -1,0 +1,203 @@
+.document-rich-text {
+  min-height: 480px;
+  outline: none;
+  font-size: 16px;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+.document-rich-text > :first-child {
+  margin-top: 0;
+}
+.document-rich-text p {
+  margin: 0 0 16px;
+}
+.document-rich-text h1 {
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin: 24px 0 16px;
+}
+.document-rich-text h2 {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  margin: 24px 0 12px;
+}
+.document-rich-text h3 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 500;
+  margin: 20px 0 12px;
+}
+.document-rich-text ul,
+.document-rich-text ol {
+  padding-left: 24px;
+}
+.document-rich-text ul[data-type='taskList'] {
+  padding-left: 0;
+  list-style: none;
+}
+.document-rich-text li[data-type='taskItem'] {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.document-rich-text li[data-type='taskItem'] > label {
+  flex: none;
+}
+.document-rich-text li[data-type='taskItem'] > div {
+  flex: 1;
+  min-width: 0;
+}
+.document-rich-text blockquote {
+  border-left: 3px solid var(--dsw-alias-border-l3);
+  padding-left: 16px;
+  color: var(--dsw-alias-label-secondary);
+  margin-inline: 0;
+}
+.document-rich-text img {
+  display: block;
+  max-width: 100%;
+  max-height: 640px;
+  object-fit: contain;
+  margin-block: 16px;
+}
+.document-rich-text a {
+  color: var(--dsw-alias-state-business-primary);
+}
+.document-rich-text hr {
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  margin: 24px 0;
+}
+.document-rich-text table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.document-rich-text td,
+.document-rich-text th {
+  position: relative;
+  min-width: 64px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  padding: 8px;
+  vertical-align: top;
+}
+.document-rich-text th {
+  background: var(--dsw-alias-bg-layer-1);
+}
+.document-rich-text .tableWrapper {
+  overflow-x: auto;
+  margin-block: 16px;
+}
+.document-rich-text .selectedCell {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+.document-rich-text .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--dsw-alias-state-business-primary);
+  pointer-events: none;
+}
+.document-rich-text [data-font='sans'] {
+  font-family: inherit;
+}
+.document-rich-text [data-font='serif'] {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.document-rich-text [data-font='mono'],
+.document-rich-text code {
+  font-family: var(--ds-font-family-code);
+}
+.document-rich-text time {
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 13px;
+}
+.document-rich-text [data-type='details'] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 12px;
+  margin-block: 16px;
+}
+.document-rich-text [data-type='details'] > button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.document-rich-text [data-type='details'] > button::before {
+  content: '›';
+  font-size: 20px;
+}
+.document-rich-text [data-type='details'].is-open > button::before {
+  content: '⌄';
+}
+.document-rich-text [data-type='details'] > div {
+  flex: 1;
+  min-width: 0;
+}
+.document-rich-text summary {
+  font-weight: 600;
+  cursor: text;
+}
+.document-code-block {
+  margin-block: 16px;
+}
+.document-code-block pre {
+  overflow-x: auto;
+  margin: 0;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 16px;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+  line-height: 20px;
+}
+.document-diagram {
+  overflow-x: auto;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.document-diagram img {
+  margin: 0;
+  max-width: 100%;
+  height: auto;
+}
+.document-rich-text :is(h1, h2, h3) {
+  scroll-margin-top: 80px;
+}
+.document-rich-text :is(td, th) > p:last-child {
+  margin-bottom: 0;
+}
+.document-rich-text li > p {
+  margin-bottom: 8px;
+}
+.document-rich-text > p:only-child:empty::before {
+  content: 'Start writing…';
+  color: var(--dsw-alias-label-secondary);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+.document-editor[data-reading] .document-rich-text > p:only-child:empty::before {
+  content: none;
+}
+.document-editor[data-reading] .document-code-block:has(.document-diagram) pre {
+  display: none;
+}
+
+@container (max-width: 760px) {
+  .document-rich-text :is(h1, h2, h3) {
+    scroll-margin-top: 128px;
+  }
+}

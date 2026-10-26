@@ -35,6 +35,7 @@ fn expiry_accepts_only_the_requested_instant_in_provider_metadata() {
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn mint_accepts_provider_fractional_zero_expiry_and_returns_canonical_time() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;

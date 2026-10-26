@@ -1,4 +1,5 @@
-import type { AgentStatus, AgentUsage } from '../api/types';
+import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
+import type { SessionCommand } from './slashCommands';
 
 export interface ConversationMessage {
   readonly order?: number;
@@ -10,6 +11,8 @@ export interface ConversationMessage {
   readonly status: 'streaming' | 'complete' | 'error';
   readonly at?: string;
   readonly liveOnly?: boolean;
+  /** Exact durable Responses command that owns this message, when available. */
+  readonly commandId?: string;
 }
 
 export interface ToolCall {
@@ -32,6 +35,20 @@ export interface ReasoningBlock {
   readonly status: 'streaming' | 'complete';
 }
 
+export interface PlanEntry {
+  readonly title: string;
+  readonly status: string;
+}
+
+/** One turn's latest reported plan; a provider restates the whole plan on every change. */
+export interface PlanSnapshot {
+  readonly order?: number;
+  readonly sequence?: number;
+  readonly id: string;
+  readonly runId?: string;
+  readonly entries: readonly PlanEntry[];
+}
+
 export interface ApprovalRequest {
   readonly order?: number;
   readonly sequence?: number;
@@ -51,6 +68,8 @@ export interface RecoveryNotice {
   readonly detail: string;
   readonly url?: string;
   readonly code?: string;
+  /** Live recovery clears only after the corresponding observation is restored. */
+  readonly clearsOn?: 'live-update' | 'recorded-turn';
 }
 
 export interface ConversationState {
@@ -65,8 +84,20 @@ export interface ConversationState {
   readonly toolCalls: readonly ToolCall[];
   readonly reasoning: readonly ReasoningBlock[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly plans: readonly PlanSnapshot[];
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
+  readonly turnUsage?: Readonly<Record<string, NonNullable<AgentUsage['currentTurn']>>>;
+  /** Ephemeral visible text already covered by the latest provider usage report. */
+  readonly visibleUsageAnchor?: {
+    readonly turnSequence: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly parts: readonly { readonly id: string; readonly text: string }[];
+  };
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
+  readonly ownerTitle?: string;
+  readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   /** Recorded turn start, independent of route mounts and stream reconnects. */
   readonly activeRunStartedAt?: string;

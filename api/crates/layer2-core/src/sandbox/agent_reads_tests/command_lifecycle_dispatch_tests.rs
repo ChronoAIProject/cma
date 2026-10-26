@@ -127,6 +127,7 @@ async fn transaction_refuses_claimed_input_before_active_publication() {
         let command = claim(&store, &agent, "owner").await;
         let parent = publishing_parent(&store, &agent, rotation).await;
         let mutation = AgentConversationMutation {
+            settings_fence: None,
             command_claim: Some(command.work.lease.unwrap().claim),
             execution_fence: None,
             trigger_execution_fence: None,

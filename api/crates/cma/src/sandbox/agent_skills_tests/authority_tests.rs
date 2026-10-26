@@ -23,6 +23,7 @@ pub(super) fn sandbox() -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1000,
                 memory_mib: 2048,
                 nyxid_services: vec![ServiceId::new("ornn-api")],
@@ -41,6 +42,7 @@ pub(super) fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("ornn-api")],
             key_generation: 3,
             delivered: true,

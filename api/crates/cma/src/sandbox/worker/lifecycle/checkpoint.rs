@@ -25,6 +25,14 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if Self::uses_retained_home(&sandbox) {
+            let stamp = rfc3339_at(now);
+            let lease = super::support::lifecycle_lease(&sandbox, &self.config.holder)?;
+            let mut next = sandbox.clone();
+            next.complete_lifecycle_persistent_pause(&lease.holder, lease.fence, stamp.clone())
+                .map_err(model_error)?;
+            return self.complete_sandbox_only_phase(sandbox, next, stamp).await;
+        }
         let started = tokio::time::Instant::now();
         let work = Box::pin(self.capture_and_publish_bounded(sandbox.clone(), now, started));
         self.checkpoint_capture_deadline(&sandbox, now, started, work)
@@ -281,6 +289,13 @@ impl SandboxWorker {
             ));
         }
         Ok(())
+    }
+
+    /// A retained agent-sandbox home already provides the pause boundary. Its
+    /// PVC is the durable source of truth, so no runtime writer hold or CMA
+    /// checkpoint object is involved.
+    pub(super) fn uses_retained_home(sandbox: &Sandbox) -> bool {
+        sandbox.retained_home_recovery().is_some()
     }
 
     pub(super) async fn resume_lifecycle_writers(

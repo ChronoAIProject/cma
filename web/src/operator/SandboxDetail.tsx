@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useState } from 'react';
 import type { AdminSandboxDetail, SandboxEvent } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
-import { IconCloseOutline16, IconRefreshOutline16 } from '../ui/icons';
-import { usePlateFocus } from '../ui/plate';
+import { IconRefreshOutline16 } from '../ui/icons';
+import { Modal } from '../ui/Modal';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice, Timestamp, stateWord } from './records';
@@ -18,8 +17,6 @@ export function SandboxDetail({
   readonly id: string;
   readonly onClose: () => void;
 }) {
-  const panel = useRef<HTMLDivElement>(null);
-  usePlateFocus(panel, onClose);
   const [state, setState] = useState<{
     detail?: AdminSandboxDetail;
     events: readonly SandboxEvent[];
@@ -28,13 +25,6 @@ export function SandboxDetail({
   }>({ events: [], loading: true });
   const [reload, setReload] = useState(0);
   const [after, setAfter] = useState(0);
-  useEffect(() => {
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, []);
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
@@ -52,26 +42,9 @@ export function SandboxDetail({
     return () => controller.abort();
   }, [client, id, after, reload]);
   const detail = state.detail;
-  return createPortal(
-    <div className="operator-drawer-mask" role="presentation" onClick={onClose}>
-      <div
-        className="operator-detail operator-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Sandbox details"
-        ref={panel}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header>
-          <h2>{detail?.sandbox.name ?? 'Sandbox details'}</h2>
-          <Button
-            size="sm"
-            aria-label="Close details"
-            title="Close details"
-            icon={<IconCloseOutline16 />}
-            onClick={onClose}
-          />
-        </header>
+  return (
+    <Modal open title="Sandbox details" description={detail?.sandbox.name} onClose={onClose}>
+      <div className="operator-detail">
         <Button
           size="sm"
           disabled={state.loading}
@@ -219,8 +192,7 @@ export function SandboxDetail({
           </>
         )}
       </div>
-    </div>,
-    document.body,
+    </Modal>
   );
 }
 

@@ -2,51 +2,160 @@
 
 [![Try it](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/badge.svg?label=try_it&theme=auto&placement=plc_08e81ca7da574d86a8addfb61d550ecd)](https://bot.chrono-ai.fun/api/v1/triggers/public/pub_d77caf24c76f4ce188e569a83c71b8a1/open/plc_08e81ca7da574d86a8addfb61d550ecd)
 
-CMA runs managed Agents on ChronoAI infrastructure. A user's Sandbox contains
-Workspaces; each Workspace contains isolated git Worktrees, each with exactly
-one Agent. Versioned Sandbox, Workspace and Agent Profiles define the environment
-and can be published through the marketplace. Codex is the one supported agent
-provider. End users install nothing locally.
+CMA is a cloud-hosted platform for running AI Agents on ChronoAI infrastructure.
+It manages their working environments, conversations, approvals, service access
+and recovery. Codex is the one supported agent provider; CMA is the platform
+around the Agent, not an AI model. End users work through the web client or
+public APIs and install nothing locally.
 
 Read [CLAUDE.md](./CLAUDE.md) before contributing. Its repository layout,
 four-layer architecture, ownership rules and CI gates are binding.
 
-## Public Interfaces
+## What You Can Do
 
-Resource management, profiles, marketplace, Triggers and Launches use public
-REST. Live conversations use AG-UI (`threadId` is the Agent id) or Responses
-(`conversation` is the Agent id). The first-party web client uses those same
-public interfaces. There is no terminal plane, separate Chat model, billing,
-sponsorship or repository-contribution workflow.
+- **Work with Agents:** create an Agent, exchange messages, follow its work and
+  respond to approvals through Agent Manager. Responses v2 conversations can
+  queue follow-up messages while a turn runs; interrupting or stopping a response
+  remains an explicit action. The composer lists commands and skills reported
+  by the running Agent rather than assuming every provider command is available.
+- **Configure its environment:** use the system image or an authorized Image
+  Manager version, with inline model, reasoning, permission, prompt and skill
+  settings. Profiles remain private immutable configuration records and
+  compatibility/recovery surfaces, not a user-facing marketplace workflow.
+- **Work on a repository:** optionally supply a GitHub repository. New Agent
+  creation starts with an empty workspace and passes the repository in the
+  first prompt for the Agent to prepare through the GitHub API workflow.
+- **Manage service access:** an Agent can request missing NyxID services for
+  owner approval. Confirmed scope updates deliver replacement credentials to the
+  existing Sandbox without restarting it or replacing its conversations; the
+  request itself never grants access.
+- **Connect external channels:** use Event Gateway for incoming events, routing
+  and reply delivery, separate from Agent execution.
+- **Share a starting point:** publish a Trigger link that lets a visitor
+  explicitly start an Agent of their own, never enter the publisher's resources.
+
+See [service boundaries](./docs/CMA_Service_Split.md),
+[GitHub source and publication workflow](./docs/CMA_GitHub_API_Workflow.md), and
+[deployment readiness](./docs/CMA_Deployment_Readiness.md). Source code and local
+tests alone do not establish that a capability is deployed or provider-verified.
+
+## Architecture
+
+### Services
+
+The unified web client has three portals, backed by separately deployable
+application services:
+
+| Service | Responsibility |
+|---|---|
+| `cma-agent-manager` | Agents, messages, turns, approvals, workspaces, runtime bindings, persistent homes and recovery. |
+| `cma-event-gateway` | Channels, sealed credentials, incoming event normalization, routing and reply delivery. |
+| `cma-image-manager` | Image catalog, builds, immutable versions, sharing and image lifecycle. |
+
+Each service owns its permissions, records and migrations. Agent Manager uses
+the infrastructure-owned Kubernetes `agent-sandbox` controller to provision
+runtimes; there is no separate CMA Sandbox Manager service. See
+[CMA Service Split](./docs/CMA_Service_Split.md) and
+[NyxID, schema, and frontend boundaries](./docs/CMA_Service_Isolation.md).
+
+### Agent Environments
+
+```text
+Sandbox                  isolated runtime and resource boundary
+  Workspace              project directory
+    Worktree             isolated Git working tree
+      Agent              exactly one Agent per Worktree
+```
+
+A Sandbox can contain multiple Workspaces and Agents. Agents work in their
+own Worktrees, not in the Workspace's main checkout. Configuration and skills
+live in per-Agent homes, not globally.
+
+New Agent creation uses the deployment runtime and an empty workspace. Repository
+setup is a separate Agent task: the runtime's `gh api` uses the authorized
+`api-github` service to obtain a pinned source snapshot while preserving existing
+files and Git metadata. That API grant does not authenticate native Git transport,
+and a source checkout does not imply imported history or working `git pull` /
+`git push`.
+
+The backend keeps public interfaces, domain logic, provider integration and
+runtime execution in four layers:
 
 ```text
 Control plane pod
-  layer1-public    REST, AG-UI, Responses; explicit MCP/A2A refusal
+  layer1-public    REST, AG-UI, Responses, limited Agent access-request tool
   layer2-core      Sandbox -> Workspace -> Worktree -> Agent, profiles, events
-  layer3-adapter   SandboxAdapter, shared hosting, Codex conventions
+  layer3-adapter   SandboxAdapter, runtime hosting, Codex conventions
 Sandbox pod
   layer4-runtime   provider-neutral supervisor, Workspaces and Agents
 ```
 
 The control plane never executes agent code; Sandbox pods never serve public
 traffic. Software installation finishes before credentials are delivered.
-Agent configuration and skills live in per-Agent homes, not globally.
+
+### Public Interfaces
+
+Resource management and Trigger/Launch operations use public REST. Live
+conversations use AG-UI (`threadId` is the Agent id) or Responses (`conversation`
+is the Agent id). The first-party conversation surface uses the same public
+interfaces available to other clients. There is no terminal plane, separate
+Chat model, billing, sponsorship or repository-contribution workflow.
+
+The general public MCP interface remains unsupported. A separate, authenticated
+runtime capability exposes only `agent_key_scope_revision` to request owner
+consent; Agents must wait for CMA's confirmed credential update before retrying
+the service. A2A exposes provider discovery, not executable Agent tasks. See the
+[MCP contract](./docs/API_MCP.md) and [A2A contract](./docs/API_A2A.md) for the
+supported boundaries and explicit refusals.
+
+Start with the [API overview](./docs/API_Overview.md),
+[REST contract](./docs/API_REST.md) and
+[public API inventory](./docs/CMA_Public_APIs.md). The
+[Agent Manager API proposal](./docs/CMA_Agent_Manager_API.md) includes target
+contracts and explicitly identifies capabilities that are not yet implemented;
+it is not a blanket statement of current API availability.
 
 ## Repository
 
 | Path | Contents |
 |---|---|
-| `api/` | Rust workspace: four layers and production composition. |
-| `web/` | React client: hierarchy, conversations, Profiles, Marketplace, Trigger journeys and Operations. |
+| `api/` | Rust workspace: four layers, service implementations and production composition. |
+| `web/` | React/TypeScript client: Agent Manager, Event Gateway, Image Manager, Trigger journeys and Operations. |
 | `sdk/` | Repository-only TypeScript and Rust SDKs, tests and bundled guides; unpublished. |
 | `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
 | `docs/` | Public contracts, design authority, operations and evidence. |
 
+The backend uses Axum/Tokio and MongoDB; the frontend uses React, TypeScript and
+Vite. Dockerfiles and Kubernetes manifests live in `infra/`.
+
+The Kubernetes workload and canonical Service names use these service names.
+Legacy DNS aliases `cma-api` and `cmaeg` preserve existing sealed ChannelPointer
+authorities and retained internal callers during deployment. The image repository
+names `cma-api`/`cma-cmaeg`, source directories and credential service identities
+remain compatible; stored pointers are not rewritten by the rename.
+
 ## Local Development
+
+These steps are for contributors, not hosted CMA users. Read
+[CLAUDE.md](./CLAUDE.md) before changing code and
+[Web Style](./docs/Web_Style.md) before changing the frontend.
+
+### Prerequisites
+
+- Node.js and npm compatible with the checked-in lockfiles. The main frontend
+  and TypeScript SDK CI jobs use Node.js 26; browser harnesses have their own
+  pinned versions in the workflows.
+- Rust via rustup, using `api/rust-toolchain.toml` for the backend and
+  `sdk/rust/rust-toolchain.toml` for the separate Rust SDK.
+- For backend integration, the documented service configuration and a MongoDB
+  replica set for transactions. NyxID and Sandbox-provider setup are separate
+  prerequisites, not supplied by installing frontend dependencies.
+
+### Frontend
 
 Backend commands run from `api/`; frontend commands run from `web/`. The
 frontend imports the checked-out TypeScript SDK, so install its runtime
-dependencies too:
+dependencies too. Run these commands from the repository root:
 
 ```sh
 npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
@@ -54,16 +163,50 @@ npm ci --prefix web
 npm run dev --prefix web
 ```
 
-The backend requires the documented configuration and a MongoDB replica set for
-transactions. See [CMA Operations](./docs/CMA_Operations.md) before starting a
-production-backed configuration. Tests using local substitutes are not evidence
-that the deployed provider or credentials work.
+The Vite development server runs the frontend only; it does not start the CMA
+services or provide authentication. See [CMA Operations](./docs/CMA_Operations.md)
+and [service isolation](./docs/CMA_Service_Isolation.md) before configuring backend
+connections. Do not use production-backed configuration as an implicit local
+development default.
+
+### Local Checks
+
+After installing frontend dependencies, run the core frontend checks from the
+repository root:
+
+```sh
+npm run format:check --prefix web
+npm run lint --prefix web
+npm run typecheck --prefix web
+npm test --prefix web
+npm run build --prefix web
+```
+
+For the backend, use the pinned Rust toolchain and checked-in lockfile:
+
+```sh
+cd api
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo build --workspace --locked
+cargo test --doc --workspace --locked
+```
+
+Backend integration tests use `cargo-nextest` and additional CI fixtures; the
+workflow runs memory-budget tests separately and provisions disposable MongoDB
+and browser dependencies. The commands above are not the full merge gate.
+[CI](./.github/workflows/ci.yml) also checks SDKs, dependency audits, secret
+scanning, repository contracts, manifests and images. Follow the separate
+[TypeScript SDK](./sdk/typescript/README.md) and [Rust SDK](./sdk/rust/docs/README.md)
+instructions when changing those packages. Tests using local substitutes are
+not evidence that the deployed provider or credentials work.
 
 ## CMA Triggers
 
-A publisher selects exact Sandbox, Workspace and Agent Profile revisions and
-their reuse policies. CMA returns a stable public URL and host-specific
-integration snippets. For example:
+A publisher selects an image, inline Agent settings and an optional GitHub
+workspace. CMA records the immutable target and returns a stable public URL
+and host-specific integration snippets. Historical profile-based targets retain
+their recorded reuse policy for replay. For example:
 
 ```markdown
 [Open in CMA](https://cma.example.com/t/PUBLIC_TRIGGER_ID)
@@ -92,5 +235,5 @@ The exact reset/deployment order and safeguards belong to
 [CMA Operations](./docs/CMA_Operations.md).
 
 Event ingress and channel delivery belong to the separate
-[CMA Event Gateway](CMAEG_Protocol.md). CMA owns provider bindings, environments
+[CMA Event Gateway](./docs/CMAEG_Protocol.md). CMA owns provider bindings, environments
 and Agent conversations; the former in-CMA Bridge execution pipeline is retired.

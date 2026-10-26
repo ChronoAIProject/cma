@@ -20,6 +20,7 @@ pub(super) struct ApprovalSnapshot {
 
 #[derive(Clone)]
 pub(super) enum PreWriteRollback {
+    Settings(Option<super::AgentSettings>),
     NewTurn,
     Approval(ApprovalSnapshot),
     WaitingApproval,
@@ -123,6 +124,7 @@ impl AgentOperationService {
         let mut logs = vec![
             operation_log(&next, operation_sequence)?,
             AgentLogKind::TurnStarted {
+                model: Some(current.settings().model),
                 turn_sequence,
                 origin_key: self
                     .command_claim
@@ -348,7 +350,7 @@ impl AgentOperationService {
         })
     }
 
-    async fn require_runtime(
+    pub(super) async fn require_runtime(
         &self,
         target: &AgentRuntimeTarget,
         required: &[RuntimeCapability],

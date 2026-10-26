@@ -1,36 +1,49 @@
 import type { KeyboardEvent, ReactNode } from 'react';
-import { StateDot, type StateDotState } from '../ui/StateDot';
-import { statusLabel } from '../vocabulary/status';
+import { toneDot } from '../ui/Badge';
+import { statusLabel, statusTone } from '../vocabulary/status';
 
-export function dotFor(status: string): StateDotState {
-  if (status === 'failed' || status === 'deleted' || status === 'retired') return 'error';
-  if (status === 'paused' || status === 'waiting_approval') return 'warning';
-  if (
-    [
-      'working',
-      'starting',
-      'provisioning',
-      'installing',
-      'pausing',
-      'reviving',
-      'rotating',
-      'credential_rotating',
-      'retiring',
-      'removing',
-    ].includes(status)
-  )
-    return 'ongoing';
-  return 'done';
-}
-
+/** A row's status word with its dot from the shared tone (§12.1), then any facts. */
 export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: ReactNode) {
+  const tone = statusTone(status);
   return (
     <>
-      <span className="tree-row__state">
-        <StateDot state={dotFor(status)} size={8} />
+      <span className="tree-row__state" data-tone={tone}>
+        {toneDot(tone)}
         {statusLabel(status)}
       </span>
       {extra}
+    </>
+  );
+}
+
+/**
+ * The one-line Agent row's leading slot (§10): a dot only for a state that
+ * shows work or asks for a person. Ready and held states stay blank, so the
+ * dots that remain are worth looking at.
+ */
+export function attentionSignal(status: Parameters<typeof statusLabel>[0]) {
+  const tone = statusTone(status);
+  const drawn = tone === 'active' || tone === 'warning' || tone === 'error';
+  return (
+    <span className="tree-row__signal" title={drawn ? statusLabel(status) : undefined}>
+      {drawn ? toneDot(tone) : null}
+    </span>
+  );
+}
+
+/**
+ * The one-line row's facts. The word is never drawn but stays in the row's
+ * accessible name, so a screen reader hears every state the list used to show.
+ * Its own separator keeps it from running into the title wherever layout does
+ * not already separate the two.
+ */
+export function lineMeta(status: Parameters<typeof statusLabel>[0], updatedAt: string) {
+  return (
+    <>
+      <span className="sr-only">{`, ${statusLabel(status)}`}</span>
+      <time className="tree-row__age" dateTime={updatedAt}>
+        {activityLabel(updatedAt)}
+      </time>
     </>
   );
 }
@@ -70,4 +83,13 @@ export function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
     row.querySelector<HTMLElement>('.tree-row__label')?.click();
     event.preventDefault();
   }
+}
+
+export function activityLabel(value: string, now = Date.now()): string {
+  const elapsed = Math.max(0, now - Date.parse(value));
+  if (!Number.isFinite(elapsed)) return 'Unknown activity';
+  if (elapsed < 60_000) return 'Now';
+  if (elapsed < 3_600_000) return `${String(Math.floor(elapsed / 60_000))}m`;
+  if (elapsed < 86_400_000) return `${String(Math.floor(elapsed / 3_600_000))}h`;
+  return `${String(Math.floor(elapsed / 86_400_000))}d`;
 }

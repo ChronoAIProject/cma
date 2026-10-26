@@ -1,7 +1,7 @@
 pub use layer3_adapter::{
-    AdapterError as AgentRuntimeInputError, ConversationInputSender as AgentRuntimeInputSender,
-    ConversationUpdate as AgentRuntimeUpdate, PromptResponse as AgentRuntimePromptResponse,
-    TurnStopReason as AgentRuntimeTurnStopReason,
+    AdapterError as AgentRuntimeInputError, ConversationInput as AgentRuntimeInput,
+    ConversationInputSender as AgentRuntimeInputSender, ConversationUpdate as AgentRuntimeUpdate,
+    PromptResponse as AgentRuntimePromptResponse, TurnStopReason as AgentRuntimeTurnStopReason,
 };
 
 use crate::{AgentId, RuntimeCapabilities};
@@ -35,6 +35,16 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         &self,
         target: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError>;
+
+    /// Retire a failed input attachment and schedule durable reattachment.
+    async fn request_reconnect(
+        &self,
+        _target: &AgentRuntimeTarget,
+    ) -> Result<(), AgentRuntimeError> {
+        Err(AgentRuntimeError::Unavailable(
+            "runtime reconnection is not configured".into(),
+        ))
+    }
 
     /// Idempotently retire every interaction route at or below this authority.
     async fn fence(

@@ -193,6 +193,7 @@ impl WarmSandbox {
             || sandbox.credential.current.is_some()
             || sandbox.credential.pending.is_some()
             || !sandbox.credential.service_grants.is_empty()
+            || sandbox.credential.service_scope.is_some()
             || seconds_from_rfc3339(at).is_none()
             || at < self.updated_at.as_str()
         {

@@ -114,7 +114,7 @@ fn owner() -> ResourceOwner {
     }
 }
 fn receipt(id: &str) -> Value {
-    json!({"connection_ref":id,"status":"pending","setup_url":"https://gateway.example/connect/opaque","label":null,"url":null})
+    json!({"connection_ref":id,"status":"pending","setup_url":"https://gateway.example/connect/start/opaque","label":null,"url":null})
 }
 
 #[tokio::test]
@@ -331,4 +331,36 @@ async fn successful_connection_responses_require_the_protocol_version() {
         f.client.list("user", &owner()).await,
         Err(BotError::Unavailable)
     ));
+}
+
+#[test]
+fn setup_links_allow_only_the_exact_legacy_or_canonical_namespace() {
+    let client = ChannelConnections::new(
+        Client::new(),
+        "https://internal.example",
+        "https://gateway.example",
+    )
+    .unwrap()
+    .with_public_api("https://bot.example/event-gateway")
+    .unwrap();
+    for valid in [
+        "https://gateway.example/connect/start/cmaeg1.cs.opaque",
+        "https://bot.example/event-gateway/connect/start/cmaeg1.cs.opaque",
+    ] {
+        let mut connection: Connection = serde_json::from_value(receipt("fixture-id")).unwrap();
+        connection.setup_url = Some(valid.into());
+        assert!(client.validate(&connection).is_ok(), "{valid}");
+    }
+    for invalid in [
+        "https://foreign.example/event-gateway/connect/start/token",
+        "https://bot.example/connect/start/token",
+        "https://bot.example/event-gateway/connect/start/",
+        "https://bot.example/event-gateway/connect/start/token?redirect=evil",
+        "https://bot.example/event-gateway/connect/start/token#fragment",
+        "https://gateway.example/connect/start/../token",
+    ] {
+        let mut connection: Connection = serde_json::from_value(receipt("fixture-id")).unwrap();
+        connection.setup_url = Some(invalid.into());
+        assert!(client.validate(&connection).is_err(), "{invalid}");
+    }
 }

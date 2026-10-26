@@ -20,6 +20,9 @@ impl BotProfileResolver for Profiles {
     }
 }
 pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
+    external_at(server, &gateway.base, &gateway.base)
+}
+pub(super) fn external_at(server: &Server, base: &str, public: &str) -> Arc<GatewayBots> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
@@ -31,8 +34,9 @@ pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
         gateway: client::GatewayClient::new(
             http.clone(),
             &GatewayConfig {
-                base_url: gateway.base.clone(),
-                public_url: gateway.base.clone(),
+                base_url: base.into(),
+                public_url: public.into(),
+                public_api_url: public.into(),
             },
             "https://nyx.example".into(),
         )
@@ -41,14 +45,9 @@ pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
             http: http.clone(),
             base: server.base.clone(),
         },
-        connections: connections::ChannelConnections::new(
-            http.clone(),
-            &gateway.base,
-            &gateway.base,
-        )
-        .unwrap(),
+        connections: connections::ChannelConnections::new(http.clone(), base, public).unwrap(),
         issuer: KeyIssuer::new(http, &server.base, "test"),
-        public: gateway.base.clone(),
+        public: public.into(),
     })
 }
 fn owner() -> layer2_core::Caller {
@@ -73,6 +72,7 @@ pub(super) async fn setup(
     (service, store, worker, bot)
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn production_effects_create_disable_rotate_and_delete_through_compiled_gateway() {
     let server = Server::start().await;
     let mut gateway = Gateway::start(&server).await;
@@ -134,6 +134,7 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
     assert!(server.remote.provider_keys.lock().unwrap().is_empty());
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_a_route() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;
@@ -167,7 +168,25 @@ async fn disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_
         assert_eq!(channel.channel_id, original_channel.channel_id);
         assert_eq!(channel.binding_id, original_channel.binding_id);
         assert_eq!(server.identity.lock().unwrap().keys.len(), 2);
-        assert_eq!(server.remote.records.lock().unwrap().len(), 1);
+        let persisted: Value = reqwest::Client::new()
+            .get(format!(
+                "{}/v1/channel-records/{}",
+                gateway.base, initial.record_id
+            ))
+            .bearer_auth("owner-token")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(persisted["channel_id"], original_channel.channel_id);
+        assert_eq!(
+            persisted["definition"]["sources"][0]["admission"]["senders"]["type"],
+            "deny"
+        );
         assert_eq!(server.remote.provider_keys.lock().unwrap().len(), 1);
     }
     service
@@ -207,6 +226,7 @@ async fn disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart() {
     for failed_step in [
         "mint_agent",
@@ -260,6 +280,7 @@ async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_re
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn required_profile_refusal_cleans_up_instead_of_activating_a_partial_bot() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;

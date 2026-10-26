@@ -34,12 +34,12 @@ describe('navigation hierarchy loading', () => {
       status: 'ready',
       items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }],
     });
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({
       status: 'ready',
       items: [{ sandbox: { lifecycle: { checkpoint: { phase: 'capture' } } } }],
     });
-    await act(() => vi.advanceTimersByTimeAsync(1500));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({
       status: 'ready',
       items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }],
@@ -60,13 +60,13 @@ describe('navigation hierarchy loading', () => {
     const client = agentClient({ readSandbox });
     const { result } = renderHook(() => useNavigation(client));
     await act(async () => {});
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({
       status: 'ready',
       refreshError: expect.stringContaining('Reconnecting'),
       items: [{ sandbox: { id: 'sbx_1' }, workspaces: [{ agents: [{ id: 'agt_1' }] }] }],
     });
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).not.toHaveProperty('refreshError');
   });
 
@@ -122,6 +122,72 @@ describe('navigation hierarchy loading', () => {
     );
     expect(readSandbox).toHaveBeenCalledWith('sbx_1', expect.any(Object));
     expect(readWorkspace).toHaveBeenCalledWith('wsp_1', expect.any(Object));
+  });
+
+  it('coalesces foreground events within the automatic refresh window but immediately refreshes after a mutation', async () => {
+    vi.useFakeTimers();
+    const listSandboxes = vi.fn().mockResolvedValue({ items: [sandboxFixture()] });
+    const client = agentClient({ listSandboxes });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { result } = renderHook(() => useNavigation(client));
+    await act(async () => {});
+    for (let index = 0; index < 14; index += 1) {
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      await act(async () => {
+        hidden.mockReturnValue(true);
+        document.dispatchEvent(new Event('visibilitychange'));
+        hidden.mockReturnValue(false);
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    }
+    expect(listSandboxes).toHaveBeenCalledOnce();
+    await act(async () => result.current.refresh());
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(14999));
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(listSandboxes).toHaveBeenCalledTimes(3);
+  });
+
+  it('aborts hidden hierarchy reads before they can expand descendants and retains the visible hierarchy', async () => {
+    vi.useFakeTimers();
+    let finishList: (value: { items: SandboxDetail[] }) => void = () => {};
+    const listSandboxes = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [sandboxFixture()] })
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ items: SandboxDetail[] }>((resolve) => {
+            finishList = resolve;
+          }),
+      )
+      .mockResolvedValue({ items: [sandboxFixture()] });
+    const readSandbox = vi.fn().mockResolvedValue(sandboxFixture());
+    const client = agentClient({ listSandboxes, readSandbox });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const { result } = renderHook(() => useNavigation(client));
+    await act(async () => {});
+    await act(() => vi.advanceTimersByTimeAsync(15000));
+    const signal = listSandboxes.mock.calls[1]![0].signal as AbortSignal;
+    await act(async () => {
+      hidden.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      finishList({ items: [sandboxFixture()] });
+    });
+    expect(signal.aborted).toBe(true);
+    expect(readSandbox).toHaveBeenCalledOnce();
+    expect(result.current).toMatchObject({
+      status: 'ready',
+      items: [{ sandbox: { id: 'sbx_1' } }],
+    });
+    expect(result.current).not.toHaveProperty('refreshError');
+    await act(() => vi.advanceTimersByTimeAsync(60000));
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      hidden.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(readSandbox).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a non-advancing public page cursor', async () => {

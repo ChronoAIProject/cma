@@ -238,3 +238,165 @@ async fn reply_gating_and_topic_partition_require_raw_evidence() {
         Some("17")
     );
 }
+
+#[tokio::test]
+async fn external_native_bot_mentions_reach_the_provider_as_bots_only_after_opt_in() {
+    for platform in ["telegram", "lark", "feishu"] {
+        let receiver = if platform == "telegram" {
+            "77"
+        } else {
+            "ou_receiver"
+        };
+        let fixture=Fixture::on(platform,|v|{
+            v["sources"][0]["bot_id"]=json!(receiver);
+            v["sources"][0]["admission"]=json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"all","bot_messages":"native_mentions"});
+        },Default::default()).await;
+        fixture.recorder.outcome.store(1, Ordering::SeqCst);
+        let mut envelope = Envelope::on(platform);
+        envelope.group();
+        envelope.payload["timestamp"] = json!("2026-10-15T00:00:00Z");
+        if platform == "telegram" {
+            envelope.payload["content"]["text"] = json!("😀 /ask@support_bot");
+            let m = &mut envelope.payload["raw_platform_data"]["message"];
+            m["from"]["is_bot"] = json!(true);
+            m["text"] = json!("😀 /ask@support_bot");
+            m["entities"] = json!([{"type":"bot_command","offset":3,"length":16}]);
+        } else {
+            envelope.payload["raw_platform_data"]["event"]["sender"]["sender_type"] = json!("app");
+            envelope.lark_text("@_user_1 hello");
+            envelope.lark_message()["mentions"] =
+                json!([{"key":"@_user_1","id":{"open_id":receiver},"name":"Support"}]);
+        }
+        let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+        assert_eq!(response["status"], "accepted", "{platform}: {response}");
+        {
+            let requests = fixture.recorder.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            let activity = serde_json::to_value(&requests[0].activity).unwrap();
+            assert_eq!(activity["actor"]["kind"], "bot");
+            assert_eq!(activity["kind"]["mentions_bot"], true);
+            assert_eq!(activity["conversation"]["kind"], "group");
+            let expected: Value = serde_json::from_str(match platform {
+                "telegram" => include_str!("../fixtures/native_bot_mentions/telegram.json"),
+                "lark" => include_str!("../fixtures/native_bot_mentions/lark.json"),
+                _ => include_str!("../fixtures/native_bot_mentions/feishu.json"),
+            })
+            .unwrap();
+            assert_eq!(activity, expected, "shared NyxID provider wire fixture");
+            if let Ok(directory) = std::env::var("NYXID_MENTIONS_ACTIVITY_ARTIFACT_DIR") {
+                std::fs::create_dir_all(&directory).unwrap();
+                std::fs::write(
+                    std::path::Path::new(&directory).join(format!("{platform}.json")),
+                    serde_json::to_vec_pretty(&activity).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        // `all` never authorizes unaddressed bot traffic.
+        if platform == "telegram" {
+            envelope.payload["raw_platform_data"]["message"]["entities"] = json!([]);
+        } else {
+            envelope.lark_message()["mentions"] = json!([]);
+        }
+        let response: Value = fixture.send(&envelope).await.json().await.unwrap();
+        assert_eq!(response["status"], "refused");
+        assert_eq!(fixture.recorder.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn external_bot_opt_in_never_admits_self_private_reply_only_or_unknown_actors() {
+    for platform in ["telegram", "lark", "feishu"] {
+        let receiver = if platform == "telegram" {
+            "77"
+        } else {
+            "ou_receiver"
+        };
+        for case in [
+            "default",
+            "self",
+            "private",
+            "unaddressed",
+            "unknown",
+            "broadcast",
+            "reply",
+            "deny_sender",
+            "deny_chat",
+        ] {
+            let fixture = Fixture::on(
+                platform,
+                |v| {
+                    v["sources"][0]["bot_id"] = json!(receiver);
+                    let mut policy = scoped("all");
+                    if case != "default" {
+                        policy["bot_messages"] = json!("native_mentions");
+                    }
+                    if case == "deny_sender" {
+                        policy["senders"] = json!({"type":"deny"});
+                    }
+                    if case == "deny_chat" {
+                        policy["chats"] = json!({"type":"deny"});
+                    }
+                    v["sources"][0]["admission"] = policy;
+                },
+                Default::default(),
+            )
+            .await;
+            let mut e = Envelope::on(platform);
+            if case != "private" {
+                e.group();
+            }
+            if platform == "telegram" {
+                e.payload["content"]["text"] = json!("😀 @support_bot");
+                let m = &mut e.payload["raw_platform_data"]["message"];
+                m["text"] = json!("😀 @support_bot");
+                m["entities"] = json!([{"type":"mention","offset":3,"length":12}]);
+                m["from"]["is_bot"] = if case == "unknown" {
+                    Value::Null
+                } else {
+                    json!(true)
+                };
+                if case == "self" {
+                    m["from"]["id"] = json!(77);
+                    e.payload["sender"]["platform_id"] = json!("77");
+                }
+                if matches!(case, "unaddressed" | "broadcast" | "reply") {
+                    e.payload["raw_platform_data"]["message"]["entities"] = json!([]);
+                }
+                if case == "reply" {
+                    e.payload["raw_platform_data"]["message"]["reply_to_message"] =
+                        json!({"from":{"id":77,"is_bot":true}});
+                }
+            } else {
+                e.lark_text("@_user_1 hello");
+                e.payload["raw_platform_data"]["event"]["sender"]["sender_type"] =
+                    json!(if case == "unknown" { "system" } else { "app" });
+                e.lark_message()["mentions"] =
+                    json!([{"key":"@_user_1","id":{"open_id":receiver},"name":"Support"}]);
+                if case == "self" {
+                    e.payload["raw_platform_data"]["event"]["sender"]["sender_id"]["open_id"] =
+                        json!(receiver);
+                    e.payload["sender"]["platform_id"] = json!(receiver);
+                }
+                if matches!(case, "unaddressed" | "reply") {
+                    e.lark_message()["mentions"] = json!([]);
+                }
+                if case == "broadcast" {
+                    e.lark_message()["mentions"] = json!([{"key":"@_all","id":{"open_id":"all"}}]);
+                }
+                if case == "reply" {
+                    e.lark_message()["parent_id"] = json!("om_parent");
+                }
+            }
+            let response: Value = fixture.send(&e).await.json().await.unwrap();
+            assert_eq!(
+                response["status"], "refused",
+                "{platform}/{case}: {response}"
+            );
+            assert!(
+                fixture.recorder.requests.lock().unwrap().is_empty(),
+                "{platform}/{case}"
+            );
+        }
+    }
+}

@@ -153,6 +153,52 @@ fn complete_inventory_is_sorted_and_preserves_unknown_lifecycle() {
 }
 
 #[test]
+fn shared_provider_inventory_parses_only_this_controllers_runtimes() {
+    let mut owned = sandbox("runtime-owned", "sbx-owned", 1, &fingerprint('a'));
+    owned
+        .metadata
+        .insert(CONTROL_PLANE_METADATA.into(), "legacy-cma".into());
+    let generic = ProviderSandbox {
+        id: "generic-python".into(),
+        status: None,
+        metadata: BTreeMap::from([(CONTROL_PLANE_METADATA.into(), "sandbox-manager".into())]),
+    };
+    let unlabelled = ProviderSandbox {
+        id: "unrelated".into(),
+        status: None,
+        metadata: BTreeMap::new(),
+    };
+    // The foreign runtime deliberately lacks every CMA runtime-contract field.
+    let inventory = creator_inventory(
+        "legacy-cma",
+        vec![generic.clone(), owned.clone(), unlabelled],
+    )
+    .unwrap();
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].handle.as_str(), "runtime-owned");
+    assert!(creator_inventory("sandbox-manager", vec![generic]).is_err());
+    owned.metadata.remove(RUNTIME_GENERATION_METADATA);
+    assert!(creator_inventory("legacy-cma", vec![owned]).is_err());
+}
+
+#[test]
+fn another_creators_matching_sandbox_id_cannot_be_adopted_or_bound() {
+    let fingerprint = fingerprint('a');
+    let mut expected = request("sbx", 1, &fingerprint);
+    expected
+        .metadata
+        .insert(CONTROL_PLANE_METADATA.into(), "legacy-cma".into());
+    let mut foreign = sandbox("foreign-runtime", "sbx", 1, &fingerprint);
+    foreign
+        .metadata
+        .insert(CONTROL_PLANE_METADATA.into(), "sandbox-manager".into());
+    assert!(matching_sandbox(&expected, vec![foreign.clone()])
+        .unwrap()
+        .is_none());
+    assert!(validate_sandbox_identity(&expected, foreign).is_err());
+}
+
+#[test]
 fn inventory_fails_closed_on_unlabelled_malformed_or_duplicate_rows() {
     let unlabelled = ProviderSandbox {
         id: "foreign".into(),

@@ -23,6 +23,10 @@ pub enum TriggerReferenceError {
     Unavailable { field: &'static str },
     #[error("trigger_reference_not_public: {field}")]
     NotPublic { field: &'static str },
+    #[error("trigger_image_access_denied: {field}")]
+    ImageAccessDenied { field: &'static str },
+    #[error("trigger_image_sign_in_required: {field}")]
+    ImageSignInRequired { field: &'static str },
 }
 
 impl TriggerReferenceError {
@@ -30,12 +34,17 @@ impl TriggerReferenceError {
         match self {
             Self::Unavailable { .. } => "trigger_reference_unavailable",
             Self::NotPublic { .. } => "trigger_reference_not_public",
+            Self::ImageAccessDenied { .. } => "trigger_image_access_denied",
+            Self::ImageSignInRequired { .. } => "trigger_image_sign_in_required",
         }
     }
 
     pub fn field(&self) -> &'static str {
         match self {
-            Self::Unavailable { field } | Self::NotPublic { field } => field,
+            Self::Unavailable { field }
+            | Self::NotPublic { field }
+            | Self::ImageAccessDenied { field }
+            | Self::ImageSignInRequired { field } => field,
         }
     }
 }
@@ -63,6 +72,31 @@ pub trait TriggerProfileResolver: TriggerProfileReader {
         trigger_owner: &SubjectId,
         target: &TriggerTarget,
     ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError>;
+}
+
+/// Converts an Agent Manager inline Trigger target into the retained immutable
+/// profile references used by the launch workers.  The generated profiles are
+/// an internal persistence detail; callers continue to author only the inline
+/// target.
+#[async_trait]
+pub trait TriggerInlineTargetMaterializer: Send + Sync {
+    async fn materialize(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+    ) -> Result<TriggerTarget, TriggerReferenceError>;
+
+    /// Materialize an inline target with the caller's delegated service
+    /// credential when an external resolver needs to verify Image Manager
+    /// authority. Compatibility implementations may use the legacy method.
+    async fn materialize_with_credential(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        _delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize(owner, target).await
+    }
 }
 
 #[async_trait]
@@ -131,6 +165,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             sandbox_profile.visibility,
             sandbox_profile.retired_at.as_deref(),
             sandbox_field,
+            target.inline.is_some(),
         )?;
 
         let workspace_profile = find_workspace(self, target.workspace_profile.id.as_str()).await?;
@@ -140,6 +175,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             workspace_profile.visibility,
             workspace_profile.retired_at.as_deref(),
             workspace_field,
+            target.inline.is_some(),
         )?;
 
         let agent_profile = find_agent(self, target.agent_profile.id.as_str()).await?;
@@ -149,6 +185,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             agent_profile.visibility,
             agent_profile.retired_at.as_deref(),
             agent_field,
+            target.inline.is_some(),
         )?;
 
         self.read_trigger_profiles(target).await
@@ -161,14 +198,20 @@ fn require_public(
     visibility: ProfileVisibility,
     retired_at: Option<&str>,
     field: &'static str,
+    allow_owned_inline: bool,
 ) -> Result<(), TriggerReferenceError> {
-    if retired_at.is_some()
-        || (visibility == ProfileVisibility::Private && trigger_owner != profile_owner)
-    {
+    if retired_at.is_some() {
         return Err(unavailable(field));
     }
     if visibility == ProfileVisibility::Private {
-        return Err(TriggerReferenceError::NotPublic { field });
+        if !allow_owned_inline {
+            return Err(TriggerReferenceError::NotPublic { field });
+        }
+        if trigger_owner != profile_owner {
+            // An inline target may use private generated snapshots only when the
+            // snapshot belongs to the publisher. Keep foreign private rows opaque.
+            return Err(unavailable(field));
+        }
     }
     Ok(())
 }

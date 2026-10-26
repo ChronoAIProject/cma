@@ -6,8 +6,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const requiredPrefixes = [
+  'document_artifacts::mongo_integration_tests::',
+  'store::message_feedback::tests::',
+  'agent_lifecycle::workspace::tests::mongo::',
+  'warm_pools::tests::mongo::',
+  'store::native_warm_pools::retirement::tests::',
+  'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',
+  'store::agent_conversation_store::admission_tests::',
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
   'store::schema_mongo_integration_tests::',
@@ -17,14 +24,20 @@ const requiredPrefixes = [
   'store::bot_setups::mongo_integration_tests::',
   'bot_setups::events::tests::',
   'store::trigger_definitions::launch_mongo_integration_tests::',
+  'store::trigger_definitions::archive_mongo_tests::',
   'store::checkpoint_objects::mongo_integration_tests::',
   'store::sandbox_mongo_integration_tests::checkpoint_capture_tests::',
   'store::sandbox_mongo_integration_tests::service_access_tests::',
   'store::sandbox_mongo_integration_tests::command_ledger_tests::',
   'store::sandbox_mongo_integration_tests::resource_access_tests::',
   'store::sandbox_maintenance::mongo_integration_tests::',
+  'store::sandbox_maintenance::consented::scope_tests::',
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
+  'sandbox::agent_worker_tests::first_message_contention_tests::',
+  'sandbox::worker_tests::lifecycle_queue_contention_tests::',
+  'store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs',
+  'sandbox::agent_worker::prepared_open_ready::',
 ];
 
 function fixture(scenario) {

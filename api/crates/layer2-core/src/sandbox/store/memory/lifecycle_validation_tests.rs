@@ -757,6 +757,7 @@ fn queue_progress_mutation(
                     state: AgentOperationDelivery::DispatchFenced,
                 },
                 AgentLogKind::TurnStarted {
+                    model: Some(agent.settings().model),
                     turn_sequence,
                     origin_key: Some(queued_message_origin(queued.sequence)),
                 },

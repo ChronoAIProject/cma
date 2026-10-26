@@ -425,6 +425,7 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
     working.conversation.last_seq += 1;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
@@ -484,6 +485,7 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
         .unwrap();
     resumed.conversation.last_seq += 1;
     let resume = AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,

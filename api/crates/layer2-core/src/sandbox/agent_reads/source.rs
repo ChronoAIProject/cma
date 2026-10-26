@@ -29,7 +29,7 @@ pub enum SharedAgentOrigin {
 impl From<&AgentOrigin> for SharedAgentOrigin {
     fn from(origin: &AgentOrigin) -> Self {
         match origin {
-            AgentOrigin::Manual => Self::Manual,
+            AgentOrigin::Manual | AgentOrigin::Lifecycle { .. } => Self::Manual,
             AgentOrigin::WorkspaceProfile { .. } => Self::WorkspaceProfile,
             AgentOrigin::Trigger { .. } => Self::Trigger,
         }

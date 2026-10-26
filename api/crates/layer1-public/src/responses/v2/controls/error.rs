@@ -22,7 +22,7 @@ pub(super) fn control(value: TargetedControlError) -> Response {
     }
 }
 
-pub(super) fn admission(value: CommandAdmissionError) -> Response {
+pub(in crate::responses::v2) fn admission(value: CommandAdmissionError) -> Response {
     match value {
         CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::NotAdmissible | CommandLedgerError::StaleClaim) => {
             error::error(StatusCode::CONFLICT, "response_control_conflict",

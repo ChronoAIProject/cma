@@ -18,6 +18,16 @@ pub enum ShareChange {
         target_org_id: SubjectId,
         mode: ShareMode,
     },
+    CreateLink {
+        audience: super::AgentShareAudience,
+        mode: ShareMode,
+        token_sha256: String,
+    },
+    RedeemLink {
+        share_id: String,
+        token_sha256: String,
+        subject: SubjectId,
+    },
     SetMode {
         share_id: String,
         mode: ShareMode,
@@ -74,7 +84,7 @@ impl ShareMutation {
         let ResourceOwner::Person { subject } = &self.owner else {
             return Err(ResourceAccessStoreError::Invalid);
         };
-        if !matches!(&self.actor,ResourceActor::Human {subject:actor}|ResourceActor::Api {subject:actor,delegation_id:None} if actor==subject)
+        if !matches!(&self.actor,ResourceActor::Human {subject:actor}|ResourceActor::Api {subject:actor,delegation_id:None} if actor==subject || matches!(&self.change, ShareChange::RedeemLink { subject: recipient, .. } if actor == recipient))
             || !hex_digest(&self.key_sha256)
             || self.proposed_id.trim().is_empty()
             || self.proposed_id.len() > 128
@@ -89,6 +99,26 @@ impl ShareMutation {
             ShareChange::Create { target_org_id, .. }
                 if self.expected_share_revision.is_none()
                     && !target_org_id.as_str().trim().is_empty() => {}
+            ShareChange::CreateLink {
+                audience,
+                mode,
+                token_sha256,
+            } if self.expected_share_revision.is_none()
+                && audience.validate()
+                && matches!(mode, ShareMode::View | ShareMode::ViewWrite)
+                && hex_digest(token_sha256)
+                && matches!(self.selector, ResourceSelector::Agent { .. }) => {}
+            ShareChange::RedeemLink {
+                share_id,
+                token_sha256,
+                subject,
+            } if !share_id.is_empty()
+                && !subject.as_str().is_empty()
+                && hex_digest(token_sha256)
+                && self.actor.ordinary_subject() == Some(subject)
+                && self
+                    .expected_share_revision
+                    .is_some_and(|r| r > 0 && r < i64::MAX as u64) => {}
             ShareChange::SetMode { share_id, .. } | ShareChange::Revoke { share_id }
                 if !share_id.trim().is_empty()
                     && self
@@ -123,6 +153,33 @@ impl ShareMutation {
                     && receipt.share.revision == 1
                     && receipt.share.created_at == receipt.at
                     && receipt.share.revoked_at.is_none()
+            }
+            ShareChange::CreateLink {
+                audience,
+                mode,
+                token_sha256,
+            } => {
+                receipt.share.mode == *mode
+                    && receipt.share.revision == 1
+                    && receipt.share.revoked_at.is_none()
+                    && receipt.share.link.as_ref().is_some_and(|l| {
+                        &l.audience == audience
+                            && &l.token_sha256 == token_sha256
+                            && l.accepted_subjects.is_empty()
+                    })
+            }
+            ShareChange::RedeemLink {
+                share_id,
+                token_sha256,
+                subject,
+            } => {
+                &receipt.share.id == share_id
+                    && receipt.share.revoked_at.is_none()
+                    && receipt.share.link.as_ref().is_some_and(|l| {
+                        &l.token_sha256 == token_sha256 && l.accepted_subjects.contains(subject)
+                    })
+                    && self.expected_share_revision.and_then(|v| v.checked_add(1))
+                        == Some(receipt.share.revision)
             }
             ShareChange::SetMode { share_id, mode } => {
                 &receipt.share.id == share_id
@@ -167,7 +224,7 @@ impl ShareMutationReceipt {
             || !hex_digest(&self.command_fingerprint)
             || !self.share.validate()
             || !matches!(&self.share.owner,
-                ResourceOwner::Person { subject } if self.actor.ordinary_subject() == Some(subject))
+                ResourceOwner::Person { subject } if self.actor.ordinary_subject() == Some(subject) || self.share.link.as_ref().is_some_and(|l| self.actor.ordinary_subject().is_some_and(|actor| l.accepted_subjects.contains(actor))))
             || self.sandbox_id.as_str().trim().is_empty()
             || crate::seconds_from_rfc3339(&self.sandbox_created_at).is_none()
             || crate::seconds_from_rfc3339(&self.at).is_none()
@@ -231,6 +288,7 @@ pub fn plan_share_mutation(
                 owner: request.owner.clone(),
                 selector: request.selector.clone(),
                 target_org_id: target_org_id.clone(),
+                link: None,
                 mode: *mode,
                 issuer_actor: request.actor.clone(),
                 created_at: request.at.clone(),
@@ -238,7 +296,34 @@ pub fn plan_share_mutation(
                 revision: 1,
             }
         }
-        ShareChange::SetMode { share_id, .. } | ShareChange::Revoke { share_id } => {
+        ShareChange::CreateLink {
+            audience,
+            mode,
+            token_sha256,
+        } => {
+            if previous.is_some() || active_share_count >= MAX_ACTIVE_RESOURCE_SHARES {
+                return Err(ResourceAccessStoreError::Capacity);
+            }
+            ResourceShare {
+                id: request.proposed_id.clone(),
+                owner: request.owner.clone(),
+                selector: request.selector.clone(),
+                target_org_id: SubjectId::new(""),
+                mode: *mode,
+                link: Some(super::AgentShareLink {
+                    audience: audience.clone(),
+                    token_sha256: token_sha256.clone(),
+                    accepted_subjects: Vec::new(),
+                }),
+                issuer_actor: request.actor.clone(),
+                created_at: request.at.clone(),
+                revoked_at: None,
+                revision: 1,
+            }
+        }
+        ShareChange::SetMode { share_id, .. }
+        | ShareChange::Revoke { share_id }
+        | ShareChange::RedeemLink { share_id, .. } => {
             let share = previous
                 .filter(|share| {
                     &share.id == share_id
@@ -271,7 +356,30 @@ pub fn plan_share_mutation(
         ShareChange::Revoke { .. } => {
             share.revoked_at.get_or_insert(request.at.clone());
         }
-        ShareChange::Create { .. } => {}
+        ShareChange::RedeemLink {
+            token_sha256,
+            subject,
+            ..
+        } => {
+            if share.revoked_at.is_some() {
+                return Err(ResourceAccessStoreError::NotFound);
+            }
+            let link = share
+                .link
+                .as_mut()
+                .filter(|link| {
+                    super::share_links::digest_equal(&link.token_sha256, token_sha256)
+                        && link.audience.allows_subject(subject)
+                })
+                .ok_or(ResourceAccessStoreError::NotFound)?;
+            if link.accepted_subjects.len() >= 1000 {
+                return Err(ResourceAccessStoreError::Capacity);
+            }
+            if !link.accepted_subjects.contains(subject) {
+                link.accepted_subjects.push(subject.clone());
+            }
+        }
+        ShareChange::Create { .. } | ShareChange::CreateLink { .. } => {}
     }
     if !share.validate() {
         return Err(ResourceAccessStoreError::Invalid);

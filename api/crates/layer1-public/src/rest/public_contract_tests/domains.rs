@@ -157,7 +157,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 .create_sandbox(admin::sandbox("sbx_contract", "owner-a", "runtime-v1"))
                 .await
                 .unwrap();
-            for id in ["agp_contract", "agp_default"] {
+            for id in ["agp_contract", layer2_core::DEFAULT_AGENT_PROFILE_ID] {
                 fixture
                     .profiles
                     .create_agent_profile(admin::agent_profile(

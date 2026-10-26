@@ -26,14 +26,17 @@ describe('operator public default picker', () => {
       />,
     );
     await user.click(await screen.findByRole('button', { name: 'More profiles' }));
-    await screen.findByRole('option', { name: 'Public agent / revision 8 / Owner' });
-    expect(screen.getAllByRole('option')).toHaveLength(3);
+    await user.click(screen.getByRole('button', { name: 'Default agent profile' }));
+    await screen.findByRole('menuitemradio', { name: 'Public agent / revision 8 / Owner' });
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(3);
     expect(change).not.toHaveBeenCalled();
     expect(client.listPublicProfiles).toHaveBeenLastCalledWith(
       'agent',
       expect.objectContaining({ cursor: 'page-2' }),
     );
-    await user.selectOptions(screen.getByLabelText('Default agent profile'), 'second:8');
+    await user.click(
+      screen.getByRole('menuitemradio', { name: 'Public agent / revision 8 / Owner' }),
+    );
     expect(change).toHaveBeenCalledWith({ id: 'second', revision: 8 });
     await user.click(screen.getByRole('button', { name: 'Refresh agent profiles' }));
     await waitFor(() =>
@@ -50,7 +53,9 @@ describe('operator public default picker', () => {
         expect.objectContaining({ q: 'review', cursor: undefined }),
       ),
     );
-    expect(screen.getByLabelText('Default agent profile')).toHaveValue('pinned:3');
+    expect(screen.getByRole('button', { name: 'Default agent profile' })).toHaveTextContent(
+      'Current profile / revision 3',
+    );
     expect(change).toHaveBeenCalledTimes(1);
   });
 

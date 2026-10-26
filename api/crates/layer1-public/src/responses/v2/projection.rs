@@ -35,6 +35,10 @@ pub struct V2ResponseObject {
     pub instructions: Option<String>,
     pub max_output_tokens: Option<u64>,
     pub model: String,
+    /// Preserve the legacy response.created model hint on deterministic replay.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(super) creation_model: String,
     pub output: Vec<super::V2OutputItem>,
     /// Internal deterministic log projection, absent from the public response.
     #[serde(skip)]
@@ -95,10 +99,10 @@ pub(super) fn project(
             .then(|| json!({"reason":"interrupted"})),
         instructions: None,
         max_output_tokens: None,
-        model: snapshot
-            .model
-            .clone()
-            .unwrap_or_else(|| "deployment-default".into()),
+        // Before dispatch, retain the original creation-model hint and queued
+        // GET/created-event equivalence. It is not evidence of execution.
+        model: super::super::model::named_or_default(snapshot.initial_model.as_deref()),
+        creation_model: super::super::model::named_or_default(snapshot.initial_model.as_deref()),
         output: vec![],
         output_events: vec![],
         parallel_tool_calls: false,
@@ -117,6 +121,14 @@ pub(super) fn project(
     let Some(turn) = command.turn_sequence else {
         return Some(response);
     };
+    response.model = super::super::model::for_turn(
+        snapshot.initial_model.as_deref(),
+        turn,
+        snapshot
+            .history
+            .iter()
+            .map(|entry| (entry.seq, entry.kind.as_ref())),
+    )?;
     let start = snapshot.history.iter().position(|entry| entry.seq == turn && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn))?;
     let mut output = super::output::OutputProjection::default();
     let mut lost_frames = 0_u64;
@@ -139,6 +151,20 @@ pub(super) fn project(
                     input_tokens_details: InputTokenDetails::default(),
                     output_tokens_details: OutputTokenDetails::default(),
                 })
+            }
+            Some(AgentLogKind::UsageUpdated {
+                turn_sequence: Some(observed_turn),
+                turn_input_tokens,
+                turn_output_tokens,
+                ..
+            }) if *observed_turn == turn => {
+                response.usage = Some(ResponseUsage {
+                    input_tokens: *turn_input_tokens,
+                    output_tokens: *turn_output_tokens,
+                    input_tokens_details: InputTokenDetails::default(),
+                    output_tokens_details: OutputTokenDetails::default(),
+                    total_tokens: turn_input_tokens.saturating_add(*turn_output_tokens),
+                });
             }
             Some(AgentLogKind::ConversationGap { frames }) if turn_active => {
                 lost_frames = lost_frames.saturating_add(*frames);
@@ -202,6 +228,9 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
     };
     let mut opening = response.clone();
     opening.status = V2ResponseStatus::Queued;
+    // This frame also exists before dispatch. Its replay bytes must not change
+    // once a turn has selected its model or later settings have changed.
+    opening.model.clone_from(&response.creation_model);
     opening.output.clear();
     opening.error = None;
     opening.incomplete_details = None;
@@ -210,6 +239,7 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
     push("response.created", json!({"response":opening}));
     if bound {
         opening.status = V2ResponseStatus::InProgress;
+        opening.model.clone_from(&response.model);
         push("response.in_progress", json!({"response":opening}));
     }
     for event in &response.output_events {

@@ -29,15 +29,22 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         Created { .. }
         | ConversationOpened { .. }
         | RuntimeGenerationRetired { .. }
+        | SkillInstallationChanged { .. }
         | WorkStepCompleted { .. }
         | WorkStepFailed { .. }
         | TurnMetadataSet { .. }
         | SignInRequired { .. }
         | FirstMessageChanged { .. }
+        | RuntimeMetadataChanged { .. }
         | ConfigOptionsSet { .. }
         | AvailableCommandsSet { .. } => None,
-        TurnStarted { turn_sequence, .. } => Some(TurnStarted {
+        TurnStarted {
             turn_sequence,
+            model,
+            ..
+        } => Some(TurnStarted {
+            turn_sequence,
+            model,
             origin_key: None,
         }),
         ApprovalRequested {
@@ -73,6 +80,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         | ApprovalResolved { .. }
         | OperationDeliveryChanged { .. }
         | Usage { .. }
+        | UsageUpdated { .. }
         | ModeChanged { .. }
         | PlanSet { .. }
         | ConversationGap { .. }

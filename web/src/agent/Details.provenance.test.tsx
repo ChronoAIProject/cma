@@ -1,47 +1,33 @@
-import { act, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
-import { unavailableClient } from '../api/client';
-import { AGENT_DETAIL } from '../test/agent';
-import { AgentDetails } from './Details';
+import { AGENT_DETAIL, agentClient } from '../test/agent';
+import { SessionSettings } from './SessionSettings';
 
-it('shows immutable creation independently of Workspace Profile provisioning and clears on close', async () => {
-  const readAgentProvenance = vi
-    .fn()
-    .mockResolvedValueOnce({
-      agent_id: AGENT_DETAIL.id,
-      created_at: AGENT_DETAIL.createdAt,
-      creation_origin: 'legacy_unknown',
-      details: {
-        created_by: null,
-        trigger: null,
-        channel_bridge: null,
-        workspace_profile_index: 0,
-      },
-    })
-    .mockRejectedValue(new Error('Denied'));
-  const client = { ...unavailableClient, readAgentProvenance };
+it('loads composer settings independently of optional creation provenance', async () => {
+  const readAgentProvenance = vi.fn().mockRejectedValue(new Error('Denied'));
+  const readAgentSettings = vi.fn().mockResolvedValue({
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  });
+  const client = agentClient({
+    readAgentProvenance,
+    readAgentSettings,
+    updateAgentSettings: vi.fn(),
+  });
   const draw = (open: boolean) => (
     <CmaClientProvider client={client}>
-      <AgentDetails
-        open={open}
-        detail={AGENT_DETAIL}
-        onNavigate={vi.fn()}
-        onStop={vi.fn()}
-        onDelete={vi.fn()}
-      />
+      <SessionSettings agentId={AGENT_DETAIL.id} active={open} busy={false} />
     </CmaClientProvider>
   );
-  const { rerender } = render(draw(false));
+  const view = render(draw(false));
+  expect(readAgentSettings).not.toHaveBeenCalled();
+  view.rerender(draw(true));
+  expect(
+    await screen.findByRole('button', { name: /^Model and reasoning effort/ }),
+  ).toHaveTextContent('gpt-6 High');
   expect(readAgentProvenance).not.toHaveBeenCalled();
-  rerender(draw(true));
-  expect(await screen.findByText('Creation origin unknown')).toBeVisible();
-  expect(screen.getByText('Provisioning')).toBeVisible();
-  expect(screen.getByText('Workspace Profile')).toBeVisible();
-  rerender(draw(false));
-  expect(screen.queryByText('Workspace Profile')).not.toBeInTheDocument();
-  rerender(draw(true));
-  expect(await screen.findByText('Creation origin unavailable')).toBeVisible();
-  expect(screen.queryByText('Workspace Profile')).not.toBeInTheDocument();
-  await act(async () => {});
+  view.rerender(draw(false));
+  expect(readAgentSettings.mock.calls[0]?.[1].signal.aborted).toBe(true);
 });

@@ -17,6 +17,7 @@ use self::support::{
 };
 
 mod execution;
+mod prepared;
 mod profile;
 mod removal;
 mod setup;
@@ -67,6 +68,11 @@ impl WorkspaceWorkerConfig {
 pub(crate) struct WorkspaceWorker {
     dependencies: WorkspaceWorkerDependencies,
     config: WorkspaceWorkerConfig,
+}
+
+pub(crate) struct WorkspaceDrain {
+    pub workspace: Workspace,
+    pub executed_work: bool,
 }
 
 impl WorkspaceWorker {
@@ -122,37 +128,6 @@ impl WorkspaceWorker {
         Ok(true)
     }
 
-    pub async fn run_until_ready(
-        &self,
-        id: &WorkspaceId,
-        now: SystemTime,
-    ) -> Result<Workspace, SandboxStoreError> {
-        for _ in 0..4 {
-            let current = self
-                .dependencies
-                .store
-                .get_workspace(id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            match current.status {
-                WorkspaceStatus::Ready => return Ok(current),
-                WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed => {
-                    return Ok(current)
-                }
-                WorkspaceStatus::Preparing => {
-                    if !self.run_one(id, now).await? {
-                        return Ok(current);
-                    }
-                }
-            }
-        }
-        self.dependencies
-            .store
-            .get_workspace(id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)
-    }
-
     async fn execute(
         &self,
         workspace: Workspace,
@@ -172,6 +147,9 @@ impl WorkspaceWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let workspace = self.pin_execution(workspace).await?;
+        if self.transfer_prepared(&workspace, now).await? {
+            return Ok(());
+        }
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
@@ -310,13 +288,22 @@ impl WorkspaceWorker {
                     && sandbox.credential.delivered
             })
             .ok_or_else(|| WorkerFailure::retryable("sandbox runtime is not ready"))?;
+        let inspection_started = std::time::Instant::now();
         let attached = super::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
         )
-        .await
-        .map_err(failure)?;
+        .await;
+        tracing::info!(
+            workspace_id = %workspace.id,
+            sandbox_id = %sandbox.id,
+            step = ?workspace.work.step,
+            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+            succeeded = attached.is_ok(),
+            "Workspace runtime inspection completed"
+        );
+        let attached = attached.map_err(failure)?;
         Ok((sandbox, attached))
     }
 

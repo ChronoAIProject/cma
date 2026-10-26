@@ -49,6 +49,7 @@ async fn partial_send_with_missing_route_key_is_unknown_and_retains_first_messag
         pointer: previous.pointer.clone(),
         definition,
         agent_key_hash: previous.agent_key_hash,
+        consumer_keys: previous.consumer_keys.clone(),
         loaded_at: previous.loaded_at,
         version: previous.version,
     });
@@ -104,6 +105,7 @@ async fn auto_final_off_still_allows_tools_and_does_not_send_committed_output() 
         pointer: previous.pointer.clone(),
         definition,
         agent_key_hash: previous.agent_key_hash,
+        consumer_keys: previous.consumer_keys.clone(),
         loaded_at: previous.loaded_at,
         version: previous.version,
     });

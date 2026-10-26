@@ -9,15 +9,24 @@ pub(super) async fn window(
     after: u64,
     through: Option<u64>,
     limit: u16,
+    message_bindings: bool,
 ) -> Result<AgentReplayWindow, Error> {
     let window = state
         .reads
         .event_stream_window(authorization, after, through, limit)
         .await?;
-    Ok(state
+    let window = state
         .commands
         .bind_replay_window(&state.reads, authorization, window)
-        .await?)
+        .await?;
+    Ok(if message_bindings {
+        state
+            .commands
+            .bind_message_window(&state.reads, authorization, window)
+            .await?
+    } else {
+        window
+    })
 }
 
 /// Reserve envelope overhead and stop before a row that does not fit. That
@@ -32,6 +41,7 @@ pub(super) fn items(window: &AgentReplayWindow, identity: &str) -> Result<Vec<Ev
             appended_at: entry.appended_at.clone(),
             kind: entry.kind.clone(),
             response_binding: entry.response_binding.clone().map(Into::into),
+            message_command_id: entry.message_command_id.as_ref().map(ToString::to_string),
         };
         let size = serde_json::to_vec(&item).map_err(|_| Error::History)?.len() + 1;
         if bytes + size > MAX_BYTES {
@@ -44,4 +54,23 @@ pub(super) fn items(window: &AgentReplayWindow, identity: &str) -> Result<Vec<Ev
         result.push(item);
     }
     Ok(result)
+}
+
+/// An ignored preference preserves old servers and strict old event consumers during rollout.
+pub(super) fn message_bindings(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-message-bindings")
+}
+
+pub(super) fn live_timestamps(headers: &axum::http::HeaderMap) -> bool {
+    preference(headers, "cma-live-observed-at")
+}
+
+fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {
+    headers.get_all("prefer").iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case(requested))
+        })
+    })
 }

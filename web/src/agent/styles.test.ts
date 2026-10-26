@@ -19,7 +19,7 @@ function declaration(rules: CSSRuleList, selector: string): CSSStyleDeclaration 
   return (rule as CSSStyleRule).style;
 }
 
-describe('pre-refactor conversation geometry with readable labels', () => {
+describe('conversation geometry with readable labels', () => {
   it('retains the original Thinking spacing and capped body without lowering contrast', () => {
     const rules = sheet('Thinking.css');
     expect(declaration(rules, '.thinking').getPropertyValue('margin-bottom')).toBe('');
@@ -34,53 +34,76 @@ describe('pre-refactor conversation geometry with readable labels', () => {
     );
   });
 
-  it('retains the original composer capsule and internal spacing with a readable placeholder', () => {
-    const rules = sheet('Agent.css');
-    const capsule = declaration(rules, '.agent-composer__capsule');
-    expect(capsule.getPropertyValue('gap')).toBe('12px');
-    expect(capsule.getPropertyValue('padding')).toBe('10px 0px 0px');
-    expect(capsule.getPropertyValue('border-radius')).toBe('22px');
-    expect(capsule.getPropertyValue('background')).toBe('var(--dsw-specific-input-major)');
+  it('draws the composer as one rounded box whose draft grows to a cap and scrolls', () => {
+    const rules = sheet('Composer.css');
+    const box = declaration(rules, '.agent-composer__box');
+    expect(box.getPropertyValue('border-radius')).toBe('16px');
+    expect(box.getPropertyValue('border')).toBe('1px solid var(--dsw-alias-border-l2)');
+    expect(box.getPropertyValue('background')).toBe('var(--dsw-specific-menu)');
+    expect(box.getPropertyValue('box-shadow')).toBe('var(--dsw-shadow-lv1)');
     const field = declaration(rules, '.agent-composer textarea');
-    expect(field.getPropertyValue('max-height')).toBe('336px');
+    expect(field.getPropertyValue('min-height')).toBe('40px');
+    expect(field.getPropertyValue('max-height')).toBe('min(336px, 40dvh)');
+    expect(field.getPropertyValue('overflow-y')).toBe('auto');
+    expect(field.getPropertyValue('padding')).toBe('8px 16px');
     expect(field.getPropertyValue('font-size')).toBe('16px');
     expect(field.getPropertyValue('line-height')).toBe('24px');
     expect(
       declaration(rules, '.agent-composer textarea::placeholder').getPropertyValue('color'),
     ).toBe('var(--dsw-alias-label-caption)');
+    expect(
+      declaration(rules, '.agent-composer__controls')
+        .getPropertyValue('grid-template-areas')
+        .replace(/\s+/g, ' '),
+    ).toBe(
+      "'attach permission steering . model ring send' 'status status status status status status status'",
+    );
   });
 
-  it('keeps Send and Stop at the original 34px circle with a separate 44px mobile hit area', () => {
-    const rules = sheet('Agent.css');
+  it('uses a 28px Send circle with 44px mobile targets and a neutral empty state', () => {
+    const rules = sheet('Composer.css');
     const submit = declaration(rules, '.agent-composer .agent-composer__submit');
-    expect(submit.getPropertyValue('width')).toBe('34px');
-    expect(submit.getPropertyValue('height')).toBe('34px');
+    expect(submit.getPropertyValue('width')).toBe('28px');
+    expect(submit.getPropertyValue('height')).toBe('28px');
     expect(submit.getPropertyValue('border-radius')).toBe('50%');
+    const empty = declaration(rules, '.agent-composer .agent-composer__submit:disabled');
+    expect(empty.getPropertyValue('background')).toBe('var(--dsw-alias-bg-layer-3)');
+    expect(empty.getPropertyValue('opacity')).toBe('1');
     const media = Array.from(rules).find(
       (rule) => rule instanceof CSSMediaRule && rule.conditionText === '(max-width: 30rem)',
     ) as CSSMediaRule;
     const narrow = declaration(media.cssRules, '.agent-composer .agent-composer__submit');
-    expect(narrow.getPropertyValue('width')).toBe('');
-    expect(narrow.getPropertyValue('height')).toBe('');
-    expect(narrow.getPropertyValue('position')).toBe('relative');
-    expect(narrow.getPropertyValue('justify-self')).toBe('center');
-    const hit = declaration(media.cssRules, '.agent-composer__submit::after');
-    expect(hit.getPropertyValue('position')).toBe('absolute');
-    expect(hit.getPropertyValue('inset')).toBe('-5px');
-    expect(hit.getPropertyValue('content')).toBe('""');
+    expect(narrow.getPropertyValue('width')).toBe('44px');
   });
 
-  it('retains the original 12px gaps in both metrics rows', () => {
+  it('retains the original 12px gap and track in the resource metrics row', () => {
     const rules = sheet('Resources.css');
-    const usage = declaration(rules, '.agent-instruments__usage');
     const resources = declaration(rules, '.resources');
-    expect(usage.getPropertyValue('grid-template-columns')).toBe('repeat(2, minmax(0, 1fr))');
     expect(resources.getPropertyValue('grid-template-columns')).toBe('repeat(3, minmax(0, 1fr))');
-    expect(usage.getPropertyValue('gap')).toBe('12px');
     expect(resources.getPropertyValue('gap')).toBe('12px');
     expect(declaration(rules, '.resources__track').getPropertyValue('height')).toBe('2px');
-    expect(declaration(rules, '.agent-instruments').getPropertyValue('color')).toBe(
-      'var(--dsw-alias-label-caption)',
+  });
+
+  it('draws the context ring with a neutral track, an accent arc and an inverted tooltip', () => {
+    const rules = sheet('ContextRing.css');
+    expect(declaration(rules, '.context-ring__track').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-border-l2)',
     );
+    expect(declaration(rules, '.context-ring__arc').getPropertyValue('stroke')).toBe(
+      'var(--dsw-alias-state-business-primary)',
+    );
+    const tooltip = declaration(rules, '.context-ring__tooltip');
+    expect(tooltip.getPropertyValue('background')).toBe('var(--dsw-alias-tooltip-bg)');
+    expect(tooltip.getPropertyValue('color')).toBe('var(--dsw-alias-label-primary-inverted)');
+    expect(tooltip.getPropertyValue('font-variant-numeric')).toBe('tabular-nums');
+  });
+
+  it('keeps the compact toolbar in flow without a hidden hover banner', () => {
+    const rules = sheet('AgentHeader.css');
+    const toolbar = declaration(rules, '.agent-toolbar');
+    expect(toolbar.getPropertyValue('display')).toBe('flex');
+    expect(toolbar.getPropertyValue('min-height')).toBe('48px');
+    expect(toolbar.getPropertyValue('position')).toBe('');
+    expect(toolbar.getPropertyValue('opacity')).toBe('');
   });
 });

@@ -47,6 +47,21 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
               turnSequence: item.response_binding.turn_sequence,
             },
     };
+  if (item.kind?.type === 'message' && item.kind.role === 'user') {
+    // The original response owns only its first input. Steering within that same
+    // turn requires its own server-proven command identity, never a text match.
+    const firstInput = !state.messages.some(
+      (message) => message.role === 'user' && message.runId === state.activeRunId,
+    );
+    const commandId =
+      item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
+    next = {
+      ...next,
+      messages: next.messages.map((message) =>
+        message.id === `event:${item.sequence}` ? { ...message, commandId } : message,
+      ),
+    };
+  }
   if (next.activeRunId === undefined) next = { ...next, responseBinding: undefined };
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
     next = {
@@ -62,22 +77,63 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       `history-gap:${item.sequence}`,
       'Some conversation updates were lost before they could be recorded.',
     );
+  else if (item.kind?.type === 'turn_started')
+    next = { ...next, recovery: next.recovery.filter((notice) => notice.clearsOn === undefined) };
+  else if (
+    (item.kind?.type === 'message' && item.kind.role === 'assistant') ||
+    item.kind?.type === 'turn_completed' ||
+    item.kind?.type === 'turn_cancelled'
+  )
+    next = clearLiveRecovery(next, state.activeRunId, true);
   return { ...next, agentCursor: item.cursor };
 }
 
-function gap(state: ConversationState, id: string, detail: string): ConversationState {
+function clearLiveRecovery(
+  state: ConversationState,
+  runId: string | undefined,
+  recorded: boolean,
+): ConversationState {
+  return {
+    ...state,
+    recovery: state.recovery.filter(
+      (notice) =>
+        notice.clearsOn === undefined ||
+        (notice.runId !== undefined && notice.runId !== runId) ||
+        (!recorded && notice.clearsOn === 'recorded-turn'),
+    ),
+  };
+}
+
+function gap(
+  state: ConversationState,
+  id: string,
+  detail: string,
+  live = false,
+): ConversationState {
   return {
     ...state,
     messages: state.messages.filter((message) => !message.liveOnly),
     reasoning: [],
     recovery: [
-      ...state.recovery.filter((notice) => notice.id !== id),
+      ...state.recovery.filter(
+        (notice) =>
+          notice.id !== id &&
+          (!live || notice.clearsOn === undefined || notice.runId !== state.activeRunId),
+      ),
       {
         id,
         runId: state.activeRunId,
         afterSequence: state.cursor,
-        title: 'Live updates interrupted',
+        title: live ? 'Refreshing live updates…' : 'Incomplete conversation history',
         detail,
+        clearsOn: live
+          ? state.messages.some((message) => message.liveOnly) ||
+            state.recovery.some(
+              (notice) => notice.clearsOn === 'recorded-turn' && notice.runId === state.activeRunId,
+            )
+            ? 'recorded-turn'
+            : 'live-update'
+          : undefined,
       },
     ],
   };
@@ -94,12 +150,22 @@ export function foldV2Frame(
   if (frame.data.agent_id !== agent || frame.data.incarnation !== state.agentIncarnation)
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
-  if (frame.type === 'cma.agent.live_gap')
+  if (frame.type === 'cma.agent.live_gap') {
+    // This is also the initial stream handshake after a complete snapshot.
+    // An active server turn alone is not evidence that this view lost anything.
+    if (
+      frame.data.reason === 'reconnected' &&
+      !state.messages.some((message) => message.liveOnly) &&
+      state.reasoning.length === 0
+    )
+      return state;
     return gap(
       state,
       `live-gap:${state.cursor}`,
-      'Live updates were interrupted. Recorded messages and tool activity are retained; missed Thinking is unavailable.',
+      'Recorded messages and tool activity are retained. The latest reply is being restored.',
+      true,
     );
+  }
   const event = frame.data;
   if (String(event.turn_sequence) !== state.activeRunId || event.after_sequence > state.cursor)
     throw new Error('A live update did not match the observed Agent turn.');
@@ -114,13 +180,14 @@ export function foldV2Frame(
   )
     return state;
   return foldLiveEvent(
-    state,
+    clearLiveRecovery(state, state.activeRunId, false),
     {
       type: event.kind === 'text_delta' ? 'TEXT_MESSAGE_CONTENT' : 'REASONING_MESSAGE_CONTENT',
       threadId: agent,
       runId: String(event.turn_sequence),
       messageId: event.message_id,
       delta: event.delta,
+      timestamp: event.observed_at,
       'cma:live': true,
       'cma:after': event.after_sequence,
     },

@@ -6,7 +6,7 @@ use crate::connections::{
     ConnectionService, Error,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{OriginalUri, Path, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -17,17 +17,56 @@ use subtle::ConstantTimeEq;
 const COOKIE: &str = "__Host-cmaeg-connection";
 
 pub(crate) fn router(service: ConnectionService) -> Router {
-    Router::new()
+    let routes = Router::new()
         .route("/connect/start/{setup_ref}", get(start))
         .route("/connect", get(page))
         .route("/connect/submit", post(submit))
-        .with_state(service)
+        .with_state(service.clone());
+    let url =
+        reqwest::Url::parse(&service.management.public_api_url).expect("validated public API base");
+    let prefix = url.path().trim_end_matches('/');
+    if prefix.is_empty() {
+        routes
+    } else {
+        routes.clone().nest(prefix, routes)
+    }
+}
+
+struct BrowserRoute {
+    origin: String,
+    alternate_origin: Option<String>,
+    page: String,
+    submit: String,
+}
+impl BrowserRoute {
+    fn for_uri(service: &ConnectionService, uri: &axum::http::Uri) -> Self {
+        let url = reqwest::Url::parse(&service.management.public_api_url)
+            .expect("validated public API base");
+        let prefix = url.path().trim_end_matches('/');
+        let canonical = !prefix.is_empty() && uri.path().starts_with(&format!("{prefix}/connect"));
+        let alternate_origin = prefix
+            .is_empty()
+            .then(|| url.origin().ascii_serialization());
+        let prefix = if canonical { prefix } else { "" };
+        Self {
+            origin: if canonical {
+                url.origin().ascii_serialization()
+            } else {
+                service.management.public_url.clone()
+            },
+            alternate_origin,
+            page: format!("{prefix}/connect"),
+            submit: format!("{prefix}/connect/submit"),
+        }
+    }
 }
 async fn start(
     State(service): State<ConnectionService>,
     Path(token): Path<String>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
+    let route = BrowserRoute::for_uri(&service, &uri);
     let result = async {
         let grant = service.open_capability(&token, "start")?;
         let (mut record, _) = service.store.connection(&grant.record_id).await?;
@@ -42,7 +81,7 @@ async fn start(
         }
         let session =
             service.capability(&record, "browser", record.browser_nonce.as_deref().unwrap())?;
-        let mut response = Redirect::to("/connect").into_response();
+        let mut response = Redirect::to(&route.page).into_response();
         response.headers_mut().insert(
             header::SET_COOKIE,
             HeaderValue::from_str(&format!(
@@ -60,14 +99,19 @@ async fn start(
     .await;
     result.unwrap_or_else(|_| expired())
 }
-async fn page(State(service): State<ConnectionService>, headers: HeaderMap) -> Response {
+async fn page(
+    State(service): State<ConnectionService>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    let route = BrowserRoute::for_uri(&service, &uri);
     match browser_record(&service, &headers).await {
         Ok((record, version)) => {
             let record = match service.refresh_management(record.clone(), version).await {
                 Ok((next, _)) => next,
                 Err(_) => record,
             };
-            render_record(&service, &record, None).await
+            render_record(&service, &record, &route, None).await
         }
         Err(_) => expired(),
     }
@@ -86,14 +130,18 @@ struct Submission {
 }
 async fn submit(
     State(service): State<ConnectionService>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     form: Result<Form<Submission>, axum::extract::rejection::FormRejection>,
 ) -> Response {
+    let route = BrowserRoute::for_uri(&service, &uri);
     let result = async {
         let (mut record, version) = browser_record(&service, &headers).await?;
         let mut origins = headers.get_all(header::ORIGIN).iter();
-        if origins.next().and_then(|v| v.to_str().ok())
-            != Some(service.management.public_url.trim_end_matches('/'))
+        let origin = origins.next().and_then(|v| v.to_str().ok());
+        if origin.is_none()
+            || (origin != Some(route.origin.as_str())
+                && origin != route.alternate_origin.as_deref())
             || origins.next().is_some()
         {
             return Err(Error::NotFound);
@@ -150,10 +198,10 @@ async fn submit(
         };
         match outcome {
             Ok(()) => Ok(super::problems::no_store(
-                Redirect::to("/connect").into_response(),
+                Redirect::to(&route.page).into_response(),
             )),
             Err(Error::Invalid(message)) => {
-                Ok(render_record(&service, &record, Some(message.into())).await)
+                Ok(render_record(&service, &record, &route, Some(message.into())).await)
             }
             Err(e) => Err(e),
         }
@@ -218,6 +266,7 @@ fn validate(record: &Connection, grant: &SetupCapability, nonce: &str) -> Result
 async fn render_record(
     service: &ConnectionService,
     record: &Connection,
+    route: &BrowserRoute,
     error: Option<String>,
 ) -> Response {
     let state=match effective_status(record) {
@@ -228,15 +277,15 @@ async fn render_record(
             };
             let selected=if managers.is_empty() {ConnectionMethod::Existing} else {ConnectionMethod::Create};
             let csrf=match record.browser_nonce.as_deref().map(|nonce|service.capability(record,"csrf",nonce)) {Some(Ok(csrf))=>csrf,_=>return expired()};
-            ConnectionSetupState::Choose(ConnectionChoices {form_action:"/connect/submit".into(),csrf_token:csrf,selected,managers,
+            ConnectionSetupState::Choose(ConnectionChoices {form_action:route.submit.clone(),csrf_token:csrf,selected,managers,
                 management:Some(ManagementChoice {instructions:"To enable this capability, select your bot in the official @BotFather Mini App and enable Bot Management Mode. The gateway verifies it with Telegram.".into(),enable_link:PageLink {label:"Open official @BotFather".into(),href:"https://t.me/BotFather".into()}}),
                 registration_help:None,error,
             })
         },
         Status::AwaitingPlatform=>ConnectionSetupState::AwaitingPlatform {
             message:if record.material.is_some() {"Enable Bot Management Mode for your new bot in official @BotFather, then check the connection."} else {"Return to your Telegram conversation and use the Create a bot button. Telegram will ask you to confirm the new bot."}.into(),
-            action:record.material.as_ref().map(|_|PageLink {label:"Open official @BotFather".into(),href:"https://t.me/BotFather".into()}),refresh_path:"/connect".into(),
-            retry: if record.material.is_none() {record.browser_nonce.as_deref().and_then(|nonce|service.capability(record,"csrf",nonce).ok()).map(|csrf_token|ConnectionRetry {form_action:"/connect/submit".into(),csrf_token})} else {None},
+            action:record.material.as_ref().map(|_|PageLink {label:"Open official @BotFather".into(),href:"https://t.me/BotFather".into()}),refresh_path:route.page.clone(),
+            retry: if record.material.is_none() {record.browser_nonce.as_deref().and_then(|nonce|service.capability(record,"csrf",nonce).ok()).map(|csrf_token|ConnectionRetry {form_action:route.submit.clone(),csrf_token})} else {None},
         },
         Status::Ready=>ConnectionSetupState::Complete {connection_label:record.material.as_ref().map_or("Your bot",|m|m.name.as_str()).into(),action:None},
         _=>ConnectionSetupState::Expired {restart:None},

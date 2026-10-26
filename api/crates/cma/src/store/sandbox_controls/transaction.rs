@@ -32,7 +32,12 @@ pub(super) async fn apply(
             // Serialize policy mutation and concurrent resource activity even
             // for an already-satisfied command that only writes a receipt.
             resource_access::fence_lineage(store, &snapshot, session).await?;
-            let plan = plan_sandbox_control(record, &snapshot.lineage.sandbox, &at)?;
+            let plan = plan_sandbox_control(
+                record,
+                &snapshot.lineage.sandbox,
+                &at,
+                store.managed_runtime_version.as_deref(),
+            )?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store
                     .legacy_reuse_blocks_quiescence(&snapshot.lineage.sandbox, sandbox, session)

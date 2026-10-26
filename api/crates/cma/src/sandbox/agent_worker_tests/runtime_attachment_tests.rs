@@ -68,6 +68,35 @@ async fn absent_runtime_leaves_agent_startup_retryable_without_reprovisioning() 
 }
 
 #[tokio::test]
+async fn foreign_parent_is_rejected_before_runtime_adoption() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("foreign-parent", Vec::new()).await;
+    let mut workspace = harness
+        .store
+        .get_workspace(&agent.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = workspace.revision;
+    workspace.owner = SubjectId::new("foreign-owner");
+    workspace.revision += 1;
+    harness
+        .store
+        .save_workspace(revision, workspace)
+        .await
+        .unwrap();
+
+    // Runtime adoption would fail retryably. Invalid lineage must win and
+    // terminate startup before the worker attempts to use that runtime.
+    harness.adapter.teardown(&harness.runtime).await.unwrap();
+    harness.run(&agent.id, harness.now).await;
+    let rejected = harness.stored(&agent.id).await;
+    assert_eq!(rejected.status, AgentStatus::Failed);
+    assert_eq!(rejected.failure.unwrap().class, "agent_lineage_invalid");
+    assert!(rejected.work.receipts.is_empty());
+}
+
+#[tokio::test]
 async fn workspace_preparation_uses_the_exact_bound_replacement_runtime() {
     let harness = Harness::with_generation(Arc::new(EmptyAgentSkillResolver), 4).await;
     let mut workspace = harness.workspace.clone();
@@ -97,7 +126,8 @@ async fn workspace_preparation_uses_the_exact_bound_replacement_runtime() {
     let ready = worker
         .run_until_ready(&workspace.id, harness.now)
         .await
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_eq!(ready.status, WorkspaceStatus::Ready);
     let inventory = adapter.runtime_inventory().await.unwrap();
     assert_eq!(inventory.len(), 1);

@@ -7,6 +7,7 @@ use crate::seconds_from_rfc3339;
 
 use super::queued_message::queued_message_origin_sequence;
 
+use super::agent_reads_usage::UsageFold;
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationKind,
     AgentTranscript, AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn,
@@ -85,9 +86,17 @@ pub(super) fn fold_agent_log(
             AgentLogKind::TurnStarted {
                 turn_sequence,
                 origin_key,
+                model,
             } => {
                 if latest_conversation.is_none() || *turn_sequence != entry.seq {
                     return Err("agent turn start is invalid".into());
+                }
+                if model.as_ref().is_some_and(|model| {
+                    model.len() > 256
+                        || model.trim() != model
+                        || model.chars().any(char::is_control)
+                }) {
+                    return Err("agent turn model is invalid".into());
                 }
                 transcript.start(*turn_sequence, origin_key.clone(), &entry.appended_at)?;
             }
@@ -167,6 +176,27 @@ pub(super) fn fold_agent_log(
                     at: entry.appended_at.clone(),
                 },
             )?,
+            AgentLogKind::UsageUpdated {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+                turn_sequence,
+                turn_input_tokens,
+                turn_output_tokens,
+            } => {
+                usage.observed = Some(AgentUsage {
+                    input_tokens: *input_tokens,
+                    output_tokens: *output_tokens,
+                    context_used: *context_used,
+                    context_window: *context_window,
+                    current_turn: turn_sequence.map(|turn_sequence| super::AgentTurnUsage {
+                        turn_sequence,
+                        input_tokens: *turn_input_tokens,
+                        output_tokens: *turn_output_tokens,
+                    }),
+                });
+            }
             AgentLogKind::Usage {
                 input_tokens,
                 output_tokens,
@@ -422,64 +452,5 @@ fn transcript_message(entry: &AgentLogEntry) -> AgentTranscriptMessage {
         role,
         content: content.clone(),
         appended_at: entry.appended_at.clone(),
-    }
-}
-
-#[derive(Default)]
-struct UsageFold {
-    closed_input: u64,
-    closed_output: u64,
-    generation: Option<u64>,
-    input_peak: u64,
-    output_peak: u64,
-    context_used: u64,
-    context_window: Option<u64>,
-}
-
-impl UsageFold {
-    fn open_generation(&mut self, generation: u64) -> Result<(), String> {
-        if self.generation.is_some_and(|current| generation <= current) {
-            return Err("agent usage generation is not increasing".into());
-        }
-        if self.generation.is_some() {
-            self.closed_input = self.closed_input.saturating_add(self.input_peak);
-            self.closed_output = self.closed_output.saturating_add(self.output_peak);
-        }
-        self.generation = Some(generation);
-        self.input_peak = 0;
-        self.output_peak = 0;
-        self.context_used = 0;
-        self.context_window = None;
-        Ok(())
-    }
-
-    fn observe(
-        &mut self,
-        input_tokens: u64,
-        output_tokens: u64,
-        context_used: u64,
-        context_window: Option<u64>,
-    ) -> Result<(), String> {
-        if self.generation.is_none() {
-            return Err("agent usage precedes its conversation".into());
-        }
-        self.input_peak = self.input_peak.max(input_tokens);
-        self.output_peak = self.output_peak.max(output_tokens);
-        if context_used > 0 {
-            self.context_used = context_used;
-        }
-        if let Some(context_window) = context_window {
-            self.context_window = Some(context_window);
-        }
-        Ok(())
-    }
-
-    fn reading(&self) -> AgentUsage {
-        AgentUsage {
-            input_tokens: self.closed_input.saturating_add(self.input_peak),
-            output_tokens: self.closed_output.saturating_add(self.output_peak),
-            context_used: self.context_used,
-            context_window: self.context_window,
-        }
     }
 }

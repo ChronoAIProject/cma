@@ -147,6 +147,7 @@ it('polls incremental Sandbox events, preserves progress on read failure, and sl
         removeWorkspace: true,
         deleteAgent: true,
         stopAgent: true,
+        exportHistory: true,
       }}
       busy={false}
       onAction={vi.fn()}
@@ -160,7 +161,10 @@ it('polls incremental Sandbox events, preserves progress on read failure, and sl
   expect(
     within(screen.getByRole('region', { name: 'Live activity' })).getByText('Sandbox created'),
   ).toBeInTheDocument();
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
+  fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  await act(async () =>
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Technical details' })),
+  );
   expect(
     within(screen.getByRole('region', { name: 'Sandbox preparation' })).getByText(
       'Starting the sandbox',

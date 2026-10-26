@@ -124,6 +124,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -142,6 +143,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 1,
             delivered: true,
@@ -227,6 +229,7 @@ fn encryption_key() -> AuthEncryptionKey {
 
 fn agent_profile(id: &str) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId("owner".into()),
         name: "Research agent".into(),
@@ -251,6 +254,7 @@ fn agent_profile(id: &str) -> AgentProfile {
 
 fn workspace_service_profile(id: &str, name: &str) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId("owner".into()),
         name: format!("{name} profile"),
@@ -305,6 +309,10 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

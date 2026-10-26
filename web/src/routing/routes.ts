@@ -4,9 +4,16 @@ export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 
 export type AppRoute =
   | { readonly kind: 'home' }
+  | { readonly kind: 'agent_manager' }
+  | { readonly kind: 'artifacts' }
+  | { readonly kind: 'document'; readonly documentId: string }
+  | { readonly kind: 'event_gateway' }
+  | { readonly kind: 'image_manager' }
+  | { readonly kind: 'docs'; readonly view?: 'event_gateway_protocol' }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
+  | { readonly kind: 'agent_share'; readonly shareId: string }
   | { readonly kind: 'inventory'; readonly organization?: string; readonly shared?: boolean }
   | { readonly kind: 'bots' }
   | { readonly kind: 'bot_new' }
@@ -27,7 +34,6 @@ export type AppRoute =
   | { readonly kind: 'public_trigger'; readonly publicId: string; readonly placementId?: string }
   | { readonly kind: 'launch'; readonly launchId: string }
   | { readonly kind: 'operations' }
-  | { readonly kind: 'developer' }
   | { readonly kind: 'not_found'; readonly pathname: string };
 
 const PROFILE_KINDS: readonly ProfileKind[] = ['agent', 'workspace', 'sandbox'];
@@ -63,6 +69,16 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 1) {
     switch (path[0]) {
+      case 'event-gateway':
+        return { kind: 'event_gateway' };
+      case 'image-manager':
+        return { kind: 'not_found', pathname };
+      case 'artifacts':
+        return { kind: 'artifacts' };
+      case 'docs':
+        return { kind: 'docs' };
+      case 'agent-manager':
+        return { kind: 'agent_manager' };
       case 'agents':
         return { kind: 'inventory' };
       case 'bots':
@@ -74,7 +90,9 @@ export function parseRoute(pathname: string): AppRoute {
       case 'operations':
         return { kind: 'operations' };
       case 'developer':
-        return { kind: 'developer' };
+        // Retired: the SDK reader it named no longer exists. Old links land on
+        // the documentation that replaced it, and the address is rewritten.
+        return { kind: 'docs' };
       default:
         return { kind: 'not_found', pathname };
     }
@@ -82,7 +100,11 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
+    if (resource === 'docs' && id === 'event-gateway')
+      return { kind: 'docs', view: 'event_gateway_protocol' };
     if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
+    if (resource === 'artifacts' && /^doc_[a-f0-9]{32}$/.test(id))
+      return { kind: 'document', documentId: id };
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
@@ -95,6 +117,8 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 3) {
     const [resource = '', qualifier = '', id = ''] = path;
+    if (resource === 'agent-manager' && qualifier === 'share')
+      return { kind: 'agent_share', shareId: id };
     if (resource === 'organizations' && id === 'agents')
       return { kind: 'inventory', organization: qualifier };
     if (resource === 'profiles' && qualifier === 'event-workers')
@@ -129,12 +153,26 @@ export function routePath(route: AppRoute): string {
   switch (route.kind) {
     case 'home':
       return '/';
+    case 'agent_manager':
+      return '/agent-manager';
+    case 'event_gateway':
+      return '/event-gateway';
+    case 'image_manager':
+      return '/image-manager';
+    case 'artifacts':
+      return '/artifacts';
+    case 'document':
+      return `/artifacts/${segment(route.documentId)}`;
+    case 'docs':
+      return route.view === 'event_gateway_protocol' ? '/docs/event-gateway' : '/docs';
     case 'sandbox':
       return `/sandboxes/${segment(route.sandboxId)}`;
     case 'workspace':
       return `/workspaces/${segment(route.workspaceId)}`;
     case 'agent':
       return `/agents/${segment(route.agentId)}`;
+    case 'agent_share':
+      return `/agent-manager/share/${segment(route.shareId)}`;
     case 'inventory':
       if (route.shared === true) return '/shared/agents';
       return route.organization === undefined
@@ -172,8 +210,6 @@ export function routePath(route: AppRoute): string {
       return `/launches/${segment(route.launchId)}`;
     case 'operations':
       return '/operations';
-    case 'developer':
-      return '/developer';
     case 'not_found':
       return route.pathname;
   }
@@ -184,12 +220,29 @@ export interface AppRouter {
   readonly navigate: (route: AppRoute, options?: { readonly replace?: boolean }) => void;
 }
 
+/** Addresses that still parse, to their replacement, but are never shown. */
+const RETIRED_PATHS: ReadonlySet<string> = new Set(['/developer']);
+
+/**
+ * Read the address bar, rewriting a retired path to the one that replaced it.
+ *
+ * Replace rather than push: the retired address was never a place somebody
+ * chose to be, so Back should not return to it.
+ */
+function currentRoute(): AppRoute {
+  const route = parseRoute(window.location.pathname);
+  if (RETIRED_PATHS.has(window.location.pathname)) {
+    window.history.replaceState(window.history.state, '', routePath(route));
+  }
+  return route;
+}
+
 export function useAppRouter(): AppRouter {
-  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname));
+  const [route, setRoute] = useState<AppRoute>(currentRoute);
 
   useEffect(() => {
     const onPopState = () => {
-      setRoute(parseRoute(window.location.pathname));
+      setRoute(currentRoute());
     };
     window.addEventListener('popstate', onPopState);
     return () => {

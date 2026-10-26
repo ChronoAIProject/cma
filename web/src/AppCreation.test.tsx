@@ -7,44 +7,34 @@ import { createMockAuthProvider } from './auth/mock';
 import { CmaClientProvider } from './api/context';
 import { agentClient } from './test/agent';
 import { creationClient } from './test/creation';
-import { sandboxFixture } from './test/hierarchy';
 import {
-  documentClient,
-  OWN_PROFILES,
   AGENT_PROFILE,
-  WORKSPACE_PROFILE,
+  OWN_PROFILES,
   SANDBOX_PROFILE,
+  WORKSPACE_PROFILE,
+  documentClient,
   marketplaceClient,
 } from './test/profiles';
 
 afterEach(() => window.history.replaceState({}, '', '/'));
 
-it('binds the production App create command and opens the created Sandbox route', async () => {
-  const user = userEvent.setup();
-  const createSandbox = vi.fn().mockResolvedValue(sandboxFixture('provisioning'));
-  const client = agentClient({ createSandbox });
+it('retires the profile-driven Sandbox creation entry from the Agent Manager home', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
-      <CmaClientProvider client={client} creation={creationClient()}>
+      <CmaClientProvider client={agentClient()} creation={creationClient()}>
         <App />
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await user.click(await screen.findByRole('button', { name: 'New sandbox' }));
-  await user.click(await screen.findByRole('button', { name: /Research sandbox Version/ }));
-  await user.click(await screen.findByRole('checkbox', { name: 'I trust this profile' }));
-  await user.click(screen.getByRole('button', { name: 'Create sandbox' }));
-  await waitFor(() => expect(window.location.pathname).toBe('/sandboxes/sbx_1'));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(await screen.findByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
+  await screen.findByRole('heading', { name: 'Welcome to CMA' });
+  expect(screen.getAllByRole('button', { name: 'New agent' }).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
 
-it('hands the reviewed Marketplace revision to creation without silently accepting its commands', async () => {
+it('keeps Marketplace profile revisions read-only while creation moves to Agent Manager', async () => {
   window.history.replaceState({}, '', '/marketplace/sandbox/sbp_research');
-  const user = userEvent.setup();
   const readMarketplace = vi.fn(marketplaceClient().readMarketplace);
-  const catalog = creationClient();
-  const readProfile = vi.spyOn(catalog, 'readProfile');
   const profiles = {
     profiles: OWN_PROFILES,
     agent: documentClient(AGENT_PROFILE),
@@ -54,20 +44,19 @@ it('hands the reviewed Marketplace revision to creation without silently accepti
   };
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
-      <CmaClientProvider client={agentClient()} profiles={profiles} creation={catalog}>
+      <CmaClientProvider client={agentClient()} profiles={profiles} creation={creationClient()}>
         <App />
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await user.click(await screen.findByRole('button', { name: 'Use' }));
-  const dialog = await screen.findByRole('dialog', { name: 'New sandbox' });
-  expect(within(dialog).getByRole('checkbox', { name: 'I trust this profile' })).not.toBeChecked();
-  expect(within(dialog).getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
-  expect(readMarketplace).toHaveBeenCalledTimes(1);
-  expect(readProfile).not.toHaveBeenCalled();
+  await screen.findByRole('heading', { name: 'Configure Agents directly' });
+  expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
+  expect(screen.getByText(/Agent setup is now saved inline/)).toBeInTheDocument();
+  expect(readMarketplace).not.toHaveBeenCalled();
 });
 
 it('does not offer Sandbox creation without its distinct capability', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider
       provider={createMockAuthProvider({
@@ -83,4 +72,30 @@ it('does not offer Sandbox creation without its distinct capability', async () =
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
+it('creates the Agent in the Workspace whose row opened New agent', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
+  const createAgentLifecycle = vi.fn().mockRejectedValue(new Error('Lost create response'));
+  render(
+    <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
+      <CmaClientProvider client={agentClient({ createAgentLifecycle })} creation={creationClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  const actor = userEvent.setup();
+  await actor.click(await screen.findByRole('button', { name: 'Sandboxes' }));
+  await actor.click(
+    await screen.findByRole('button', { name: 'Options for /workspaces/chrono-bot' }),
+  );
+  await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
+  const dialog = await screen.findByRole('dialog', { name: 'New agent' });
+  expect(within(dialog).getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
+  await actor.click(within(dialog).getByRole('button', { name: 'Create agent' }));
+  await waitFor(() => expect(createAgentLifecycle).toHaveBeenCalledOnce());
+  expect(createAgentLifecycle.mock.calls[0]?.[0]).toEqual({
+    name: 'New agent',
+    workspace_id: 'wsp_1',
+  });
+});
+
 import './test/connectedAccounts';

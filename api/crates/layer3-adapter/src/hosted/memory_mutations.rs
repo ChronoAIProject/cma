@@ -362,3 +362,61 @@ pub(super) fn validate(
         refused(operation, "operation_request_invalid")
     }
 }
+
+pub(super) fn install_skill(
+    runtime: &mut MemoryRuntime,
+    fenced: FencedRequest<crate::AgentSkillInstallRequest>,
+) -> crate::Result<ResponseFrame> {
+    let operation = WireOperation::InstallAgentSkill;
+    let fence = fenced.authority_fence;
+    let request = fenced.request;
+    validate(
+        request.has_valid_sha256(),
+        request.operation_id
+            == format!(
+                "agent:{}:skill:{}:install:v1",
+                request.agent_id.as_str(),
+                request.skill.id
+            ),
+        operation,
+    )?;
+    let payload = request.request_sha256.clone();
+    authority::admit(
+        runtime,
+        authority::ResourceKey::AgentSkill(request.agent_id.clone(), request.skill.id.clone()),
+        authority::Disposition::Present,
+        fence,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )?;
+    if let Some(response) = replay_operation(
+        runtime,
+        &request.operation_id,
+        &request.request_sha256,
+        &payload,
+        operation,
+    )? {
+        let ResponseFrame::InstallAgentSkill(mut response) = response else {
+            return refused(operation, "operation_replay_mismatch");
+        };
+        response.authority_fence = fence;
+        return Ok(ResponseFrame::InstallAgentSkill(response));
+    }
+    let Some(home) = runtime.homes.get_mut(&request.agent_id) else {
+        return refused(operation, "agent_home_missing");
+    };
+    if !safe_name(&request.skill.id) || home.skills.iter().any(|s| s.id == request.skill.id) {
+        return refused(operation, "skill_destination_exists");
+    }
+    home.skills.push(request.skill.clone());
+    let receipt = crate::AgentSkillInstallReceipt::from_request(&request);
+    finish(
+        runtime,
+        request.operation_id,
+        request.request_sha256,
+        payload,
+        ResponseFrame::InstallAgentSkill(FencedReceipt::new(fence, receipt)),
+    )
+}

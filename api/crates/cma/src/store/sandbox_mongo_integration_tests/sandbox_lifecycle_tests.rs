@@ -14,6 +14,10 @@ use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
 
 use super::*;
+#[path = "parent_readiness_wake_tests.rs"]
+mod parent_readiness_wake_tests;
+#[path = "sandbox_lifecycle_wake_tests.rs"]
+mod wake_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

@@ -175,6 +175,22 @@ pub(super) fn next_auth_counter(value: u64) -> Result<u64, StoreError> {
 
 #[async_trait::async_trait]
 pub trait AuthStore: Send + Sync {
+    async fn insert_proxy_grant(
+        &self,
+        _grant: super::nyxid_proxy::ProxyGrant,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "identity proxy grants are not configured".into(),
+        ))
+    }
+    async fn proxy_grant(
+        &self,
+        _id: &[u8; 32],
+    ) -> Result<Option<super::nyxid_proxy::ProxyGrant>, StoreError> {
+        Err(StoreError::Unavailable(
+            "identity proxy grants are not configured".into(),
+        ))
+    }
     async fn due_actor_wakeups(
         &self,
         _due_before: u64,
@@ -252,6 +268,7 @@ pub struct MemoryAuthStore {
     subjects: Mutex<HashMap<SubjectId, SubjectAuthState>>,
     api_bearers: Mutex<HashMap<SecretDigest, ApiBearerCustody>>,
     actor_links: Mutex<HashMap<String, super::actor_links::ActorLinkRecord>>,
+    proxy_grants: Mutex<HashMap<[u8; 32], super::nyxid_proxy::ProxyGrant>>,
 }
 
 #[cfg(test)]
@@ -284,6 +301,26 @@ impl MemoryAuthStore {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AuthStore for MemoryAuthStore {
+    async fn insert_proxy_grant(
+        &self,
+        grant: super::nyxid_proxy::ProxyGrant,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        grant.validate()?;
+        let mut rows = self.proxy_grants.lock().await;
+        if rows.contains_key(&grant.id) {
+            return Ok(false);
+        }
+        rows.insert(grant.id, grant);
+        Ok(true)
+    }
+    async fn proxy_grant(
+        &self,
+        id: &[u8; 32],
+    ) -> Result<Option<super::nyxid_proxy::ProxyGrant>, StoreError> {
+        self.available()?;
+        Ok(self.proxy_grants.lock().await.get(id).cloned())
+    }
     async fn due_actor_wakeups(
         &self,
         due_before: u64,

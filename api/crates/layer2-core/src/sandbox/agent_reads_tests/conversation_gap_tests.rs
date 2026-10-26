@@ -36,6 +36,7 @@ fn opened() -> AgentLogKind {
 
 fn start(turn_sequence: u64) -> AgentLogKind {
     AgentLogKind::TurnStarted {
+        model: None,
         turn_sequence,
         origin_key: None,
     }

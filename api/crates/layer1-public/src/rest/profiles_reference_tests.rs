@@ -238,6 +238,7 @@ async fn reserved_defaults_are_accepted_only_as_exact_kind_matched_references() 
     let store = Arc::new(InMemoryProfileStore::default());
     let now = "2026-09-05T00:00:00Z";
     let agent = AgentProfile {
+        internal: false,
         id: AgentProfileId(DEFAULT_AGENT_PROFILE_ID.into()),
         owner: SubjectId("system".into()),
         name: "Default agent".into(),
@@ -257,6 +258,7 @@ async fn reserved_defaults_are_accepted_only_as_exact_kind_matched_references() 
         .await
         .unwrap();
     let workspace = WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(DEFAULT_WORKSPACE_PROFILE_ID.into()),
         owner: agent.owner,
         name: "Default workspace".into(),

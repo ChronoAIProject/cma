@@ -11,12 +11,18 @@ use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod cleanup;
 mod connection;
+mod connection_retry;
 mod first_message;
+mod first_message_publication;
+mod live_skills;
+mod prepared_open_ready;
+mod prepared_replay;
 mod reconcile;
 mod startup;
 mod startup_open;
 mod startup_publication;
 mod startup_support;
+mod startup_wait;
 mod support;
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
@@ -35,24 +41,38 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub managed_documents_enabled: bool,
     pub holder: String,
     pub deployment_id: String,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub open_timeout: Duration,
     pub sign_in_timeout: Duration,
+    parent_readiness: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            managed_documents_enabled: false,
             holder: holder.into(),
             deployment_id: deployment_id.into(),
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             open_timeout: DEFAULT_OPEN_TIMEOUT,
             sign_in_timeout: DEFAULT_SIGN_IN_TIMEOUT,
+            parent_readiness: None,
         }
+    }
+
+    pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {
+        self.managed_documents_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_parent_readiness(mut self, readiness: Arc<tokio::sync::Notify>) -> Self {
+        self.parent_readiness = Some(readiness);
+        self
     }
 }
 
@@ -98,11 +118,23 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        Box::pin(self.execute(agent, now + started.elapsed())).await?;
+        let claim_ms = started.elapsed().as_millis() as u64;
+        let step = agent.work.step;
+        let executing = tokio::time::Instant::now();
+        let result = Box::pin(self.execute(agent, now + started.elapsed())).await;
+        tracing::info!(
+            agent_id = %id,
+            ?step,
+            claim_ms,
+            execution_ms = executing.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Agent work attempt completed"
+        );
+        result?;
         Ok(true)
     }
 
-    /// Follow already-prepared startup steps immediately, keeping each durable claim.
+    /// Follow committed startup steps immediately, keeping each durable claim.
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
@@ -117,17 +149,15 @@ impl AgentWorker {
             let Some(agent) = self.dependencies.store.get_agent(id).await? else {
                 break;
             };
-            if agent.work.warm_conversation_id.is_none()
-                || !matches!(
-                    agent.work.step,
-                    AgentWorkStep::AddWorktree
-                        | AgentWorkStep::MaterializeHome
-                        | AgentWorkStep::OpenConversation
-                        | AgentWorkStep::PublishReady
-                        | AgentWorkStep::PublishConnection
-                        | AgentWorkStep::DispatchFirstMessage
-                )
-                || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
+            if !matches!(
+                agent.work.step,
+                AgentWorkStep::AddWorktree
+                    | AgentWorkStep::MaterializeHome
+                    | AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+                    | AgentWorkStep::PublishConnection
+                    | AgentWorkStep::DispatchFirstMessage
+            ) || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;
             }
@@ -140,6 +170,8 @@ impl AgentWorker {
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         match agent.work.step {
+            AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
+            AgentWorkStep::WaitForWorkspace => self.wait_for_workspace(agent, now).await,
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
             AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
             AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,

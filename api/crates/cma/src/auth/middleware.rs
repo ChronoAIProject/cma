@@ -18,6 +18,12 @@ pub async fn attach_subject(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if request
+        .headers()
+        .contains_key(super::resource_request::HEADER)
+    {
+        return super::resource_request::attach(&auth, request, next).await;
+    }
     if bypasses_ambient_auth(request.uri().path()) {
         return next.run(request).await;
     }
@@ -319,7 +325,7 @@ mod tests {
         let app = crate::auth::router(auth.clone())
             .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
         for (path, expected) in [
-            ("/auth/session", StatusCode::SERVICE_UNAVAILABLE),
+            ("/auth/session", StatusCode::UNAUTHORIZED),
             ("/auth/login", StatusCode::SEE_OTHER),
             ("/auth/callback", StatusCode::BAD_REQUEST),
             ("/auth/logout", StatusCode::SEE_OTHER),

@@ -4,4 +4,4 @@ import type { Cma } from '@chronoai/cma-sdk';
 export type ResourceViewsClient = Pick<
   Cma,
   'agents' | 'resourceAccess' | 'sandboxes' | 'workspaces'
->;
+> & { readonly agentEventsV2?: Pick<Cma['agentEventsV2'], 'head'> };

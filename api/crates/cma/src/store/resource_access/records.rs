@@ -36,9 +36,19 @@ pub(super) fn share_document(
         ResourceSelector::Agent { agent_id } => ("agent", agent_id.as_str()),
         ResourceSelector::Sandbox { sandbox_id } => ("sandbox", sandbox_id.as_str()),
     };
-    Ok(
-        doc! {"_id":&record.id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,"sandbox_id":sandbox_id.as_str(),"selector_kind":kind,"selector_id":id,"target_org_id":record.target_org_id.as_str(),"revoked":record.revoked_at.is_some(),"revision":signed(record.revision,"resource share revision").map_err(|_|ResourceAccessStoreError::Corrupt)?,"record":record_bson(record).map_err(|_|ResourceAccessStoreError::Corrupt)?},
-    )
+    let mut document = doc! {"_id":&record.id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,"sandbox_id":sandbox_id.as_str(),"selector_kind":kind,"selector_id":id,"target_org_id":record.target_org_id.as_str(),"revoked":record.revoked_at.is_some(),"revision":signed(record.revision,"resource share revision").map_err(|_|ResourceAccessStoreError::Corrupt)?,"record":record_bson(record).map_err(|_|ResourceAccessStoreError::Corrupt)?};
+    // Additive projection only for new link records; old documents remain valid
+    // without a backfill and continue using their existing organization index.
+    if let Some(link) = &record.link {
+        document.insert(
+            "accepted_subjects",
+            link.accepted_subjects
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+        );
+    }
+    Ok(document)
 }
 pub(super) fn read_share(
     sandbox_id: &SandboxId,

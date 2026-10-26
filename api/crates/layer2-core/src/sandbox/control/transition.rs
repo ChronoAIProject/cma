@@ -1,5 +1,6 @@
 use crate::sandbox::store::{
-    apply_command, PendingApplication, SandboxLifecycleCommand, SandboxLifecycleCommandDisposition,
+    apply_sandbox_lifecycle_command, SandboxLifecycleCommand, SandboxLifecycleCommandApplication,
+    SandboxLifecycleCommandDisposition,
 };
 use crate::sandbox::{Sandbox, SandboxEventKind, SandboxReviveCause, SandboxStatus};
 
@@ -25,6 +26,7 @@ pub fn plan_sandbox_control(
     record: &SandboxControlRecord,
     current: &Sandbox,
     at: &str,
+    managed_runtime_version: Option<&str>,
 ) -> Result<SandboxControlPlan, SandboxControlError> {
     record.validate()?;
     current
@@ -46,7 +48,7 @@ pub fn plan_sandbox_control(
             SandboxControlFailure::TargetChanged,
         ));
     }
-    let command = match record.envelope.command {
+    let mut command = match record.envelope.command {
         SandboxControl::Pause => SandboxLifecycleCommand::pause(
             current.id.clone(),
             current.owner.clone(),
@@ -82,13 +84,18 @@ pub fn plan_sandbox_control(
             });
         }
     };
+    command.managed_runtime_version = managed_runtime_version.map(str::to_owned);
     Ok(
-        match apply_command(current.clone(), &command).map_err(|_| SandboxControlError::Corrupt)? {
-            PendingApplication::Commit { sandbox, event, .. } => SandboxControlPlan::Transition {
-                sandbox: Box::new(sandbox),
-                event,
-            },
-            PendingApplication::Accepted(outcome) => SandboxControlPlan::NoChange {
+        match apply_sandbox_lifecycle_command(current.clone(), &command)
+            .map_err(|_| SandboxControlError::Corrupt)?
+        {
+            SandboxLifecycleCommandApplication::Commit { sandbox, event, .. } => {
+                SandboxControlPlan::Transition {
+                    sandbox: Box::new(sandbox),
+                    event,
+                }
+            }
+            SandboxLifecycleCommandApplication::Accepted(outcome) => SandboxControlPlan::NoChange {
                 disposition: match outcome.disposition {
                     SandboxLifecycleCommandDisposition::AlreadyScheduled => {
                         SandboxControlDisposition::AlreadyScheduled
@@ -101,7 +108,7 @@ pub fn plan_sandbox_control(
                     }
                 },
             },
-            PendingApplication::NotEligible(_) => {
+            SandboxLifecycleCommandApplication::NotEligible(_) => {
                 SandboxControlPlan::Reject(SandboxControlFailure::NotEligible)
             }
         },

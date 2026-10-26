@@ -44,6 +44,14 @@ impl AuthState {
         &self,
         request: &super::RequestAuth,
     ) -> Result<bool, layer2_core::StoreError> {
+        // Proxy commands may use an owner's retained token for execution, but
+        // that custody does not turn the proxy grant into personal Bot consent.
+        if matches!(
+            request.credential_source,
+            layer2_core::resource_access::CredentialSource::IdentityProxy { .. }
+        ) {
+            return Ok(false);
+        }
         let Some(credential) = request.delegated_credential.as_deref() else {
             return Ok(false);
         };

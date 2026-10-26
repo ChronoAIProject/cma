@@ -210,6 +210,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let logs = if status == AgentStatus::WaitingApproval {
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },

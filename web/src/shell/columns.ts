@@ -32,7 +32,7 @@ export const CENTER_MIN = 640;
 
 export const SIDEBAR_MIN = 264;
 export const SIDEBAR_MAX = 420;
-export const SIDEBAR_DEFAULT = 280;
+export const SIDEBAR_DEFAULT = 344;
 
 /** The closed sidebar: a 24px icon column between 16px paddings. */
 export const SIDEBAR_COLLAPSED = 56;

@@ -1,0 +1,138 @@
+//! Refresh tools on an idle retained thread using pinned, existing ACP methods.
+use std::sync::atomic::Ordering;
+
+use super::acp::Bridge;
+use crate::{AdapterError, PermissionLevel, ReasoningEffort};
+
+impl Bridge {
+    pub(super) async fn context_readiness_receipt(&self, sequence: u64) -> Option<String> {
+        let session = self.session().await.ok()?;
+        if sequence == 0
+            || self.context_busy().await
+            || !self
+                .context_goal
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|(id, safe)| id == &session && *safe)
+        {
+            return None;
+        }
+        self.context_refresh
+            .as_ref()?
+            .readiness_receipt(&session, sequence)
+            .await
+            .ok()
+    }
+
+    pub(super) async fn context_busy(&self) -> bool {
+        self.owned_prompt_waiters.load(Ordering::SeqCst) != 0
+            || self.orphaned_prompt_response.load(Ordering::SeqCst)
+            || !self.blocked.lock().await.is_empty()
+            || self.pending.lock().await.values().any(|call| call.prompt)
+    }
+
+    pub(super) async fn observe_context_goal(&self, session: &str, update: &serde_json::Value) {
+        if update
+            .get("sessionUpdate")
+            .and_then(serde_json::Value::as_str)
+            != Some("session_info_update")
+        {
+            return;
+        }
+        let Some(goal) = update.pointer("/_meta/goal") else {
+            return;
+        };
+        let mut observed = self.context_goal.lock().await;
+        if observed.as_ref().is_some_and(|(id, _)| id != session) {
+            return;
+        }
+        // A native goal can continue without a CMA prompt waiter. Even a later
+        // pause/clear may arrive while its current turn is still running, so a
+        // goal seen on this attachment vetoes maintenance until reconnection.
+        let safe = goal.is_null()
+            && !observed
+                .as_ref()
+                .is_some_and(|(id, safe)| id == session && !safe);
+        *observed = Some((session.to_owned(), safe));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn refresh_context(
+        &self,
+        session: &str,
+        operation_sequence: u64,
+        readiness_receipt: &str,
+        guidance: &str,
+        previous_guidance: &[String],
+        model: &str,
+        effort: ReasoningEffort,
+        permission: PermissionLevel,
+        working_directory: Option<&str>,
+    ) -> crate::Result<()> {
+        if self.context_busy().await
+            || self
+                .context_goal
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|(id, safe)| id != session || !safe)
+        {
+            return Err(AdapterError::OperationIdentityConflict(
+                "conversation must settle before managed context refresh".into(),
+            ));
+        }
+        let binding = self.context_refresh.as_ref().ok_or_else(|| {
+            AdapterError::Unsupported("runtime has no retained context writer".into())
+        })?;
+        let cwd = working_directory.unwrap_or_else(|| binding.cwd());
+        if !cwd.starts_with('/') || cwd.len() > 4096 || cwd.contains('\0') || model.is_empty() {
+            return Err(AdapterError::Unsupported(
+                "retained context identity is invalid".into(),
+            ));
+        }
+        binding
+            .append_guidance(
+                session,
+                operation_sequence,
+                readiness_receipt,
+                guidance,
+                previous_guidance,
+            )
+            .await?;
+        // The native app-server retains MCP configuration for a live thread.
+        // Unsubscribe first, then load its persisted ID. This neither stops the
+        // sandbox process nor creates a new conversation or home.
+        let refreshed = async {
+            self.call("session/close", serde_json::json!({"sessionId":session}))
+                .await?;
+            let loaded = self
+                .call(
+                    "session/load",
+                    serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":binding.tools()}),
+                )
+                .await?;
+            if loaded
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id != session)
+            {
+                return Err(AdapterError::Rejected(
+                    "managed refresh loaded another conversation".into(),
+                ));
+            }
+            self.configure_settings(session, model, effort, permission, None)
+                .await?;
+            if self.session().await? != session {
+                return Err(AdapterError::Rejected(
+                    "managed refresh changed conversation identity".into(),
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        refreshed.map_err(|error: AdapterError| {
+            AdapterError::Unavailable(format!("managed context refresh is not confirmed: {error}"))
+        })
+    }
+}

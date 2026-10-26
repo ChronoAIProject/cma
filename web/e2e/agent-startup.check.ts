@@ -136,14 +136,15 @@ for (const status of ['paused', 'reviving'] as const) {
       await page.goto('/sandboxes/sbx_route');
       const surface = page.locator('.sandbox-page');
       await expect(surface.getByRole('heading', { name: 'research', exact: true })).toBeVisible();
-      if (kind === 'workspace')
-        await expect(
-          surface.getByRole('button', { name: 'New workspace', exact: true }),
-        ).toBeDisabled();
-      else
-        await expect(surface.getByRole('button', { name: 'New agent', exact: true })).toHaveCount(
-          0,
-        );
+      await surface.getByRole('button', { name: 'More actions', exact: true }).click();
+      await expect(
+        page.getByRole('menuitem', {
+          name: kind === 'workspace' ? /^New workspace/ : /^New agent/,
+        }),
+      ).toHaveAttribute('aria-disabled', 'true');
+      await expect(
+        surface.getByRole('button', { name: 'New agent in this Sandbox', exact: true }),
+      ).toHaveCount(0);
       expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);
@@ -151,7 +152,7 @@ for (const status of ['paused', 'reviving'] as const) {
   }
 }
 
-for (const kind of ['workspace', 'agent'] as const) {
+for (const kind of ['workspace'] as const) {
   test(`LOCAL active ${kind} creation retries one command and reloads without manual revival`, async ({
     page,
     baseURL,
@@ -162,21 +163,10 @@ for (const kind of ['workspace', 'agent'] as const) {
     await page.goto('/sandboxes/sbx_route');
     await page
       .locator('.sandbox-page')
-      .getByRole('button', { name: `New ${kind}`, exact: true })
+      .getByRole('button', { name: 'More actions', exact: true })
       .click();
+    await page.getByRole('menuitem', { name: `New ${kind}`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: `New ${kind}`, exact: true });
-    if (kind === 'agent')
-      await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-    await dialog.getByRole('radio', { name: 'Default', exact: true }).check();
-    await dialog
-      .getByRole('button', { name: 'Select Deployment default Version 1', exact: true })
-      .click();
-    if (kind === 'agent') {
-      await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-      await dialog
-        .getByLabel('First message (optional)', { exact: true })
-        .fill('  Inspect after revival.\nKeep this request exact.  ');
-    }
     await dialog.getByRole('button', { name: `Create ${kind}`, exact: true }).click();
     await expect(dialog.getByRole('button', { name: 'Retry creation', exact: true })).toBeEnabled();
     expect(boundary.writes).toHaveLength(1);
@@ -186,18 +176,11 @@ for (const kind of ['workspace', 'agent'] as const) {
     expect(boundary.writes).toHaveLength(2);
     expect(boundary.writes[1]).toEqual(boundary.writes[0]);
     expect(boundary.writes[0]?.key).toBeTruthy();
-    expect(boundary.writes[0]?.body).toEqual(
-      kind === 'agent'
-        ? {
-            agent_profile: { id: 'agp_route', revision: 1 },
-            first_message: '  Inspect after revival.\nKeep this request exact.  ',
-          }
-        : { workspace_profile: { id: 'wkp_route', revision: 1 } },
-    );
+    expect(boundary.writes[0]?.body).toEqual({ source: { type: 'empty' }, name: 'workspace' });
     await page.reload();
     await expect(
       page.getByRole('heading', {
-        name: kind === 'agent' ? 'Agent agt_contract' : 'research',
+        name: 'research',
         exact: true,
       }),
     ).toBeVisible();

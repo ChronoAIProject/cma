@@ -4,7 +4,7 @@ use super::*;
 #[path = "queued_cancellation_race_tests.rs"]
 mod races;
 
-async fn queued(
+pub(super) async fn queued(
     name: &str,
     client: &Client,
 ) -> (

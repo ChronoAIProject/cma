@@ -8,12 +8,14 @@ use utoipa::ToSchema;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ShareModeView {
     View,
+    ViewWrite,
     OrgRoles,
 }
 impl From<ShareModeView> for ShareMode {
     fn from(value: ShareModeView) -> Self {
         match value {
             ShareModeView::View => Self::View,
+            ShareModeView::ViewWrite => Self::ViewWrite,
             ShareModeView::OrgRoles => Self::OrgRoles,
         }
     }
@@ -22,6 +24,7 @@ impl From<ShareMode> for ShareModeView {
     fn from(value: ShareMode) -> Self {
         match value {
             ShareMode::View => Self::View,
+            ShareMode::ViewWrite => Self::ViewWrite,
             ShareMode::OrgRoles => Self::OrgRoles,
         }
     }
@@ -197,6 +200,8 @@ pub(crate) enum ResourceOwnershipView {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct EffectiveAccessView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_by: Option<super::agent_share_links::ShareIdentityView>,
     /// Safe ownership attribution without parent identities or private person IDs.
     pub owner: ResourceOwnershipView,
     /// Current policy permissions; individual operations also check lifecycle

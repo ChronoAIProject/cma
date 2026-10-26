@@ -239,7 +239,9 @@ fn only_exact_runtime_loss_discards_capture_debt_without_resume() {
     let mut value = active();
     value.lifecycle.checkpoints.latest = Some(checkpoint(1, NOW));
     value.begin_checkpoint_capture(LATER.into()).unwrap();
-    value.recover_runtime_loss(&[], LATER.into()).unwrap();
+    value
+        .recover_runtime_loss(&[], false, LATER.into())
+        .unwrap();
     assert_eq!(value.status, SandboxStatus::Reviving);
     assert!(value.lifecycle.checkpoint_capture.is_none());
     assert!(value.runtime.is_none());

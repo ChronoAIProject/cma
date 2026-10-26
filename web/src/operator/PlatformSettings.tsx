@@ -5,7 +5,6 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { IconCheckOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
-import { DefaultProfilePicker } from './DefaultProfilePicker';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
 import { reviewSettingsDraft } from './settingsDraft';
@@ -179,22 +178,6 @@ function SettingsEditor({
         ) : null}
       </Presence>
       <section>
-        <h3>Defaults</h3>
-        {(['sandbox', 'workspace', 'agent'] as const).map((kind) => (
-          <DefaultProfilePicker
-            key={kind}
-            kind={kind}
-            client={client}
-            value={draft.defaults[`${kind}_profile`]}
-            disabled={disabled}
-            error={fieldError(`defaults.${kind}_profile`)}
-            onChange={(reference) =>
-              update({ ...draft, defaults: { ...draft.defaults, [`${kind}_profile`]: reference } })
-            }
-          />
-        ))}
-      </section>
-      <section>
         <h3>Inactivity</h3>
         <NumberField
           label="Pause after (seconds)"
@@ -208,38 +191,9 @@ function SettingsEditor({
           }
         />
       </section>
-      {draft.checkpoints === undefined ? null : (
-        <section>
-          <h3>Snapshots</h3>
-          <NumberField
-            label="Save progress every (minutes)"
-            value={draft.checkpoints.interval_seconds / 60}
-            minimum={1}
-            maximum={1440}
-            step="any"
-            error={fieldError('checkpoints.interval_seconds')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({
-                ...draft,
-                checkpoints: { ...draft.checkpoints, interval_seconds: Math.round(value * 60) },
-              })
-            }
-          />
-        </section>
-      )}
       <section>
         <h3>Retention</h3>
         <div className="operator-settings-grid">
-          <NumberField
-            label="Checkpoint grace (days)"
-            value={draft.retention.checkpoint_grace_days}
-            error={fieldError('retention.checkpoint_grace_days')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, retention: { ...draft.retention, checkpoint_grace_days: value } })
-            }
-          />
           <NumberField
             label="Agent log retention (days)"
             value={draft.retention.agent_log_days}
@@ -309,23 +263,6 @@ function SettingsEditor({
             }
           />
           Orchestration paused
-        </label>
-      </section>
-      <section>
-        <h3>Marketplace</h3>
-        <label className="operator-switch">
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={draft.marketplace.enabled}
-            onChange={(event) =>
-              update({
-                ...draft,
-                marketplace: { ...draft.marketplace, enabled: event.target.checked },
-              })
-            }
-          />
-          Marketplace enabled
         </label>
       </section>
       <div className="operator-actions">

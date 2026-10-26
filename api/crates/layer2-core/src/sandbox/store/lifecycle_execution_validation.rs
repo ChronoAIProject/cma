@@ -105,6 +105,16 @@ pub(super) fn lifecycle_sandbox_advanced(
                 appended_at.into(),
             )
             .map(|_| ())
+    } else if let Some(failure) = next
+        .runtime_update_request()
+        .and_then(|request| request.failure.clone())
+        .filter(|_| {
+            current
+                .runtime_update_request()
+                .is_some_and(|request| request.failure.is_none())
+        })
+    {
+        expected.park_failed_runtime_update(failure, &lease.holder, lease.fence, appended_at.into())
     } else if retries_same_phase {
         expected.retry_lifecycle(
             next.work.ready_at.clone(),
@@ -145,12 +155,22 @@ fn advance_phase(
         .ok_or_else(invalid_execution)?
     {
         SandboxLifecycleOperation::Pause { phase, .. } => match phase {
-            SandboxPausePhase::CaptureAndPublishCheckpoint => Err(invalid_execution()),
+            SandboxPausePhase::CaptureAndPublishCheckpoint => {
+                if expected.lifecycle.home_recovery.is_some() {
+                    expected.complete_lifecycle_persistent_pause(holder, fence, at.into())
+                } else {
+                    Err(invalid_execution())
+                }
+            }
             SandboxPausePhase::PauseAgents => {
                 expected.complete_lifecycle_agent_pause(holder, fence, at.into())
             }
             SandboxPausePhase::TeardownRuntime => {
-                expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                if submitted.lifecycle.suspended_runtime.is_some() {
+                    expected.complete_lifecycle_runtime_suspension(holder, fence, at.into())
+                } else {
+                    expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                }
             }
             SandboxPausePhase::PublishPaused => {
                 expected.publish_lifecycle_paused(holder, fence, at.into())
@@ -211,12 +231,21 @@ fn advance_rotation_phase(
     at: &str,
 ) -> Result<(), crate::sandbox::SandboxModelError> {
     match phase {
+        SandboxImageRotationPhase::CaptureAndPublishCheckpoint
+            if expected.retained_home_recovery().is_some() =>
+        {
+            expected.complete_lifecycle_persistent_pause(holder, fence, at.into())
+        }
         SandboxImageRotationPhase::CaptureAndPublishCheckpoint => Err(invalid_execution()),
         SandboxImageRotationPhase::PauseAgents => {
             expected.complete_lifecycle_agent_pause(holder, fence, at.into())
         }
         SandboxImageRotationPhase::TeardownRuntime => {
-            expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+            if submitted.lifecycle.suspended_runtime.is_some() {
+                expected.complete_lifecycle_runtime_suspension(holder, fence, at.into())
+            } else {
+                expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+            }
         }
         SandboxImageRotationPhase::CheckpointVerification => {
             verify_checkpoint(expected, holder, fence, at)

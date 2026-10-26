@@ -3,8 +3,13 @@ use super::problems::{problem, protocol_headers};
 use crate::telemetry::timing::IngressTiming;
 use crate::{
     auth::webhook,
-    delivery::sync::SyncRegistry,
-    ingress::{custom, launch::LaunchOutcome, IngressState},
+    delivery::sync::{SyncRegistry, Waiter},
+    ingress::{
+        custom::{self, ProducerHint},
+        launch::{LaunchOutcome, LaunchRequest},
+        IngressState,
+    },
+    turns::observer::{LaunchClass, ProducerFacts},
 };
 use axum::{
     body::to_bytes,
@@ -19,12 +24,15 @@ use axum::{
 };
 use cmaeg_core::{
     channel::{Sink, Source},
-    cloudevent::{parse_binary, parse_structured, MAX_CLOUD_EVENT_BYTES},
+    cloudevent::{parse_binary, parse_structured, CloudEvent, MAX_CLOUD_EVENT_BYTES},
+    ids::{EventId, RecordId},
     problem::ProblemCode,
     seal::ReplyAddress,
 };
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
+const MAX_ATTACHMENT_DETAIL_BYTES: usize = 256;
+const SOURCE: &str = "custom";
 #[derive(Clone)]
 pub struct CustomIngressState {
     pub ingress: IngressState,
@@ -89,7 +97,7 @@ pub async fn receive_event(
         None => false,
         _ => return invalid("invalid mode"),
     };
-    let Ok(_permit) = state.ingress.inflight.clone().try_acquire_owned() else {
+    let Ok(permit) = state.ingress.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
             ProblemCode::RateLimited,
@@ -100,139 +108,20 @@ pub async fn receive_event(
             .insert("retry-after", HeaderValue::from_static("1"));
         return response;
     };
-    let (parts, body) = request.into_parts();
-    let media = webhook::single(&parts.headers, "content-type")
-        .and_then(|value| value.split(';').next())
-        .map(str::trim);
-    let structured = match media {
-        Some(value) if value.eq_ignore_ascii_case("application/cloudevents+json") => true,
-        Some(value) if value.eq_ignore_ascii_case("application/json") => false,
-        _ => {
-            return problem(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                ProblemCode::UnsupportedMediaType,
-                "a CloudEvents structured or JSON binary body is required",
-            )
-        }
+    // The request is consumed by preparation so its body is released before
+    // the acceptance wait; the launcher decides how long the permit is held.
+    let PreparedEvent {
+        turn,
+        waiter,
+        accepted,
+        report,
+    } = match prepare_event(&state, &channel_id, stream, request, timing).await {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
     };
-    let body = match tokio::time::timeout(
-        Duration::from_secs(5),
-        to_bytes(body, MAX_CLOUD_EVENT_BYTES),
-    )
-    .await
-    {
-        Ok(Ok(body)) => body,
-        Ok(Err(_)) => {
-            return problem(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                ProblemCode::PayloadTooLarge,
-                "event body exceeds 256 KiB",
-            )
-        }
-        Err(_) => {
-            return problem(
-                StatusCode::REQUEST_TIMEOUT,
-                ProblemCode::InvalidRequest,
-                "body_timeout",
-            )
-        }
-    };
-    let received_at = timing.received();
-    let channel = match state
-        .ingress
-        .resolver
-        .resolve_observed(&channel_id, Some(&timing))
-        .await
-    {
-        Ok(channel) => channel,
-        Err(error) => return super::tools::result::<()>(Err(error.problem())),
-    };
-    let verify_time = timing.verify();
-    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
-    let verify_guard = verify_span.enter();
-    let Some(Source::Custom { auth, .. }) = channel
-        .definition
-        .sources
-        .iter()
-        .find(|source| matches!(source, Source::Custom { .. }))
-    else {
-        return invalid("channel has no custom source");
-    };
-    let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    if !custom::authenticated(
-        auth,
-        &channel.definition.secrets,
-        &parts.headers,
-        &body,
-        now,
-    ) {
-        return problem(
-            StatusCode::UNAUTHORIZED,
-            ProblemCode::NotAuthenticated,
-            "custom event authentication failed",
-        );
-    }
-    let parsed = if structured {
-        parse_structured(&body)
-    } else {
-        let mut headers = Vec::new();
-        for name in parts
-            .headers
-            .keys()
-            .filter(|name| name.as_str().starts_with("ce-"))
-        {
-            let Some(value) = webhook::single(&parts.headers, name.as_str()) else {
-                return invalid("invalid or duplicate CloudEvents header");
-            };
-            headers.push((name.to_string(), value.to_owned()));
-        }
-        if !headers.iter().any(|(name, _)| name == "ce-datacontenttype") {
-            headers.push(("ce-datacontenttype".into(), "application/json".into()));
-        }
-        parse_binary(&headers, &body)
-    };
-    let event = match parsed {
-        Ok(event) => event,
-        Err(_) => return invalid("invalid CloudEvent"),
-    };
-    verify_span.record("event_id", event.id.as_str());
-    let mut waiter = None;
-    let reply = if stream {
-        if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
-            return invalid("stream requires a Sync sink");
-        }
-        let Some((id, pending)) = state.waiters.register() else {
-            return problem(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ProblemCode::Internal,
-                "sync_capacity",
-            );
-        };
-        waiter = Some(pending);
-        ReplyAddress::Sync { waiter: id }
-    } else {
-        ReplyAddress::None
-    };
-    let mut turn = match custom::activity::launch_request(
-        channel,
-        event,
-        reply,
-        &state.ingress.master_keys,
-        received_at,
-        now,
-    ) {
-        Ok(turn) => turn,
-        Err(reason) => return invalid(reason),
-    };
-    drop(verify_guard);
-    drop(verify_time);
-    turn.timing = Some(timing);
-    let accepted = EventAccepted {
-        status: AcceptedStatus::Accepted,
-        event_id: turn.activity.event_id.clone(),
-        conversation_id: turn.conversation_id.clone(),
-    };
-    match state.ingress.launcher.launch(turn).await {
+    let outcome = state.ingress.launcher.launch_holding(turn, permit).await;
+    report.outcome(&state.ingress, LaunchClass::of(&outcome));
+    match outcome {
         LaunchOutcome::Refused(error) => {
             let busy = error.code == ProblemCode::ProviderBusy;
             let mut response = super::tools::result::<()>(Err(error));
@@ -251,6 +140,272 @@ pub async fn receive_event(
         },
     }
 }
+/// An authenticated event ready to launch, with the request already released.
+struct PreparedEvent {
+    turn: LaunchRequest,
+    waiter: Option<Waiter>,
+    accepted: EventAccepted,
+    report: EventReport,
+}
+
+/// What happens to one authenticated event, reported for the console: each
+/// refusal, and the producer its `ce.source` names with the event's outcome.
+struct EventReport {
+    record: RecordId,
+    hint: ProducerHint,
+    /// Set once the CloudEvent parsed.
+    event: Option<(Option<EventId>, String, String)>,
+}
+
+impl EventReport {
+    /// Note the parsed event's id, `ce.source` and `ce.type`.
+    fn parsed(&mut self, event: &CloudEvent) {
+        self.event = Some((
+            EventId::new(event.id.as_str()).ok(),
+            event.source.clone(),
+            event.r#type.clone(),
+        ));
+    }
+
+    /// Report a refusal as `reason`, then answer with `response`.
+    fn refuse(&self, ingress: &IngressState, reason: &str, response: Response) -> Response {
+        self.outcome(ingress, LaunchClass::Refused);
+        let event_id = self.event.as_ref().and_then(|(id, _, _)| id.as_ref());
+        ingress
+            .activity
+            .refused(&self.record, SOURCE, event_id, reason);
+        response
+    }
+
+    /// Report the producer with the event's outcome.
+    fn outcome(&self, ingress: &IngressState, outcome: LaunchClass) {
+        if let Some((_, source, ce_type)) = &self.event {
+            ingress.activity.produced(
+                &self.record,
+                ProducerFacts {
+                    source,
+                    hint: &self.hint.to_string(),
+                    ce_type,
+                    outcome,
+                },
+            );
+        }
+    }
+}
+/// Authenticates and normalizes one custom event into a launchable turn.
+///
+/// Taking `request` by value means `parts`, `body` and the parsed CloudEvent
+/// are dropped when this returns, before the caller waits for acceptance.
+/// Every early return is the handler's final response.
+async fn prepare_event(
+    state: &CustomIngressState,
+    channel_id: &str,
+    stream: bool,
+    request: Request,
+    timing: IngressTiming,
+) -> Result<PreparedEvent, Response> {
+    let (parts, body) = request.into_parts();
+    let media = webhook::single(&parts.headers, "content-type")
+        .and_then(|value| value.split(';').next())
+        .map(str::trim);
+    let structured = match media {
+        Some(value) if value.eq_ignore_ascii_case("application/cloudevents+json") => true,
+        Some(value) if value.eq_ignore_ascii_case("application/json") => false,
+        _ => {
+            return Err(problem(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                ProblemCode::UnsupportedMediaType,
+                "a CloudEvents structured or JSON binary body is required",
+            ))
+        }
+    };
+    let body = match tokio::time::timeout(
+        Duration::from_secs(5),
+        to_bytes(body, MAX_CLOUD_EVENT_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(body)) => body,
+        Ok(Err(_)) => {
+            return Err(problem(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ProblemCode::PayloadTooLarge,
+                "event body exceeds 256 KiB",
+            ))
+        }
+        Err(_) => {
+            return Err(problem(
+                StatusCode::REQUEST_TIMEOUT,
+                ProblemCode::InvalidRequest,
+                "body_timeout",
+            ))
+        }
+    };
+    let received_at = timing.received();
+    let channel = match state
+        .ingress
+        .resolver
+        .resolve_observed(channel_id, Some(&timing))
+        .await
+    {
+        Ok(channel) => channel,
+        Err(error) => return Err(super::tools::result::<()>(Err(error.problem()))),
+    };
+    let verify_time = timing.verify();
+    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(channel_id), event_id = tracing::field::Empty);
+    let verify_guard = verify_span.enter();
+    let Some(Source::Custom {
+        auth,
+        attachments: config,
+        ..
+    }) = channel
+        .definition
+        .sources
+        .iter()
+        .find(|source| matches!(source, Source::Custom { .. }))
+    else {
+        return Err(invalid("channel has no custom source"));
+    };
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let Some(hint) = custom::authenticate(
+        auth,
+        &channel.definition.secrets,
+        &parts.headers,
+        &body,
+        now,
+    ) else {
+        state.ingress.activity.unauthenticated(SOURCE);
+        return Err(problem(
+            StatusCode::UNAUTHORIZED,
+            ProblemCode::NotAuthenticated,
+            "custom event authentication failed",
+        ));
+    };
+    // Authenticated from here on: every refusal is reported for the console.
+    let mut report = EventReport {
+        record: channel.definition.record_id.clone(),
+        hint,
+        event: None,
+    };
+    let ingress = &state.ingress;
+    let parsed = if structured {
+        parse_structured(&body)
+    } else {
+        let mut headers = Vec::new();
+        for name in parts
+            .headers
+            .keys()
+            .filter(|name| name.as_str().starts_with("ce-"))
+        {
+            let Some(value) = webhook::single(&parts.headers, name.as_str()) else {
+                return Err(report.refuse(
+                    ingress,
+                    "invalid_cloud_event",
+                    invalid("invalid or duplicate CloudEvents header"),
+                ));
+            };
+            headers.push((name.to_string(), value.to_owned()));
+        }
+        if !headers.iter().any(|(name, _)| name == "ce-datacontenttype") {
+            headers.push(("ce-datacontenttype".into(), "application/json".into()));
+        }
+        parse_binary(&headers, &body)
+    };
+    let event = match parsed {
+        Ok(event) => event,
+        Err(_) => {
+            return Err(report.refuse(
+                ingress,
+                "invalid_cloud_event",
+                invalid("invalid CloudEvent"),
+            ))
+        }
+    };
+    verify_span.record("event_id", event.id.as_str());
+    report.parsed(&event);
+    // Extraction only reads the verified body; no locator is fetched here.
+    let attachments = match config {
+        Some(config) if state.ingress.media_enabled => {
+            match custom::attachments::extract(&event, config) {
+                Ok(attachments) => attachments,
+                Err(error) => {
+                    tracing::info!("custom event attachment refused");
+                    return Err(report.refuse(
+                        ingress,
+                        "attachment_invalid",
+                        invalid(&attachment_invalid(&error.pointer)),
+                    ));
+                }
+            }
+        }
+        Some(_) => {
+            tracing::debug!("custom attachments ignored while media is disabled");
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    let mut waiter = None;
+    let reply = if stream {
+        if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
+            return Err(report.refuse(
+                ingress,
+                "stream_requires_sync_sink",
+                invalid("stream requires a Sync sink"),
+            ));
+        }
+        let Some((id, pending)) = state.waiters.register() else {
+            return Err(report.refuse(
+                ingress,
+                "sync_capacity",
+                problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::Internal,
+                    "sync_capacity",
+                ),
+            ));
+        };
+        waiter = Some(pending);
+        ReplyAddress::Sync { waiter: id }
+    } else {
+        ReplyAddress::None
+    };
+    let mut turn = match custom::activity::launch_request(
+        channel,
+        event,
+        attachments,
+        reply,
+        &state.ingress.master_keys,
+        received_at,
+        now,
+    ) {
+        Ok(turn) => turn,
+        Err(reason) => return Err(report.refuse(ingress, reason, invalid(reason))),
+    };
+    drop(verify_guard);
+    drop(verify_time);
+    turn.timing = Some(timing);
+    let accepted = EventAccepted {
+        status: AcceptedStatus::Accepted,
+        event_id: turn.activity.event_id.clone(),
+        conversation_id: turn.conversation_id.clone(),
+    };
+    Ok(PreparedEvent {
+        turn,
+        waiter,
+        accepted,
+        report,
+    })
+}
 fn invalid(detail: &str) -> Response {
     problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)
+}
+/// The pointer is sender-chosen and may be long, so the detail is bounded.
+fn attachment_invalid(pointer: &str) -> String {
+    let mut detail = format!("attachment_invalid {pointer}");
+    let mut end = detail.len().min(MAX_ATTACHMENT_DETAIL_BYTES);
+    while !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    detail.truncate(end);
+    detail
 }

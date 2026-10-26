@@ -286,8 +286,10 @@ impl crate::resource_access::ResourceShareStore for InMemorySandboxStore {
         }
         let snapshot = snapshot(&state, &request.target())?;
         let id = match &request.change {
-            ShareChange::Create { .. } => &request.proposed_id,
-            ShareChange::SetMode { share_id, .. } | ShareChange::Revoke { share_id } => share_id,
+            ShareChange::Create { .. } | ShareChange::CreateLink { .. } => &request.proposed_id,
+            ShareChange::SetMode { share_id, .. }
+            | ShareChange::Revoke { share_id }
+            | ShareChange::RedeemLink { share_id, .. } => share_id,
         };
         let previous = state.resource_shares.get(id).map(|receipt| &receipt.share);
         let count = state

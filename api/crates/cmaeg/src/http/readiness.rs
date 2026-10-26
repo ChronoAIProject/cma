@@ -14,6 +14,7 @@ use std::{
     },
     time::Duration,
 };
+use tokio::sync::Notify;
 
 #[derive(Clone, Default)]
 pub struct Readiness {
@@ -25,6 +26,10 @@ struct Inner {
     registry_loaded: AtomicBool,
     cma_reachable: AtomicBool,
     draining: AtomicBool,
+    /// Set once `/readyz` first answered ready; background work that must
+    /// never compete with startup waits for it.
+    served_ready: AtomicBool,
+    served: Notify,
 }
 
 #[derive(Clone, Serialize)]
@@ -41,7 +46,28 @@ impl Readiness {
                 registry_loaded: true.into(),
                 cma_reachable: false.into(),
                 draining: false.into(),
+                served_ready: false.into(),
+                served: Notify::new(),
             }),
+        }
+    }
+    /// Note that `/readyz` answered ready, waking [`Readiness::served`].
+    pub fn note_served_ready(&self) {
+        if !self.inner.served_ready.swap(true, Ordering::AcqRel) {
+            self.inner.served.notify_waiters();
+        }
+    }
+    /// Wait until `/readyz` has answered ready at least once.
+    pub async fn served(&self) {
+        loop {
+            // Register before checking, so a concurrent note cannot be lost.
+            let notified = self.inner.served.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.inner.served_ready.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
         }
     }
     pub fn start_draining(&self) {
@@ -92,6 +118,7 @@ impl Drop for ReachabilityProbe {
 pub async fn readyz(State(readiness): State<Readiness>) -> Response {
     let report = readiness.report();
     let status = if report.ready {
+        readiness.note_served_ready();
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -100,4 +127,39 @@ pub async fn readyz(State(readiness): State<Readiness>) -> Response {
     // Readiness has a typed diagnostic body even when local startup is incomplete.
     response.extensions_mut().insert(report);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn served_waits_for_the_first_ready_answer() {
+        let readiness = Readiness::initialized();
+        let waiting = tokio::spawn({
+            let readiness = readiness.clone();
+            async move { readiness.served().await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!waiting.is_finished());
+        assert_eq!(readyz(State(readiness.clone())).await.status(), 200);
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        // Later waiters return at once.
+        readiness.served().await;
+    }
+
+    #[tokio::test]
+    async fn an_unready_answer_is_not_noted() {
+        let readiness = Readiness::initialized();
+        readiness.start_draining();
+        assert_eq!(readyz(State(readiness.clone())).await.status(), 503);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), readiness.served())
+                .await
+                .is_err()
+        );
+    }
 }

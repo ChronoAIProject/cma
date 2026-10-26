@@ -9,6 +9,7 @@ use std::{
 use cmaeg_core::{
     channel::Secret,
     ids::{BindingId, ConversationId, ProviderSlug},
+    profile::canonical_json,
 };
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
@@ -134,7 +135,10 @@ impl ProviderClient {
             .client
             .put(url)
             .bearer_auth(bearer.as_str())
-            .json(&body)
+            // Keep the reviewed provider bytes independent of serde_json's
+            // workspace-unified preserve_order feature, including nested values.
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(canonical_json(body))
             .timeout(self.request_timeout)
             .send()
             .await
@@ -287,8 +291,8 @@ impl ProviderClient {
             body["event_context"] = serde_json::to_value(context)
                 .map_err(|_| ProviderError::InvalidRequest("invalid event context".into()))?;
         }
-        let bytes = serde_json::to_vec(&body)
-            .map_err(|_| ProviderError::InvalidRequest("invalid provider request".into()))?;
+        // Binding and turn requests share the original recursively sorted wire form.
+        let bytes = canonical_json(body).into_bytes();
         let observed = tokio::time::timeout(
             self.request_timeout,
             handle.responses.send(

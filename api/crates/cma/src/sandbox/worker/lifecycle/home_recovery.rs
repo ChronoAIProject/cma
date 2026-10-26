@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
-use layer3_adapter::{RuntimeHandle, RuntimeStatusRequest};
+use layer3_adapter::{RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
 
 use super::super::support::{adapter_failure, WorkerFailure};
 use super::super::SandboxWorker;
@@ -47,6 +47,13 @@ impl SandboxWorker {
             .as_ref()
             .and_then(|home| home.attachment())
             .ok_or_else(missing_source)?;
+        if attachment.request.policy.is_native_vct()
+            && sandbox.lifecycle.suspended_runtime.is_none()
+        {
+            return Err(WorkerFailure::terminal_security(
+                "retained home recovery has no original runtime authority; storage was preserved",
+            ));
+        }
         let volumes = self
             .dependencies
             .adapter
@@ -65,6 +72,11 @@ impl SandboxWorker {
         let old = |observation: &layer3_adapter::RuntimeObservation| {
             observation.sandbox_id == sandbox.id.as_str()
                 && observation.generation <= source.source_generation
+                && sandbox
+                    .lifecycle
+                    .suspended_runtime
+                    .as_ref()
+                    .is_none_or(|binding| binding.runtime_id != observation.handle.0)
         };
         for observation in self
             .dependencies
@@ -75,6 +87,13 @@ impl SandboxWorker {
             .iter()
             .filter(|observation| old(observation))
         {
+            // Older recovery records can lack a retained binding. Their original
+            // storage-owning object must never become process cleanup.
+            if observation.handle.as_str().starts_with("agent-sandbox:") {
+                return Err(WorkerFailure::terminal_security(
+                    "retained runtime authority is unavailable; storage was preserved",
+                ));
+            }
             self.dependencies
                 .adapter
                 .reclaim_runtime(observation)
@@ -94,6 +113,23 @@ impl SandboxWorker {
                 "previous runtime removal is still in progress",
             ));
         }
+        if sandbox.lifecycle.runtime_provision.is_none() {
+            if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
+                let request = crate::sandbox::runtime_attachment::retained_runtime_request(
+                    sandbox,
+                    binding,
+                    &self.config.deployment_id,
+                )
+                .map_err(adapter_failure)?;
+                self.dependencies
+                    .adapter
+                    // A lost process does not imply a suspended provider object.
+                    // Repeating suspension is safe after a lost acknowledgement.
+                    .suspend_runtime(&request)
+                    .await
+                    .map_err(adapter_failure)?;
+            }
+        }
         volumes.verify(&attachment).await.map_err(adapter_failure)
     }
 
@@ -103,7 +139,7 @@ impl SandboxWorker {
         runtime: &RuntimeHandle,
         generation: u64,
         credentialed: bool,
-    ) -> Result<(), WorkerFailure> {
+    ) -> Result<RuntimeStatus, WorkerFailure> {
         let source = sandbox
             .retained_home_recovery()
             .ok_or_else(missing_source)?;
@@ -135,7 +171,7 @@ impl SandboxWorker {
                 "retained runtime does not prove completed home recovery",
             ));
         }
-        Ok(())
+        Ok(status)
     }
 
     pub(super) async fn accept_lifecycle_home(

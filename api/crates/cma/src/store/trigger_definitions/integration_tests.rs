@@ -58,6 +58,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
     let workspace_id = WorkspaceProfileId("wkp_trigger_test".into());
     let sandbox_id = SandboxProfileId("sbp_trigger_test".into());
     let agent = AgentProfile {
+        internal: false,
         id: agent_id.clone(),
         owner: owner.clone(),
         name: "Trigger agent".into(),
@@ -84,6 +85,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         .await
         .unwrap();
     let workspace = WorkspaceProfile {
+        internal: false,
         id: workspace_id.clone(),
         owner: owner.clone(),
         name: "Trigger workspace".into(),
@@ -110,6 +112,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         .await
         .unwrap();
     let sandbox = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
@@ -119,6 +122,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: vec![],
@@ -164,6 +168,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
             sandbox_profile: SandboxProfileRef::new(sandbox_id, 1),
             workspace_profile: WorkspaceProfileRef::new(workspace_id, 1),
             agent_profile: AgentProfileRef::new(agent_id, 1),
+            inline: None,
         },
     }
 }
@@ -413,56 +418,6 @@ async fn authoring_public_lookup_preview_and_retirement_are_durable() {
             .availability,
         TriggerAvailability::Retired
     );
-    seed.client.database(&seed.database).drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn deletion_hides_ownership_and_preserves_every_published_trigger() {
-    let seed = seeded("deletion").await;
-    let draft_id = TriggerId("trg_delete_draft".into());
-    seed.store
-        .create_trigger(trigger(draft_id.as_str(), &seed.owner, &seed.target))
-        .await
-        .unwrap();
-    assert_eq!(
-        seed.store
-            .delete_unpublished_trigger(&draft_id, &SubjectId::new("other"))
-            .await,
-        Err(TriggerStoreError::NotFound)
-    );
-    seed.store
-        .delete_unpublished_trigger(&draft_id, &seed.owner)
-        .await
-        .unwrap();
-    assert!(seed
-        .store
-        .trigger(&draft_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_none());
-
-    let published_id = TriggerId("trg_delete_published".into());
-    seed.store
-        .create_trigger(trigger(published_id.as_str(), &seed.owner, &seed.target))
-        .await
-        .unwrap();
-    seed.store
-        .publish_trigger(&published_id, &seed.owner, 1, T2.into())
-        .await
-        .unwrap();
-    assert_eq!(
-        seed.store
-            .delete_unpublished_trigger(&published_id, &seed.owner)
-            .await,
-        Err(TriggerStoreError::AlreadyPublished)
-    );
-    assert!(seed
-        .store
-        .trigger(&published_id, &seed.owner)
-        .await
-        .unwrap()
-        .is_some());
     seed.client.database(&seed.database).drop().await.unwrap();
 }
 

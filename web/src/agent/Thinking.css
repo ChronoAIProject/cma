@@ -1,11 +1,34 @@
-/* Active Thinking occupies a stable seat above the composer, outside history. */
+/* The composer keeps its seat; ephemeral Thinking belongs to the message stream. */
 .agent-surface__input {
   grid-row: 4;
   min-width: 0;
 }
 
-.agent-surface__thinking {
-  padding: 0 max(16px, calc((100% - var(--read-column)) / 2 + 24px));
+.active-thinking {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--ds-transition-duration) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.active-thinking__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: 4px;
+}
+.active-thinking[data-presence='exiting'] {
+  grid-template-rows: 0fr;
+}
+@starting-style {
+  .active-thinking[data-presence='visible'] {
+    grid-template-rows: 0fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .active-thinking {
+    transition: none;
+  }
 }
 
 .thinking {
@@ -126,6 +149,28 @@
 
 .thinking__elapsed {
   font-variant-numeric: tabular-nums;
+}
+.thinking__usage {
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 40rem) {
+  .thinking__key {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 44px;
+  }
+  .thinking__usage {
+    order: 1;
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding-bottom: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* A 2px dot between the title and the line, rather than a bullet character. */

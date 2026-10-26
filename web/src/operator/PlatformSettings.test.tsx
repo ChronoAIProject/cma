@@ -7,31 +7,16 @@ import { operatorClient, settings, stored } from './testFixtures';
 import { reviewSettingsDraft } from './settingsDraft';
 
 describe('platform settings', () => {
-  it('edits snapshot minutes as seconds and preserves the draft across conflicts', async () => {
+  it('does not expose CMA snapshot scheduling or retired profile configuration', async () => {
     const client = operatorClient();
-    const current = {
-      ...stored,
-      settings: { ...settings, checkpoints: { interval_seconds: 1800 } },
-    };
-    client.admin.readSettings.mockResolvedValue(current);
-    const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
-    const interval = await screen.findByLabelText('Save progress every (minutes)');
-    expect(interval).toHaveValue(30);
-    await user.clear(interval);
-    await user.type(interval, '10');
-    await user.click(screen.getByRole('button', { name: 'Save settings' }));
-    expect(client.admin.replaceSettings).toHaveBeenCalledWith({
-      expected_revision: stored.revision,
-      settings: { ...current.settings, checkpoints: { interval_seconds: 600 } },
-    });
-    expect(
-      reviewSettingsDraft(
-        current.settings,
-        { ...current.settings, checkpoints: { interval_seconds: 600 } },
-        { ...current.settings, checkpoints: { interval_seconds: 3600 } },
-      ).checkpoints,
-    ).toEqual({ interval_seconds: 600 });
+    await screen.findByLabelText('Pause after (seconds)');
+    expect(screen.queryByText('Snapshots')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Save progress every (minutes)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Checkpoint grace (days)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Default .* profile/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Marketplace enabled')).not.toBeInTheDocument();
+    expect(client.listPublicProfiles).not.toHaveBeenCalled();
   });
   it('rebases an explicitly selected profile and revision as one atomic reference', () => {
     const current = {
@@ -47,29 +32,23 @@ describe('platform settings', () => {
       revision: 3,
     });
   });
-  it('loads exact current references and saves explicit selections, counts, and distinct toggles', async () => {
+  it('saves counts and distinct toggles while preserving loaded compatibility values', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
     const pause = await screen.findByLabelText('Pause after (seconds)');
-    expect(screen.getByLabelText('Default agent profile')).toHaveValue('agp_default:3');
-    await screen.findByRole('option', { name: 'Public agent / revision 7 / Owner' });
-    await user.selectOptions(screen.getByLabelText('Default agent profile'), 'agent-public:7');
     await user.clear(pause);
     await user.type(pause, '600');
     await user.click(screen.getByLabelText('Triggers enabled'));
     await user.click(screen.getByLabelText('Orchestration paused'));
-    await user.click(screen.getByLabelText('Marketplace enabled'));
     await user.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText('Settings saved at revision 5.');
     expect(client.admin.replaceSettings).toHaveBeenCalledWith({
       expected_revision: 4,
       settings: {
         ...settings,
-        defaults: { ...settings.defaults, agent_profile: { id: 'agent-public', revision: 7 } },
         inactivity: { pause_after_seconds: 600 },
         triggers: { enabled: false, orchestration_paused: true },
-        marketplace: { enabled: false },
       },
     });
   });
@@ -84,6 +63,8 @@ describe('platform settings', () => {
         future: { preserved: 'newer server value' },
         retention: { ...settings.retention, agent_log_days: 40 },
         inactivity: { pause_after_seconds: 700 },
+        defaults: { ...settings.defaults, sandbox_profile: { id: 'new-default', revision: 9 } },
+        marketplace: { enabled: false },
       },
     };
     client.admin.readSettings.mockResolvedValueOnce(stored).mockResolvedValue(current);
@@ -200,16 +181,15 @@ describe('platform settings', () => {
     expect(screen.getByLabelText('Visitor launches per day')).toBeInvalid();
   });
 
-  it('retains exact defaults and other editable settings when public search is unavailable', async () => {
+  it('retains exact defaults without querying the retired marketplace', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
     client.listPublicProfiles.mockRejectedValue(
       new ApiError(403, 'Disabled', 'marketplace_disabled'),
     );
     render(<PlatformSettings client={client} />);
-    const picker = await screen.findByLabelText('Default sandbox profile');
-    await screen.findAllByText('marketplace_disabled');
-    expect(picker).toHaveValue('sbp_default:1');
+    await screen.findByLabelText('Sandboxes per user');
+    expect(client.listPublicProfiles).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText('Settings saved at revision 5.');
     expect(client.admin.replaceSettings).toHaveBeenCalledWith({ expected_revision: 4, settings });
