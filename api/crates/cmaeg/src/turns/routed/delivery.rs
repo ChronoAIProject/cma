@@ -1,14 +1,15 @@
 //! Fenced delivery of one already authenticated provider replay frame.
 //! Projection chooses the effect; observing a frame never implicitly sends.
 use super::{
+    custom_delivery::{effect_for, CustomFrame},
     delivery_gate::{CancelSend, DeliveryGate, SEND_WINDOW},
     delivery_state::{DeliveryCheckpoint, DeliveryStatus},
     dispatcher::{admission_error, current_target},
     storage,
     tool_reply_gate::{CancelReply, ReplyGate},
     tool_reply_store::{Admission, Kind, ReplyStore},
-    Authority, ExecutionError, FrozenTurn, Journal, Lease, Phase, RoutedToolReplies,
-    ToolReplyStatus,
+    Authority, CustomCheckpoint, ExecutionError, FrozenTurn, Journal, Lease, Phase,
+    RoutedToolReplies, ToolReplyStatus,
 };
 use crate::{
     delivery::{
@@ -27,6 +28,7 @@ use std::sync::Arc;
 pub enum ReplayEffect {
     NoEffect,
     Reply(OutboundMessage),
+    Custom(crate::delivery::local_stream::CustomStreamEffect),
 }
 pub enum FrameDelivery {
     Settled {
@@ -37,10 +39,10 @@ pub enum FrameDelivery {
     Unknown,
 }
 pub struct RoutedDelivery {
-    plans: PlanStore,
-    journal: Journal,
-    authority: Arc<dyn Authority>,
-    coordinator: DeliveryCoordinator,
+    pub(super) plans: PlanStore,
+    pub(super) journal: Journal,
+    pub(super) authority: Arc<dyn Authority>,
+    pub(super) coordinator: DeliveryCoordinator,
 }
 impl RoutedDelivery {
     pub fn new(
@@ -163,12 +165,23 @@ impl RoutedDelivery {
             return Err(ExecutionError::Invalid);
         }
         let effect_hash = bounded_hash(&effect)?;
+        let custom_effect = effect_for(&body, frame, &effect)?;
+        if custom_effect.is_some() && !self.coordinator.supports_custom_stream() {
+            return Err(ExecutionError::Unsupported);
+        }
         let checkpoint = DeliveryCheckpoint {
             response_id: response_id.clone(),
             cursor: frame.sequence_number,
             frame_hash,
             effect_hash,
             status: DeliveryStatus::Intent,
+            custom: custom_effect.as_ref().map(|effect| {
+                CustomCheckpoint::new(
+                    &super::model::delivery_event(&plan, target),
+                    &body,
+                    effect.terminal(),
+                )
+            }),
             terminal: matches!(
                 frame.event,
                 ResponsesEvent::Completed { .. }
@@ -200,6 +213,27 @@ impl RoutedDelivery {
                         });
                     }
                     DeliveryStatus::Intent => {
+                        if let Some(effect) = &custom_effect {
+                            body.validate(
+                                &plan,
+                                target,
+                                &self.journal.keys,
+                                (self.journal.clock)(),
+                            )?;
+                            return self
+                                .deliver_custom(
+                                    lease,
+                                    CustomFrame {
+                                        plan: &plan,
+                                        target,
+                                        frame,
+                                        body: &body,
+                                        effect,
+                                    },
+                                    true,
+                                )
+                                .await;
+                        }
                         self.record(lease, DeliveryStatus::Unknown).await?;
                         return Ok(FrameDelivery::Unknown);
                     }
@@ -222,6 +256,24 @@ impl RoutedDelivery {
             return Err(ExecutionError::Invalid);
         }
         body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        if let Some(effect) = &custom_effect {
+            let mut next = lease.state.clone();
+            next.delivery = Some(checkpoint);
+            self.journal.commit(lease, next).await?;
+            return self
+                .deliver_custom(
+                    lease,
+                    CustomFrame {
+                        plan: &plan,
+                        target,
+                        frame,
+                        body: &body,
+                        effect,
+                    },
+                    false,
+                )
+                .await;
+        }
         if let ReplayEffect::Reply(message) = &effect {
             message.validate().map_err(|_| ExecutionError::Invalid)?;
             if body
@@ -264,6 +316,7 @@ impl RoutedDelivery {
         next.delivery = Some(checkpoint);
         self.journal.commit(lease, next).await?;
         let receipt = match effect {
+            ReplayEffect::Custom(_) => return Err(ExecutionError::Corrupt),
             ReplayEffect::NoEffect => None,
             ReplayEffect::Reply(_) if suppressed => None,
             ReplayEffect::Reply(_) if replayed.is_some() => replayed,
@@ -367,7 +420,7 @@ impl RoutedDelivery {
         })
     }
 
-    async fn close(
+    pub(super) async fn close(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
@@ -379,7 +432,7 @@ impl RoutedDelivery {
         }
     }
 
-    async fn record(
+    pub(super) async fn record(
         &self,
         lease: &mut Lease,
         status: DeliveryStatus,

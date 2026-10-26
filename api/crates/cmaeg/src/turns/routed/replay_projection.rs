@@ -119,6 +119,11 @@ impl ReplayProjection {
     }
     pub fn needs_tool_receipt(&self, frame: &RecoveryEvent, body: &FrozenTurn) -> bool {
         match &frame.event {
+            ResponsesEvent::OutputTextDelta { .. }
+                if super::custom_delivery::is_custom_stream(body) =>
+            {
+                body.delivery.auto_final && !self.tool_replied
+            }
             ResponsesEvent::Completed { .. }
             | ResponsesEvent::Failed { .. }
             | ResponsesEvent::Incomplete { .. } => true,
@@ -149,6 +154,13 @@ impl ReplayProjection {
             .projection
             .event(frame.event.clone())
             .map_err(|_| ExecutionError::Invalid)?;
+        let custom = super::custom_delivery::is_custom_stream(body);
+        let custom_effect = outcome.as_ref().and_then(|outcome| {
+            crate::delivery::local_stream::CustomStreamEffect::project(
+                outcome,
+                body.delivery.auto_final && !self.tool_replied,
+            )
+        });
         let text = match outcome {
             Some(TurnOutcome::MessageCommitted { text })
                 if body.delivery.auto_final && !self.tool_replied =>
@@ -169,16 +181,20 @@ impl ReplayProjection {
             }
             _ => None,
         };
-        let effect = text.map_or(ReplayEffect::NoEffect, |text| {
-            ReplayEffect::Reply(OutboundMessage {
-                text: Some(text),
-                blocks: vec![],
-                reply_to: None,
-                native_attachments: vec![],
-                whatsapp_template: None,
-                thread_reply: self.thread_reply,
+        let effect = if custom {
+            custom_effect.map_or(ReplayEffect::NoEffect, ReplayEffect::Custom)
+        } else {
+            text.map_or(ReplayEffect::NoEffect, |text| {
+                ReplayEffect::Reply(OutboundMessage {
+                    text: Some(text),
+                    blocks: vec![],
+                    reply_to: None,
+                    native_attachments: vec![],
+                    whatsapp_template: None,
+                    thread_reply: self.thread_reply,
+                })
             })
-        });
+        };
         self.last = Some(ProjectedFrame {
             sequence: frame.sequence_number,
             frame_hash: storage::hash(&storage::bytes(&frame.raw)?),

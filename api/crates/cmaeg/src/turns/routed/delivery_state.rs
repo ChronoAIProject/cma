@@ -12,6 +12,8 @@ pub struct DeliveryCheckpoint {
     pub effect_hash: String,
     pub terminal: bool,
     pub status: DeliveryStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<super::CustomCheckpoint>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

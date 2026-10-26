@@ -19,6 +19,7 @@ pub(super) struct DeliveryGate {
     target: StoredTarget,
     channel_version: u64,
     destination: Option<super::DefaultDestination>,
+    origin_webhook: Option<crate::delivery::destination::WebhookDestination>,
     deadline: Instant,
     cancelled: AtomicBool,
 }
@@ -42,9 +43,20 @@ impl DeliveryGate {
             target,
             channel_version,
             destination,
+            origin_webhook: None,
             deadline: Instant::now() + SEND_WINDOW,
             cancelled: AtomicBool::new(false),
         })
+    }
+    pub fn with_origin_webhook(
+        mut self: Arc<Self>,
+        destination: crate::delivery::destination::WebhookDestination,
+    ) -> Arc<Self> {
+        // Only the constructor's unshared result uses this builder.
+        Arc::get_mut(&mut self)
+            .expect("unshared delivery gate")
+            .origin_webhook = Some(destination);
+        self
     }
     fn live(&self) -> bool {
         let now = (self.journal.clock)();
@@ -62,6 +74,9 @@ impl DeliveryGate {
             .await
             .map_err(|_| refused())?;
         if current.version != self.channel_version
+            || self.origin_webhook.as_ref().is_some_and(|destination| {
+                !crate::delivery::local_stream::webhook_authorized(&current, destination)
+            })
             || self
                 .destination
                 .as_ref()
