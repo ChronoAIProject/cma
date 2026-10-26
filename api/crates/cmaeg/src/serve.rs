@@ -69,6 +69,10 @@ pub(crate) async fn serve(
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
         std::sync::Arc::new(delivery::router::ShardedScheduler::new(inbound));
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+    let custom_delivery = delivery::custom::CustomDelivery::new(
+        config.management.public_url.clone(),
+        waiters.clone(),
+    );
     let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),
         state.master_keys.clone(),
@@ -92,10 +96,7 @@ pub(crate) async fn serve(
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
-        delivery::custom::CustomDelivery::new(
-            config.management.public_url.clone(),
-            waiters.clone(),
-        ),
+        custom_delivery.clone(),
         observers.activity.clone(),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
@@ -129,6 +130,7 @@ pub(crate) async fn serve(
             tool_providers: tool_providers.clone(),
             delivery: delivery.clone(),
             tracker: tracker.clone(),
+            custom: custom_delivery,
         },
     )?;
     let runner = std::sync::Arc::new(

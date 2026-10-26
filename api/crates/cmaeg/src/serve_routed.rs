@@ -3,7 +3,7 @@ mod lifecycle;
 pub(crate) use lifecycle::Worker;
 
 use crate::{
-    delivery::{durable::DeliveryCoordinator, router::DeliverySink},
+    delivery::{custom::CustomDelivery, durable::DeliveryCoordinator, router::DeliverySink},
     http::ManagementState,
     ingress::{routed::RoutedIngress, routing_store::PlanStore},
     media::{prepare::PrepareConfig, service::MediaService},
@@ -30,6 +30,7 @@ pub(crate) struct Deps {
     pub tool_providers: Arc<MediaToolProviders>,
     pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
+    pub custom: CustomDelivery,
 }
 
 pub(crate) fn compose(
@@ -65,7 +66,7 @@ pub(crate) fn compose(
         plans.clone(),
         journal,
         authority,
-        DeliveryCoordinator::new(deps.delivery),
+        DeliveryCoordinator::new(deps.delivery).with_custom_stream(deps.custom),
     );
     let tool_replies = Arc::new(delivery.tool_replies());
     let executor = Arc::new(RoutedTargetExecutor::new(
@@ -97,7 +98,8 @@ pub(crate) fn compose(
             config.routing.non_human_providers.clone(),
             replay_providers,
         )
-        .with_admissions_enabled(config.routing.admission_enabled),
+        .with_admissions_enabled(config.routing.admission_enabled)
+        .with_sync_delivery(true),
     );
     Ok(Some(Composition {
         ingress,
