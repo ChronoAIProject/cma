@@ -1,8 +1,9 @@
 //! Acceptance budget is independent of the detached, bounded provider consumer.
 use super::{
-    consume, metadata,
+    consume,
     outcomes::TurnOutcome,
-    render_input,
+    preparation,
+    preparation::has_attachments,
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
@@ -10,16 +11,12 @@ use super::{
 use crate::{
     delivery::router::DeliverySink,
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
-    media::{
-        prepare::{prepare, PrepareConfig, Prepared},
-        service::MediaService,
-    },
+    media::{prepare::PrepareConfig, service::MediaService},
     providers::{ProviderClient, ProviderError, TurnRequest, TurnStream},
     telemetry::timing::MediaLabel,
     MediaToolProviders, TurnConfig,
 };
 use cmaeg_core::{
-    activity::Activity,
     ids::ConsumerId,
     problem::{Problem, ProblemCode},
 };
@@ -122,7 +119,14 @@ impl TurnRunner {
             let fence = self.config.busy_retry_max + self.prepare.budget + FENCE_SLACK;
             let (_, prepared) = tokio::join!(
                 ticket.wait(fence),
-                self.prepare_or_empty(&turn, audience, nonce, prepare_deadline),
+                preparation::prepare_or_empty(
+                    self.media.as_deref(),
+                    &self.prepare,
+                    &turn,
+                    audience,
+                    nonce,
+                    prepare_deadline
+                ),
             );
             if let Some(timing) = &turn.timing {
                 if fenced {
@@ -174,35 +178,6 @@ impl TurnRunner {
             },
         );
     }
-    /// The turn's media, prepared when there is a media service and the
-    /// activity carries attachments, and otherwise descriptors only.
-    async fn prepare_or_empty(
-        &self,
-        turn: &LaunchRequest,
-        audience: Audience,
-        nonce: Option<String>,
-        deadline: Instant,
-    ) -> Prepared {
-        match &self.media {
-            Some(service) if has_attachments(&turn.activity) => {
-                let now = time::OffsetDateTime::now_utc().unix_timestamp();
-                prepare(
-                    service,
-                    turn,
-                    audience,
-                    &self.prepare,
-                    nonce,
-                    deadline.into(),
-                    now,
-                )
-                .await
-            }
-            _ => Prepared {
-                media: RenderMedia::empty(nonce),
-                eager: false,
-            },
-        }
-    }
     /// Fail a turn whose consumer its channel does not configure, as any
     /// other provider refusal fails, before any provider call.
     fn unserved(
@@ -239,20 +214,15 @@ impl TurnRunner {
         let credential = consumer.credential.ok_or_else(|| {
             ProviderError::InvalidRequest("channel has no provider credential".into())
         })?;
+        let rendered = preparation::render(turn, media, audience, None);
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, &turn.channel.definition, media, audience),
+            input: rendered.input,
             idempotency_key: turn.idempotency_key.clone(),
-            metadata: metadata::render(turn),
+            metadata: rendered.metadata,
             agent_key: credential.clone(),
-            event_context: Some(crate::providers::EventContextSnapshot {
-                schema_version: 1,
-                channel_id: turn.channel.id.clone(),
-                conversation_id: turn.conversation_id.clone(),
-                activity: turn.activity.clone(),
-                event_ref: turn.event_ref.clone(),
-            }),
+            event_context: Some(rendered.event_context),
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;
@@ -368,10 +338,6 @@ impl TurnLauncher for TurnRunner {
 /// The serving consumer is gone from the channel's definition.
 fn unconfigured() -> ProviderError {
     ProviderError::InvalidRequest("consumer is not configured".into())
-}
-/// A message or event that carries at least one attachment.
-fn has_attachments(activity: &Activity) -> bool {
-    !render_media::attachments(activity).is_empty()
 }
 fn jitter(max: Duration) -> Duration {
     let mut bytes = [0; 8];

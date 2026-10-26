@@ -4,6 +4,7 @@ mod consume;
 mod metadata;
 pub mod observer;
 pub mod outcomes;
+mod preparation;
 mod projection;
 pub mod render_input;
 pub mod render_media;

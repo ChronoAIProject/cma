@@ -8,7 +8,7 @@ use axum::{
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
@@ -21,6 +21,10 @@ pub struct Config {
     pub native_agent: String,
     pub corrupt_acceptance: bool,
     pub acceptance_fault: Option<&'static str>,
+    pub conversation_status: u16,
+    pub conversation_delay: Duration,
+    pub on_conversation: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub on_post: Option<Arc<dyn Fn() + Send + Sync>>,
     pub on_snapshot: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl Default for Config {
@@ -31,6 +35,10 @@ impl Default for Config {
             native_agent: "agt_native".into(),
             corrupt_acceptance: false,
             acceptance_fault: None,
+            conversation_status: 201,
+            conversation_delay: Duration::ZERO,
+            on_conversation: None,
+            on_post: None,
             on_snapshot: None,
         }
     }
@@ -47,6 +55,7 @@ pub struct Memory {
     pub config: Config,
     pub seen: Vec<Seen>,
     pub metadata: BTreeMap<String, String>,
+    pub conversations: BTreeSet<String>,
 }
 pub struct HttpServer {
     pub base: String,
@@ -64,6 +73,7 @@ impl HttpServer {
             config: Config::default(),
             seen: vec![],
             metadata: BTreeMap::new(),
+            conversations: BTreeSet::new(),
         }));
         let router = Router::new().fallback(handle).with_state(memory.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -122,6 +132,33 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         memory.seen.push(seen);
         (memory.config.clone(), memory.metadata.clone())
     };
+    if parts.method == axum::http::Method::PUT {
+        tokio::time::sleep(config.conversation_delay).await;
+        if let Some(callback) = &config.on_conversation {
+            callback();
+        }
+        let status = if (200..300).contains(&config.conversation_status)
+            && !memory
+                .lock()
+                .unwrap()
+                .conversations
+                .insert(parts.uri.path().into())
+        {
+            200
+        } else {
+            config.conversation_status
+        };
+        return Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+    }
+    if post {
+        if let Some(callback) = &config.on_post {
+            callback();
+        }
+    }
     if post && config.post_status != 200 {
         return Response::builder().status(config.post_status).header("content-type","application/json")
         .body(Body::from(json!({"error":{"code":if config.post_status==400 {"invalid_json"} else {"response_unavailable"}}}).to_string())).unwrap();

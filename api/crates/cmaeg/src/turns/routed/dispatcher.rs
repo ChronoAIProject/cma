@@ -201,6 +201,9 @@ impl Dispatcher {
         }
         let body = self.journal.body(lease).await?;
         body.validate(plan, target, &self.journal.keys, (self.journal.clock)())?;
+        // Media/conversation preparation has its own bound. Renew the still
+        // owned lease so it cannot consume the subsequent acceptance budget.
+        self.journal.renew(lease).await?;
         // The durable start marker precedes any network effect. If either CAS
         // confirmation or the fresh authority check fails, no POST is made.
         self.journal.transition(lease, Phase::Starting).await?;
@@ -297,6 +300,15 @@ pub(super) async fn current_target(
     target: &StoredTarget,
 ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
     let current = authority.current(&plan.identity).await?;
+    validate_current(&current, plan, target)?;
+    Ok(current)
+}
+
+pub(super) fn validate_current(
+    current: &ResolvedChannel,
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+) -> Result<(), ExecutionError> {
     let consumer = current
         .definition
         .consumer(Some(&target.launch.consumer))
@@ -318,5 +330,5 @@ pub(super) async fn current_target(
     {
         return Err(ExecutionError::AuthorityChanged);
     }
-    Ok(current)
+    Ok(())
 }
