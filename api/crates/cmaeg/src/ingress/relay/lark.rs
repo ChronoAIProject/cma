@@ -126,7 +126,7 @@ fn content(
 ) -> Result<Content, Refusal> {
     match message.get("message_type").and_then(Value::as_str) {
         Some("text") => text(payload, message).map(|()| Content::default()),
-        Some(message_type @ ("image" | "file" | "audio" | "media")) if media_enabled => {
+        Some(message_type @ ("image" | "file" | "audio" | "media" | "video")) if media_enabled => {
             let attachments = media(payload, message, message_type)?;
             Ok(Content {
                 text: None,
@@ -135,7 +135,7 @@ fn content(
         }
         Some("post") if media_enabled => post(payload, message, mentions, bot_id),
         // NyxID offers no download for a sticker, so it stays refused with media on.
-        Some("image" | "file" | "audio" | "media" | "sticker") => {
+        Some("image" | "file" | "audio" | "media" | "video" | "sticker") => {
             Err(Refusal::AttachmentUnsupported)
         }
         _ => Err(Refusal::ContentUnsupported),
@@ -165,7 +165,7 @@ fn text(payload: &CallbackPayload, message: &Value) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// An image, file, audio or media message. NyxID lists the message's one
+/// An image, file, audio, media or video message. NyxID lists the message's one
 /// resource as an envelope attachment, so the presence refusal for text does
 /// not apply; its `content.type` must agree and it carries no text.
 fn media(

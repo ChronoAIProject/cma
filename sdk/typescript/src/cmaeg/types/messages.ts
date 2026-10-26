@@ -123,7 +123,34 @@ export const IntentReceiptSchema = object({
 });
 export type IntentReceipt = Output<typeof IntentReceiptSchema>;
 
+export const NativeMediaKindSchema = enumeration('image', 'file', 'audio', 'video');
+export type NativeMediaKind = Output<typeof NativeMediaKindSchema>;
+export const NativeMediaSourceSchema = tagged(
+  {
+    url: object({ type: enumeration('url'), url: text }),
+    base64: object({ type: enumeration('base64'), data: text }),
+  },
+  'type',
+);
+export type NativeMediaSource = Output<typeof NativeMediaSourceSchema>;
+export const NativeAttachmentSchema = object({
+  kind: NativeMediaKindSchema,
+  source: NativeMediaSourceSchema,
+  filename: optional(nullable(text)),
+  mime_type: optional(nullable(text)),
+  caption: optional(nullable(text)),
+});
+export type NativeAttachment = Output<typeof NativeAttachmentSchema>;
+export const NativeMediaCapabilitiesSchema = object({
+  kinds: array(text),
+  sources: array(text),
+  max_attachments: integer,
+  max_inline_bytes: integer,
+});
+export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
+
 export const OutboundMessageSchema = object({
+  native_attachments: optional(array(NativeAttachmentSchema)),
   thread_reply: optional(boolean),
   blocks: optional(array(BlockSchema)),
   reply_to: optional(nullable(MessageRefSchema)),

@@ -25,10 +25,8 @@ it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' 
     vi.stubGlobal('fetch', fetcher);
     const done = vi.fn();
     render(<ChannelEditor channel={channel} denied={vi.fn()} onDone={done} />);
-    const input = screen.getByLabelText<HTMLTextAreaElement>('Channel configuration JSON');
-    const policy = JSON.parse(input.value);
-    policy.name = 'Renamed channel';
-    fireEvent.change(input, { target: { value: JSON.stringify(policy) } });
+    const input = screen.getByLabelText('Channel name');
+    fireEvent.change(input, { target: { value: 'Renamed channel' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save channel' }));
     await waitFor(() => expect(done).toHaveBeenCalledOnce());
     expect(fetcher).toHaveBeenCalledOnce();

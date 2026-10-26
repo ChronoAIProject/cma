@@ -3352,3 +3352,100 @@ derive from that SVG, and content-hashed URLs refresh retained browser icons.
 
 
 | 2026-10-23 | Render Mermaid diagrams with the current CMA alias palette, including connector and edge-label contrast, and re-render on appearance changes without changing source. Keep narrow-canvas outline destinations below wrapped formatting controls with a 128px scroll margin. |
+
+### Event Gateway delivery map (2026-10-26)
+
+A selected channel opens on a readable, interactive delivery map: every configured
+producer on the left, the channel in the middle, and the implicit default plus
+all recorded additional consumers on the right. Keep the existing channel table,
+sidebar, breadcrumbs and retained channel instances. The map describes configured
+connections, not live delivery or health. Connector lines are static; no animated
+traffic or green health claim is inferred from configuration. A pending consumer
+is explicitly labelled "Binding pending" and an unattached relay "No routes".
+
+The detail has a 1440px maximum width. At 1080px of available detail width,
+the map and inspector sit alongside each other in minmax(0,1fr)/360px columns
+with a 24px gap; below that they stack without changing component identity. The map uses a layer-2 ground, 1px border-l2,
+16px radius, 24px insets and a 24px dotted grid in border-l1. Its header uses
+16/24 medium text and a 13/20 secondary explanation. Inside, three columns use
+minmax(0,1fr), minmax(140px,.8fr), minmax(0,1fr), with 40px connection gutters.
+Each column has a 12/18 medium title and a readable count, and its node list is
+vertically centred with 12px gaps. Nodes are full-width real buttons, at least
+88px high, 12px insets, 12px radius and a layer-1 fill; names are 14/20 medium,
+metadata 12/18 secondary, and the 32px icon seat has an 8px radius and layer-3
+fill. Long names and metadata truncate, with their full value in a title.
+Selected nodes use the business-primary border and accent wash; hover changes
+only border and ground. The central channel has 16px insets and a business-tone
+icon seat. Decorative 1px border-l3 connectors join the node edges through a
+shared vertical rail; the producer/channel/consumer order conveys direction.
+The map has accessible stage labels, natural producer/channel/consumer tab order,
+named pressed-state node controls and the existing focus ring. It is not a
+canvas requiring pointer gestures.
+
+Below 600px of available map width, the map becomes a vertical roadmap in
+producer/channel/consumer reading order with a quiet vertical connector and no
+horizontal overflow. Its insets are 16px, every action remains at least 44px, and
+node text stays within the viewport. This layout follows the detail's width via
+a container query, so an expanded navigation rail cannot squeeze the map.
+
+Selecting a node opens its inspector alongside the map (below on narrower surfaces): a layer-1 surface with a
+1px border-l2 edge, radius 12, 20px insets, a 16/24 medium title and 13/20 secondary
+purpose. Read-only facts are a definition list with two equal columns, 16px gaps,
+12/18 secondary labels and 14/22 primary values; opaque IDs wrap. At 640px these
+facts stack. Render only named public configuration fields, never a raw JSON dump
+or credential. The channel inspector contains endpoints and the recorded routing
+summary; producers show their platform, routes and admission policy; consumers
+show their binding, target, reply policy and pending state. Tests identify their
+actual target and side effects. A provider test is never described as proof of
+platform ingress or message delivery. An uncertain outcome stays uncertain and
+never triggers an automatic retry. Tests and edits retain state across node and
+channel navigation; opening a node sends no mutation or extra resource request.
+
+Each node is the only entry to its own settings and tests. There is no whole-channel
+configuration form or editor toggle in channel detail. Creation retains its initial
+setup form. The structured editor reuses service-form and shared Input, Picker and Button.
+`.channel-form-section` is a min-width-zero fieldset with a 1px border-l2 edge,
+12px radius, 16px insets and 16px gaps; its legend is 14/22 medium.
+`.channel-form-grid` is two equal minmax-zero columns with 16px gaps, stacking at
+640px. `.channel-form-row` wraps aligned controls with an 8px gap. A
+`.channel-value-field` uses 14/22 text and wraps opaque IDs; `.channel-field-hint`
+is 12/18 secondary text with 4px top spacing. The editor stays mounted while
+changing the inspected node, retaining the exact draft, original revision and
+uncertain request. Read-only permissions remove mutation controls, not context.
+
+Node selection and inspector changes use the shared 200ms opacity and
+border/background transitions. Neither selection nor hover moves content;
+`prefers-reduced-motion: reduce` removes every map transition and entrance.
+No timers, polling or graph library are introduced for this projection.
+
+| 2026-10-26 | Replace the channel JSON disclosure with an interactive producer → channel → consumer delivery map and scoped readable inspectors, preserving channel navigation, drafts, permission checks and honest test outcomes. Establish responsive map geometry, structured field groups and reduced-motion selection transitions. |
+
+Map nodes carry their actual platform/provider identity in the existing 32px icon
+seat. Telegram, Discord and WhatsApp use locally bundled CC0 Simple Icons paths;
+Lark/Feishu reuse the user-supplied bird geometry already used in NyxID, with
+Feishu's outline variant. CMA consumers reuse the existing CMA face SVG; Nyxbot
+uses the existing NyxID identity glyph. Monochrome paths use currentColor and
+existing aliases; the CMA face retains its approved fixed palette. The mark is
+20px and decorative because the node names its platform/provider in text.
+Unknown providers retain a generic Agent glyph and their literal provider name.
+No logo fetch, dependency, palette or network-derived health indicator is added.
+
+| 2026-10-26 | Identify producer and consumer nodes with local platform and provider glyphs; make each node the sole entry to its own settings and real targeted tests in a retained adjacent inspector. |
+
+For channel editors with update permission, Add producer is a shared quiet button
+with 12px top spacing in the producer column. It opens an explicitly unsaved
+producer in the same inspector; tests become available only after save. Existing
+producer and consumer nodes continue to describe saved configuration. On stacked
+layouts, selecting a node brings the inspector into view with smooth scrolling
+and a 20px top scroll margin; reduced motion uses immediate scrolling. The
+scroll responds only to the user's selection and does not poll or change drafts.
+
+| 2026-10-26 | Keep a scoped unsaved producer in the map inspector until its versioned save and bring selected details into view on narrow layouts, preserving reduced-motion behavior. |
+
+Inside the node inspector, the form's outer fieldset and nested fieldsets keep
+their semantic legends but omit their extra borders and padding, with 16px block
+spacing. The inspector supplies the enclosing edge, avoiding repeated boxes
+around a single setting group. Test outcomes retained after a configuration
+change explicitly say that settings changed since that test was requested.
+
+| 2026-10-26 | Keep scoped setting groups visually quiet within the inspector and distinguish retained test results from verification of subsequently changed settings. |

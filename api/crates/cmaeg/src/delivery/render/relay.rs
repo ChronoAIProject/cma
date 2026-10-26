@@ -79,7 +79,7 @@ fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, 
         });
     }
     (
-        if sections.is_empty() {
+        if sections.is_empty() && message.native_attachments.is_empty() {
             "Choose an option".into()
         } else {
             sections.join("\n\n")

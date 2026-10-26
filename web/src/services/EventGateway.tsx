@@ -1,16 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { Button } from '../ui/Button';
 import { routePath } from '../routing/routes';
 import { PageHeader, type Crumb } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import {
-  can,
-  segment,
-  ServiceError,
-  serviceRequest,
-  type Denied,
-  type ServiceSession,
-} from './client';
+import { can, type Denied, type ServiceSession } from './client';
 import { PageStatus, usePage } from './data';
 import {
   ChannelEditor,
@@ -19,7 +12,10 @@ import {
   type Channel,
   type ChannelListItem,
 } from './ChannelEditor';
-import { ChannelEndpoints } from './ChannelEndpoints';
+import { ChannelMap } from './ChannelMap';
+import { NodeInspector } from './NodeInspector';
+import { ChannelNodeTests } from './ChannelNodeTests';
+import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
 import { ChannelTable } from './ChannelTable';
 import { ExistingChannel } from './ExistingChannel';
 import './EventGateway.css';
@@ -130,6 +126,7 @@ export function EventGateway({
             description="Connect an event source to your agent."
           />
           <ChannelEditor
+            ownerSubject={session.subject}
             denied={denied}
             onDone={(channel) => {
               if (channel) {
@@ -264,80 +261,78 @@ function AddressedChannel({
   readonly onChanged: (channel?: Channel) => void;
   readonly onDeleted: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Channel>();
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string>();
-  async function test() {
-    setBusy(true);
-    setResult(undefined);
-    try {
-      const value = await serviceRequest<{ first_text: string }>(
-        'event-gateway',
-        `/v1/channels/${segment(channel.channel_id)}/test`,
-        { method: 'POST', signal: AbortSignal.timeout(125_000) },
-      );
-      setResult(value.first_text);
-    } catch (error) {
-      if (error instanceof ServiceError && [401, 403].includes(error.status)) denied(error.status);
-      setResult(
-        error instanceof Error && error.name !== 'TimeoutError'
-          ? error.message
-          : 'Test result is unknown. Check channel activity before sending another test.',
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
+  const inspectorId = useId();
+  const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
+  const [confirmed, setConfirmed] = useState<Channel>();
+  const current = confirmed && confirmed.version >= channel.version ? confirmed : channel;
+  const nodes = channelNodes(current);
+  const editable = can(session, 'event-gateway', 'channels:update');
+  const newProducer =
+    editable && selection.kind === 'producer' && selection.index === nodes.producers.length;
+  const exists =
+    selection.kind === 'channel' ||
+    newProducer ||
+    [...nodes.producers, ...nodes.consumers].some((node) => node.key === selectionKey(selection));
+  const selected: ChannelSelection = exists ? selection : { kind: 'channel' };
   return (
-    <>
-      <ChannelEndpoints endpoints={channel.endpoints} />
-      <div className="service-actions">
-        {can(session, 'event-gateway', 'channels:update') ? (
-          <Button
-            onClick={() => {
-              setDraft((current) => current ?? channel);
-              setEditing((value) => !value);
-            }}
-          >
-            {editing ? 'Close editor' : 'Edit channel'}
-          </Button>
-        ) : null}
-        {can(session, 'event-gateway', 'channels:test') ? (
-          <Button disabled={busy} onClick={() => void test()}>
-            {busy ? 'Sending test…' : 'Send test event'}
-          </Button>
-        ) : null}
-      </div>
-      {can(session, 'event-gateway', 'channels:update') && draft ? (
-        <div hidden={!editing}>
+    <div className="channel-workspace">
+      <ChannelMap
+        channel={current}
+        selection={selected}
+        onSelect={(next) => {
+          setSelection(next);
+          requestAnimationFrame(() => {
+            const inspector = document.getElementById(inspectorId);
+            if (
+              !inspector ||
+              inspector.getClientRects().length === 0 ||
+              (inspector.parentElement?.clientWidth ?? 0) >= 1080
+            )
+              return;
+            inspector.scrollIntoView?.({
+              block: 'start',
+              behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                ? 'instant'
+                : 'smooth',
+            });
+          });
+        }}
+        inspectorId={inspectorId}
+        canAddProducer={editable}
+      />
+      <NodeInspector channel={current} selection={selected} id={inspectorId}>
+        {editable ? (
           <ChannelEditor
-            channel={draft}
+            channel={current}
+            section={selected}
             denied={denied}
             onDone={(updated) => {
-              setEditing(false);
-              setDraft(undefined);
+              if (updated) setConfirmed(updated);
               onChanged(updated);
             }}
           />
+        ) : (
+          <p className="channel-field-hint">You have read-only access to this configuration.</p>
+        )}
+        {can(session, 'event-gateway', 'channels:test') ? (
+          <div hidden={newProducer}>
+            <ChannelNodeTests
+              channelId={current.channel_id}
+              channelVersion={current.version}
+              selection={selected}
+              denied={denied}
+            />
+          </div>
+        ) : null}
+        <div hidden={selected.kind !== 'channel'}>
+          {can(session, 'event-gateway', 'channels:delete') ? (
+            <section className="channel-inspector__danger">
+              <h3>Delete channel</h3>
+              <DeleteChannel channel={current} denied={denied} onDone={onDeleted} />
+            </section>
+          ) : null}
         </div>
-      ) : null}
-      {result ? (
-        <section className="service-panel" role="status">
-          <h2>Test result</h2>
-          <p>{result}</p>
-        </section>
-      ) : null}
-      <details className="gateway-detail__section">
-        <summary>Channel configuration</summary>
-        <pre>{JSON.stringify(channel.definition, null, 2)}</pre>
-      </details>
-      {can(session, 'event-gateway', 'channels:delete') ? (
-        <section className="gateway-detail__section">
-          <h2>Delete channel</h2>
-          <DeleteChannel channel={channel} denied={denied} onDone={onDeleted} />
-        </section>
-      ) : null}
-    </>
+      </NodeInspector>
+    </div>
   );
 }

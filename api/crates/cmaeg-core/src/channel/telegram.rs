@@ -16,7 +16,14 @@ pub(super) fn validate(
             "must be a positive Telegram bot ID",
         ));
     }
-    validate_relay_identity(Platform::Telegram, username, Some(bot_id), false, pointer)?;
+    validate_relay_identity(
+        Platform::Telegram,
+        username,
+        Some(bot_id),
+        false,
+        false,
+        pointer,
+    )?;
     validate_admission(admission, pointer)?;
     let token = secrets
         .telegram_bot_token

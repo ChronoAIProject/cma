@@ -51,7 +51,7 @@ impl Key {
     }
 }
 
-/// The attachment of a Lark `image`, `file`, `audio` or `media` message, or
+/// The attachment of a Lark `image`, `file`, `audio`, `media` or `video` message, or
 /// `None` for any other `message_type`. `content` is `event.message.content`
 /// parsed from its JSON string; `envelope` is `payload.content.attachments`.
 pub(super) fn extract(
@@ -84,7 +84,7 @@ pub(super) fn extract(
             "audio",
         ),
         // The cover `image_key` is ignored: NyxID cannot serve it.
-        "media" => (
+        "media" | "video" => (
             Key::File,
             AttachmentKind::Video,
             "video",
@@ -114,13 +114,13 @@ pub(super) fn extract(
         thumbnail: None,
         emoji: None,
     };
-    if matches!(message_type, "file" | "media") {
+    if matches!(message_type, "file" | "media" | "video") {
         attachment.filename = match content.get("file_name") {
             Some(Value::String(name)) => Some(name.clone()),
             _ => item.and_then(|item| item.attachment.filename.clone()),
         };
     }
-    if matches!(message_type, "audio" | "media") {
+    if matches!(message_type, "audio" | "media" | "video") {
         attachment.duration_seconds = duration_seconds(content.get("duration"));
     }
     count_locator(key.is_some(), item.is_some(), label);

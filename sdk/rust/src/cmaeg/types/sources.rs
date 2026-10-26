@@ -52,6 +52,9 @@ pub enum Source {
         /// Wire field `trust_normalized`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trust_normalized: Option<bool>,
+        /// Opt into raw Discord/WhatsApp event verification; never combine with trust_normalized.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_raw_event: Option<bool>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -107,6 +110,9 @@ pub enum SourceRequest {
         /// Wire field `trust_normalized`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trust_normalized: Option<bool>,
+        /// Opt into raw Discord/WhatsApp event verification; never combine with trust_normalized.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verify_raw_event: Option<bool>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
