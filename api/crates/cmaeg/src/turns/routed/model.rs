@@ -141,11 +141,11 @@ pub enum Phase {
     Unknown,
     Accepted {
         response_id: String,
-        durable_cursor: u64,
+        durable_cursor: Option<u64>,
     },
     Completed {
         response_id: String,
-        durable_cursor: u64,
+        durable_cursor: Option<u64>,
     },
     Refused {
         code: String,

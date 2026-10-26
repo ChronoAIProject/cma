@@ -54,6 +54,10 @@ proof of nonacceptance. An accepted response retains its exact response ID and
 durable cursor and is never posted again. Recovery returns a read/replay directive
 with an ownership lease and the original frozen body.
 
+The initial cursor is absent, so replay includes durable event zero. A cursor of
+zero is stored only after event zero has a confirmed durable downstream receipt.
+Adapters must not translate an absent cursor into `starting_after=0`.
+
 The delivery cursor advances only after a caller has confirmed durable downstream
 receipt of that numeric provider event. Merely reading an SSE frame is not a
 receipt. Response identity mismatches and backwards cursors are refused. The

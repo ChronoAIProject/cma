@@ -176,14 +176,14 @@ impl Journal {
         else {
             return Err(ExecutionError::Invalid);
         };
-        if expected != response_id || cursor < *durable_cursor {
+        if expected != response_id || durable_cursor.is_some_and(|previous| cursor < previous) {
             return Err(ExecutionError::Invalid);
         }
         self.transition(
             lease,
             Phase::Accepted {
                 response_id: response_id.into(),
-                durable_cursor: cursor,
+                durable_cursor: Some(cursor),
             },
         )
         .await
