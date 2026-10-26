@@ -1559,3 +1559,79 @@ The operator retained the publication receipt with SHA-256
 `1fe81036befcd3e62ad866544553a56c67f88afb37cd278e53f327379d470ce7`
 and production comparison with SHA-256
 `b8b7402c1a06595e1df533649bcd8e4e46fdb6f405069c45201584d1106a673b`.
+
+### Live Channel Activity and flow workspace publication from PR #1122 (2026-10-27)
+
+Candidate `0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48` passed all 15 jobs in
+GitHub CI run `40401725379`, attempt `1`, and was squash-merged into `develop`
+as `ec8521e6cda77dc50ae01112e8b69bda495e155f`. The imported API, Gateway and Web
+archives identify merge checkout `dc595e845658aa5f783f833310f949ca95269d99` and
+source tree `66e33b9bb1e13048d2411267cbdf96e1231372b0`; that tree exactly matches
+the merged source. All three production Deployments completed their rollouts.
+
+| Deployment | Imported immutable image digest | CI artifact |
+|---|---|---|
+| `cma-agent-manager` | `sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107` | `12691412069` |
+| `cma-event-gateway` | `sha256:6adcecfcdccf6b86d2ccfe3f6edb0d9ebdab8e187fb3dd912a2472ffbf30c8d6` | `12689857419` |
+| `cma-web` | `sha256:fd9e43d1cbad3750cfae5aec5dcc96e5e07dcb2ad966ecd320d7d5be255fe1c1` | `12689068722` |
+
+The Event Gateway workspace uses a full-area React Flow map and shared Agent
+Manager components. Individual nodes open centered, bounded settings dialogs
+with section navigation and internal scrolling. Channel and consumer navigation
+includes creator and creation metadata. Local browser checks covered desktop and
+mobile, both themes, reduced motion, modal bounds, retained drafts and the full
+consumer management journey. Authenticated production browser interaction was
+not exercised; production verification used the public APIs and SSE below.
+
+Activity persists receipt before provider work and streams an authoritative
+snapshot on connection, subsequent changes and reconnect. The browser does not
+poll. Local notifications publish changes immediately; a bounded one-second
+server consistency check also observes another Gateway process during a rolling
+release. Displayed receipt, dispatch, native Agent identity and recipient outcome
+are grounded in recorded evidence rather than inferred success.
+
+An isolated production Custom Channel test measured **196 ms** from event POST
+to the corresponding live Activity snapshot. A latest-Activity GET at **402 ms**
+already contained that in-flight event; provider completion took **15,921 ms**.
+Thus receipt visibility did not wait for completion. Reconnect with the recorded
+cursor restored the final snapshot and exact native Agent identity. Provider
+history confirmed one turn before and after reconnect. This is one production
+sample, not a percentile or an external-platform latency guarantee.
+
+Separate production Custom tests passed invalid HMAC rejection (`401`, 129 ms),
+streamed text completion with the exact expected marker (16,639 ms), and an
+attached-file marker read by the Agent (3,130 ms). No external platform messages
+were sent. Native Discord and selected routed/multi-consumer activation remain
+disabled; the rollout preserved every existing feature flag and ConfigMap.
+
+The initial post-rollout comparison passed all 15 canonical checks, preserving
+9 mapped user Pod identities, 20 user PVC identities/backing volumes, Agent
+lineages, owner Channel configuration, service settings and additive public
+operations. The bounded history sample retained 22 owner Agents and 1,660 durable
+events. All 7 prior entry-page assets retained their hashes. Web retains every
+older asset initializer and adds the preceding `2ee79459e6b1` release.
+
+The strict unchanged-runtime guard did not pass after deployment, and its
+original baseline and refusal are retained. The previously documented exit-2
+runtime kept its UID/image/PVC while its restart counter rose from 348 to 350;
+it was subsequently observed Running/Ready, which does not establish permanent
+repair. A later observation found a different existing user's pool-named runtime
+restart once and then receive a new Pod UID. The kubelet reported `SandboxChanged`
+at `2026-10-26T22:15:02Z`; CMA recorded automatic `runtime_lost` revival at
+`22:15:10Z`. Its replacement became Ready at `22:15:39Z` on the same image and
+Bound PVC/PV. At review time conversation reopening was still retrying after
+`work_step_failed`. It is not the isolated verification sandbox. These observations
+do not prove the initial cause or establish a relationship to this release;
+they also prevent a claim of uninterrupted runtime continuity. Neither the
+baseline nor the guard was widened to suppress this difference.
+
+The three source manifests were synchronized against the verified publication
+and rollout receipts. Source validation passed strict kubeconform, kube-linter,
+HTTPRoute ownership and native Sandbox isolation contracts. This source pin
+update records the deployed images and does not mutate production resources.
+
+Retained operator evidence SHA-256 values:
+
+- Publication: `994e0eb447eba7a816fceff6544c7967941720a194278a4617e3c580f48cf9ad`.
+- Initial canonical comparison: `11bca04d62f725888748d80c360461770ce0fd29efe8b6b3d33050b0ce8feb39`.
+- Activity probe result: `8999b72bacc219e2f34758b6a53a24f352de9e63a705509467820109c84bd3e7`.
