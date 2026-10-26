@@ -218,6 +218,55 @@ combined with RUST_LOG enforces this, so even
 with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
 
+## Provider response recovery transport
+
+Recovery is an explicit per-provider opt-in. Existing provider definitions omit
+`paths.recovery` and retain their POST and streaming behavior. After deploying
+compatible registry readers everywhere, the CMA provider may add this member to
+its existing `paths` object:
+
+```json
+{"recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}}
+```
+
+Both paths are required and use the CMA Responses v2 dialect. The same strict
+allowlisted origin, normalized templates and encoded opaque path segments apply.
+Redirects are never followed. Do not infer recovery from a provider's POST path
+or name. Leave Nyxbot recovery absent until its deployed API supplies a verified
+snapshot/replay contract. The deployment manifest includes the same opt-in
+example and deliberately leaves both provider entries unchanged.
+
+The transport only reads an already accepted response using the fresh consumer
+agent key supplied by the dispatcher. CMA's response endpoints recheck current
+command/binding and stream authority. There is no management-token fallback,
+conversation creation or turn POST. A snapshot must match the sealed journal's
+accepted response ID and the frozen command's exact metadata. Its
+`conversation.id` is CMA's native Agent ID, not the gateway's conversation alias;
+retain that Agent ID and check it on subsequent snapshots and lifecycle frames.
+
+Replay requires `x-cma-response-id` to match the requested accepted response.
+Each durable SSE ID must be the canonical decimal `sequence_number`, contiguous
+from zero or `starting_after + 1`. Gaps, duplicates, changed IDs, metadata, native
+Agent IDs and lifecycle types are refused. An SSE `error` without an ID reports
+observation failure, even if it contains `sequence_number`; it never emits a
+durable failed-turn event or advances the checkpoint. End-of-stream without a
+durable terminal event is likewise an observation failure.
+
+Snapshot bodies are bounded at 4 MiB, HTTP error bodies at 64 KiB, replay wire
+bytes at 16 MiB and individual SSE frames at 1 MiB. One read/replay attempt lasts
+at most the configured provider request timeout or 60 seconds, whichever is
+shorter; a later attempt resumes from the last committed cursor. Dropping or
+cancelling a read releases its provider concurrency permit, including an idle
+stream or pending response headers. Non-200 HTTP responses preserve their status
+and bounded code in `ProviderError::Rejected`; 429 retains `Retry-After` as
+`Busy`. In this read-only recovery API, a 5xx refusal is an observation error
+eligible for policy-controlled retry, never proof the durable command failed.
+
+This transport does not activate routed ingress or provide its journal,
+dispatcher, delivery fencing or checkpoint policy. The dispatcher must advance
+the durable cursor only after confirming the corresponding downstream durable
+effect, and must never resubmit an accepted turn when observation fails.
+
 ## Native thread rollout
 
 Deploy with `CMAEG_THREAD_CONTRACT_WRITES_ENABLED=false`. Keep existing platform

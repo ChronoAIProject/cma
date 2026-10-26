@@ -2028,6 +2028,23 @@ not authenticate the Telegram sender as that owner.
 
 ## 9. Provider contract
 
+An operator may explicitly configure the CMA Responses v2 durable recovery
+dialect through `paths.recovery.response` and `paths.recovery.events`. This is
+optional and is not implied by ordinary Responses POST support. Recovery GETs
+authenticate with the current consumer agent key and address only the response
+ID already accepted into the gateway's sealed execution journal. The snapshot's
+native `conversation.id` identifies the CMA Agent; it is not the gateway's
+external conversation alias. Exact command metadata and any retained native
+Agent ID must also match.
+
+The replay response binds `x-cma-response-id` to that response. Durable frames
+carry matching numeric SSE IDs and `sequence_number` values with no gaps or
+duplicates after the requested `starting_after` cursor. Observation `error`
+frames have no SSE ID and cannot change the command outcome or advance the
+gateway's durable cursor. Recovery support grants no right to repeat a POST.
+See [recovery transport operations](CMAEG_Operations.md#provider-response-recovery-transport)
+for configuration, bounds and staged activation.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
