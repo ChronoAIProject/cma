@@ -1,6 +1,13 @@
 //! Native Discord transport, sealed source custody and durable intake journal.
-//! Source writes remain gated; outbound delivery and application-level recovery
-//! integration are required before startup may activate ordinary messaging.
+//! Source writes remain gated; application supervision and durable inbox scheduling
+//! must be composed explicitly before ordinary messaging is activated.
+pub(crate) mod facts;
+mod inbox_reader;
+mod normalize;
+pub use inbox_reader::{InboxLaunch, InboxReader};
+pub(crate) mod outbound_media;
+pub(crate) mod rest;
+pub use rest::{DiscordRest, RestError};
 mod connection;
 mod discovery;
 mod gateway;
@@ -25,3 +32,12 @@ mod tests;
 mod journal_fixture;
 #[cfg(test)]
 mod journal_tests;
+
+#[cfg(test)]
+mod media_tests;
+#[cfg(test)]
+mod normalization_tests;
+#[cfg(test)]
+pub(crate) mod rest_fixture;
+#[cfg(test)]
+mod rest_tests;

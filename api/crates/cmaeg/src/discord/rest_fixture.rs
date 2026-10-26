@@ -1,0 +1,93 @@
+use super::DiscordRest;
+use axum::{
+    body::{to_bytes, Body},
+    extract::{Request, State},
+    http::StatusCode,
+    response::Response,
+    Router,
+};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub struct Capture {
+    pub path: String,
+    pub authorization: Option<String>,
+    pub content_type: Option<String>,
+    pub body: Vec<u8>,
+}
+pub struct Memory {
+    pub calls: Mutex<Vec<Capture>>,
+    pub status: Mutex<StatusCode>,
+    pub response: Mutex<Vec<u8>>,
+    pub broken: Mutex<bool>,
+}
+pub struct Fixture {
+    pub api: DiscordRest,
+    pub memory: Arc<Memory>,
+    pub base: String,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+impl Fixture {
+    pub async fn new() -> Self {
+        let memory = Arc::new(Memory {
+            calls: Mutex::new(Vec::new()),
+            status: Mutex::new(StatusCode::OK),
+            response: Mutex::new(
+                serde_json::to_vec(&json!({"id":"800","channel_id":"99","author":{"id":"77"}}))
+                    .unwrap(),
+            ),
+            broken: Mutex::new(false),
+        });
+        let app = Router::new().fallback(endpoint).with_state(memory.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        Self {
+            api: DiscordRest::fixture(&format!("{base}/api/v10/")),
+            memory,
+            base,
+            task,
+        }
+    }
+    pub fn respond(&self, status: StatusCode, body: Value) {
+        *self.memory.status.lock().unwrap() = status;
+        *self.memory.response.lock().unwrap() = serde_json::to_vec(&body).unwrap();
+    }
+}
+async fn endpoint(State(state): State<Arc<Memory>>, request: Request) -> Response {
+    let (parts, body) = request.into_parts();
+    let body = to_bytes(body, 10 * 1024 * 1024).await.unwrap();
+    state.calls.lock().unwrap().push(Capture {
+        path: parts.uri.path().into(),
+        authorization: parts
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned),
+        content_type: parts
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned),
+        body: body.to_vec(),
+    });
+    let body = if *state.broken.lock().unwrap() {
+        Body::from_stream(futures_util::stream::iter([Err::<bytes::Bytes, _>(
+            std::io::Error::other("fixture lost response"),
+        )]))
+    } else {
+        Body::from(state.response.lock().unwrap().clone())
+    };
+    Response::builder()
+        .status(*state.status.lock().unwrap())
+        .body(body)
+        .unwrap()
+}

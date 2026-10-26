@@ -4,6 +4,9 @@ mod complete;
 mod complete_tests;
 pub mod custom;
 pub mod durable;
+mod discord;
+#[cfg(test)]
+mod discord_tests;
 mod edit;
 pub mod engine;
 mod event;

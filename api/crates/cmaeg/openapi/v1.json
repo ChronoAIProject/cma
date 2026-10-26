@@ -629,6 +629,33 @@
         "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
         "oneOf": [
           {
+            "description": "Exact native Discord message attachment; resolved with current bot custody.",
+            "properties": {
+              "attachment_id": {
+                "type": "string"
+              },
+              "channel_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel_id",
+              "message_id",
+              "attachment_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Position of the attachment in the NyxID relay callback.",
             "properties": {
               "index": {
@@ -3218,7 +3245,7 @@
       "NativeMediaSource": {
         "oneOf": [
           {
-            "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+            "description": "The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy.",
             "properties": {
               "type": {
                 "enum": [

@@ -363,12 +363,17 @@ pub fn compose(
         return Ok(None);
     }
     let limits = MediaLimits::from_config(&config.media);
-    let sources = Arc::new(SourceRegistry::new(
-        Arc::new(NyxidSource::new(&config.management.nyxid_base_url)?),
-        Arc::new(TelegramFileSource::new(deps.telegram)),
-        Arc::new(UrlSource::new(Arc::new(PinnedTransport))),
-        Arc::new(InlineSource),
-    ));
+    let sources = Arc::new(
+        SourceRegistry::new(
+            Arc::new(NyxidSource::new(&config.management.nyxid_base_url)?),
+            Arc::new(TelegramFileSource::new(deps.telegram)),
+            Arc::new(UrlSource::new(Arc::new(PinnedTransport))),
+            Arc::new(InlineSource),
+        )
+        .with_discord(Arc::new(super::source::discord::DiscordFileSource::new(
+            crate::discord::DiscordRest::new()?,
+        ))),
+    );
     let decode = Arc::new(Semaphore::new(1));
     // An empty CMAEG_STT_URL leaves speech-to-text off.
     let transcriber: Arc<dyn Transcriber> = match &config.stt.endpoint {

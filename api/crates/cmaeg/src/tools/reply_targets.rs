@@ -223,6 +223,7 @@ impl ToolsState {
 }
 fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
     let valid = match reply {
+        ReplyAddress::Discord { bot_id, .. } => crate::discord::rest::token(channel, bot_id).is_some(),
         ReplyAddress::NyxidRelay { route_id, platform, .. } => channel.definition.secrets.channel_key.is_some()
             && channel.definition.sources.iter().any(|s| matches!(s, Source::NyxidRelay { route_ids, platform: current, .. } if current==platform && route_ids.contains(route_id))),
         ReplyAddress::Telegram { bot_id, .. } => channel.definition.secrets.telegram_bot_token.is_some()

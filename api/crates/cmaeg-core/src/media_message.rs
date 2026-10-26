@@ -20,7 +20,7 @@ pub enum NativeMediaKind {
 #[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeMediaSource {
-    /// NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.
+    /// The native adapter or NyxID fetches public HTTPS with bounded, pinned-address policy.
     Url { url: String },
     /// Standard padded base64, with at most 64 KiB decoded across the request.
     Base64 { data: String },
