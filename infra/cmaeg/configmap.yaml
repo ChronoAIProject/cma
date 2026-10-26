@@ -20,6 +20,10 @@ data:
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
   # Native source readers/REST/media are additive; enable only after supervised inbox routing is composed.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "false"
+  # Runtime rollout is separate from authoring; keep off until local and staged validation passes.
+  CMAEG_NATIVE_DISCORD_ENABLED: "false"
+  # Explicit canonical channel record IDs; selected records also require durable routed recovery.
+  CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS: ""
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"
   CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "false"
   CMAEG_MONGODB_DATABASE: "chrono-bot"

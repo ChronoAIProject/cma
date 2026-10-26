@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -35,6 +35,8 @@ pub struct Memory {
     pub channel: Mutex<Vec<u8>>,
     pub now: Arc<AtomicI64>,
     pub user: Mutex<Value>,
+    pub user_rate_limited: AtomicBool,
+    pub user_calls: AtomicUsize,
     pub gateway: Mutex<Value>,
     pub fault: Mutex<Option<(String, bool)>>,
 }
@@ -69,6 +71,8 @@ impl Fixture {
             ),
             now: now.clone(),
             user: Mutex::new(json!({"id":"77","bot":true})),
+            user_rate_limited: AtomicBool::new(false),
+            user_calls: AtomicUsize::new(0),
             gateway: Mutex::new(
                 json!({"url":"wss://gateway.discord.gg/","shards":1,"session_start_limit":{"total":10,"remaining":10,"reset_after":86_400_000,"max_concurrency":1}}),
             ),
@@ -142,6 +146,15 @@ pub fn definition() -> ChannelDefinition {
     definition
 }
 async fn user(State(state): State<Arc<Memory>>, headers: HeaderMap) -> Response {
+    state.user_calls.fetch_add(1, Ordering::SeqCst);
+    if state.user_rate_limited.load(Ordering::SeqCst) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("retry-after", "120")],
+            Json(json!({"retry_after":90})),
+        )
+            .into_response();
+    }
     if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&format!("Bot {TOKEN}")) {
         return StatusCode::UNAUTHORIZED.into_response();
     }

@@ -15,6 +15,24 @@ use crate::{
 use cmaeg_core::channel::{Secret, Source};
 use serde_json::json;
 
+#[tokio::test]
+async fn discovery_rate_limit_is_preserved_across_reconnect_attempts() {
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new().await;
+    f.memory.user_rate_limited.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        f.api.discover(&Secret::new(TOKEN), "77").await,
+        Err(GatewayError::RateLimited)
+    ));
+    assert!(f.api.retry_after(&Secret::new(TOKEN)).as_secs() >= 119);
+    f.memory.user_rate_limited.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        f.api.discover(&Secret::new(TOKEN), "77").await,
+        Err(GatewayError::RateLimited)
+    ));
+    assert_eq!(f.memory.user_calls.load(Ordering::SeqCst), 1);
+}
+
 fn ready(session: &str) -> (Dispatch, Checkpoint) {
     let event = Dispatch {
         name: "READY".into(),

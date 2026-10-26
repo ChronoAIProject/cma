@@ -1,5 +1,5 @@
 //! Read-only Discord bot discovery. Credentials never leave the fixed API origin.
-use super::{protocol::endpoint, GatewayError};
+use super::{protocol::endpoint, DiscordRest, GatewayError, RestError};
 use cmaeg_core::channel::Secret;
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -23,6 +23,7 @@ pub struct Discovery {
 pub struct DiscordApi {
     client: Client,
     origin: Url,
+    limits: DiscordRest,
 }
 impl DiscordApi {
     pub fn new() -> Result<Self, GatewayError> {
@@ -31,11 +32,19 @@ impl DiscordApi {
                 .connect_timeout(Duration::from_secs(2))
                 .timeout(Duration::from_secs(4))
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .build()
                 .map_err(|_| GatewayError::Unavailable)?,
             origin: Url::parse("https://discord.com/api/v10/")
                 .map_err(|_| GatewayError::InvalidConfiguration)?,
+            limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
         })
+    }
+    pub(super) fn retry_after(&self, token: &Secret) -> Duration {
+        match self.limits.ready(token) {
+            Err(RestError::RateLimited(seconds)) => Duration::from_secs(seconds),
+            _ => Duration::ZERO,
+        }
     }
     pub async fn discover(
         &self,
@@ -73,6 +82,10 @@ impl DiscordApi {
         path: &str,
         token: &Secret,
     ) -> Result<T, GatewayError> {
+        self.limits.ready(token).map_err(|error| match error {
+            RestError::RateLimited(_) => GatewayError::RateLimited,
+            _ => GatewayError::Unavailable,
+        })?;
         let url = self
             .origin
             .join(path)
@@ -84,10 +97,33 @@ impl DiscordApi {
             .send()
             .await
             .map_err(|_| GatewayError::Unavailable)?;
-        if matches!(response.status().as_u16(), 401 | 403) {
+        let status = response.status().as_u16();
+        let retry = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0);
+        if response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value.as_bytes() == b"0")
+        {
+            let reset = response
+                .headers()
+                .get("x-ratelimit-reset-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            self.limits.cooldown(token, reset.max(retry.unwrap_or(0.0)));
+        }
+        if status == 429 {
+            self.limits.cooldown(token, retry.unwrap_or(60.0));
+        }
+        if matches!(status, 401 | 403) {
             return Err(GatewayError::Authority);
         }
-        if !response.status().is_success() {
+        if status != 429 && !response.status().is_success() {
             return Err(GatewayError::Unavailable);
         }
         let mut body = Vec::new();
@@ -101,12 +137,22 @@ impl DiscordApi {
             }
             body.extend_from_slice(&chunk);
         }
+        if status == 429 {
+            let body_retry = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| value["retry_after"].as_f64())
+                .filter(|value| value.is_finite() && *value > 0.0);
+            self.limits
+                .cooldown(token, body_retry.unwrap_or(60.0).max(retry.unwrap_or(0.0)));
+            return Err(GatewayError::RateLimited);
+        }
         serde_json::from_slice(&body).map_err(|_| GatewayError::Protocol)
     }
     #[cfg(test)]
     pub(super) fn fixture(origin: &str) -> Self {
         let mut result = Self::new().unwrap();
         result.origin = Url::parse(origin).unwrap();
+        result.limits = DiscordRest::fixture(origin);
         result
     }
 }

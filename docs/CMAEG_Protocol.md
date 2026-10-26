@@ -3293,6 +3293,20 @@ admission and stored source bytes. Transient failures stay pending, and elapsed
 reply authority is recorded as expired without renewing it or erasing retained
 intake data. Routed execution recovery continues independently after admission.
 
+Native runtime activation is separate from authoring: `CMAEG_NATIVE_DISCORD_ENABLED`
+defaults to false, and `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults to empty.
+This staged rollout accepts at most 64 explicit canonical channel records already
+selected for durable routed recovery. Without activation and selection, no native
+worker, scanner or Discord request starts. Each source must retain its original
+ready public channel identity and an explicit routing snapshot; normal-user source
+auto-discovery and native single-default-consumer planning are separate rollout work.
+Each supervised attempt reacquires its fenced lease and stored Resume checkpoint.
+Retryable disconnects back off and preserve Discord's Gateway and discovery REST
+cooldowns; terminal authentication/configuration errors wait for a changed source
+revision. Uncached eligibility checks stop an old connection when its source is
+revoked, rotated or loses routing. Service shutdown stops native intake before
+draining providers and deliveries; interrupted inbox work remains recoverable.
+
 Native replies seal `{"type":"discord","bot_id":"77","channel_id":"99",
 "message_id":"700"}` inside the event reference. They contain no relay token.
 The current channel must still configure that bot and its encrypted credential.

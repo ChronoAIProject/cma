@@ -198,6 +198,14 @@ pub(crate) async fn serve(
     let mut routed_worker = routed.map(|composition| {
         crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
     });
+    let mut native_discord = crate::discord::lifecycle::Worker::start(
+        &config.native_discord,
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        ingress.clone(),
+        state.readiness.clone(),
+    )
+    .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
@@ -229,15 +237,32 @@ pub(crate) async fn serve(
         wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
+        if let Some(worker) = &native_discord {
+            worker.stop();
+        }
         if let Some(worker) = &routed_worker {
             worker.stop_scheduling();
         }
-        let (turns_drained, routed_drained) = tokio::join!(tracker.drain(deadline), async {
-            match &mut routed_worker {
-                Some(worker) => worker.drain(deadline).await,
-                None => true,
+        let (turns_drained, routed_drained, native_drained) = tokio::join!(
+            tracker.drain(deadline),
+            async {
+                match &mut routed_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            },
+            async {
+                match &mut native_discord {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
             }
-        },);
+        );
+        if !native_drained {
+            tracing::warn!(
+                "native Discord drain incomplete; durable inbox and lease fences retained"
+            );
+        }
         if !turns_drained {
             tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
         }
