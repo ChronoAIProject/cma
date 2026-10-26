@@ -15,11 +15,12 @@ pub enum GatewayError {
     MissingMessageContentIntent,
     Authority,
     Unavailable,
+    RateLimited,
     Protocol,
 }
 
 /// Resume authority is private durable state, never logs or a public response.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Checkpoint {
     pub session_id: String,

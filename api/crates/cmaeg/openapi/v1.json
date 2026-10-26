@@ -2184,6 +2184,16 @@
               }
             ]
           },
+          "discord_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hmac_secrets": {
             "items": {
               "$ref": "#/components/schemas/HmacSecretRequest"
@@ -2223,6 +2233,16 @@
             "$ref": "#/components/schemas/Secret"
           },
           "channel_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discord_bot_token": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Secret"
@@ -4570,6 +4590,35 @@
             "type": "object"
           },
           {
+            "description": "Native Discord Gateway, independently owned by CMAEG.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
@@ -4728,7 +4777,7 @@
         "type": "string"
       },
       "SourceId": {
-        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
         "type": "string"
       },
       "SourceKind": {
@@ -4750,6 +4799,24 @@
             },
             "required": [
               "platform",
+              "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bot_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "bot_id",
               "type"
             ],
@@ -4818,6 +4885,35 @@
             },
             "required": [
               "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Native Discord Gateway. New writes require the native Discord write gate.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "intents": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "discord"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "intents",
               "admission",
               "type"
             ],

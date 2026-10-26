@@ -39,6 +39,8 @@ pub struct WriteFlags {
     pub dynamic_sources: bool,
     /// Admits Discord/WhatsApp raw verification without enabling dynamic topology.
     pub relay_raw_verification: bool,
+    /// Admits native Discord sources and credential revisions after reader rollout.
+    pub native_discord: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -104,6 +106,26 @@ pub(crate) fn check(
             ));
         }
     }
+    let discord = |d: &ChannelDefinition| {
+        (
+            d.sources
+                .iter()
+                .filter(|s| matches!(s, Source::Discord { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            d.secrets.discord_bot_token.clone(),
+        )
+    };
+    let next_discord = discord(next);
+    if (!next_discord.0.is_empty() || next_discord.1.is_some())
+        && !flags.native_discord
+        && !current.is_some_and(|old| discord(old) == next_discord)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_discord_writes_disabled",
+        ));
+    }
     let extensions = Extensions::of(next);
     if extensions.legacy_compatible() {
         return Ok(());
@@ -146,7 +168,14 @@ pub(crate) fn check(
 }
 
 fn dynamic_sources(definition: &ChannelDefinition) -> bool {
-    definition.validate_legacy_sources_and_partition().is_err()
+    let mut legacy = definition.clone();
+    legacy
+        .sources
+        .retain(|s| !matches!(s, Source::Discord { .. }));
+    if legacy.sources.is_empty() && !definition.sources.is_empty() {
+        return definition.partition.custom_key.is_some();
+    }
+    legacy.validate_legacy_sources_and_partition().is_err()
         || definition.partition.custom_key.is_some()
 }
 fn without_relay_verification(sources: &[Source]) -> Vec<Source> {
@@ -232,6 +261,7 @@ struct SourceExtension<'a> {
     partition: &'a PartitionRule,
     channel_key: Option<&'a Secret>,
     telegram_bot_token: Option<&'a Secret>,
+    discord_bot_token: Option<&'a Secret>,
     telegram_webhook_secret: Option<&'a Secret>,
     hmac_secrets: &'a [(String, Secret)],
 }
@@ -244,6 +274,7 @@ impl<'a> SourceExtension<'a> {
             partition: &definition.partition,
             channel_key: secrets.channel_key.as_ref(),
             telegram_bot_token: secrets.telegram_bot_token.as_ref(),
+            discord_bot_token: secrets.discord_bot_token.as_ref(),
             telegram_webhook_secret: secrets.telegram_webhook_secret.as_ref(),
             hmac_secrets: &secrets.hmac_secrets,
         }

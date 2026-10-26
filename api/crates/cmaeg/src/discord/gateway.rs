@@ -65,9 +65,12 @@ impl GatewayClient {
                     state.resume_url.as_str()
                 }),
         )?;
-        timeout(IO_TIMEOUT, journal.authorize_connection(resume.as_ref()))
-            .await
-            .map_err(|_| GatewayError::Unavailable)??;
+        timeout(
+            Duration::from_secs(12),
+            journal.authorize_connection(resume.as_ref()),
+        )
+        .await
+        .map_err(|_| GatewayError::Unavailable)??;
         let socket = timeout(
             IO_TIMEOUT,
             connect_async_with_config(url.as_str(), Some(socket_config()), true),

@@ -41,9 +41,12 @@ impl PartitionRule {
         let has_custom = sources
             .iter()
             .any(|source| matches!(source, Source::Custom { .. }));
-        let has_relay = sources
-            .iter()
-            .any(|source| matches!(source, Source::NyxidRelay { .. } | Source::Telegram { .. }));
+        let has_relay = sources.iter().any(|source| {
+            matches!(
+                source,
+                Source::NyxidRelay { .. } | Source::Telegram { .. } | Source::Discord { .. }
+            )
+        });
         if has_custom
             && !matches!(
                 self.key,
@@ -105,7 +108,7 @@ impl PartitionRule {
                 Source::Custom { .. } if !is_custom_key(self.key_for(&SourceKind::Custom)) => {
                     return Err(ValidationError::new("/partition/key", CUSTOM_KEYS));
                 }
-                Source::Telegram { .. } | Source::NyxidRelay { .. }
+                Source::Telegram { .. } | Source::Discord { .. } | Source::NyxidRelay { .. }
                     if self.key == PartitionKey::PerEvent =>
                 {
                     return Err(ValidationError::new(

@@ -53,6 +53,7 @@ pub(crate) async fn serve(
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
+    state.native_discord_writes_enabled = config.native_discord_writes_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(

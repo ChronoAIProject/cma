@@ -147,6 +147,7 @@ pub struct Config {
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
+    pub native_discord_writes_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
@@ -249,6 +250,9 @@ impl Config {
             )?,
             dynamic_sources_writes_enabled: routing::write_flag(
                 "CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED",
+            )?,
+            native_discord_writes_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_WRITES_ENABLED",
             )?,
             relay_raw_verification_writes_enabled: routing::write_flag(
                 "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
