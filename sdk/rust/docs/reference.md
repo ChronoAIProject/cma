@@ -305,6 +305,8 @@ The optional token on read/comment calls goes only in
 returned metadata never includes it. Keep share tokens out of logs and URL
 queries. Link access alone never exposes a user's registry inventory.
 
+## Gateway native cards and relay authoring
+
 ### Lark and Feishu native cards
 
 Discover the event context before using interactive blocks. When the operator
@@ -317,6 +319,8 @@ retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
+### Approved WhatsApp templates
+
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
 before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
@@ -328,6 +332,7 @@ or initiated sends. Templates must already be approved in the WhatsApp account;
 see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
 ordinary message behavior. An unknown receipt must not be retried automatically.
 
+### Relay authoring capabilities
 
 `get_channel_capabilities` also returns optional `relay_authoring`: relay platform verification
 modes and their `writes_enabled` status, plus independent raw-verification,

@@ -2864,7 +2864,7 @@ transport failure or 429 is `unknown` and is never automatically retried: the
 platform may have accepted the message. Ordinary messages that omit the field
 retain their existing serialized form and behavior.
 
-### Relay authoring discovery and setup
+## Relay authoring discovery and setup
 
 Authenticated `GET /v1/channel-capabilities` now includes optional
 `relay_authoring`. The existing `platforms` array still describes **native

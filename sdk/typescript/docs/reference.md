@@ -587,6 +587,8 @@ never appended to a URL. The caller generates a random 256-bit token for
 metadata without the token. Revocation is effective on subsequent source reads,
 including downloads that were in progress when authority was revoked.
 
+## Gateway native cards and relay authoring
+
 ### Lark and Feishu native cards
 
 Discover the event context before using interactive blocks. When the operator
@@ -599,6 +601,8 @@ retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
+### Approved WhatsApp templates
+
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
 before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
@@ -609,6 +613,8 @@ authorized recipient, cannot be edited, and do not enable interactive callbacks
 or initiated sends. Templates must already be approved in the WhatsApp account;
 see the gateway protocol for exact limits. Omit the field (Rust: `None`) to retain
 ordinary message behavior. An unknown receipt must not be retried automatically.
+
+### Relay authoring capabilities
 
 `getChannelCapabilities` also returns optional `relay_authoring`: relay platform verification
 modes and their `writes_enabled` status, plus independent raw-verification,
