@@ -5,8 +5,8 @@ This is a disabled execution foundation, following
 preparation builder, bounded scheduler, durable delivery receipts and
 replay/projection executor are implemented. HTTP ingress can use the durable
 admission adapter when explicitly composed with a channel-record selection.
-Production composition and durable tool-reply suppression remain required before
-activation. No production fan-out or provider capability is enabled by this
+Production composition remains required before activation. Durable tool-reply
+suppression is integrated. No production fan-out or provider capability is enabled by this
 change. Existing ingress and default launch behavior are unchanged.
 
 ## Verified HTTP ingress admission
@@ -285,3 +285,24 @@ leaves the durable lease and effect journal authoritative. A later scheduler
 invocation continues from the retained cursor. These bounds limit worker and
 provider use; they are not a latency promise or an exactly-once external-delivery
 claim. This component alone does not enable production ingress.
+
+The executor consults durable tool-reply status before public reply decisions
+and every terminal frame. A confirmed tool receipt suppresses automatic output
+after restart even without the process tracker. Pending tool work retains the
+accepted response for retry; unknown tool delivery retains it for reconciliation.
+The delivery guard atomically arbitrates tool/automatic sends and closes before
+terminal acknowledgement, including terminal frames with no public effect. A
+lookup alone does not establish this exclusion.
+
+Routed tool replies are not fully equivalent to the live tool lane. The current
+direct tool API supplies no stable per-invocation identity, so its durable
+operation identity is the original target plus canonical outbound-message hash.
+Two intentionally separate calls with identical content under that same target
+are therefore treated as the same operation, and an already confirmed reply is
+returned without another send. This is an explicit compatibility tradeoff of the
+opt-in lane; existing live channels keep their prior behavior. Before broad
+activation, add an optional stable operation/tool-call identity that remains
+unchanged across retries, and test both identical-content independent calls and
+same-operation retries. A new random identity on each retry would defeat durable
+deduplication. No full routed delivery-equivalence claim or production activation
+is made by this slice.

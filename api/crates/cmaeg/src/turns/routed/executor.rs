@@ -3,7 +3,7 @@ use super::{
     replay_projection::ReplayProjection,
     scheduler::{Disposition, TargetExecutor, WorkItem},
     DispatchOutcome, ExecutionError, FrameDelivery, FrozenTurn, HttpExecutionPort, Journal, Lease,
-    ReattachError, RoutedDelivery,
+    ReattachError, RoutedDelivery, ToolReplyStatus,
 };
 use crate::{turns::tracker::TurnTracker, DeliveryConfig};
 use futures_util::future::BoxFuture;
@@ -155,9 +155,25 @@ impl RoutedTargetExecutor {
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {
-                    let tool_replied = self
-                        .tracker
-                        .has_tool_reply(body.event_context.event_ref.as_str(), (journal.clock)());
+                    let durable_reply = if projection.needs_tool_receipt(&frame, body) {
+                        match self
+                            .delivery
+                            .tool_reply_status(&work.identity, &work.target_id, lease, body)
+                            .await?
+                        {
+                            ToolReplyStatus::None => false,
+                            ToolReplyStatus::Confirmed => true,
+                            ToolReplyStatus::Pending => return Ok(Disposition::Retry(RETRY)),
+                            ToolReplyStatus::Unknown => return Ok(Disposition::Settled),
+                        }
+                    } else {
+                        false
+                    };
+                    let tool_replied = durable_reply
+                        || self.tracker.has_tool_reply(
+                            body.event_context.event_ref.as_str(),
+                            (journal.clock)(),
+                        );
                     let effect =
                         projection.project(&frame, body, tool_replied, &self.failure_text)?;
                     journal.save_projection(lease, &projection).await?;

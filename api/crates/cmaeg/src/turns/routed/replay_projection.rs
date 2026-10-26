@@ -1,7 +1,7 @@
 //! Persisted live-output projection. A pending effect is replayed exactly once.
 use super::{storage, ExecutionError, FrozenTurn, Lease, Phase, ReplayEffect};
 use crate::{
-    providers::{RecoveryEvent, ResponsesEvent},
+    providers::{OutputItem, RecoveryEvent, ResponsesEvent},
     turns::{outcomes::TurnOutcome, projection::Projection},
 };
 use cmaeg_core::message::OutboundMessage;
@@ -55,6 +55,25 @@ impl ReplayProjection {
         {
             return Err(ExecutionError::Corrupt);
         }
+        if let Some(last) = &self.last {
+            if let Some(checkpoint) = &lease.state.delivery {
+                if checkpoint.cursor == last.sequence
+                    && (checkpoint.response_id != self.response_id
+                        || checkpoint.frame_hash != last.frame_hash
+                        || checkpoint.effect_hash != storage::hash(&storage::bytes(&last.effect)?)
+                        || checkpoint.terminal != last.terminal)
+                {
+                    return Err(ExecutionError::Corrupt);
+                }
+            }
+            if Some(last.sequence) == *durable_cursor
+                && !lease.state.delivery.as_ref().is_some_and(|checkpoint| {
+                    checkpoint.cursor == last.sequence && checkpoint.status.settled()
+                })
+            {
+                return Err(ExecutionError::Corrupt);
+            }
+        }
         match (&self.last, durable_cursor) {
             (None, None) => Ok(()),
             (Some(last), cursor)
@@ -97,6 +116,19 @@ impl ReplayProjection {
             return Err(ExecutionError::Corrupt);
         }
         Ok(None)
+    }
+    pub fn needs_tool_receipt(&self, frame: &RecoveryEvent, body: &FrozenTurn) -> bool {
+        match &frame.event {
+            ResponsesEvent::Completed { .. }
+            | ResponsesEvent::Failed { .. }
+            | ResponsesEvent::Incomplete { .. } => true,
+            ResponsesEvent::OutputTextDone { .. }
+            | ResponsesEvent::OutputItemDone {
+                item: OutputItem::Message { .. },
+                ..
+            } => body.delivery.auto_final && !self.tool_replied,
+            _ => false,
+        }
     }
     /// Call only for a new contiguous frame; persist before delivering/acking it.
     pub fn project(

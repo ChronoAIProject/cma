@@ -202,6 +202,14 @@ async fn encrypted_chunk_tampering_and_wrong_native_or_cursor_are_refused() {
         setup.journal().load_projection(&lease).await,
         Err(ExecutionError::Corrupt)
     ));
+    projection.last.as_mut().unwrap().frame_hash = "0".repeat(64);
+    assert!(matches!(
+        setup
+            .journal()
+            .save_projection(&mut lease, &projection)
+            .await,
+        Err(ExecutionError::Corrupt)
+    ));
     projection.native_agent_id = Some(String::new());
     assert!(matches!(
         setup
@@ -253,4 +261,46 @@ async fn projection_dedupes_committed_output_and_never_leaks_tools_reasoning_or_
             .unwrap(),
         ReplayEffect::NoEffect
     ));
+}
+
+#[tokio::test]
+async fn multichunk_snapshots_keep_complete_text_and_fence_an_expired_writer() {
+    use std::sync::atomic::Ordering;
+    let setup = Setup::new(supported()).await;
+    let mut lease = accepted(&setup).await;
+    let mut projection = ReplayProjection::new("resp_1".into());
+    let chunk = "界".repeat(20_000);
+    apply(&setup, &mut lease, &mut projection, &delta(0, &chunk)).await;
+    let mut stale = Lease {
+        state: lease.state.clone(),
+    };
+    setup.server.memory.clock.fetch_add(31, Ordering::SeqCst);
+    let mut lease = accepted(&setup).await;
+    let mut restored = setup
+        .journal()
+        .load_projection(&lease)
+        .await
+        .unwrap()
+        .unwrap();
+    apply(&setup, &mut lease, &mut restored, &delta(1, &chunk)).await;
+    assert_eq!(
+        setup
+            .journal()
+            .save_projection(&mut stale, &projection)
+            .await,
+        Err(ExecutionError::LostLease)
+    );
+    let mut latest = setup
+        .journal()
+        .load_projection(&lease)
+        .await
+        .unwrap()
+        .unwrap();
+    let body = setup.journal().body(&lease).await.unwrap();
+    let effect = latest
+        .project(&recovery_frame("resp_1", 2, true), &body, false, "failed")
+        .unwrap();
+    assert!(
+        matches!(effect, ReplayEffect::Reply(ref message) if message.text.as_deref() == Some(chunk.repeat(2).as_str()))
+    );
 }
