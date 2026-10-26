@@ -3260,7 +3260,16 @@ re-executed as new messages.
 
 `discord::InboxReader::load` restores the exact immutable inbox manifest/chunks,
 checks their hash, native source custody and retention, and yields either a
-`LaunchRequest` or an explicit admission refusal. It normalizes real native
+`VerifiedInboxLaunch` or an explicit admission refusal. The verified result contains
+the `LaunchRequest`, exact authenticated stored payload bytes (serialized dispatch
+plus public channel snapshot, bounded to 2 MiB; not original WebSocket wire octets),
+and the immutable first durable receipt time. Routing admission must use those
+same stored bytes on every retry. Event authority expires thirty minutes after
+that receipt, capped by retention, and cannot be renewed by reloading the inbox.
+Loads after that expiry are refused while retained records remain available for
+inspection. Older, unactivated native inbox records without the receipt timestamp
+are explicitly refused; the reader never substitutes its current time.
+It normalizes real native
 MESSAGE_CREATE facts rather than constructing a relay callback: bots/webhooks,
 system messages, edits, malformed identities and unsupported content are refused.
 Guild membership comes from the native guild ID; mention and exact reply evidence

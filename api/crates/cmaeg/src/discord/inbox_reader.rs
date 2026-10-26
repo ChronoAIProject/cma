@@ -21,8 +21,15 @@ use serde::Deserialize;
 use std::{sync::Arc, time::Instant};
 
 pub enum InboxLaunch {
-    Launch(Box<LaunchRequest>),
+    Launch(Box<VerifiedInboxLaunch>),
     Refused(Refusal),
+}
+/// Verified immutable intake for durable routed admission. These bytes are the
+/// stored dispatch + public channel snapshot, not original WebSocket wire octets.
+pub struct VerifiedInboxLaunch {
+    pub request: LaunchRequest,
+    pub source_bytes: Vec<u8>,
+    pub received_at: i64,
 }
 pub struct InboxReader {
     store: Store,
@@ -51,11 +58,20 @@ impl InboxReader {
             .await?
             .ok_or(GatewayError::Unavailable)?;
         let authority = Authority::from_definition(&current.definition)?;
+        let expires_at = inbox
+            .received_at
+            .checked_add(1800)
+            .ok_or(GatewayError::Protocol)?
+            .min(inbox.retained_until);
         if version != 1
             || inbox.kind != "discord_inbox_v1"
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.source_revision != authority.revision
+            || inbox.received_at < 0
+            || inbox.received_at > now
+            || inbox.received_at >= inbox.retained_until
+            || expires_at <= now
             || inbox.retained_until <= now
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
@@ -142,7 +158,7 @@ impl InboxReader {
                 event_id: activity.event_id.clone(),
                 partition_key,
                 conversation_id: conversation_id.clone(),
-                expires_at: (now + 1800).min(inbox.retained_until),
+                expires_at,
                 reply: ReplyAddress::Discord {
                     bot_id: inbox.bot_id,
                     channel_id: activity.conversation.id.clone(),
@@ -154,7 +170,7 @@ impl InboxReader {
             &self.store.keys,
         )
         .map_err(|_| GatewayError::Protocol)?;
-        Ok(InboxLaunch::Launch(Box::new(LaunchRequest {
+        let request = LaunchRequest {
             idempotency_key: IdempotencyKey::from_event(&activity.event_id),
             channel: Arc::new(ResolvedChannel {
                 id: current.id.clone(),
@@ -172,6 +188,11 @@ impl InboxReader {
             trace: tracing::Span::current(),
             timing: None,
             consumer: None,
+        };
+        Ok(InboxLaunch::Launch(Box::new(VerifiedInboxLaunch {
+            request,
+            source_bytes: bytes,
+            received_at: inbox.received_at,
         })))
     }
 }

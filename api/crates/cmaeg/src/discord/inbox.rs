@@ -70,6 +70,7 @@ impl DurableJournal {
             source_revision: authority.revision.clone(),
             payload_hash,
             parts,
+            received_at: (self.store.clock)() / 1000,
             retained_until: expiry,
         };
         match self
@@ -96,6 +97,9 @@ impl DurableJournal {
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.message_id != message
+            || inbox.received_at < 0
+            || inbox.received_at >= inbox.retained_until
+            || inbox.received_at > (self.store.clock)() / 1000
             || inbox.retained_until <= (self.store.clock)() / 1000
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
