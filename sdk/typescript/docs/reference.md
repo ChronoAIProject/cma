@@ -651,7 +651,6 @@ to resend. See `docs/CMAEG_Protocol.md` for durable binding and rollout limits.
 
 The existing public option-label bound of 64 UTF-8 bytes also applies.
 
-
 ### Owner-initiated messages
 
 `prepareOutboundMessage(channelId, { source_id, route_id, message },
