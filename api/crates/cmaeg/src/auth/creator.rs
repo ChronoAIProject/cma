@@ -109,8 +109,10 @@ where
                 .authenticate(&parts.headers)
                 .await
                 .map_err(service_error)?;
+            let outbound = parts.uri.path().split('/').nth(4) == Some("outbound-messages");
             let permission = match parts.method {
                 axum::http::Method::GET | axum::http::Method::HEAD => "cma-eg:channels:read",
+                _ if outbound => "cma-eg:channels:update",
                 axum::http::Method::DELETE => "cma-eg:channels:delete",
                 axum::http::Method::POST if parts.uri.path().ends_with("/test") => {
                     "cma-eg:channels:test"

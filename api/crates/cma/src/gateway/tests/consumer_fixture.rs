@@ -77,6 +77,7 @@ impl ConsumerGateway {
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
+        outbound_messages_writes_enabled: false,
             listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(),
             providers: cmaeg::providers::ProviderRegistry::parse(&json!([{
                 "slug":"cma_codex","base_url":server.base,"kind":"responses_http","max_inflight":8,
@@ -107,6 +108,8 @@ impl ConsumerGateway {
         let tools = cmaeg::tools::ToolsState {
             lark_cards_enabled: false,
             whatsapp_templates_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
             native_media_enabled: false,
             relay_text_edits_enabled: false,
             resolver: state.resolver.clone(),

@@ -30,9 +30,30 @@ pub struct Card {
     /// names a consumer is sealed under kind `ic`, never `in`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumer: Option<ConsumerId>,
+    /// Absent for default and historical cards. New named cards keep the exact
+    /// serving identity and original conversation through retries and restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_owner: Option<super::owner::CallbackOwner>,
     /// Absent on all legacy/Telegram records. New issuance is rollout-gated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lark: Option<LarkIdentity>,
+    /// New WhatsApp records retain the exact control kind. Legacy bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<WhatsappKind>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhatsappKind {
+    Button,
+    List,
+}
+impl WhatsappKind {
+    pub(super) fn prefix(self) -> &'static str {
+        match self {
+            Self::Button => "cw1b:",
+            Self::List => "cw1l:",
+        }
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LarkIdentity {
@@ -76,12 +97,12 @@ pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error>
     }
     let mut parts = value.split(':');
     let kind = parts.next();
-    if !matches!(kind, Some("ce1" | "cl1")) {
+    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l")) {
         return Err(Error::Denied);
     }
     let id =
         uuid::Uuid::parse_str(parts.next().ok_or(Error::Denied)?).map_err(|_| Error::Denied)?;
-    let revision = if kind == Some("cl1") {
+    let revision = if kind != Some("ce1") {
         Some(
             parts
                 .next()

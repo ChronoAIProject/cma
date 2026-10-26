@@ -23,6 +23,8 @@ use tracing::Instrument;
 pub struct ToolsState {
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
+    pub whatsapp_interactions_enabled: bool,
+    pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.

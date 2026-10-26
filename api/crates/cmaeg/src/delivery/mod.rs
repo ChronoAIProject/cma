@@ -8,6 +8,7 @@ pub mod engine;
 mod event;
 pub mod gate;
 pub mod intents;
+mod interactive;
 mod pacing;
 pub mod relay_client;
 pub mod render;

@@ -62,6 +62,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             binding
                 .advance_revision(layer2_core::now_rfc3339())
                 .unwrap();
+            management::create_backing_resources(&store, &binding).await;
             store.save_binding(Some(revision), binding).await.unwrap();
         }
     }
