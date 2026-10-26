@@ -6,6 +6,7 @@ export interface RelayAuthoringCapabilities {
   readonly dynamic_sources_writes_enabled: boolean;
   readonly relay_raw_verification_writes_enabled: boolean;
   readonly outbound_messages_writes_enabled?: boolean | null;
+  readonly native_media_writes_enabled?: boolean | null;
   readonly multi_consumer_writes_enabled: boolean;
   readonly native_bot_mentions_writes_enabled: boolean;
   readonly thread_contract_writes_enabled: boolean;
