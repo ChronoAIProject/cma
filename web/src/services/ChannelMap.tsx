@@ -69,7 +69,7 @@ export function ChannelMap({
           ) : (
             <p className="channel-map__empty">No producers configured</p>
           )}
-          {canAddProducer && producers.length < 8 ? (
+          {canAddProducer && producers.length < 4 ? (
             <Button
               placement="channel-map__add"
               onClick={() => onSelect({ kind: 'producer', index: producers.length })}

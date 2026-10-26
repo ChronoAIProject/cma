@@ -74,16 +74,13 @@ export function SourceFields({
                 options={[
                   { value: 'verified', label: 'Verify original platform event' },
                   { value: 'trusted', label: 'Trust normalized NyxID messages' },
-                  { value: 'refuse', label: 'Do not admit messages' },
                 ]}
                 onChange={(mode) =>
                   onChange({
                     ...without(value, ['trust_normalized', 'verify_raw_event']),
                     ...(mode === 'verified'
                       ? { verify_raw_event: true }
-                      : mode === 'trusted'
-                        ? { trust_normalized: true }
-                        : {}),
+                      : { trust_normalized: true }),
                   })
                 }
               />
