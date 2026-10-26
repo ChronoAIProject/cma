@@ -66,6 +66,12 @@ impl RoutedIngress {
         self.records.contains(record.as_str())
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.clock = clock;
+        self
+    }
+
     pub fn with_admissions_enabled(mut self, enabled: bool) -> Self {
         self.admission_enabled = enabled;
         self

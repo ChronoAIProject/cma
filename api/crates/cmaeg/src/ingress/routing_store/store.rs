@@ -28,6 +28,12 @@ impl PlanStore {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.clock = clock;
+        self
+    }
+
     /// Check an admitted event before consulting current routing policy. A
     /// duplicate still restores its snapshot after routing/consumers are removed.
     /// Ingress authentication and source admission remain the caller's duty.
