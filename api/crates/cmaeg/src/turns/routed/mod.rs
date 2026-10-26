@@ -52,6 +52,8 @@ mod custom_delivery_tests;
 #[cfg(test)]
 mod custom_http_fixture;
 #[cfg(test)]
+mod custom_http_retry_tests;
+#[cfg(test)]
 mod custom_http_tests;
 #[cfg(test)]
 mod delivery_crash_tests;
