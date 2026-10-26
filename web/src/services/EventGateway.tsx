@@ -17,7 +17,9 @@ import { NodeInspector } from './NodeInspector';
 import { ChannelNodeTests } from './ChannelNodeTests';
 import { ChannelOutboundMessage } from './ChannelOutboundMessage';
 import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
-import { ChannelActivity } from './ChannelActivity';
+import { ChannelActivityView } from './ChannelActivity';
+import { ChannelActivityPreview } from './ChannelActivityPreview';
+import { useChannelActivity } from './useChannelActivity';
 import { GatewayWelcome } from './GatewayWelcome';
 import { GatewayRecordMeta } from './GatewayRecordMeta';
 import { ExistingChannel } from './ExistingChannel';
@@ -291,6 +293,7 @@ function AddressedChannel({
   const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
   const [confirmed, setConfirmed] = useState<Channel>();
   const current = confirmed && confirmed.version >= channel.version ? confirmed : channel;
+  const activity = useChannelActivity(current.channel_id, session.subject, active);
   const nodes = channelNodes(current);
   const editable = can(session, 'event-gateway', 'channels:update');
   const newProducer =
@@ -305,6 +308,7 @@ function AddressedChannel({
       <ChannelMap
         channel={current}
         selection={selected}
+        activityPreview={<ChannelActivityPreview feed={activity} />}
         onActivity={() => {
           setSelection({ kind: 'channel' });
           setInspectorSection('activity');
@@ -347,15 +351,7 @@ function AddressedChannel({
             </div>
           ) : undefined
         }
-        activity={
-          selected.kind === 'channel' ? (
-            <ChannelActivity
-              channelId={current.channel_id}
-              owner={session.subject}
-              active={active && inspecting}
-            />
-          ) : undefined
-        }
+        activity={selected.kind === 'channel' ? <ChannelActivityView feed={activity} /> : undefined}
         danger={
           selected.kind === 'channel' && can(session, 'event-gateway', 'channels:delete') ? (
             <DeleteChannel channel={current} denied={denied} onDone={onDeleted} />
