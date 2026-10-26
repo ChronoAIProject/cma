@@ -13,6 +13,7 @@ use crate::{
 };
 
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     config: Config,
     complete_replies: bool,
@@ -21,6 +22,7 @@ pub(crate) async fn serve(
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
+    consumer_interactions: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -83,6 +85,7 @@ pub(crate) async fn serve(
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
+        .with_consumer_interactions(consumer_interactions)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -144,6 +147,7 @@ pub(crate) async fn serve(
     let tools_state = tools::ToolsState {
         whatsapp_templates_enabled: whatsapp_templates,
         whatsapp_interactions_enabled: whatsapp_interactions,
+        consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
         lark_cards_enabled: lark_cards,

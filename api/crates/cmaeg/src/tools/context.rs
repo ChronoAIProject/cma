@@ -289,18 +289,26 @@ pub(super) fn project(
             }
         }
     };
+    let consumer_controls = event.consumer.is_none()
+        || (state.consumer_interactions_enabled
+            && activity_verified
+            && crate::interactions::owner::eligible(channel, event, &activity));
     crate::interactions::lark::project(
         &mut capabilities,
         &activity,
         event,
         activity_verified,
-        state.lark_cards_enabled,
+        state.lark_cards_enabled && consumer_controls,
     );
     if state.whatsapp_interactions_enabled
+        && consumer_controls
         && activity_verified
         && crate::interactions::whatsapp::eligible(channel, event, &activity)
     {
         capabilities.buttons = "native_interactive".into();
+    }
+    if !consumer_controls && !matches!(activity.source, SourceKind::Custom) {
+        capabilities.buttons = "numbered_text".into();
     }
     // A hand-off's actor is the publishing consumer, so no human click could
     // ever match a card prepared from it; its controls are refused, and the

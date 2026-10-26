@@ -135,21 +135,17 @@ pub async fn seed(
     activity: &Activity,
     event: &EventRefPayload,
 ) {
+    let consumer = channel.consumer(event.consumer.as_ref()).unwrap();
     let mut stream = providers
         .start_turn(
-            &channel.definition.provider.slug,
+            &consumer.provider.slug,
             TurnRequest {
                 timing: None,
                 conversation_id: event.conversation_id.clone(),
                 input: vec![],
                 metadata: Default::default(),
                 idempotency_key: IdempotencyKey::from_event(&activity.event_id),
-                agent_key: channel
-                    .definition
-                    .secrets
-                    .provider_credential
-                    .clone()
-                    .unwrap(),
+                agent_key: consumer.credential.unwrap().clone(),
                 event_context: Some(EventContextSnapshot {
                     schema_version: 1,
                     channel_id: channel.id.clone(),

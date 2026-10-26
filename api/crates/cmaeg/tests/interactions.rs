@@ -1,3 +1,5 @@
+#[path = "consumer_interactions/callbacks.rs"]
+mod consumer_callbacks;
 #[path = "tools/consumer_cards.rs"]
 mod consumer_cards;
 #[allow(dead_code)]
@@ -45,7 +47,7 @@ use cmaeg_core::{
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
-/// The admission chat dispatch applies while only default cards exist.
+/// A test caller can additionally restrict consumption to default cards.
 fn default_only(consumer: Option<&cmaeg_core::ids::ConsumerId>) -> bool {
     consumer.is_none()
 }

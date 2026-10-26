@@ -56,6 +56,9 @@ impl Sender {
             }
         };
         let controls = crate::interactions::has_controls(message);
+        if controls && event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
+            return (unsupported(), effects);
+        }
         let mut prepared = if controls {
             if parts.len() != 1 {
                 receipt.delivery = DeliveryOutcome::Rejected {

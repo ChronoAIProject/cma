@@ -35,8 +35,7 @@ pub(crate) fn eligible(
     else {
         return false;
     };
-    event.consumer.is_none()
-        && event.lineage.is_none()
+    event.lineage.is_none()
         && activity.actor.kind != ActorKind::Bot
         && numeric(&activity.actor.id)
         && activity.actor.id == activity.conversation.id
@@ -63,7 +62,6 @@ pub(super) fn valid_record(card: &Card) -> bool {
         return true;
     };
     card.lark.is_none()
-        && card.consumer.is_none()
         && card.thread.is_none()
         && card.revision > 0
         && numeric(&card.actor)
