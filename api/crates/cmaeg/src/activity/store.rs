@@ -114,12 +114,26 @@ impl ActivityStore {
     }
 
     pub async fn received(&self, request: &LaunchRequest) -> Result<(), RecordError> {
-        let owner = &request.channel.definition.owner.subject;
-        let record = request.channel.definition.record_id.as_str();
-        let _guard = self.writes[stripe(record)].lock().await;
         let elapsed =
             time::Duration::try_from(request.received_at.elapsed()).unwrap_or(time::Duration::ZERO);
         let received = time::OffsetDateTime::now_utc() - elapsed;
+        self.received_at(
+            &request.channel.definition.owner.subject,
+            request.channel.definition.record_id.as_str(),
+            &request.activity,
+            received,
+        )
+        .await
+    }
+
+    pub(crate) async fn received_at(
+        &self,
+        owner: &str,
+        record: &str,
+        activity: &cmaeg_core::activity::Activity,
+        received: time::OffsetDateTime,
+    ) -> Result<(), RecordError> {
+        let _guard = self.writes[stripe(record)].lock().await;
         let mut day = received.unix_timestamp().div_euclid(86400);
         if day < today() - RETENTION_DAYS + 1 {
             return Err(malformed());
@@ -137,11 +151,10 @@ impl ActivityStore {
             bucket
                 .items
                 .iter()
-                .any(|row| row.event_id == request.activity.event_id.as_str())
+                .any(|row| row.event_id == activity.event_id.as_str())
         }) {
             day = bucket.day;
         }
-        let activity = &request.activity;
         let mut actor = activity.actor.clone();
         actor.id = bounded(&actor.id, 512);
         actor.display_name = actor.display_name.map(|v| bounded(&v, 256));
@@ -177,7 +190,7 @@ impl ActivityStore {
             contexts.pop_first();
         }
         contexts.insert(
-            (record.into(), request.activity.event_id.to_string()),
+            (record.into(), activity.event_id.to_string()),
             (owner.into(), day),
         );
         Ok(())
