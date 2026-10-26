@@ -34,12 +34,16 @@ pub(super) async fn forward_turn(
         };
         if let Some(sender) = accepted_tx.take() {
             match &event {
-                ResponsesEvent::Created { response_id } => {
+                ResponsesEvent::Created {
+                    response_id,
+                    thread_reply,
+                } => {
                     if response_id.is_empty() || response_id.len() > 512 {
                         break;
                     }
                     let _ = sender.send(Accepted {
                         response_id: response_id.clone(),
+                        thread_reply: *thread_reply,
                         at: Instant::now(),
                     });
                 }
@@ -51,6 +55,7 @@ pub(super) async fn forward_turn(
                         break;
                     };
                     let _ = sender.send(Accepted {
+                        thread_reply: false,
                         response_id,
                         at: Instant::now(),
                     });

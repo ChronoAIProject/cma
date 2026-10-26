@@ -8,6 +8,7 @@ use std::time::Duration;
 async fn tool_receipts_seal_platform_identity_consume_token_once_and_suppress_fallback() {
     let mut app = App::standard(0).await;
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -49,6 +50,7 @@ async fn tool_receipts_seal_platform_identity_consume_token_once_and_suppress_fa
 async fn committed_messages_cancel_ack_and_each_send_but_terminal_does_not_duplicate() {
     let mut app = App::standard(100).await;
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -67,6 +69,7 @@ async fn committed_messages_cancel_ack_and_each_send_but_terminal_does_not_dupli
 async fn ack_does_not_suppress_final_and_deltas_are_not_delivered() {
     let mut app = App::standard(50).await;
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -86,6 +89,7 @@ async fn ack_does_not_suppress_final_and_deltas_are_not_delivered() {
 async fn failure_is_sent_once_and_disabled_ack_stays_disabled() {
     let mut app = App::standard(0).await;
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -114,6 +118,7 @@ async fn heartbeat_is_capped_at_five_and_tool_reply_suppresses_failure() {
     )
     .await;
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -175,4 +180,66 @@ async fn nine_thousand_characters_send_three_ordered_parts_and_degrade_buttons()
         "1) Yes\n2) No\nReply with a number."
     );
     app.drain().await;
+}
+
+#[tokio::test]
+async fn thread_reply_is_explicit_on_stream_and_tools_and_bound_to_original_source() {
+    let mut app = App::threaded_lark().await;
+    app.outcome(TurnOutcome::Accepted {
+        response_id: "thread_response".into(),
+        thread_reply: true,
+    })
+    .await;
+    app.outcome(TurnOutcome::Completed {
+        final_text: Some("thread answer".into()),
+    })
+    .await;
+    app.fake.wait(1).await;
+    {
+        let requests = app.fake.requests.lock().unwrap();
+        assert_eq!(requests[0].body["thread_reply"], true);
+        assert_eq!(requests[0].body["message_id"], "message-1");
+    }
+    app.reply(json!({"text":"delayed follow-up", "thread_reply":true}))
+        .await;
+    app.drain().await;
+    assert!(app
+        .fake
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.body["thread_reply"] == true && r.body["message_id"] == "message-1"));
+
+    let mut legacy = App::on("lark", false).await;
+    let refused = legacy
+        .reply(json!({"text":"must not escape", "thread_reply":true}))
+        .await;
+    assert!(matches!(refused.delivery, DeliveryOutcome::Rejected { .. }));
+    assert!(legacy.fake.requests.lock().unwrap().is_empty());
+    legacy.reply(json!({"text":"legacy"})).await;
+    legacy.drain().await;
+    assert!(legacy.fake.requests.lock().unwrap()[0]
+        .body
+        .get("thread_reply")
+        .is_none());
+}
+
+#[tokio::test]
+async fn negotiated_metadata_does_not_change_legacy_provider_output() {
+    let mut app = App::threaded_lark().await;
+    app.outcome(TurnOutcome::Accepted {
+        response_id: "legacy_choice".into(),
+        thread_reply: false,
+    })
+    .await;
+    app.outcome(TurnOutcome::Completed {
+        final_text: Some("legacy reply".into()),
+    })
+    .await;
+    app.drain().await;
+    assert!(app.fake.requests.lock().unwrap()[0]
+        .body
+        .get("thread_reply")
+        .is_none());
 }

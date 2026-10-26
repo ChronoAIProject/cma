@@ -53,6 +53,7 @@ fn event_reference_expires_and_redacts_debug() {
         conversation_id: conversation_id(),
         expires_at: 100,
         reply: ReplyAddress::NyxidRelay {
+            thread_reply: false,
             message_id: "message-1".into(),
             route_id: "route-1".into(),
             platform: Platform::Telegram,
@@ -303,6 +304,7 @@ fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
             conversation_id: conversation_id(),
             expires_at: 100,
             reply: ReplyAddress::NyxidRelay {
+                thread_reply: false,
                 message_id: "message-1".into(),
                 route_id: "route-1".into(),
                 platform,

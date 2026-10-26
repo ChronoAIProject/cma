@@ -160,7 +160,7 @@ fn additional_bindings(definition: &ChannelDefinition) -> Vec<Binding> {
         .collect()
 }
 
-/// The definition without routing and consumer keys, and without a
+/// The definition without native opt-ins, routing and consumer keys, and without a
 /// `custom_key` that no custom source uses.
 fn legacy_shape(mut definition: ChannelDefinition) -> ChannelDefinition {
     for source in &mut definition.sources {
@@ -171,6 +171,7 @@ fn legacy_shape(mut definition: ChannelDefinition) -> ChannelDefinition {
         }
     }
     definition.routing = None;
+    definition.reply.thread_contract = None;
     definition.secrets.consumer_keys.clear();
     if !definition
         .sources

@@ -147,6 +147,7 @@ impl ConnectionService {
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(|_| Error::Unavailable)?;
         let activity = Activity {
+            thread: None,
             schema_version: 1,
             event_id: event_id.clone(),
             actor: Actor {

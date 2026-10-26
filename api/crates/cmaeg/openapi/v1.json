@@ -50,6 +50,16 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "thread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1238,7 +1248,9 @@
           "sender": {
             "$ref": "#/components/schemas/RelaySender"
           },
-          "thread_context": {},
+          "thread_context": {
+            "description": "Additive NyxID hint; raw platform verification remains authoritative."
+          },
           "thread_id": {
             "oneOf": [
               {
@@ -1593,6 +1605,15 @@
           },
           "record_id": {
             "type": "string"
+          },
+          "thread_contract_versions": {
+            "description": "Explicit opt-in support; absent/empty means unsupported.",
+            "items": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
           },
           "version": {
             "format": "int64",
@@ -3009,6 +3030,10 @@
               "string",
               "null"
             ]
+          },
+          "thread_reply": {
+            "description": "Request the verified source thread; never fall back when unavailable.",
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -3707,6 +3732,16 @@
               "$ref": "#/components/schemas/Sink"
             },
             "type": "array"
+          },
+          "thread_contract": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadContract"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4323,6 +4358,97 @@
           "medium",
           "high",
           "very_high"
+        ],
+        "type": "string"
+      },
+      "ThreadAddress": {
+        "enum": [
+          "mention",
+          "reply_to_bot",
+          "not_addressed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "ThreadContract": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_chat_ids": {
+            "description": "Admit ordinary human messages in these chats, preserving sender/chat ACLs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "type": "object"
+      },
+      "ThreadFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/ThreadAddress"
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ThreadKind"
+          },
+          "mentions_others": {
+            "type": "boolean"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "native_thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sender_kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "kind",
+          "chat_id",
+          "message_id",
+          "sender_kind",
+          "address"
+        ],
+        "type": "object"
+      },
+      "ThreadKind": {
+        "enum": [
+          "native"
         ],
         "type": "string"
       },

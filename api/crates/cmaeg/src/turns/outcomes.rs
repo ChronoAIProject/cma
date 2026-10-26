@@ -3,14 +3,33 @@ pub use crate::delivery::intents::DeliveryCommand;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TurnOutcome {
-    Accepted { response_id: String },
-    TextDelta { text: String },
-    MessageCommitted { text: String },
-    ToolStarted { name: String },
-    ToolFinished { name: String, ok: bool },
-    Completed { final_text: Option<String> },
-    Failed { code: String, message: String },
-    Incomplete { reason: String },
+    Accepted {
+        response_id: String,
+        thread_reply: bool,
+    },
+    TextDelta {
+        text: String,
+    },
+    MessageCommitted {
+        text: String,
+    },
+    ToolStarted {
+        name: String,
+    },
+    ToolFinished {
+        name: String,
+        ok: bool,
+    },
+    Completed {
+        final_text: Option<String>,
+    },
+    Failed {
+        code: String,
+        message: String,
+    },
+    Incomplete {
+        reason: String,
+    },
 }
 impl TurnOutcome {
     pub fn kind(&self) -> &'static str {

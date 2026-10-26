@@ -11,19 +11,48 @@ pub type ResponseObject = Value;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResponsesEvent {
-    Created { response_id: String },
+    Created {
+        response_id: String,
+        thread_reply: bool,
+    },
     InProgress,
-    OutputItemAdded { index: usize, item: OutputItem },
-    OutputTextDelta { item_id: String, delta: String },
-    OutputTextDone { item_id: String, text: String },
-    OutputItemDone { index: usize, item: OutputItem },
-    McpCallInProgress { item_id: String },
-    McpCallCompleted { item_id: String },
-    McpCallFailed { item_id: String },
-    Completed { response: ResponseObject },
-    Failed { error: ResponseError },
-    Incomplete { reason: String },
-    Unknown { r#type: String },
+    OutputItemAdded {
+        index: usize,
+        item: OutputItem,
+    },
+    OutputTextDelta {
+        item_id: String,
+        delta: String,
+    },
+    OutputTextDone {
+        item_id: String,
+        text: String,
+    },
+    OutputItemDone {
+        index: usize,
+        item: OutputItem,
+    },
+    McpCallInProgress {
+        item_id: String,
+    },
+    McpCallCompleted {
+        item_id: String,
+    },
+    McpCallFailed {
+        item_id: String,
+    },
+    Completed {
+        response: ResponseObject,
+    },
+    Failed {
+        error: ResponseError,
+    },
+    Incomplete {
+        reason: String,
+    },
+    Unknown {
+        r#type: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +118,15 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(object)?,
+            thread_reply: value
+                .pointer("/response/thread_reply")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        ResponsesEventError::Malformed("invalid native thread reply choice".into())
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false),
         }),
         "response.in_progress" => Ok(ResponsesEvent::InProgress),
         "response.output_item.added" => Ok(ResponsesEvent::OutputItemAdded {
@@ -289,13 +327,31 @@ mod tests {
                 r#"{"type":"response.created","response":{"id":"resp_1"}}"#
             )),
             Ok(ResponsesEvent::Created {
-                response_id: "resp_1".into()
+                response_id: "resp_1".into(),
+                thread_reply: false
             })
         );
         assert_eq!(
             parse_event(&frame(r#"{"type":"response.future"}"#)),
             Ok(ResponsesEvent::Unknown {
                 r#type: "response.future".into()
+            })
+        );
+    }
+
+    #[test]
+    fn native_thread_choice_is_opt_in_on_provider_acceptance() {
+        assert!(parse_event(&frame(
+            r#"{"type":"response.created","response":{"id":"resp_thread","thread_reply":"true"}}"#
+        ))
+        .is_err());
+        assert_eq!(
+            parse_event(&frame(
+                r#"{"type":"response.created","response":{"id":"resp_thread","thread_reply":true}}"#
+            )),
+            Ok(ResponsesEvent::Created {
+                response_id: "resp_thread".into(),
+                thread_reply: true
             })
         );
     }

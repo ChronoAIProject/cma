@@ -5,6 +5,7 @@ use super::{
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
     render::{RelayText, Renderer},
+    telegram::replaces_telegram_cards,
 };
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -12,7 +13,7 @@ use crate::{
     turns::observer::{default_consumer, ActivityObserver, DeliveryStep, Destination},
 };
 use cmaeg_core::{
-    channel::{ChannelDefinition, Platform, Source},
+    channel::Platform,
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{EventRefPayload, MasterKeyRing, MessageRefPayload, ReplyAddress},
@@ -86,6 +87,21 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.thread_reply
+            && !matches!(
+                event.reply,
+                ReplyAddress::NyxidRelay {
+                    thread_reply: true,
+                    ..
+                }
+            )
+        {
+            let mut result = unsupported();
+            result.delivery = DeliveryOutcome::Rejected {
+                reason: "thread_target_unavailable".into(),
+            };
+            return (result, SendEffects::default());
+        }
         if matches!(event.reply, ReplyAddress::Telegram { .. }) {
             return self.native_reply(ctx, event, message).await;
         }
@@ -136,6 +152,10 @@ impl Sender {
                 return (result, SendEffects { first_send_done });
             }
         };
+        let mut address = event.reply.clone();
+        if let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut address {
+            *thread_reply = message.thread_reply;
+        }
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
@@ -179,7 +199,7 @@ impl Sender {
                 break;
             };
             first_send_done = true;
-            let mut outcome = self.relay.send(&event.reply, credential, &part.text).await;
+            let mut outcome = self.relay.send(&address, credential, &part.text).await;
             drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
@@ -195,7 +215,7 @@ impl Sender {
                 outcome = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
                         self.relay
-                            .send(&event.reply, Credential::ChannelKey(key), &part.text)
+                            .send(&address, Credential::ChannelKey(key), &part.text)
                             .await
                     }
                     None => DeliveryOutcome::Rejected {
@@ -279,31 +299,6 @@ pub(super) fn unsupported() -> IntentReceipt {
             blocks: vec![],
         },
         delivery: DeliveryOutcome::Unsupported,
-    }
-}
-
-/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
-/// prepare cards, so the route's own relay must be a Telegram one. The message
-/// reference carries the relay route its card was sent on (`route_id`, copied
-/// from the sealed reply address when the card was bound), so no reply address
-/// is needed. With at most one relay the channel-level check is kept verbatim;
-/// the two agree on every legacy definition, whose only relay is the route's.
-fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
-    let relays = definition
-        .sources
-        .iter()
-        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
-        .count();
-    if relays > 1 {
-        matches!(
-            definition.relay_source_for_route(route_id),
-            Some(Source::NyxidRelay {
-                platform: Platform::Telegram,
-                ..
-            })
-        )
-    } else {
-        definition.relay_platform() == Some(Platform::Telegram)
     }
 }
 

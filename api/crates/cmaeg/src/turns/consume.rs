@@ -33,7 +33,7 @@ pub(super) async fn consume(
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id}).await?;
+                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}).await?;
             }
             event = stream.events.recv() => {
                 let Some(event) = event else {return Err("stream_lost");};
