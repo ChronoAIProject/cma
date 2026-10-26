@@ -16,7 +16,9 @@ mod types;
 pub use candidate::Candidate;
 pub use recovery::{RecoveryIssue, RecoveryPage};
 pub use store::PlanStore;
-pub use types::{AdmissionError, AdmissionState, AdmittedPlan, EventIdentity, StoredTarget};
+pub use types::{
+    AdmissionError, AdmissionState, AdmittedPlan, EventIdentity, StoredTarget, MAX_SOURCE_BYTES,
+};
 
 #[cfg(test)]
 mod security_tests;

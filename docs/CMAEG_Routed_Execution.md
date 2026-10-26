@@ -1,12 +1,34 @@
 # Durable routed execution journal
 
 This is a disabled execution foundation, following
-`docs/CMAEG_Routed_Admission.md`. It does not connect ordinary ingress to routing,
-install a scheduler, configure a provider capability, or activate production
-fan-out. The concrete HTTP execution adapter, production preparation builder,
-bounded scheduler and durable delivery receipts are implemented. The
-replay/projection executor and production composition remain required before
-activation. Existing ingress and default launch behavior are unchanged.
+`docs/CMAEG_Routed_Admission.md`. The concrete HTTP execution adapter, production
+preparation builder, bounded scheduler, durable delivery receipts and
+replay/projection executor are implemented. HTTP ingress can use the durable
+admission adapter when explicitly composed with a channel-record selection.
+Production composition and durable tool-reply suppression remain required before
+activation. No production fan-out or provider capability is enabled by this
+change. Existing ingress and default launch behavior are unchanged.
+
+## Verified HTTP ingress admission
+
+`CMAEG_ROUTED_CHANNEL_RECORDS` accepts at most 64 explicit record IDs, with no
+wildcard, and defaults to empty. Service composition does not yet install the
+adapter, so the setting alone does not activate execution. Unselected channels
+retain their existing launcher and make no admission-store read. For selected
+ordinary events, native Telegram, relay and custom-event handlers capture the
+exact bytes only after authentication. The 256 KiB limit is checked without
+copying an oversized body; oversized selected requests receive 413. Interactive
+callbacks continue through their existing exact-consumer path.
+
+The adapter checks for an already committed identity before evaluating mutable
+routing. Exact retries restore its original targets; changed bytes under the same
+identity conflict. New plans require explicit provider replay support before any
+write. Binary custom-event attributes authenticated only by a body HMAC do not
+gain routing authority from unsigned headers. Missing bytes, unavailable storage
+and incomplete commits cannot fall back to the live launcher. A 202 admission is
+returned only after the immutable plan commits, with its actual primary
+conversation ID. Capacity remains bounded through that commit. A full local
+scheduler hint queue does not undo the durable acceptance.
 
 `Dispatcher::dispatch` accepts an original event identity and one target ID. It
 loads the committed admission and finds that ID in its immutable target list.
