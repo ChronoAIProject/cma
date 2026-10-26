@@ -6,8 +6,7 @@ use cmaeg_core::{
 };
 use serde_json::json;
 
-#[path = "fixture.rs"]
-mod fixture;
+use super::fixture;
 use fixture::*;
 
 #[test]
