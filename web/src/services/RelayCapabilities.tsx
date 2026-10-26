@@ -3,6 +3,9 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly native_discord_writes_enabled?: boolean | null;
+  readonly native_discord_auto_activation_enabled?: boolean | null;
+  readonly native_discord_capacity?: number | null;
   readonly dynamic_sources_writes_enabled: boolean;
   readonly relay_raw_verification_writes_enabled: boolean;
   readonly outbound_messages_writes_enabled?: boolean | null;
@@ -110,4 +113,22 @@ export function RelayDiscoveryNotice() {
       ) : null}
     </p>
   );
+}
+
+/** Native authoring and automatic intake are distinct, explicitly advertised gates. */
+export function nativeDiscordUnavailable(
+  discovery: RelayDiscovery,
+  automatic = true,
+): string | undefined {
+  if (discovery.authoring?.native_discord_writes_enabled !== true)
+    return discovery.status === 'loading'
+      ? 'Checking direct Discord support…'
+      : 'This gateway has not enabled direct Discord authoring.';
+  if (
+    automatic &&
+    (discovery.authoring.native_discord_auto_activation_enabled !== true ||
+      discovery.authoring.multi_consumer_writes_enabled !== true)
+  )
+    return 'This gateway has not enabled automatic activation for new direct Discord channels.';
+  return undefined;
 }

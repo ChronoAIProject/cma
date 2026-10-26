@@ -38,6 +38,18 @@ export function defaultProfile(owner = ''): Fields {
   };
 }
 export function defaultSource(type: string): Fields {
+  if (type === 'discord')
+    return {
+      type,
+      bot_id: '',
+      intents: 37377,
+      admission: {
+        type: 'scoped',
+        senders: { type: 'open' },
+        chats: { type: 'open' },
+        groups: 'mention',
+      },
+    };
   if (type === 'telegram') return { type, bot_id: '', admission: { type: 'all' } };
   if (type === 'nyxid_relay')
     return {
@@ -84,7 +96,13 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
 }
 export function credentialsPatch(values: Fields, create: boolean): Fields | undefined {
   const patch: Fields = {};
-  for (const key of ['agent_key', 'channel_key', 'telegram_bot_token', 'telegram_webhook_secret']) {
+  for (const key of [
+    'agent_key',
+    'channel_key',
+    'telegram_bot_token',
+    'telegram_webhook_secret',
+    'discord_bot_token',
+  ]) {
     const value = text(values[key]);
     if (value !== '') patch[key] = value;
   }
@@ -106,8 +124,15 @@ export function channelRequest(
     throw new Error('Choose a ready CMA-managed Telegram connection.');
   const patch = credentialsPatch(
     !channel && draft.connection_ref
-      ? without(credentials, ['channel_key', 'telegram_bot_token', 'telegram_webhook_secret'])
-      : credentials,
+      ? without(credentials, [
+          'channel_key',
+          'telegram_bot_token',
+          'telegram_webhook_secret',
+          'discord_bot_token',
+        ])
+      : records(draft.sources).some((source) => source.type === 'discord')
+        ? credentials
+        : without(credentials, ['discord_bot_token']),
     !channel,
   );
   return {

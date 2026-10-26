@@ -1218,7 +1218,13 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "native_discord_activation": {
+        "state": "selected",
+        "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+        "capacity": 64,
+        "selected_records": 1
+      }
     },
     {
       "channel_id": "fixture",
@@ -1498,7 +1504,13 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "native_discord_activation": {
+        "state": "selected",
+        "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+        "capacity": 64,
+        "selected_records": 1
+      }
     }
   ],
   "ChannelPage": [
@@ -1785,7 +1797,13 @@
             "slug": "fixture"
           },
           "record_id": "fixture",
-          "version": 1
+          "version": 1,
+          "native_discord_activation": {
+            "state": "selected",
+            "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+            "capacity": 64,
+            "selected_records": 1
+          }
         },
         {
           "channel_id": "fixture",
@@ -2065,7 +2083,13 @@
             "slug": "fixture"
           },
           "record_id": "fixture",
-          "version": 1
+          "version": 1,
+          "native_discord_activation": {
+            "state": "selected",
+            "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+            "capacity": 64,
+            "selected_records": 1
+          }
         }
       ],
       "next_cursor": "fixture"
@@ -2356,7 +2380,13 @@
       "version": 1,
       "thread_contract_versions": [
         1
-      ]
+      ],
+      "native_discord_activation": {
+        "state": "selected",
+        "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+        "capacity": 64,
+        "selected_records": 1
+      }
     },
     {
       "channel_id": "fixture",
@@ -2639,7 +2669,13 @@
       "version": 1,
       "thread_contract_versions": [
         1
-      ]
+      ],
+      "native_discord_activation": {
+        "state": "selected",
+        "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+        "capacity": 64,
+        "selected_records": 1
+      }
     }
   ],
   "ChannelUpdateRequest": [
@@ -4380,7 +4416,10 @@
         ],
         "relay_raw_verification_writes_enabled": false,
         "outbound_messages_writes_enabled": false,
-        "native_media_writes_enabled": false
+        "native_media_writes_enabled": false,
+        "native_discord_writes_enabled": true,
+        "native_discord_auto_activation_enabled": true,
+        "native_discord_capacity": 64
       }
     },
     {
@@ -4411,7 +4450,10 @@
         ],
         "relay_raw_verification_writes_enabled": false,
         "outbound_messages_writes_enabled": false,
-        "native_media_writes_enabled": false
+        "native_media_writes_enabled": false,
+        "native_discord_writes_enabled": true,
+        "native_discord_auto_activation_enabled": true,
+        "native_discord_capacity": 64
       }
     },
     {
@@ -4451,7 +4493,10 @@
         ],
         "relay_raw_verification_writes_enabled": false,
         "outbound_messages_writes_enabled": false,
-        "native_media_writes_enabled": false
+        "native_media_writes_enabled": false,
+        "native_discord_writes_enabled": true,
+        "native_discord_auto_activation_enabled": true,
+        "native_discord_capacity": 64
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5726,7 +5771,10 @@
       ],
       "relay_raw_verification_writes_enabled": false,
       "outbound_messages_writes_enabled": false,
-      "native_media_writes_enabled": false
+      "native_media_writes_enabled": false,
+      "native_discord_writes_enabled": true,
+      "native_discord_auto_activation_enabled": true,
+      "native_discord_capacity": 64
     }
   ],
   "PrepareOutboundMessage": [
@@ -5879,6 +5927,14 @@
     {
       "custom_emoji_id": "123456",
       "type": "custom_emoji"
+    }
+  ],
+  "NativeDiscordActivation": [
+    {
+      "state": "selected",
+      "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+      "capacity": 64,
+      "selected_records": 1
     }
   ]
 }

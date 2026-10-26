@@ -33,6 +33,7 @@ pub struct RoutedIngress {
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
+    native_discovery: crate::discord::selection::Selection,
     non_human_providers: BTreeSet<String>,
     replay_providers: BTreeSet<String>,
     admission_enabled: bool,
@@ -54,6 +55,7 @@ impl RoutedIngress {
             schedule,
             keys,
             records,
+            native_discovery: Default::default(),
             non_human_providers,
             replay_providers,
             admission_enabled: true,
@@ -64,6 +66,28 @@ impl RoutedIngress {
 
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
+    }
+
+    pub fn with_native_discovery(
+        mut self,
+        selection: crate::discord::selection::Selection,
+    ) -> Self {
+        self.native_discovery = selection;
+        self
+    }
+
+    pub(crate) fn native_eligible(
+        &self,
+        definition: &cmaeg_core::channel::ChannelDefinition,
+    ) -> bool {
+        definition.routing.is_some()
+            && definition
+                .consumers()
+                .filter(|consumer| !consumer.pending)
+                .all(|consumer| {
+                    self.replay_providers
+                        .contains(consumer.provider.slug.as_str())
+                })
     }
 
     #[cfg(test)]
@@ -252,7 +276,12 @@ impl IngressState {
             ));
         }
         let Some(routing) = self.routed.as_ref().filter(|routing| {
-            routing.selected(&request.channel.definition.record_id) && ordinary(&request)
+            (routing.selected(&request.channel.definition.record_id)
+                || (routing.native_discovery.discovery_enabled()
+                    && routing
+                        .native_discovery
+                        .contains(request.channel.definition.record_id.as_str())))
+                && ordinary(&request)
         }) else {
             return LaunchOutcome::Refused(Problem::new(
                 ProblemCode::ProviderUnavailable,

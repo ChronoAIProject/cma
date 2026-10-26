@@ -33,10 +33,12 @@ export function AdmissionFields({
   value,
   onChange,
   label = 'Admission',
+  allowBotMessages = true,
 }: {
   value: unknown;
   onChange: (v: Fields) => void;
   label?: string;
+  allowBotMessages?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const admission = object(value);
@@ -90,21 +92,23 @@ export function AdmissionFields({
             options={['deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot']}
             onChange={(groups) => onChange({ ...admission, groups })}
           />
-          <Choice
-            label="Messages from bots"
-            value={admission.bot_messages ?? 'deny'}
-            options={[
-              { value: 'deny', label: 'Ignore bots' },
-              {
-                value: 'native_mentions',
-                label: 'Verified mentions only',
-                ...(discovery.authoring?.native_bot_mentions_writes_enabled === false
-                  ? { unavailable: 'New native bot mention writes are disabled on this gateway.' }
-                  : {}),
-              },
-            ]}
-            onChange={(bot_messages) => onChange({ ...admission, bot_messages })}
-          />
+          {allowBotMessages ? (
+            <Choice
+              label="Messages from bots"
+              value={admission.bot_messages ?? 'deny'}
+              options={[
+                { value: 'deny', label: 'Ignore bots' },
+                {
+                  value: 'native_mentions',
+                  label: 'Verified mentions only',
+                  ...(discovery.authoring?.native_bot_mentions_writes_enabled === false
+                    ? { unavailable: 'New native bot mention writes are disabled on this gateway.' }
+                    : {}),
+                },
+              ]}
+              onChange={(bot_messages) => onChange({ ...admission, bot_messages })}
+            />
+          ) : null}
         </>
       ) : null}
     </Section>

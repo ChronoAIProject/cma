@@ -1752,7 +1752,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/RecordId",
-                "description": "Optional UUID reserved by a durable creator before issuing the request."
+                "description": "Stable UUID reserved by a durable creator before issuing the request.\nRequired as a canonical UUID v4 when authoring a native Discord source;\noptional for existing non-native creation contracts."
               },
               {
                 "type": "null"
@@ -1833,6 +1833,16 @@
               }
             ]
           },
+          "native_discord_activation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "$ref": "#/components/schemas/ProviderResponse"
           },
@@ -1883,6 +1893,16 @@
           },
           "endpoints": {
             "$ref": "#/components/schemas/EndpointResponse"
+          },
+          "native_discord_activation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderResponse"
@@ -3433,6 +3453,31 @@
         ],
         "type": "object"
       },
+      "NativeDiscordActivation": {
+        "properties": {
+          "capacity": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "selected_records": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "detail",
+          "capacity",
+          "selected_records"
+        ],
+        "type": "object"
+      },
       "NativeMediaCapabilities": {
         "properties": {
           "kinds": {
@@ -4261,6 +4306,25 @@
           },
           "native_bot_mentions_writes_enabled": {
             "type": "boolean"
+          },
+          "native_discord_auto_activation_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_discord_capacity": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "native_discord_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "native_media_writes_enabled": {
             "description": "The configured relay accepts new native attachments; platform limits still apply.",

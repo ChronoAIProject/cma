@@ -74,8 +74,16 @@ pub async fn check(
                 "credential",
                 "Discord credential",
                 secrets.discord_bot_token.is_some(),
-                "Credential presence only; live Gateway intake and replies are not yet activated.",
+                "Credential presence only; this check does not contact Discord or send messages.",
             ));
+            if let Some(activation) = crate::discord::activation::view(state, &loaded.definition) {
+                checks.push(item(
+                    "native_activation",
+                    "Native Discord activation",
+                    activation.state == "selected",
+                    &activation.detail,
+                ));
+            }
             "discord".into()
         }
         Source::Telegram { .. } => {

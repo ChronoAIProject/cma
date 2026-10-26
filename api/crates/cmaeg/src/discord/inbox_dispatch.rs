@@ -14,7 +14,7 @@ pub struct InboxDispatcher {
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     ingress: IngressState,
-    selected: BTreeSet<String>,
+    selected: super::selection::Selection,
     reader: InboxReader,
     store: InboxStore,
 }
@@ -30,6 +30,23 @@ impl InboxDispatcher {
         keys: Arc<MasterKeyRing>,
         ingress: IngressState,
         selected: BTreeSet<String>,
+    ) -> Self {
+        Self::with_selection(
+            records,
+            keys,
+            ingress,
+            super::selection::Selection::new(&crate::NativeDiscordConfig {
+                enabled: true,
+                discovery_enabled: false,
+                records: selected,
+            }),
+        )
+    }
+    pub(crate) fn with_selection(
+        records: RecordClient,
+        keys: Arc<MasterKeyRing>,
+        ingress: IngressState,
+        selected: super::selection::Selection,
     ) -> Self {
         Self {
             reader: InboxReader::new(records.clone(), keys.clone()),

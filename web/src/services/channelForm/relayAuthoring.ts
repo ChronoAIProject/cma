@@ -1,4 +1,8 @@
-import { modeUnavailable, type RelayDiscovery } from '../RelayCapabilities';
+import {
+  modeUnavailable,
+  nativeDiscordUnavailable,
+  type RelayDiscovery,
+} from '../RelayCapabilities';
 import { credentialsPatch, object, records, type Fields } from './model';
 
 function canonical(value: unknown): string {
@@ -17,8 +21,22 @@ export function validateRelayAuthoring(
 ) {
   const oldSources = records(previous?.sources);
   for (const source of records(next.sources)) {
-    if (source.type !== 'nyxid_relay') continue;
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
+    if (source.type === 'discord') {
+      const hasSavedNative = oldSources.some((old) => old.type === 'discord');
+      const reason = nativeDiscordUnavailable(discovery, !hasSavedNative);
+      if (
+        reason &&
+        (!unchanged || Boolean(credentialsPatch(credentials, false)?.discord_bot_token))
+      )
+        throw new Error(
+          `${reason} Keep saved Discord settings unchanged. Your draft has been retained.`,
+        );
+      if (!hasSavedNative && !credentialsPatch(credentials, false)?.discord_bot_token)
+        throw new Error('Enter the Discord bot token. Saved token values are never displayed.');
+      continue;
+    }
+    if (source.type !== 'nyxid_relay') continue;
     const platform = String(source.platform);
     const mode =
       source.verify_raw_event === true
