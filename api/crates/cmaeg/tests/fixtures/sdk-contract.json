@@ -4130,13 +4130,100 @@
       ],
       "source_features": [
         "native_bot_mentions_v1"
-      ]
+      ],
+      "relay_authoring": {
+        "dynamic_sources_writes_enabled": false,
+        "multi_consumer_writes_enabled": false,
+        "native_bot_mentions_writes_enabled": true,
+        "thread_contract_writes_enabled": false,
+        "platforms": [
+          {
+            "id": "whatsapp",
+            "label": "WhatsApp",
+            "verification_modes": [
+              {
+                "id": "raw_event",
+                "writes_enabled": false
+              },
+              {
+                "id": "trusted_normalized",
+                "writes_enabled": true
+              }
+            ]
+          }
+        ],
+        "relay_raw_verification_writes_enabled": false
+      }
     },
     {
       "source_features": [
         "native_bot_mentions_v1"
       ],
-      "platforms": []
+      "platforms": [],
+      "relay_authoring": {
+        "dynamic_sources_writes_enabled": false,
+        "multi_consumer_writes_enabled": false,
+        "native_bot_mentions_writes_enabled": true,
+        "thread_contract_writes_enabled": false,
+        "platforms": [
+          {
+            "id": "whatsapp",
+            "label": "WhatsApp",
+            "verification_modes": [
+              {
+                "id": "raw_event",
+                "writes_enabled": false
+              },
+              {
+                "id": "trusted_normalized",
+                "writes_enabled": true
+              }
+            ]
+          }
+        ],
+        "relay_raw_verification_writes_enabled": false
+      }
+    },
+    {
+      "platforms": [
+        {
+          "id": "telegram",
+          "label": "Telegram",
+          "connection_methods": [
+            "existing_credential",
+            "managed_create"
+          ],
+          "optional_capabilities": [
+            "manage_bots"
+          ]
+        }
+      ],
+      "relay_authoring": {
+        "dynamic_sources_writes_enabled": false,
+        "multi_consumer_writes_enabled": false,
+        "native_bot_mentions_writes_enabled": true,
+        "thread_contract_writes_enabled": false,
+        "platforms": [
+          {
+            "id": "whatsapp",
+            "label": "WhatsApp",
+            "verification_modes": [
+              {
+                "id": "raw_event",
+                "writes_enabled": false
+              },
+              {
+                "id": "trusted_normalized",
+                "writes_enabled": true
+              }
+            ]
+          }
+        ],
+        "relay_raw_verification_writes_enabled": false
+      },
+      "source_features": [
+        "native_bot_mentions_v1"
+      ]
     }
   ],
   "ConnectionPage": [
@@ -5308,6 +5395,57 @@
           "text": "42"
         }
       ]
+    }
+  ],
+  "RelayVerificationCapability": [
+    {
+      "id": "raw_event",
+      "writes_enabled": false
+    },
+    {
+      "id": "trusted_normalized",
+      "writes_enabled": true
+    }
+  ],
+  "RelayPlatformCapability": [
+    {
+      "id": "whatsapp",
+      "label": "WhatsApp",
+      "verification_modes": [
+        {
+          "id": "raw_event",
+          "writes_enabled": false
+        },
+        {
+          "id": "trusted_normalized",
+          "writes_enabled": true
+        }
+      ]
+    }
+  ],
+  "RelayAuthoringCapabilities": [
+    {
+      "dynamic_sources_writes_enabled": false,
+      "multi_consumer_writes_enabled": false,
+      "native_bot_mentions_writes_enabled": true,
+      "thread_contract_writes_enabled": false,
+      "platforms": [
+        {
+          "id": "whatsapp",
+          "label": "WhatsApp",
+          "verification_modes": [
+            {
+              "id": "raw_event",
+              "writes_enabled": false
+            },
+            {
+              "id": "trusted_normalized",
+              "writes_enabled": true
+            }
+          ]
+        }
+      ],
+      "relay_raw_verification_writes_enabled": false
     }
   ]
 }

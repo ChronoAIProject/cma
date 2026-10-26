@@ -146,6 +146,7 @@ pub struct Config {
     pub thread_contract_writes_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
+    pub relay_raw_verification_writes_enabled: bool,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
@@ -247,6 +248,9 @@ impl Config {
             )?,
             dynamic_sources_writes_enabled: routing::write_flag(
                 "CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED",
+            )?,
+            relay_raw_verification_writes_enabled: routing::write_flag(
+                "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
             )?,
             ingress: IngressConfig::from_env()?,
             turns,

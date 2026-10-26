@@ -139,7 +139,7 @@ it('puts channels in the sidebar and shows only the selected channel details', a
     'aria-current',
     'page',
   );
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 it.each(['completed', 'timeout'] as const)(
@@ -200,7 +200,7 @@ it.each(['completed', 'timeout'] as const)(
       await act(() => vi.advanceTimersByTimeAsync(120_000));
       expect(screen.getByRole('button', { name: 'Sending test…' })).toBeDisabled();
       fireEvent.click(send);
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(3);
       if (outcome === 'completed') {
         await act(async () =>
           resolveTest(new Response(JSON.stringify({ first_text: 'Cold test completed' }))),
@@ -215,8 +215,8 @@ it.each(['completed', 'timeout'] as const)(
         ).toBeVisible();
       }
       expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      expect(fetcher.mock.calls[1]?.[1]?.method).toBe('POST');
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
     } finally {
       timeout.mockRestore();
       vi.useRealTimers();

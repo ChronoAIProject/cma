@@ -67,3 +67,26 @@ it('keeps the verification policy and all other source fields during an unrelate
   fireEvent.change(screen.getByLabelText('Bot username'), { target: { value: 'updated_bot' } });
   expect(onChange).toHaveBeenCalledWith({ ...original, bot_username: 'updated_bot' });
 });
+
+it('does not opt into raw or normalized trust while discovery is unavailable', () => {
+  const next = selectPlatform(source('telegram', {}), 'discord');
+  expect(next).not.toHaveProperty('verify_raw_event');
+  expect(next).not.toHaveProperty('trust_normalized');
+});
+
+it('retains a saved raw mode on an older gateway and disables new selection with a reason', () => {
+  const original = source('discord', { verify_raw_event: true });
+  const onChange = vi.fn();
+  render(<SourceFields value={original} onChange={onChange} />);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Incoming message verification' })).toHaveTextContent(
+    'Verify original platform event',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Incoming message verification' }));
+  expect(
+    screen.getByRole('menuitemradio', { name: /Verify original platform event/ }),
+  ).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByText(/no automatic switch to normalized trust/)).toBeVisible();
+  fireEvent.click(screen.getByRole('menuitemradio', { name: /Verify original platform event/ }));
+  expect(onChange).not.toHaveBeenCalled();
+});

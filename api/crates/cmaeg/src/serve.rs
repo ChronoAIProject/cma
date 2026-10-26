@@ -48,6 +48,7 @@ pub(crate) async fn serve(
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
+    state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
