@@ -28,6 +28,25 @@ workers and bounded queues, pacing, rendering and transport. The replay path use
 the channel credential rather than reusing a single-use ingress reply token.
 Legacy `Reply` and `StreamOutcome` paths retain their behavior.
 
+Routed tool sends use the same actual receipt path. Composition must set
+`ToolsState.routed_replies = Some(Arc::new(delivery.tool_replies()))` alongside
+routed execution; the default server wiring remains `None` in this foundation.
+An immutable encrypted event-reference binding is written before the provider
+can start, so a later channel owner or routing change cannot make an admitted
+routed tool call fall back to legacy sending. Current caller, channel, source,
+consumer and provider authority are still revalidated before each network
+attempt. Direct tools and durable delayed reply targets use the hook.
+
+A separate sealed CAS reply guard coordinates tool and automatic sends without
+overwriting execution/projection ownership. It keeps only the latest tool and
+automatic attempts, their actual bounded receipts, a sticky confirmed-tool bit,
+and a terminal closed bit. Enqueueing never sets the confirmed bit. Projection
+can query `tool_reply_status`; automatic delivery also atomically reserves this
+guard, closing the lookup/send race even when a persisted projection selected
+an answer before the tool receipt arrived. A proved tool reply suppresses a
+later automatic answer across restart. An unresolved or unknown attempt blocks
+new effects, including attempts after an earlier confirmed tool reply.
+
 The send window is at most 20 seconds under a freshly renewed 30-second lease.
 Every network attempt rechecks current authority, the captured channel version,
 lease and original event expiry after pacing. A synchronous commit guard checks
@@ -58,12 +77,22 @@ Simply reading a provider frame cannot advance or complete execution. Existing
 settled receipts can finish acknowledgement after reply authority expires, but
 new effects retain the original expiry.
 
+Every terminal frame, including `NoEffect`, must close the shared reply guard
+before its cursor advances. Closing races tool admission through CAS: one can
+win, never both. Pending tools defer acknowledgement; unknown tools quarantine
+it. The already settled frame checkpoint is retained so a retry can finish
+closing without sending again. Closed ordinary references refuse new tool
+sends. An explicit delayed reply-target capability may continue through its
+existing independent durable receipt path after a proved terminal close or
+after original automatic-reply authority expires; unresolved sends cannot use
+terminal closure to bypass the guard.
+
 Ephemeral synchronous waiters cannot provide durable completion evidence and
 are explicitly unsupported in this lane. Default-destination projection is
 also explicitly unsupported until it has its own durable authority binding;
 it never falls back to the origin. These limitations do not affect the live
 default lane. Activation additionally needs the scheduler and projection state,
-tool-reply suppression, per-platform recovery evidence and a shared Sync
+per-platform recovery evidence and a shared Sync
 finalization design.
 
 Tests exercise the real encrypted record HTTP/CAS protocol, delayed actual
@@ -71,3 +100,7 @@ engine sends, queue refusal, missing receipts, abandoned intents, authority
 revocation, stale leases, sibling isolation, exact CAS read-back, lost cursor
 acknowledgement after receipt persistence, expiry, changed frame/effect rejection
 and terminal completion fencing. No test sends an external message.
+Suppression tests additionally cover restart after actual tool delivery, lost
+receipt persistence and lost write confirmation, concurrent tool/automatic
+admission, stale writers, terminal no-effect closure, late tool refusal, sticky
+confirmation followed by an uncertain send, and routing/owner revocation.

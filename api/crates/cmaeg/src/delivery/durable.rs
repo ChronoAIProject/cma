@@ -1,7 +1,7 @@
 //! Opt-in awaited sends. Enqueueing alone is never a delivery receipt.
 use super::{
     gate::SendGate,
-    intents::{DeliveryCommand, DeliveryOutcome, IntentReceipt},
+    intents::{DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource},
     router::{DeliverySink, Refused},
     send::unsupported,
 };
@@ -16,6 +16,7 @@ pub struct DurableReply {
     pub event: EventRefPayload,
     pub message: OutboundMessage,
     pub gate: Arc<dyn SendGate>,
+    pub source: ReplySource,
     pub receipt: oneshot::Sender<IntentReceipt>,
 }
 impl std::fmt::Debug for DurableReply {
@@ -42,6 +43,17 @@ impl DeliveryCoordinator {
         message: OutboundMessage,
         gate: Arc<dyn SendGate>,
     ) -> IntentReceipt {
+        self.reply_from(channel, event, message, gate, ReplySource::Stream)
+            .await
+    }
+    pub async fn reply_from(
+        &self,
+        channel: Arc<ResolvedChannel>,
+        event: EventRefPayload,
+        message: OutboundMessage,
+        gate: Arc<dyn SendGate>,
+        source: ReplySource,
+    ) -> IntentReceipt {
         let (receipt, received) = oneshot::channel();
         let command = DeliveryCommand::DurableReply(Box::new(DurableReply {
             trace: tracing::Span::current(),
@@ -49,6 +61,7 @@ impl DeliveryCoordinator {
             event,
             message,
             gate,
+            source,
             receipt,
         }));
         if let Some(result) = self.sink.preflight(&command) {

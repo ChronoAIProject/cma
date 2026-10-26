@@ -131,6 +131,7 @@ impl App {
             keys: fixture.state.master_keys.clone(),
             providers,
             delivery,
+            routed_replies: None,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             public_api_url: "https://gateway.example".into(),

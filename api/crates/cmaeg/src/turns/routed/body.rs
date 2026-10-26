@@ -37,6 +37,7 @@ impl Journal {
         if encoded.len() > MAX_BODY {
             return Err(ExecutionError::Invalid);
         }
+        self.bind_tool_reply(plan, target).await?;
         let digest = hash(&encoded);
         let mut reference = BodyReference {
             hash: digest.clone(),

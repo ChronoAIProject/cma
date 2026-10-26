@@ -4,14 +4,18 @@ use super::{
     delivery_gate::{CancelSend, DeliveryGate, SEND_WINDOW},
     delivery_state::{DeliveryCheckpoint, DeliveryStatus},
     dispatcher::{admission_error, current_target},
-    storage, Authority, ExecutionError, Journal, Lease, Phase,
+    storage,
+    tool_reply_gate::{CancelReply, ReplyGate},
+    tool_reply_store::{Admission, Kind, ReplyStore},
+    Authority, ExecutionError, FrozenTurn, Journal, Lease, Phase, RoutedToolReplies,
+    ToolReplyStatus,
 };
 use crate::{
     delivery::{
         durable::{receipt_for, DeliveryCoordinator},
         intents::{DeliveryOutcome, IntentReceipt},
     },
-    ingress::routing_store::{EventIdentity, PlanStore},
+    ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, StoredTarget},
     providers::{parse_event, RecoveryEvent, ResponsesEvent, SseFrame},
 };
 use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::ReplyAddress};
@@ -51,6 +55,50 @@ impl RoutedDelivery {
             authority,
             coordinator,
         }
+    }
+
+    pub fn tool_replies(&self) -> RoutedToolReplies {
+        RoutedToolReplies::new(
+            self.plans.clone(),
+            self.journal.clone(),
+            self.authority.clone(),
+            self.coordinator.clone(),
+        )
+    }
+
+    pub async fn tool_reply_status(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+        lease: &Lease,
+        body: &FrozenTurn,
+    ) -> Result<ToolReplyStatus, ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        if lease.state.id != target.id
+            || lease.state.root != plan.admission_id
+            || lease.state.owner != plan.identity.owner
+            || lease.state.request_hash != plan.request_hash
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        self.journal.guard(lease).await?;
+        body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        current_target(self.authority.as_ref(), &plan, target).await?;
+        let status = ReplyStore(self.journal.clone())
+            .status(&plan, target)
+            .await?;
+        self.journal.guard(lease).await?;
+        Ok(status)
     }
 
     /// Intent is sealed and CAS-confirmed before enqueue; its actual outcome is
@@ -140,6 +188,9 @@ impl RoutedDelivery {
                 match &previous.status {
                     DeliveryStatus::Settled { receipt } if previous.status.settled() => {
                         let receipt = receipt.clone();
+                        if checkpoint.terminal && !self.close(&plan, target).await? {
+                            return Ok(FrameDelivery::Unknown);
+                        }
                         self.journal
                             .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
                             .await?;
@@ -174,12 +225,39 @@ impl RoutedDelivery {
         if let ReplayEffect::Reply(message) = &effect {
             message.validate().map_err(|_| ExecutionError::Invalid)?;
         }
+        // This shared CAS reservation closes the race between projection's
+        // suppression lookup and a concurrently admitted tool reply.
+        let store = ReplyStore(self.journal.clone());
+        let mut automatic = None;
+        let mut suppressed = false;
+        let mut replayed = None;
+        if matches!(effect, ReplayEffect::Reply(_)) {
+            let operation = storage::hash(&storage::bytes(&(
+                &checkpoint.response_id,
+                checkpoint.cursor,
+                &checkpoint.frame_hash,
+                &checkpoint.effect_hash,
+            ))?);
+            match store
+                .admit(&plan, target, Kind::Automatic, operation)
+                .await?
+            {
+                Admission::Claimed(claim) => automatic = Some(claim),
+                Admission::Replay(receipt) => replayed = Some(receipt),
+                Admission::Suppressed => suppressed = true,
+                Admission::Pending => return Err(ExecutionError::Busy),
+                Admission::Unknown => return Ok(FrameDelivery::Unknown),
+                Admission::Closed => return Err(ExecutionError::Invalid),
+            }
+        }
         self.journal.guard(lease).await?;
         let mut next = lease.state.clone();
         next.delivery = Some(checkpoint);
         self.journal.commit(lease, next).await?;
         let receipt = match effect {
             ReplayEffect::NoEffect => None,
+            ReplayEffect::Reply(_) if suppressed => None,
+            ReplayEffect::Reply(_) if replayed.is_some() => replayed,
             ReplayEffect::Reply(message) => {
                 let event = body
                     .event_context
@@ -190,8 +268,7 @@ impl RoutedDelivery {
                 // Ephemeral Sync waiters have no durable completion receipt.
                 // Default-destination projection must be implemented explicitly;
                 // never silently send a default-target message to the origin.
-                if !body.delivery.auto_final
-                    || body.delivery.destination != ReplyChoice::Origin
+                if body.delivery.destination != ReplyChoice::Origin
                     || matches!(event.reply, ReplyAddress::Sync { .. })
                 {
                     Some(receipt_for(DeliveryOutcome::Unsupported))
@@ -206,9 +283,16 @@ impl RoutedDelivery {
                         current.version,
                     );
                     let cancel = CancelSend(gate.clone());
+                    let reply_gate = ReplyGate::automatic(
+                        store.clone(),
+                        automatic.as_ref().ok_or(ExecutionError::Corrupt)?,
+                        gate,
+                        event.expires_at,
+                    );
+                    let cancel_reply = CancelReply(reply_gate.clone());
                     let result = tokio::time::timeout(
                         SEND_WINDOW,
-                        self.coordinator.reply(current, event, message, gate),
+                        self.coordinator.reply(current, event, message, reply_gate),
                     )
                     .await
                     .unwrap_or_else(|_| {
@@ -216,11 +300,15 @@ impl RoutedDelivery {
                             reason: "delivery_deadline".into(),
                         })
                     });
+                    drop(cancel_reply);
                     drop(cancel);
                     Some(result)
                 }
             }
         };
+        if let (Some(claim), Some(receipt)) = (&automatic, &receipt) {
+            store.finish(claim, receipt).await?;
+        }
         if receipt.as_ref().is_some_and(|value| {
             matches!(value.delivery, DeliveryOutcome::Unknown { .. })
                 || storage::bytes(value).map_or(true, |bytes| bytes.len() > 16 * 1024)
@@ -235,6 +323,15 @@ impl RoutedDelivery {
             },
         )
         .await?;
+        if lease
+            .state
+            .delivery
+            .as_ref()
+            .is_some_and(|value| value.terminal)
+            && !self.close(&plan, target).await?
+        {
+            return Ok(FrameDelivery::Unknown);
+        }
         self.journal
             .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
             .await?;
@@ -242,6 +339,18 @@ impl RoutedDelivery {
             cursor: frame.sequence_number,
             receipt,
         })
+    }
+
+    async fn close(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<bool, ExecutionError> {
+        match ReplyStore(self.journal.clone()).close(plan, target).await? {
+            ToolReplyStatus::Pending => Err(ExecutionError::Busy),
+            ToolReplyStatus::Unknown => Ok(false),
+            ToolReplyStatus::None | ToolReplyStatus::Confirmed => Ok(true),
+        }
     }
 
     async fn record(

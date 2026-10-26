@@ -58,7 +58,11 @@ async fn handle(
                 gate: reply.gate.as_ref(),
             };
             let (result, _) = sender.reply(&context, &reply.event, &reply.message).await;
-            sender.observe(&reply.event, DeliveryStep::Answer, &result.delivery);
+            let step = match reply.source {
+                ReplySource::Tool => DeliveryStep::ToolReply,
+                ReplySource::Stream => DeliveryStep::Answer,
+            };
+            sender.observe(&reply.event, step, &result.delivery);
             let _ = reply.receipt.send(result);
         }
         DeliveryCommand::Update {

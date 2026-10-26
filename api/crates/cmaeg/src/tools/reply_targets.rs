@@ -138,6 +138,16 @@ impl ToolsState {
         };
         // Recheck after durable admission; rotation/deletion during the store call must refuse dispatch.
         let channel = self.authorize_target(caller, &target).await?;
+        if let Some(routed) = &self.routed_replies {
+            if let Some(result) = routed
+                .reply(caller, &channel, &target.event, message.clone(), true)
+                .await
+                .map_err(super::routed_reply_error)?
+            {
+                store.finish(claim, &result).await?;
+                return Ok(result);
+            }
+        }
         let (receipt, received) = oneshot::channel();
         let result = self
             .deliver(
