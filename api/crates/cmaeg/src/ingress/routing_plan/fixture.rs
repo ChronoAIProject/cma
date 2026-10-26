@@ -96,6 +96,7 @@ pub fn request(edit: impl FnOnce(&mut Value), activity: Activity) -> LaunchReque
         },
         consumer: None,
         lineage: None,
+        telegram_admission: None,
     };
     payload.validate().unwrap();
     LaunchRequest {

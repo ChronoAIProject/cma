@@ -3,6 +3,7 @@
 mod client;
 mod client_types;
 mod context;
+mod frozen;
 mod management_auth;
 mod probe;
 mod recovery;
@@ -18,6 +19,7 @@ pub use client_types::{
     TurnRequest, TurnStream,
 };
 pub use context::EventContextSnapshot;
+pub(crate) use frozen::FrozenSubmission;
 pub use probe::AgentCardProbe;
 pub use recovery::{RecoveryEvent, RecoveryIdentity, RecoverySnapshot, RecoveryStream};
 pub use registry::{
