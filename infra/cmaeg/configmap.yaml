@@ -36,7 +36,7 @@ data:
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
   # Issue native controls only after all serving and rollback card/admission readers support them.
   CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "false"
-  # Independent native image/PDF/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
+  # Independent native image/document/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Issue received-message reaction references only after compatible reader rollout.
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"

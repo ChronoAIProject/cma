@@ -1,8 +1,8 @@
-# Native WhatsApp image, PDF, audio, sticker and video replies
+# Native WhatsApp image, document, audio, sticker and video replies
 
-Native WhatsApp event replies can upload JPEG/PNG images, PDF documents and the
+Native WhatsApp event replies can upload JPEG/PNG images, the eight document types below and the
 bounded audio, WebP sticker and MP4/3GPP video profiles below under the independent `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED` gate. It defaults to
-false in code and the checked-in ConfigMap. This gate does not depend on native
+false in code; the checked-in ConfigMap retains the separately verified #1156 activation. This gate does not depend on native
 inbound media or NyxID relay-media flags. Local fake Graph and record-store tests
 establish the composed implementation; no live Meta send or client acceptance
 has been performed. Overall WhatsApp support remains incomplete.
@@ -17,18 +17,18 @@ WhatsApp event, the enabled capability reports:
 | --- | --- |
 | `kinds` | `image`, `file`, `audio`, `sticker`, `video` |
 | `sources` | `url`, `base64` |
-| `mime_types` | `image/jpeg`, `image/png`, `application/pdf`, `audio/aac`, `audio/amr`, `audio/mpeg`, `audio/mp4`, `audio/ogg`, `image/webp`, `video/mp4`, `video/3gpp` |
+| `mime_types` | `image/jpeg`, `image/png`, the eight document MIME types below, `audio/aac`, `audio/amr`, `audio/mpeg`, `audio/mp4`, `audio/ogg`, `image/webp`, `video/mp4`, `video/3gpp` |
 | `max_attachments` | 4 |
 | `max_inline_bytes` | 65536 aggregate decoded inline bytes |
 | `max_total_bytes` | 8388608 aggregate inline/downloaded bytes |
 | `max_image_bytes` | 5000000 encoded bytes per image |
-| `max_caption_chars` | 1024 for image/PDF/video; shared metadata also caps captions at 1024 UTF-8 bytes; audio/sticker captions are refused |
+| `max_caption_chars` | 1024 for image/document/video; shared metadata also caps captions at 1024 UTF-8 bytes; audio/sticker captions are refused |
 | `sticker` | Exact sticker dimensions, byte ceilings and animation limits described below |
 | `video` | Exact video codec/profile and structural limits described below |
 
-`image` requires JPEG or PNG, and `file` requires PDF. Supplied MIME types must
-match the sniffed bytes. Supplied filename extensions must match the type
-(`jpg`/`jpeg`, `png`, `pdf`, `webp`, `mp4`, `3gp`, or the audio extensions below); absent names get a
+`image` requires JPEG or PNG, and `file` requires one of the document profiles below.
+Supplied MIME types must match the validated bytes. Supplied filename extensions must match the type
+(`jpg`/`jpeg`, `png`, `webp`, `mp4`, `3gp`, or a document/audio extension below); absent names get a
 generated matching extension.
 Existing filename single-component and control-character validation applies.
 PNG headers must declare 8-bit RGB or RGBA. JPEG headers must declare 8-bit,
@@ -37,7 +37,7 @@ three-component baseline or progressive data. Images also retain the shared
 or rewrite pixels, inflate metadata or certify an entire file; Meta remains
 authoritative for complete file validity and client acceptance.
 
-Other document formats, templates, native controls mixed with
+Unlisted document formats, templates, native controls mixed with
 media, explicit reply overrides and thread replies are refused before any
 platform write. Ordinary text and attachment captions remain separate.
 A media-only reply generates no placeholder message. The existing 128 KiB tool
@@ -52,6 +52,63 @@ is sent. Native delivery has a 60-second outer budget; each Graph exchange retai
 its 8-second timeout, the non-routed tool wait is 65 seconds, and the routed send
 window remains independently limited to 20 seconds. These limits can stop a valid
 batch before it finishes.
+
+## Document format checks
+
+`file` accepts the following byte-identified profiles. The existing 64 KiB aggregate
+inline and 8 MiB aggregate inline/downloaded limits remain unchanged; Meta's 100 MB
+per-document ceiling does not raise either CMA limit. Document upload parts and
+recipient messages preserve the verified MIME, matching filename, optional caption,
+and returned upload ID. The same preflight applies to eligible existing-group replies.
+
+| Extension | Exact MIME | Validated profile |
+| --- | --- | --- |
+| `.txt` | `text/plain` | Complete UTF-8 (optional BOM) or BOM-marked UTF-16LE/BE; no invalid sequences, NUL or binary controls; tab, newline, carriage return and form feed allowed |
+| `.pdf` | `application/pdf` | PDF 1.0–1.7 or 2.0 header and final EOF marker |
+| `.doc` | `application/msword` | CFB Word 97–2007 FIB identity, bounded text offsets and selected nonempty table stream; encrypted/obfuscated FIB refused |
+| `.xls` | `application/vnd.ms-excel` | CFB Workbook/Book stream with complete BIFF8 records, globals BOF and balanced EOF; encrypted FILEPASS refused |
+| `.ppt` | `application/vnd.ms-powerpoint` | CFB PowerPoint record tree with Document container/atom and unencrypted Current User identity |
+| `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | OOXML Word package and document XML root |
+| `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | OOXML spreadsheet package and workbook XML root |
+| `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | OOXML presentation package and presentation XML root |
+
+CFB validation checks complete allocation/stream chains, limits the directory to
+1024 entries, each stream to 8 MiB and total traversed stream data to 32 MiB.
+BIFF and PowerPoint record counts are capped at 65536; PowerPoint nesting is capped
+at 32. Generic compound files, conflicting Office identities and encrypted packages
+cannot be classified from a filename alone.
+
+OOXML requires matching content types, an internal root office-document relationship,
+and a well-formed main XML part in the transitional or strict Office namespace.
+ZIP central directories are bounded before parser allocation: at most 1024 entries,
+256-byte names, no duplicate/case-colliding or traversing paths, multidisk, ZIP64,
+encryption or overlapping entries. Only stored/Deflate compression is supported;
+every entry is read through its CRC, with 8 MiB per entry and 32 MiB total expanded
+bytes. No archive entry is written to disk. Package XML is UTF-8 XML 1.0, bounded to 128
+levels, 131072 events and 64 attributes/namespace declarations per element, and refuses DTDs/custom entities. No package relationship
+is fetched. Macro-enabled/template main content types and unrelated ZIPs are refused.
+
+These checks identify bounded document formats; they do not render Office/PDF
+content or certify full application-level validity. Meta and the receiving client
+remain authoritative for acceptance. All files in a reply are validated before
+its first text message or upload. No new message schema, tool, native-send authority,
+feature flag or runtime image is introduced.
+
+Official Meta media and document tables were saved on 2026-10-28 under
+`/private/tmp/cmaeg-whatsapp-documents-evidence-20261028`. Their examples use v26;
+this adapter retains Graph v25.0 and makes no connected native acceptance claim.
+
+| Saved official evidence | SHA-256 |
+| --- | --- |
+| `media.txt` | `7a153f99c45a909d9ebf6a39fad5c2eb1615612583a8ffc9dcbba2a873c5fcb5` |
+| `documents.txt` | `fdfd42700f8ac46e62c160a702b999ce501bdd5597a693c03aff9fb62f250d1e` |
+
+Local fixtures construct CFB allocation/stream chains and stored/Deflate OOXML
+packages in memory; they exercise format identity and malformed-container refusal,
+not Office application rendering. Composed delivery tests cover all eight types,
+exact uploaded bytes, generated names, captions, sealed recipients/quotes and
+whole-batch refusal before text or upload. Existing uncertainty, receipt-loss,
+revocation, group custody and aggregate-byte tests exercise the shared send path.
 
 ## Audio format checks
 
@@ -331,7 +388,7 @@ Read-only official documentation checked on 2026-10-27 and 2026-10-28:
 - [Meta Sticker messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/sticker-messages): static/animated WebP, 100 KB/500 KB ceilings and ID-only sticker messages.
 - [Meta Video messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/video-messages): MP4/3GPP, H.264 with zero or one AAC stream, captions, provider 16 MB ceiling and client profile guidance.
 - [Meta Audio messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/audio-messages): basic uploaded-ID audio messages, the five supported audio MIME types and 16 MB provider ceiling; Ogg requires mono Opus and voice presentation is a separate flag.
-- [Meta Document messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/document-messages): document ID, filename and caption fields, supported PDF type and provider 100 MB ceiling.
+- [Meta Document messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/document-messages): document ID, filename and caption fields, all eight supported document types and provider 100 MB ceiling.
 
 The current examples use Graph v26.0. CMA deliberately retains its pinned v25.0
 endpoint; these documentation checks and local v25-shaped transport tests do not
