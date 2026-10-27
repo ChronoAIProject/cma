@@ -164,12 +164,16 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
             .as_str()
             .filter(|id| valid_message_id(id))
             .ok_or(Error::Message)?;
-        // Meta sends an empty string when removing the sender's reaction. It
-        // does not report the previous emoji, so no old-state value is inferred.
-        let emoji = raw["reaction"]["emoji"]
-            .as_str()
-            .filter(|emoji| emoji.len() <= 512 && !emoji.chars().any(char::is_control))
-            .ok_or(Error::Message)?;
+        // Meta's reaction webhook reference documents removal by omitting emoji.
+        // Preserve explicit empty-string removal too; a present malformed value
+        // must not become a removal. Meta does not supply the previous emoji.
+        let emoji = match raw["reaction"].get("emoji") {
+            None => "",
+            Some(value) => value
+                .as_str()
+                .filter(|emoji| emoji.len() <= 512 && !emoji.chars().any(char::is_control))
+                .ok_or(Error::Message)?,
+        };
         Content::Reaction {
             target: target.to_owned(),
             emoji: emoji.to_owned(),
