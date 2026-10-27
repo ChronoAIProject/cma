@@ -1,6 +1,8 @@
 use super::{lark_fixture::App, *};
 #[path = "whatsapp_group_context_tests.rs"]
 mod group_context_tests;
+#[path = "whatsapp_retention_tests.rs"]
+mod retention_tests;
 use crate::channels::definition::fixture as definition_fixture;
 use crate::{
     net::exchange::{HttpReply, TransportError},
@@ -79,6 +81,16 @@ async fn fixture() -> (App, Arc<Graph>) {
 }
 async fn fixture_for(named: bool) -> (App, Arc<Graph>) {
     let mut app = App::new(Platform::Lark).await;
+    app.state.resolver = crate::channels::resolver::ChannelResolver::new(
+        Arc::new(
+            app.state
+                .resolver
+                .record_client()
+                .with_whatsapp_reaction_fixture(),
+        ),
+        app.state.keys.clone(),
+        Default::default(),
+    );
     app.definition.sources = vec![crate::whatsapp::tests::source()];
     app.definition.secrets.whatsapp = Some(crate::whatsapp::tests::credentials());
     if named {

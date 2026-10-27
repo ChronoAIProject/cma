@@ -39,7 +39,7 @@ impl Store {
     }
     pub fn whatsapp_reaction(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
-            records: records.interactions(),
+            records: records.whatsapp_reaction_records(),
             keys,
             domain: "cmaeg.whatsapp-received-mutation.v1",
             kind: "whatsapp_received_mutation_v1",
