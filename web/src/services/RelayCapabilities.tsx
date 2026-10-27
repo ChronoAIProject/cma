@@ -3,6 +3,8 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly native_whatsapp_writes_enabled?: boolean | null;
+  readonly native_whatsapp_auto_activation_enabled?: boolean | null;
   readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
   readonly native_discord_writes_enabled?: boolean | null;
@@ -133,5 +135,18 @@ export function nativeDiscordUnavailable(
       discovery.authoring.multi_consumer_writes_enabled !== true)
   )
     return 'This gateway has not enabled automatic activation for new direct Discord channels.';
+  return undefined;
+}
+
+export function nativeWhatsappUnavailable(
+  discovery: RelayDiscovery,
+  automatic = true,
+): string | undefined {
+  if (discovery.authoring?.native_whatsapp_writes_enabled !== true)
+    return discovery.status === 'loading'
+      ? 'Checking direct WhatsApp support…'
+      : 'This gateway has not enabled direct WhatsApp setup.';
+  if (automatic && discovery.authoring.native_whatsapp_auto_activation_enabled !== true)
+    return 'This gateway has not enabled message delivery for new direct WhatsApp producers.';
   return undefined;
 }

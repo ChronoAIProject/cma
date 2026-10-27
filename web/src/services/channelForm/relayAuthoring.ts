@@ -1,6 +1,7 @@
 import {
   modeUnavailable,
   nativeDiscordUnavailable,
+  nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
 import { credentialsPatch, object, records, text, type Fields } from './model';
@@ -22,6 +23,25 @@ export function validateRelayAuthoring(
   const oldSources = records(previous?.sources);
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
+    if (source.type === 'whatsapp') {
+      const saved = oldSources.some((old) => old.type === 'whatsapp');
+      const replacement = credentialsPatch(credentials, false)?.whatsapp;
+      const reason = nativeWhatsappUnavailable(discovery, !saved);
+      if (reason && (!unchanged || replacement))
+        throw new Error(`${reason} Your draft has been retained.`);
+      if (!saved && !replacement) throw new Error('Enter all three WhatsApp credentials.');
+      if (
+        ['app_id', 'waba_id', 'phone_number_id'].some(
+          (key) => !/^[1-9][0-9]{0,31}$/.test(text(source[key])),
+        )
+      )
+        throw new Error(
+          'Enter the numeric Meta app, WhatsApp Business account and phone number IDs.',
+        );
+      if (object(next.partition).key === 'thread')
+        throw new Error('Direct WhatsApp uses private chats. Choose a conversation partition.');
+      continue;
+    }
     if (
       source.type === 'telegram' &&
       source.message_events === true &&
