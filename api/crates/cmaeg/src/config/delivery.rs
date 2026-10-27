@@ -12,6 +12,7 @@ pub const CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: &str =
 pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIONS_ENABLED";
 pub const CMAEG_WHATSAPP_INTERACTIONS_ENABLED: &str = "CMAEG_WHATSAPP_INTERACTIONS_ENABLED";
 pub const CMAEG_DISCORD_INTERACTIONS_ENABLED: &str = "CMAEG_DISCORD_INTERACTIONS_ENABLED";
+pub const CMAEG_DISCORD_MULTISELECT_ENABLED: &str = "CMAEG_DISCORD_MULTISELECT_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
 pub const CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED";
@@ -86,6 +87,9 @@ pub(crate) fn whatsapp_interactions_from_env() -> Result<bool, ConfigError> {
 }
 pub(crate) fn discord_interactions_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_DISCORD_INTERACTIONS_ENABLED)
+}
+pub(crate) fn discord_multiselect_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_DISCORD_MULTISELECT_ENABLED)
 }
 fn whatsapp_interactions(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
     match value.as_deref() {

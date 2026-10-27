@@ -80,6 +80,10 @@ pub struct Click {
     pub(super) event_id: String,
     pub(super) callback_id: String,
     pub(super) action: usize,
+    /// Canonical opaque option indices for one native Discord whole-set choice.
+    /// Absent on historical clicks, buttons, single-selects and other transports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) selection: Option<Vec<usize>>,
     pub(super) occurred_at: String,
 }
 pub struct PreparedCard {

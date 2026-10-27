@@ -1,9 +1,7 @@
 //! Native component consumption reuses encrypted cards and their single-winner CAS.
 use super::{
     card::{now, Click},
-    discord,
-    keyboard::actions,
-    Card, Error, InteractionStore,
+    discord, Card, Error, InteractionStore,
 };
 use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::activity::{Activity, InteractionResult};
@@ -45,7 +43,7 @@ impl InteractionStore {
         for _ in 0..2 {
             let (mut card, version) = self.load(&id).await?;
             let identity = card.discord.as_ref().ok_or(Error::Denied)?;
-            let action_index =
+            let resolved =
                 discord::action(&card, click.custom_id, click.component_type, click.values)?;
             if card.channel_id != channel.id
                 || card.owner != channel.definition.owner.subject
@@ -77,14 +75,12 @@ impl InteractionStore {
             {
                 return Err(Error::Denied);
             }
-            let action = actions(&card.message)
-                .get(action_index)
-                .cloned()
-                .ok_or(Error::Denied)?;
+            let action = resolved.action;
             if let Some(consumed) = &card.consumed {
                 if consumed.event_id != activity.event_id.as_str()
                     || consumed.callback_id != click.id
-                    || consumed.action != action_index
+                    || consumed.action != resolved.index
+                    || consumed.selection != resolved.selection
                 {
                     return Err(Error::Denied);
                 }
@@ -97,7 +93,8 @@ impl InteractionStore {
                 card.consumed = Some(Click {
                     event_id: activity.event_id.to_string(),
                     callback_id: click.id.into(),
-                    action: action_index,
+                    action: resolved.index,
+                    selection: resolved.selection,
                     occurred_at: activity.occurred_at.clone(),
                 });
                 match self.save(&card, Some(version)).await {
