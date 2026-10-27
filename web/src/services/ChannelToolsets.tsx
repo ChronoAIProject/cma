@@ -105,8 +105,8 @@ export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
                 </p>
                 {extra > 0 ? (
                   <p>
-                    {extra} additional MCP {extra === 1 ? 'server is' : 'servers are'} configured in
-                    its agent settings.
+                    {extra} additional MCP {extra === 1 ? 'server is' : 'servers are'} requested in
+                    its saved profile. Provider installation is not confirmed here.
                   </p>
                 ) : null}
               </li>
