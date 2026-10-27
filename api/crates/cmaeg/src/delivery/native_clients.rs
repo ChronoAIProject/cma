@@ -3,6 +3,14 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_lark_outbound_media(mut self, enabled: bool) -> Self {
+        self.native_lark_outbound_media = enabled;
+        self
+    }
+    pub(super) fn native_lark_outbound_media_enabled(&self) -> bool {
+        self.native_lark_outbound_media
+    }
+
     pub fn with_native_lark(
         mut self,
         client: crate::native_lark::Client,

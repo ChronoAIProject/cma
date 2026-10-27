@@ -238,6 +238,7 @@ impl App {
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: true,
             native_media_enabled: false,
+            native_lark_outbound_media_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             whatsapp_reactions: None,
             native_whatsapp_templates_enabled: false,

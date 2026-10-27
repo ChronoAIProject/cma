@@ -155,6 +155,7 @@ pub struct Config {
     pub native_lark_media_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_media_enabled: bool,
+    pub native_lark_outbound_media_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     pub native_whatsapp_interactions_enabled: bool,
     pub native_whatsapp_reactions_enabled: bool,
@@ -282,6 +283,9 @@ impl Config {
             native_lark_media_enabled: routing::write_flag("CMAEG_NATIVE_LARK_MEDIA_ENABLED")?,
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
+            )?,
+            native_lark_outbound_media_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
             )?,
             native_whatsapp_outbound_media_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED",
