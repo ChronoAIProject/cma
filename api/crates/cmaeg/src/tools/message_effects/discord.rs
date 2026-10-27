@@ -16,15 +16,24 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 pub struct DiscordEffectsClient {
-    api: DiscordRest,
-    capacity: Semaphore,
+    pub(super) api: DiscordRest,
+    pub(super) capacity: Semaphore,
+    pub(super) card_effects_enabled: bool,
 }
 impl DiscordEffectsClient {
     pub fn new(api: DiscordRest) -> Self {
         Self {
             api,
             capacity: Semaphore::new(32),
+            card_effects_enabled: false,
         }
+    }
+    pub(crate) fn card_effects_enabled(&self) -> bool {
+        self.card_effects_enabled
+    }
+    pub fn with_card_effects(mut self, enabled: bool) -> Self {
+        self.card_effects_enabled = enabled;
+        self
     }
 }
 
@@ -150,7 +159,8 @@ impl ToolsState {
         };
         // Serialize different idempotency keys too: a reaction replacement is a
         // read/remove/add sequence, and overlapping keys must not leave two reactions.
-        let serial = super::serial::Store::new(self.resolver.record_client(), self.keys.clone());
+        let serial =
+            crate::discord::mutation::Store::new(self.resolver.record_client(), self.keys.clone());
         let destination = message
             .discord_message
             .as_ref()

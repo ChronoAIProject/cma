@@ -27,8 +27,10 @@ pub(crate) async fn serve(
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     discord_interactions: bool,
+    discord_forms: bool,
     discord_multiselect: bool,
     discord_card_edits: bool,
+    discord_card_effects: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -115,6 +117,7 @@ pub(crate) async fn serve(
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
         .with_discord_interactions(discord_interactions)
+        .with_discord_forms(discord_forms)
         .with_discord_multiselect(discord_multiselect)
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
@@ -218,9 +221,10 @@ pub(crate) async fn serve(
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
-        discord_effects: Some(std::sync::Arc::new(tools::DiscordEffectsClient::new(
-            crate::discord::DiscordRest::new()?,
-        ))),
+        discord_effects: Some(std::sync::Arc::new(
+            tools::DiscordEffectsClient::new(crate::discord::DiscordRest::new()?)
+                .with_card_effects(discord_card_effects),
+        )),
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

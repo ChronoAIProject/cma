@@ -38,28 +38,34 @@ fn frames(thread: bool) -> Vec<Value> {
 }
 #[tokio::test]
 async fn native_component_runs_real_provider_once_and_replies_to_original_card() {
-    run(false, false, false, false).await;
+    run(false, false, false, false, false).await;
 }
 #[tokio::test]
 async fn native_thread_buttons_and_selects_run_one_original_consumer_and_reply_in_same_thread() {
     for select in [false, true] {
-        run(true, select, false, false).await;
+        run(true, select, false, false, false).await;
     }
 }
 #[tokio::test]
 async fn native_discord_multiselect_executes_one_whole_set_and_preserves_named_thread_reply() {
     for thread in [false, true] {
-        run(thread, true, true, false).await;
+        run(thread, true, true, false, false).await;
     }
 }
 #[tokio::test]
 async fn native_discord_edited_multiselect_executes_once_for_original_named_thread() {
-    run(true, true, true, true).await;
+    run(true, true, true, true, false).await;
 }
-async fn run(thread: bool, select: bool, multi: bool, edited: bool) {
+#[tokio::test]
+async fn discord_modal_executes_once_and_replies_to_original_named_conversation() {
+    for thread in [false, true] {
+        run(thread, false, false, false, true).await;
+    }
+}
+async fn run(thread: bool, select: bool, multi: bool, edited: bool, form: bool) {
     let mut fixture = if thread {
         FixtureState::named_thread(11).await
-    } else if multi {
+    } else if multi || form {
         FixtureState::named().await
     } else {
         FixtureState::new().await
@@ -70,17 +76,28 @@ async fn run(thread: bool, select: bool, multi: bool, edited: bool) {
     } else {
         message(select)
     };
-    let card = if edited {
+    let card = if form {
+        super::modal_fixture::card(&fixture).await
+    } else if edited {
         replaced_card(&fixture, &outbound).await
     } else {
         fixture.card(&outbound).await
     };
+    let modal = if form {
+        Some(super::modal_fixture::launch(&fixture, &card, 2).await.1)
+    } else {
+        None
+    };
     let before_callback = fixture.rest.memory.calls.lock().unwrap().len();
-    let mut raw = fixture.callback(
-        card.markup[0]["components"][0]["custom_id"]
-            .as_str()
-            .unwrap(),
-    );
+    let mut raw = if let Some(custom) = modal {
+        super::modal_fixture::submit(&fixture, &custom)
+    } else {
+        fixture.callback(
+            card.markup[0]["components"][0]["custom_id"]
+                .as_str()
+                .unwrap(),
+        )
+    };
     if thread {
         fixture.queue_thread_metadata();
     }
@@ -92,7 +109,7 @@ async fn run(thread: bool, select: bool, multi: bool, edited: bool) {
             json!(["1"])
         };
     }
-    fixture.receive(raw.clone(), 2).await.unwrap();
+    fixture.receive(raw.clone(), 3).await.unwrap();
     {
         let mut calls = fixture.rest.memory.calls.lock().unwrap();
         assert_eq!(calls.len(), before_callback + if thread { 2 } else { 1 });
@@ -233,6 +250,22 @@ async fn run(thread: bool, select: bool, multi: bool, edited: bool) {
                 .all(|call| !String::from_utf8_lossy(&call.body)
                     .contains("private-interaction-token"))
         );
+        if form {
+            let body: Value = serde_json::from_slice(&turns[0].body).unwrap();
+            let context = &body["event_context"];
+            assert_eq!(
+                context["conversation_id"],
+                fixture.original.conversation_id.as_str()
+            );
+            assert_eq!(
+                context["activity"]["routing"]["targets"][0]["id"],
+                fixture.original.consumer.as_ref().unwrap().as_str()
+            );
+            assert_eq!(
+                context["activity"]["kind"]["values"]["fields"],
+                json!({"private-text":"Ada","private-choice":"private-write","private-number":12.5,"private-date":"2028-02-29"})
+            );
+        }
         if multi {
             let body: Value = serde_json::from_slice(&turns[0].body).unwrap();
             let context = &body["event_context"];
