@@ -4164,6 +4164,11 @@ fails execution closed; the base deployment remains usable with lifecycle off.
 Eligible event context includes `capabilities.thread_lifecycle` only after the
 server restores the exact retained native inbox and original selected consumer.
 It describes scope and supported actions, not current Discord permissions.
+Discovery is optional and has a 100 ms budget: ordinary context reads succeed
+without this hint when storage is slow or lifecycle concurrency is exhausted.
+Unrelated platforms and sources without lifecycle consent perform no lifecycle
+storage lookup. Discovery reuses the authorized context snapshot; explicit
+operations still restore current channel custody before any platform write.
 
 | REST | MCP / TypeScript | Rust | Behavior |
 | --- | --- | --- | --- |
