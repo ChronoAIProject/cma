@@ -60,6 +60,12 @@ impl FixtureState {
         f
     }
     pub async fn new() -> Self {
+        Self::configured(false).await
+    }
+    pub async fn group() -> Self {
+        Self::configured(true).await
+    }
+    async fn configured(group: bool) -> Self {
         let mut setup = Setup::discovered().await;
         let activity = setup.observe();
         let provider = HttpServer::start().await;
@@ -70,7 +76,13 @@ impl FixtureState {
             setup.fixture.store.keys.clone(),
             provider.client(true, Duration::from_secs(5)),
         ));
-        let id = setup.message(|_| {}).await;
+        let id = setup
+            .message(|raw| {
+                if group {
+                    raw["guild_id"] = "88".into();
+                }
+            })
+            .await;
         let channel = setup
             .state
             .resolver

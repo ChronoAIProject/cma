@@ -75,6 +75,14 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
+        if let Err(error) = self
+            .relay
+            .discord
+            .verify_component_channel(token, channel_id, context.activity.conversation.kind)
+            .await
+        {
+            return (refused(rendering, super::discord::outcome(error)), effects);
+        }
         let Ok(mut card) = store
             .prepare_with_context(ctx.channel, event, message, context)
             .await

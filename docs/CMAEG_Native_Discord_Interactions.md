@@ -20,6 +20,11 @@ Controls require a verified human native Discord event, a ready source, durable
 routing, and an executable provider binding. A provider's event-context response
 must match the sealed event digest before a card can be prepared. Published agent
 events and thread contexts are ineligible in this initial implementation.
+Before creating a card, delivery verifies the exact channel through one
+authenticated Discord channel read with a two-second budget. Only ordinary DM
+or server channels matching the verified conversation kind qualify. Missing,
+unavailable or thread metadata refuses issuance even when the original event
+has no thread marker; this check is independent of the thread metadata gate.
 
 There are at most five action rows, with at most five buttons per row or one
 single-select menu per row. Neutral message validation currently bounds a select
