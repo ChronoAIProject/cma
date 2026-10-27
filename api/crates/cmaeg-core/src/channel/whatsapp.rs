@@ -57,6 +57,22 @@ pub fn valid_message_id(value: &str) -> bool {
         && value.bytes().all(|byte| (33..=126).contains(&byte))
 }
 
+/// Meta webhooks use base64; Graph metadata may report the same digest in hex.
+pub fn media_sha256(value: &str) -> Option<[u8; 32]> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        let mut digest = [0; 32];
+        for (index, output) in digest.iter_mut().enumerate() {
+            *output = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
+        }
+        return Some(digest);
+    }
+    if value.len() != 44 {
+        return None;
+    }
+    STANDARD.decode(value).ok()?.try_into().ok()
+}
+
 pub(super) fn validate(
     app_id: &str,
     waba_id: &str,

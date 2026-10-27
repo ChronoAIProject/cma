@@ -50,7 +50,10 @@ impl IngressState {
                             messages.iter().any(|message| {
                                 message.id == *target
                                     && message.sender == verified.message.sender
-                                    && matches!(message.content, Content::Text { .. })
+                                    && matches!(
+                                        message.content,
+                                        Content::Text { .. } | Content::Media { .. }
+                                    )
                             })
                         });
                     if !same_message || !matches!(plan.activity.kind, ActivityKind::Message { .. })
@@ -155,7 +158,14 @@ impl IngressState {
                 event_id: request.activity.event_id.clone(),
             };
             let body = match routing.plans.load(&identity).await {
-                Ok(None) => verified.body.clone(),
+                Ok(None) => {
+                    if matches!(verified.message.content, Content::Media { .. })
+                        && !(self.media_enabled && self.native_whatsapp_media_enabled)
+                    {
+                        return refusal(422, "native_whatsapp_media_disabled");
+                    }
+                    verified.body.clone()
+                }
                 Ok(Some(existing)) => {
                     let same = webhook::extract(&verified.source, &existing.source_body).is_ok_and(
                         |messages| messages.iter().any(|message| message == &verified.message),
