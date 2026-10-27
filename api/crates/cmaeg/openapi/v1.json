@@ -1666,6 +1666,16 @@
           "cards": {
             "type": "string"
           },
+          "conversation_history": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationHistoryCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "edit": {
             "type": "boolean"
           },
@@ -5323,6 +5333,12 @@
           },
           "thread_contract_writes_enabled": {
             "type": "boolean"
+          },
+          "native_discord_conversation_history_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -6022,6 +6038,10 @@
               "bot_id": {
                 "type": "string"
               },
+              "conversation_history": {
+                "description": "Explicit read-only pagination within the original admitted conversation.",
+                "type": "boolean"
+              },
               "intents": {
                 "format": "int64",
                 "minimum": 0,
@@ -6473,6 +6493,10 @@
               },
               "bot_id": {
                 "type": "string"
+              },
+              "conversation_history": {
+                "description": "Explicit read-only pagination within the original admitted conversation.",
+                "type": "boolean"
               },
               "intents": {
                 "format": "int64",
@@ -7522,6 +7546,293 @@
           "refused"
         ],
         "type": "object"
+      },
+      "ConversationHistoryCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_facts_only": {
+            "type": "boolean"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/HistoryDirection"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_metadata_bytes": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_output_bytes": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_text_bytes": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page_size",
+          "direction",
+          "attachment_facts_only",
+          "max_text_bytes",
+          "max_metadata_bytes",
+          "max_output_bytes",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "ConversationHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_message_id": {
+            "type": "string"
+          },
+          "before_message_id": {
+            "type": "string"
+          },
+          "content_coverage": {
+            "$ref": "#/components/schemas/HistoryContentCoverage"
+          },
+          "continuation": {
+            "$ref": "#/components/schemas/HistoryContinuation"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ActivityConversation"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "fetched_at": {
+            "description": "Gateway fetch time, not a Discord snapshot timestamp.",
+            "type": "string"
+          },
+          "messages": {
+            "description": "Chronological within the page; continuation travels backward.",
+            "items": {
+              "$ref": "#/components/schemas/HistoryMessage"
+            },
+            "type": "array"
+          },
+          "metadata_truncated": {
+            "type": "boolean"
+          },
+          "omitted_message_count": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scanned_messages": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation",
+          "anchor_message_id",
+          "before_message_id",
+          "fetched_at",
+          "expires_at",
+          "messages",
+          "scanned_messages",
+          "omitted_message_count",
+          "text_truncated",
+          "metadata_truncated",
+          "content_coverage",
+          "continuation"
+        ],
+        "type": "object"
+      },
+      "HistoryAttachmentFacts": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_seconds": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ephemeral": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": "string"
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attachment_id",
+          "filename",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
+      "HistoryContentCoverage": {
+        "enum": [
+          "platform_returned_only"
+        ],
+        "type": "string"
+      },
+      "HistoryContinuation": {
+        "oneOf": [
+          {
+            "properties": {
+              "cursor": {
+                "$ref": "#/components/schemas/HistoryCursor"
+              },
+              "status": {
+                "enum": [
+                  "more_visible_rows"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "cursor",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "status": {
+                "enum": [
+                  "end_of_visible_history"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "HistoryCursor": {
+        "type": "string"
+      },
+      "HistoryDirection": {
+        "enum": [
+          "backward"
+        ],
+        "type": "string"
+      },
+      "HistoryMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryAttachmentFacts"
+            },
+            "type": "array"
+          },
+          "author": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "metadata_truncated": {
+            "type": "boolean"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "omitted_content": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryOmittedContent"
+            },
+            "type": "array"
+          },
+          "text": {
+            "type": "string"
+          },
+          "text_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message_id",
+          "author",
+          "text",
+          "occurred_at",
+          "attachments",
+          "omitted_content",
+          "text_truncated",
+          "metadata_truncated"
+        ],
+        "type": "object"
+      },
+      "HistoryOmittedContent": {
+        "enum": [
+          "embeds",
+          "components",
+          "stickers",
+          "poll",
+          "forwarded_snapshot"
+        ],
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -10389,6 +10700,59 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/events/{event_ref}/history": {
+      "get": {
+        "operationId": "readEventHistory",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/HistoryCursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationHistoryPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     }
