@@ -19,6 +19,7 @@ pub struct DiscordEffectsClient {
     pub(super) api: DiscordRest,
     pub(super) capacity: Semaphore,
     pub(super) card_effects_enabled: bool,
+    pub(super) received_issuance_enabled: bool,
 }
 impl DiscordEffectsClient {
     pub fn new(api: DiscordRest) -> Self {
@@ -26,6 +27,7 @@ impl DiscordEffectsClient {
             api,
             capacity: Semaphore::new(32),
             card_effects_enabled: false,
+            received_issuance_enabled: false,
         }
     }
     pub(crate) fn card_effects_enabled(&self) -> bool {
@@ -33,6 +35,10 @@ impl DiscordEffectsClient {
     }
     pub fn with_card_effects(mut self, enabled: bool) -> Self {
         self.card_effects_enabled = enabled;
+        self
+    }
+    pub fn with_received_reactions(mut self, enabled: bool) -> Self {
+        self.received_issuance_enabled = enabled;
         self
     }
 }

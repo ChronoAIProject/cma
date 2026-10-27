@@ -298,3 +298,6 @@ async fn native_effects_honor_cooldowns_and_ambiguous_delete_outcomes() {
         Err(RestError::RateLimited(_))
     ));
 }
+
+#[path = "received_effects_tests.rs"]
+mod received;

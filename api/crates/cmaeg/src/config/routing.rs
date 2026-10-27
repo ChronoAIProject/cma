@@ -163,6 +163,13 @@ fn default_set(registry: &ProviderRegistry) -> BTreeSet<String> {
     }
 }
 
+pub(super) fn telegram_received_reactions() -> Result<bool, super::ConfigError> {
+    write_flag("CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED")
+}
+pub(super) fn discord_received_reactions() -> Result<bool, super::ConfigError> {
+    write_flag("CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED")
+}
+
 /// Reader-first authoring gate; an unset value never enables a new stored shape.
 pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
     match std::env::var(name).as_deref() {

@@ -18,6 +18,7 @@ pub mod lineage;
 pub mod media_link;
 pub mod message_ref;
 pub mod pointer;
+pub mod received_reaction;
 pub mod reply_target;
 pub mod telegram_effect;
 pub mod whatsapp_reaction;

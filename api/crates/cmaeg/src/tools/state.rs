@@ -113,7 +113,8 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.whatsapp_reaction.is_some()
+        let channel = if message.received_reaction.is_some()
+            || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()
             || message.discord_message.is_some()
             || (message.interaction_record_id.is_some() && message.route_id.starts_with("discord:"))

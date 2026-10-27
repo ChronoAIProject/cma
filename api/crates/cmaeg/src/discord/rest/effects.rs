@@ -1,4 +1,4 @@
-//! Exact bot-message effects. The caller owns durable authorization/idempotency;
+//! Exact native message effects. The caller owns durable authorization/idempotency;
 //! these transport primitives never retry a possibly accepted write.
 use super::{valid_id, DiscordRest, RestError};
 use cmaeg_core::{
@@ -46,51 +46,123 @@ impl DiscordRest {
         }
         tokio::time::timeout(Duration::from_secs(5), async {
             let current = self.own_message(token, bot, channel, message).await?;
-            let desired = match request.reaction.first() {
-                None => None,
-                Some(TelegramReaction::Emoji { emoji }) => Some(emoji.clone()),
-                Some(TelegramReaction::CustomEmoji { custom_emoji_id }) => {
-                    Some(self.custom_emoji(token, channel, custom_emoji_id).await?)
-                }
-            };
-            let existing = own_reactions(&current)?;
-            // Validate every exact destination before the first removal.
-            for emoji in existing.iter().chain(desired.iter()) {
-                self.reaction_url(channel, message, emoji)?;
-            }
-            let mut changed = false;
-            for emoji in existing
-                .iter()
-                .filter(|emoji| Some(*emoji) != desired.as_ref())
-            {
-                let result = self
-                    .effect_request(
-                        token,
-                        Method::DELETE,
-                        self.reaction_url(channel, message, emoji)?,
-                    )
-                    .await;
-                if let Err(error) = result {
-                    return Err(if changed { RestError::Unknown } else { error });
-                }
-                changed = true;
-            }
-            if let Some(emoji) = desired.filter(|emoji| !existing.contains(emoji)) {
-                if let Err(error) = self
-                    .effect_request(
-                        token,
-                        Method::PUT,
-                        self.reaction_url(channel, message, &emoji)?,
-                    )
-                    .await
-                {
-                    return Err(if changed { RestError::Unknown } else { error });
-                }
-            }
-            Ok(())
+            self.replace_reactions(token, channel, message, &current, request, || async {
+                Ok(())
+            })
+            .await
         })
         .await
         .unwrap_or(Err(RestError::Unknown))
+    }
+
+    /// Retained human-message authority is separate from bot-message mutations.
+    /// The caller rechecks current sealed custody after all reads and before each write.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn set_received_message_reaction<F, Fut>(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        message: &str,
+        actor: &str,
+        request: &MessageReactionRequest,
+        check: F,
+    ) -> Result<(), RestError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), RestError>>,
+    {
+        if !valid_id(bot)
+            || !valid_id(actor)
+            || bot == actor
+            || request.validate().is_err()
+            || request.is_big
+        {
+            return Err(RestError::Rejected);
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            self.verify_bot(token, bot).await?;
+            let current = self.message(token, channel, message).await?;
+            if current["author"]["id"].as_str() != Some(actor)
+                || ["bot", "system"].iter().any(|flag| {
+                    current["author"]
+                        .get(*flag)
+                        .is_some_and(|value| value.as_bool() != Some(false))
+                })
+                || current.get("webhook_id").is_some_and(|v| !v.is_null())
+                || !matches!(current["type"].as_u64(), Some(0 | 19))
+            {
+                return Err(RestError::Rejected);
+            }
+            self.replace_reactions(token, channel, message, &current, request, check)
+                .await
+        })
+        .await
+        .unwrap_or(Err(RestError::Unknown))
+    }
+
+    async fn replace_reactions<F, Fut>(
+        &self,
+        token: &Secret,
+        channel: &str,
+        message: &str,
+        current: &Value,
+        request: &MessageReactionRequest,
+        check: F,
+    ) -> Result<(), RestError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<(), RestError>>,
+    {
+        let desired = match request.reaction.first() {
+            None => None,
+            Some(TelegramReaction::Emoji { emoji }) => Some(emoji.clone()),
+            Some(TelegramReaction::CustomEmoji { custom_emoji_id }) => {
+                Some(self.custom_emoji(token, channel, custom_emoji_id).await?)
+            }
+        };
+        let existing = own_reactions(current)?;
+        // Validate every exact destination before the first removal.
+        for emoji in existing.iter().chain(desired.iter()) {
+            self.reaction_url(channel, message, emoji)?;
+        }
+        check().await?;
+        let mut changed = false;
+        for emoji in existing
+            .iter()
+            .filter(|emoji| Some(*emoji) != desired.as_ref())
+        {
+            if let Err(error) = check().await {
+                return Err(if changed { RestError::Unknown } else { error });
+            }
+            let result = self
+                .effect_request(
+                    token,
+                    Method::DELETE,
+                    self.reaction_url(channel, message, emoji)?,
+                )
+                .await;
+            if let Err(error) = result {
+                return Err(if changed { RestError::Unknown } else { error });
+            }
+            changed = true;
+        }
+        if let Some(emoji) = desired.filter(|emoji| !existing.contains(emoji)) {
+            if let Err(error) = check().await {
+                return Err(if changed { RestError::Unknown } else { error });
+            }
+            if let Err(error) = self
+                .effect_request(
+                    token,
+                    Method::PUT,
+                    self.reaction_url(channel, message, &emoji)?,
+                )
+                .await
+            {
+                return Err(if changed { RestError::Unknown } else { error });
+            }
+        }
+        Ok(())
     }
 
     async fn own_message(
