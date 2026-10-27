@@ -153,6 +153,129 @@ async fn crash_after_consume_recovers_exact_default_and_named_admission_without_
     }
 }
 #[tokio::test]
+async fn consumed_click_survives_both_admission_windows_and_abandoned_external_lock() {
+    for after_admission in [false, true] {
+        for named in [false, true] {
+            let f = Fixture::new(named, true, LarkRegion::Feishu).await;
+            let card = f.card(false, true).await;
+            let click = f.callback(&card, "winning_click", 0);
+            f.store
+                .consume_native_lark(&f.channel, &click)
+                .await
+                .unwrap();
+            let pending = f
+                .store
+                .native_lark_pending(&card.card.id, &f.channel)
+                .await
+                .unwrap();
+            let reference = card
+                .card
+                .reference
+                .as_ref()
+                .unwrap()
+                .open(&routed::keys())
+                .unwrap()
+                .payload;
+            let (state, _scheduler) = state(&f);
+            let identity = super::routing_store::EventIdentity {
+                owner: f.channel.definition.owner.subject.clone(),
+                channel_id: f.channel.id.clone(),
+                record_id: f.channel.pointer.record_id.clone(),
+                event_id: pending.event.event_id.clone(),
+            };
+            if after_admission {
+                // Persist routing admission, then lose the separate admitted marker.
+                *f.server.memory.fault.lock().unwrap() =
+                    Some(super::routing_store::test_server::Fault {
+                        id: card.card.id.clone(),
+                        store: false,
+                        lose_read: false,
+                        skip: 0,
+                    });
+                assert!(matches!(
+                    state
+                        .resume_native_lark_control(&card.card.id, f.channel.id.as_str())
+                        .await,
+                    LaunchOutcome::Refused(_)
+                ));
+                assert!(f.server.store().load(&identity).await.unwrap().is_some());
+            }
+            let receipt = card
+                .card
+                .native_lark
+                .as_ref()
+                .unwrap()
+                .destination
+                .as_ref()
+                .unwrap();
+            let serial =
+                lark_ledger::Store::new(f.server.records.clone(), Arc::new(routed::keys()));
+            // Emulate a writer that read the card before consumption and crashed
+            // immediately after acquiring the external lock, before rechecking it.
+            let _abandoned_external = serial
+                .acquire(
+                    lark_ledger::native_destination(&receipt.reply),
+                    &f.channel.definition.owner.subject,
+                    receipt.retained_until,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(f
+                .store
+                .replace_native_lark(
+                    &f.channel,
+                    &reference,
+                    &crate::interactions::native_lark::fixture::outbound(false)
+                )
+                .await
+                .is_err());
+            assert!(f
+                .store
+                .fence_native_lark(&f.channel, &reference)
+                .await
+                .is_err());
+            assert!(
+                !f.store
+                    .native_lark_pending(&card.card.id, &f.channel)
+                    .await
+                    .unwrap()
+                    .admitted
+            );
+            assert!(matches!(
+                state
+                    .resume_native_lark_control(&card.card.id, f.channel.id.as_str())
+                    .await,
+                LaunchOutcome::Admitted { .. }
+            ));
+            let recovered = f
+                .store
+                .native_lark_pending(&card.card.id, &f.channel)
+                .await
+                .unwrap();
+            assert!(recovered.admitted);
+            assert_eq!(recovered.activity, pending.activity);
+            assert_eq!(recovered.event, pending.event);
+            let plan = f.server.store().load(&identity).await.unwrap().unwrap();
+            assert_eq!(plan.activity, pending.activity);
+            assert_eq!(plan.targets.len(), 1);
+            assert_eq!(plan.targets[0].launch.event, pending.event);
+            // Recovery did not reclaim or release the external writer's fence.
+            assert!(serial
+                .acquire_control(
+                    lark_ledger::native_destination(&receipt.reply),
+                    &f.channel.definition.owner.subject,
+                    receipt.retained_until,
+                    &card.card.id,
+                )
+                .await
+                .unwrap()
+                .is_none());
+        }
+    }
+}
+
+#[tokio::test]
 async fn callback_ack_requires_durable_admission_and_external_mutation_blocks_consumption() {
     let f = Fixture::new(false, false, LarkRegion::Feishu).await;
     let card = f.card(false, true).await;

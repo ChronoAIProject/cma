@@ -32,7 +32,9 @@ impl ToolsState {
             .native_lark_reference(channel, message)
             .await
             .map_err(|_| denied())?;
-        let enabled = !card.superseded && self.native_lark_effects.is_some();
+        let enabled = !card.superseded
+            && crate::interactions::native_lark::mutation_ready(&card)
+            && self.native_lark_effects.is_some();
         Ok(MessageEffectsCapabilities {
             delete: enabled,
             reaction: enabled,
@@ -93,7 +95,7 @@ impl ToolsState {
                 delivery: receipt.delivery,
             });
         }
-        if card.superseded {
+        if card.superseded || !crate::interactions::native_lark::mutation_ready(&card) {
             return Err(denied());
         }
         let claim = match store
@@ -168,7 +170,7 @@ impl ToolsState {
             .native_lark_reference(&channel, &message)
             .await
             .map_err(|_| refusal())?;
-        if card.superseded != deleting {
+        if card.superseded != deleting || !crate::interactions::native_lark::mutation_ready(&card) {
             return Err(refusal());
         }
         let destination = card
@@ -205,7 +207,9 @@ impl ToolsState {
             .native_lark_reference(&fresh, &current)
             .await
             .map_err(|_| refusal())?;
-        if fresh_card.superseded != deleting {
+        if fresh_card.superseded != deleting
+            || !crate::interactions::native_lark::mutation_ready(&fresh_card)
+        {
             return Err(refusal());
         }
         Ok((authority, token))

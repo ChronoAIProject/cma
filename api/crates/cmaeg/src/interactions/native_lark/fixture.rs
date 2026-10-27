@@ -121,7 +121,7 @@ impl Fixture {
             Arc::new(routed::keys()),
             provider.client(true, Duration::from_secs(2)),
         ));
-        let f = Self {
+        let mut f = Self {
             server,
             _provider: provider,
             store,
@@ -130,6 +130,17 @@ impl Fixture {
             context,
         };
         f.save_channel();
+        // Exercise the production restore path, including the exact default and
+        // named consumer key hashes. The planner fixture's placeholder hash is
+        // deliberately not valid retained custody after a fresh restore.
+        f.channel = crate::channels::resolver::ChannelResolver::new(
+            Arc::new(f.server.records.clone()),
+            Arc::new(routed::keys()),
+            Default::default(),
+        )
+        .resolve_current(f.channel.id.as_str())
+        .await
+        .unwrap();
         f
     }
     pub fn save_channel(&self) {

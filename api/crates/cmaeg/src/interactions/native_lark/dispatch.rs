@@ -21,7 +21,7 @@ pub(crate) async fn current(
         .get("interaction_record_id")
         .and_then(serde_json::Value::as_str)
         .ok_or(Error::Denied)?;
-    let records = records.interactions();
+    let records = records.clone().interactions();
     let url = records.record_url(id).map_err(|_| Error::Denied)?;
     let row = records.get(url.as_str()).await.map_err(|e| match e {
         crate::records::RecordError::NotFound => Error::Denied,

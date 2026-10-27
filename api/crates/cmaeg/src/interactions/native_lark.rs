@@ -62,13 +62,23 @@ pub(crate) fn render(
     Ok((value, report))
 }
 pub(super) fn valid(card: &Card, keys: &cmaeg_core::seal::MasterKeyRing) -> bool {
+    valid_shape(card) && (card.native_lark.is_none() || store::valid_reference(card, keys))
+}
+pub(super) fn valid_shape(card: &Card) -> bool {
     match &card.native_lark {
-        Some(a) => a.valid(card) && store::valid_reference(card, keys),
+        Some(a) => a.valid(card),
         None => true,
     }
 }
 pub(crate) fn is_reference(message: &cmaeg_core::seal::MessageRefPayload) -> bool {
     message.interaction_record_id.is_some() && message.route_id.starts_with("native-lark-card:")
+}
+
+/// A winning callback owns the message until its exact durable admission is saved.
+pub(crate) fn mutation_ready(card: &Card) -> bool {
+    card.native_lark
+        .as_ref()
+        .is_some_and(|a| a.pending.as_ref().is_none_or(|pending| pending.admitted))
 }
 
 pub(crate) fn decode(locator: &str) -> Result<(String, usize, Option<u64>), Error> {
