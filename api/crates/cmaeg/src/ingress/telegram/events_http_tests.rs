@@ -159,3 +159,25 @@ async fn telegram_message_events_locator_conflicts_require_exact_identity_revisi
         assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
     }
 }
+
+#[tokio::test]
+async fn telegram_anonymous_counts_authenticate_before_lookup_and_recover_without_duplicate_turns()
+{
+    let f = Fixture::new(true).await;
+    let raw = super::anonymous_tests::aggregate(&f);
+    let server = Server::new(&f).await;
+    assert_eq!(server.send(&raw, "wrong-secret").await.0, 401);
+    assert!(f.server.memory.rows.lock().unwrap().is_empty());
+    assert_eq!(server.send(&f.raw, "fixture-webhook").await.0, 202);
+    let (status, body) = server.send(&raw, "fixture-webhook").await;
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(body["status"], "accepted");
+    let plan = f.plan("telegram:77:301").await.unwrap();
+    let before = f.server.memory.writes.load(Ordering::SeqCst);
+    drop(server);
+    let restored = Server::new(&f).await;
+    assert_eq!(restored.send(&raw, "fixture-webhook").await, (status, body));
+    assert_eq!(f.server.memory.writes.load(Ordering::SeqCst), before);
+    assert_eq!(f.plan("telegram:77:301").await.unwrap(), plan);
+    assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+}

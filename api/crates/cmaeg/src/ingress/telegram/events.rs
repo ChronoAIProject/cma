@@ -1,4 +1,4 @@
-//! Authenticated edits and attributable reactions are notifications of saved messages.
+//! Authenticated edits and reaction facts are notifications of saved messages.
 use super::{message_context, Outcome};
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -58,13 +58,16 @@ fn event(raw: &Value) -> Result<(&str, &Value), Error> {
     if object.len() != 2 || raw["update_id"].as_i64().is_none_or(|id| id < 0) {
         return Err(Error::Invalid);
     }
-    for name in ["edited_message", "message_reaction"] {
+    for name in [
+        "edited_message",
+        "message_reaction",
+        "message_reaction_count",
+    ] {
         if let Some(value) = object.get(name).filter(|value| value.is_object()) {
             return Ok((name, value));
         }
     }
-    // Channel posts are not admitted originals today. Anonymous actors and
-    // aggregated counts cannot substitute a message author's human authority.
+    // Channel posts are not admitted originals today.
     Err(Error::Refused(Refusal::SystemSender))
 }
 fn address(value: &Value) -> Result<(String, String), Error> {
@@ -217,25 +220,8 @@ fn normalize(
             json!({"patch":{"text":observed.payload.content.text.unwrap_or_default(),"attachments":observed.facts.attachments}}),
         )
     } else {
-        if value.get("actor_chat").is_some() {
-            return Err(Error::Refused(Refusal::UnknownSender));
-        }
-        let user = &value["user"];
-        if user["is_bot"] != false {
-            return Err(Error::Refused(Refusal::UnknownSender));
-        }
-        let actor = Actor {
-            id: positive(&user["id"])?.to_string(),
-            kind: ActorKind::Human,
-            display_name: user["first_name"]
-                .as_str()
-                .map(|name| name.chars().filter(|c| !c.is_control()).take(128).collect()),
-        };
-        (
-            actor,
-            timestamp(&value["date"], now)?.1,
-            json!({"old_reactions":reactions(&value["old_reaction"])?,"new_reactions":reactions(&value["new_reaction"])?}),
-        )
+        let (actor, change) = reaction_facts::normalize(name, value, &chat, admission)?;
+        (actor, timestamp(&value["date"], now)?.1, change)
     };
     let chat_type = match original.activity.conversation.kind {
         cmaeg_core::activity::ConversationKind::Private => "private",
@@ -250,7 +236,12 @@ fn normalize(
     if value["chat"]["type"] != chat_type {
         return Err(Error::Invalid);
     }
-    for admitted_actor in [&original.activity.actor, &actor] {
+    // Anonymous notifications have no human sender to authorize. The helper
+    // already required an open sender policy; original author/chat/group
+    // admission below remains authoritative and cannot be bypassed by counts.
+    let actors = std::iter::once(&original.activity.actor)
+        .chain((actor.kind != ActorKind::Unknown).then_some(&actor));
+    for admitted_actor in actors {
         admit(
             admission,
             &AdmissionFacts {
@@ -309,7 +300,7 @@ fn normalize(
     activity.validate().map_err(|_| Error::Invalid)?;
     Ok(activity)
 }
-fn reactions(value: &Value) -> Result<Vec<Value>, Error> {
+pub(super) fn reactions(value: &Value) -> Result<Vec<Value>, Error> {
     let values = value
         .as_array()
         .filter(|v| v.len() <= 64)
@@ -345,6 +336,9 @@ fn reactions(value: &Value) -> Result<Vec<Value>, Error> {
     result.sort_by_key(|value| cmaeg_core::profile::canonical_json(value.clone()));
     Ok(result)
 }
+
+#[path = "reaction_facts.rs"]
+mod reaction_facts;
 
 #[cfg(test)]
 #[path = "events_tests.rs"]
