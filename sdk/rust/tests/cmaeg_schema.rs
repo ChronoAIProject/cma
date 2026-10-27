@@ -118,6 +118,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConformanceLevel,
         ContextConfig,
         ContextResponse,
+        ReceivedMessageContext,
         ThreadHistory,
         ThreadHistoryMessage,
         ConversationId,
@@ -480,8 +481,10 @@ fn a_context_response_names_its_consumer_only_on_a_routed_channel() {
     );
     let mut legacy = examples["ContextResponse"][0].clone();
     legacy.as_object_mut().unwrap().remove("consumer");
+    legacy.as_object_mut().unwrap().remove("received_message");
     let decoded = decode(&legacy);
     assert!(decoded.consumer.is_none());
+    assert!(decoded.received_message.is_none());
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }
 

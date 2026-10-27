@@ -141,6 +141,7 @@ fn default_event_refs_keep_their_canonical_plaintext_for_every_reply_address() {
 fn default_message_refs_keep_their_canonical_plaintext() {
     let plain = MessageRefPayload {
         discord_message: None,
+        whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,
         channel_id: ChannelId::new("cmaeg1.ch.golden-references").unwrap(),
@@ -153,6 +154,7 @@ fn default_message_refs_keep_their_canonical_plaintext() {
     };
     let interaction = MessageRefPayload {
         discord_message: None,
+        whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,
         interaction_record_id: Some("6f1e2d3c-4b5a-4978-8a69-5b4c3d2e1f00".into()),

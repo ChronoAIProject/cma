@@ -318,7 +318,14 @@ export const PublicActivitySchema = object({
 });
 export type PublicActivity = Output<typeof PublicActivitySchema>;
 
+export const ReceivedMessageContextSchema = object({
+  message_ref: text,
+  effects: MessageEffectsCapabilitiesSchema,
+});
+export type ReceivedMessageContext = Output<typeof ReceivedMessageContextSchema>;
+
 export const ContextResponseSchema = object({
+  received_message: optional(nullable(ReceivedMessageContextSchema)),
   thread_history: optional(nullable(ThreadHistorySchema)),
   activity: PublicActivitySchema,
   activity_verified: boolean,
