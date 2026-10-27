@@ -235,7 +235,7 @@ impl InteractionStore {
         reference: &MessageRefPayload,
     ) -> Result<Card, Error> {
         let (mut card, version) = self.native_lark_reference(channel, reference).await?;
-        if card.superseded {
+        if card.superseded || !super::mutation_ready(&card) {
             return Err(Error::Denied);
         }
         card.superseded = true;

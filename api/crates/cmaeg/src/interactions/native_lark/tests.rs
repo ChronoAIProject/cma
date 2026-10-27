@@ -1,4 +1,4 @@
-use super::{fixture::*, *};
+use super::fixture::*;
 use cmaeg_core::{
     activity::ActivityKind,
     channel::{LarkRegion, Secret},
@@ -334,6 +334,22 @@ async fn concurrent_distinct_clicks_have_one_winner_and_replacement_never_extend
         .open(&crate::ingress::routing_plan::fixture::keys())
         .unwrap()
         .payload;
+    assert!(f
+        .store
+        .replace_native_lark(&f.channel, &reference, &outbound(false))
+        .await
+        .is_err());
+    assert!(f
+        .store
+        .fence_native_lark(&f.channel, &reference)
+        .await
+        .is_err());
+    let admitted = f
+        .store
+        .native_lark_pending(&card.card.id, &f.channel)
+        .await
+        .unwrap();
+    f.store.native_lark_admitted(&card.card.id).await.unwrap();
     let mut replacement = f
         .store
         .replace_native_lark(&f.channel, &reference, &outbound(false))
@@ -365,6 +381,15 @@ async fn concurrent_distinct_clicks_have_one_winner_and_replacement_never_extend
         .unwrap();
     let pending = f.store.native_lark_pending(&card.card.id, &f.channel).await;
     assert!(pending.is_err());
+    super::current_dispatch(
+        &f.server.records,
+        &Arc::new(crate::ingress::routing_plan::fixture::keys()),
+        &f.channel,
+        &admitted.activity,
+        &admitted.event,
+    )
+    .await
+    .unwrap();
     let ReplyAddress::NativeLark(original) = &f.event.reply else {
         panic!()
     };

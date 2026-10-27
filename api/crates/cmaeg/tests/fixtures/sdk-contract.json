@@ -847,7 +847,8 @@
         "reaction": true,
         "scope": "confirmed_native_bot_message"
       },
-      "thread_history": true
+      "thread_history": true,
+      "forms": false
     }
   ],
   "ChannelCreateRequest": [
@@ -3268,7 +3269,8 @@
           "reaction": true,
           "scope": "confirmed_native_bot_message"
         },
-        "thread_history": true
+        "thread_history": true,
+        "forms": false
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3451,7 +3453,8 @@
           "reaction": true,
           "scope": "confirmed_native_bot_message"
         },
-        "thread_history": true
+        "thread_history": true,
+        "forms": false
       },
       "channel_id": "fixture",
       "consumer": {
@@ -5024,7 +5027,9 @@
         "native_whatsapp_auto_activation_enabled": false,
         "native_whatsapp_writes_enabled": false,
         "native_lark_writes_enabled": false,
-        "native_lark_intake_enabled": false
+        "native_lark_intake_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "agent_tools": [
         {
@@ -5077,7 +5082,9 @@
         "native_whatsapp_auto_activation_enabled": true,
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
-        "native_lark_intake_enabled": false
+        "native_lark_intake_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "agent_tools": [
         {
@@ -5139,7 +5146,9 @@
         "native_whatsapp_auto_activation_enabled": true,
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
-        "native_lark_intake_enabled": false
+        "native_lark_intake_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6524,7 +6533,9 @@
       "native_whatsapp_auto_activation_enabled": false,
       "native_whatsapp_writes_enabled": false,
       "native_lark_writes_enabled": false,
-      "native_lark_intake_enabled": false
+      "native_lark_intake_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6561,7 +6572,9 @@
       "native_discord_reactions_enabled": true,
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
-      "native_lark_intake_enabled": false
+      "native_lark_intake_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6598,7 +6611,9 @@
       "native_discord_reactions_enabled": true,
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
-      "native_lark_intake_enabled": false
+      "native_lark_intake_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6635,7 +6650,9 @@
       "native_discord_reactions_enabled": true,
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
-      "native_lark_intake_enabled": false
+      "native_lark_intake_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
