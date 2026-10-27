@@ -56,6 +56,10 @@ pub struct TelegramEffectAuthority {
     pub admission: TelegramAdmissionProof,
     pub issued_at: i64,
     pub expires_at: i64,
+    /// A native upload grants delete/own-reaction authority without text edits.
+    /// Historical text references omit this to preserve their serialized identity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub effects_only: bool,
 }
 impl TelegramEffectAuthority {
     pub fn validate(&self) -> Result<(), ValidationError> {

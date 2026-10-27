@@ -159,8 +159,10 @@ impl ToolsState {
         };
         // Serialize different idempotency keys too: a reaction replacement is a
         // read/remove/add sequence, and overlapping keys must not leave two reactions.
-        let serial =
-            crate::discord::mutation::Store::new(self.resolver.record_client(), self.keys.clone());
+        let serial = crate::discord::mutation::Store::discord(
+            self.resolver.record_client(),
+            self.keys.clone(),
+        );
         let destination = message
             .discord_message
             .as_ref()

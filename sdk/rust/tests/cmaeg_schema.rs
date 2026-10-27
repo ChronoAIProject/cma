@@ -241,6 +241,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativeStickerCapabilities,
         SourceCheckResponse,
         SourceCheck,
         SourceCheckStatus,
@@ -504,4 +505,11 @@ fn native_bot_extensions_preserve_legacy_omitted_defaults() {
     let policy = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
     let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
+}
+
+#[test]
+fn legacy_native_media_capabilities_omit_unknown_transport_limits() {
+    let legacy = json!({"kinds":["image","file","audio","video"],"sources":["url","base64"],"max_attachments":4,"max_inline_bytes":65536});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }

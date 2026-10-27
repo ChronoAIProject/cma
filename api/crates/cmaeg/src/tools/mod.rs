@@ -24,7 +24,8 @@ pub use attachments::{
     MAX_RESULT_IMAGE_BYTES, REST_VIEW_WEIGHT, TOOL_WAIT,
 };
 pub use context::{
-    Capabilities, ConsumerSummary, ContextResponse, NativeMediaCapabilities, PublicActivity,
+    Capabilities, ConsumerSummary, ContextResponse, NativeMediaCapabilities,
+    NativeStickerCapabilities, PublicActivity,
 };
 pub(crate) use download_access::{Authorized, Refusal};
 pub(crate) use media_links::safe_name;

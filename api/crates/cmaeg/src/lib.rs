@@ -144,6 +144,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let relay_text_edits = config::relay_text_edits_from_env()?;
     let native_discord_edits = config::native_discord_edits_from_env()?;
     let native_discord_effects = config::native_discord_effects_from_env()?;
+    let native_discord_media_effects = config::native_discord_media_effects_from_env()?;
     let native_discord_threads = config::native_discord_thread_metadata_from_env()?;
     let lark_cards = config::lark_cards_from_env()?;
     let lark_forms = config::lark_forms_from_env()?;
@@ -156,6 +157,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let discord_multiselect = config::discord_multiselect_from_env()?;
     let whatsapp_templates = config::whatsapp_templates_from_env()?;
     let telegram_effects = config::telegram_message_effects_from_env()?;
+    let telegram_media_effects = config::telegram_media_effects_from_env()?;
     let config = Config::from_env()?;
     serve::serve(
         config,
@@ -164,6 +166,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         relay_text_edits,
         native_discord_edits,
         native_discord_effects,
+        native_discord_media_effects,
         native_discord_threads,
         lark_cards,
         lark_forms,
@@ -176,6 +179,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         discord_card_effects,
         consumer_interactions,
         telegram_effects,
+        telegram_media_effects,
     )
     .await
 }

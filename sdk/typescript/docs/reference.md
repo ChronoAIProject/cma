@@ -530,6 +530,19 @@ every platform can edit every message. For Discord and WhatsApp sources,
 `verify_raw_event: true` opts into signed raw-event correlation and requires the
 deployment's extended-source writer support; omission preserves existing trust.
 
+An enabled native Discord upload can return an opaque `message_ref` for delete
+and own-reaction effects when the complete upload fits one confirmed Discord
+message. This reference does not authorize text or attachment updates. Query its
+message-effect capabilities and inspect effect receipts. Several native messages
+or uncertain delivery produce no upload reference; several files in one message
+can share one reference. The SDK types and method signatures are unchanged.
+
+Native Telegram can likewise return an effects-only reference for one confirmed
+individual upload when its separate media-effects gate is enabled. A caption on
+that upload is allowed, but top-level text plus an upload or several attachments
+produce several native messages and no aggregate media reference. Caption/media
+editing and album effects remain unsupported.
+
 `postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
 `{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the
 configured base64 secret string is used as UTF-8 without decoding it. The client
@@ -641,6 +654,36 @@ consumer-interaction gate and preserve their original binding and conversation.
 Disabled or threaded contexts retain their advertised fallback capabilities. Native forms and media mixed with
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
+
+### Native WhatsApp image, PDF, audio and sticker replies
+
+Discover `capabilities.native_media` before using `native_attachments`. Native
+WhatsApp has an independent default-off gate and supports JPEG/PNG `image`,
+PDF `file` and bounded `audio` attachments. Audio supports AAC-LC ADTS (`audio/aac`,
+`.aac`), AMR narrowband (`audio/amr`, `.amr`), MPEG Layer III (`audio/mpeg`, `.mp3`),
+single-track self-contained AAC-LC M4A (`audio/mp4`, `.m4a`) and mono Opus Ogg
+(`audio/ogg`, `.ogg`). Audio captions are refused; text is a separate message,
+and voice-note presentation is not exposed. The additive optional `mime_types`, `max_total_bytes`,
+`max_image_bytes` and `max_caption_chars` fields report that exact subset: 8 MiB
+aggregate bytes, 5,000,000 bytes per image and 1024 caption characters; shared
+metadata still limits captions to 1024 UTF-8 bytes. Existing limits remain four
+attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
+address validation. Matching MIME type and filename extension are required when
+provided; images must have 8-bit RGB/RGBA headers. Audio undergoes bounded
+container/codec checks without a runtime decoder; those checks do not certify
+complete payload decodability. Native video and other document formats remain unavailable. The original event fixes the recipient
+and quoted message; clients cannot provide a Meta media ID. Confirmed replies
+record exact target receipts, while uncertain/partial sends must not be retried
+automatically. Actual Meta/client acceptance remains separate from local tests.
+
+The additive `sticker` kind requests static or animated `image/webp` presentation;
+`.webp` is the matching extension. `native_media.sticker` (`NativeStickerCapabilities`)
+reports a 512×512 canvas, 100000 static/500000 animated bytes, at most 128 frames,
+10000 ms per cycle and at least 8 ms per frame. Captions are refused; accompanying
+text stays separate. Files undergo bounded container/frame checks without pixel
+decoding. The sticker message carries only the upload result ID. Unsupported
+native transports and all NyxID/initiated paths refuse this kind before any send;
+legacy capabilities omit the optional `sticker` object.
 
 ### Approved WhatsApp templates
 
