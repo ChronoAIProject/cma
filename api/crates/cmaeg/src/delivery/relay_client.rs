@@ -128,6 +128,7 @@ pub struct RelayClient {
     discord_card_edits: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    telegram_media_effects: bool,
     pub whatsapp: crate::whatsapp::Client,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub telegram: crate::telegram::TelegramClient,
@@ -164,6 +165,14 @@ impl RelayClient {
     }
     pub(super) fn telegram_effects_enabled(&self) -> bool {
         self.telegram_effects
+    }
+    /// New media scopes require compatible readers; retained effects stay usable.
+    pub fn with_telegram_media_effects(mut self, enabled: bool) -> Self {
+        self.telegram_media_effects = enabled;
+        self
+    }
+    pub(super) fn telegram_media_effects_enabled(&self) -> bool {
+        self.telegram_media_effects
     }
     /// Enable only after the deployed relay preserves approved template metadata.
     pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
@@ -251,6 +260,7 @@ impl RelayClient {
             discord_card_edits: false,
             consumer_interactions: false,
             telegram_effects: false,
+            telegram_media_effects: false,
             interactions: None,
             whatsapp: crate::whatsapp::Client::production()?,
             whatsapp_receipts: None,

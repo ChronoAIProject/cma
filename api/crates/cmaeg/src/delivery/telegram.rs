@@ -205,6 +205,7 @@ impl Sender {
                     ctx.channel,
                     &self.keys,
                     effect_issued_at,
+                    false,
                 ) {
                     receipt.message_ref = Some(enriched);
                 }
@@ -219,6 +220,13 @@ impl Sender {
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        if reference
+            .telegram_effect
+            .as_ref()
+            .is_some_and(|authority| authority.effects_only)
+        {
+            return (unsupported(), effects);
+        }
         let channel = ctx.channel;
         let Some((bot_id, chat_id)) =
             channel

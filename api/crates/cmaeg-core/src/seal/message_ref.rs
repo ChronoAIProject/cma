@@ -73,6 +73,7 @@ impl MessageRefPayload {
         if let Some(effect) = &self.telegram_effect {
             effect.validate()?;
             if self.relay_message.is_some()
+                || (effect.effects_only && self.interaction_record_id.is_some())
                 || self.route_id != format!("telegram:{}:{}", effect.bot_id, effect.chat_id)
                 || !self
                     .platform_message_id
