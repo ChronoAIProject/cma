@@ -71,6 +71,14 @@ impl ToolsState {
                 .native_received_message_context(caller, event, activity, verified)
                 .await;
         }
+        if matches!(
+            activity.source,
+            cmaeg_core::activity::SourceKind::NativeLark(_)
+        ) {
+            return self
+                .native_lark_received_context(caller, event, activity, verified)
+                .await;
+        }
         if !verified
             || !self.whatsapp_reactions.as_ref()?.issuance_enabled
             || !matches!(

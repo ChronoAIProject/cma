@@ -58,6 +58,8 @@ fn native_lark_requires_separate_explicit_authoring_and_intake_activation() {
         "CMAEG_NATIVE_LARK_INTAKE_ENABLED",
         "CMAEG_NATIVE_LARK_MEDIA_ENABLED",
         "CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED",
+        "CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED",
+        "CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED",
     ] {
         assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"));
     }

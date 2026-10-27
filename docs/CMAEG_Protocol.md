@@ -4114,3 +4114,9 @@ open sender policy. Aggregate data uses `observation: aggregate` and
 `reaction_counts: [{type, total_count}]`, without inventing per-user old/new
 reactions. Exact source, original consumer, partition and chat/topic custody
 remain mandatory. See `CMAEG_Native_Telegram_Message_Events.md`.
+
+### Separate native Lark message effects
+
+The separately provisioned native Lark/Feishu app can issue exact confirmed-message text-edit, recall and own-reaction authority under `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`. `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` independently adds reaction-only `received_message` context for the original retained routed human message. Both default false. This authority is distinct from NyxID relay `lark_effect`; its current region, app, tenant, bot, source credentials, channel record, selected consumer/provider and routing must still match. A single native message from a confirmed reply can issue one reference; multipart replies do not issue a reference to only their first part. Single media messages grant recall/reaction authority without text editing. References expire within 24 hours of the original receipt or message; received references also respect the original event expiry.
+
+Stable effect claims and an exact-message durable fence span all native mutations. An unknown write, uncertain receipt storage, or partially applied reaction replacement keeps the message fenced across restart and new request keys. `updateMessage` has no idempotency-key argument; an uncertain native update is likewise fenced from further mutation. The client verifies fresh native bot custody and exact message metadata, then current local authority before every write. It removes only a retained reaction ID proven to belong to the same app, repeating the checks between removal and creation. See [native Lark message effects](CMAEG_Native_Lark_Message_Effects.md) for the supported subset and regional API contracts.

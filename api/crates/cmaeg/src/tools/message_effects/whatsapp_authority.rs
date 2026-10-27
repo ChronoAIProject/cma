@@ -100,6 +100,7 @@ pub(crate) fn issue(
     let mut message = MessageRefPayload {
         route_id: authority.route(),
         received_reaction: None,
+        native_lark_effect: None,
         whatsapp_reaction: Some(Box::new(authority)),
         channel_id: event.channel_id.clone(),
         event_id: event.event_id.clone(),
