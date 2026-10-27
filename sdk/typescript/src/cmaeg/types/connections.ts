@@ -39,11 +39,13 @@ export const RelayPlatformCapabilitySchema = object({
 });
 export type RelayPlatformCapability = Output<typeof RelayPlatformCapabilitySchema>;
 export const RelayAuthoringCapabilitiesSchema = object({
+  native_discord_thread_history_enabled: optional(nullable(boolean)),
   native_discord_writes_enabled: optional(nullable(boolean)),
   native_discord_auto_activation_enabled: optional(nullable(boolean)),
   native_discord_capacity: optional(nullable(integer)),
   dynamic_sources_writes_enabled: boolean,
   relay_raw_verification_writes_enabled: boolean,
+  lark_resource_writes_enabled: optional(nullable(boolean)),
   outbound_messages_writes_enabled: optional(nullable(boolean)),
   native_media_writes_enabled: optional(nullable(boolean)),
   multi_consumer_writes_enabled: boolean,

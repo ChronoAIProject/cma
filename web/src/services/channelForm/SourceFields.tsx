@@ -1,3 +1,4 @@
+import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
 import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
@@ -49,7 +50,7 @@ export function SourceFields({
               }))}
               onChange={(platform) => {
                 const updated = {
-                  ...value,
+                  ...without(value, platform !== value.platform ? ['lark_resources'] : []),
                   platform,
                   ...(['discord', 'whatsapp'].includes(platform) &&
                   !value.trust_normalized &&
@@ -156,6 +157,9 @@ export function SourceFields({
           onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
         />
       </Section>
+      {value.type === 'nyxid_relay' && ['lark', 'feishu'].includes(String(value.platform)) ? (
+        <LarkResourceFields value={value} onChange={onChange} />
+      ) : null}
       <AdmissionFields value={value.admission} onChange={(v) => set('admission', v)} />
     </>
   );

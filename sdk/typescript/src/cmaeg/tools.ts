@@ -113,12 +113,16 @@ export class CmaegTools {
     });
   }
 
-  readEventContext(eventRef: string, options: OperationOptions = {}) {
+  readEventContext(
+    eventRef: string,
+    options: OperationOptions & { includeThreadHistory?: boolean } = {},
+  ) {
+    const { includeThreadHistory, ...operationOptions } = options;
     return read(
       this.config,
-      `/v1/events/${segment(eventRef)}/context`,
+      `/v1/events/${segment(eventRef)}/context${includeThreadHistory ? '?include_thread_history=true' : ''}`,
       ContextResponseSchema,
-      options,
+      operationOptions,
     );
   }
 }

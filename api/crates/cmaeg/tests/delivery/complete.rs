@@ -83,7 +83,7 @@ async fn long_unicode_url_code_and_every_block_remain_in_one_logical_request() {
         Some(format!("Bearer {REPLY_TOKEN}").as_str())
     );
     assert_eq!(sent[0].json()["reply"]["metadata"], Value::Null);
-    assert_eq!(sent[0].timeout, Duration::from_secs(5));
+    assert_eq!(sent[0].timeout, Duration::from_secs(15));
     assert_eq!(
         receipt
             .message_ref

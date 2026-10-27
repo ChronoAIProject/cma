@@ -39,8 +39,11 @@ pub struct WriteFlags {
     pub dynamic_sources: bool,
     /// Admits Discord/WhatsApp raw verification without enabling dynamic topology.
     pub relay_raw_verification: bool,
+    /// Exact proxy bindings are admitted only after compatible readers deploy.
+    pub lark_resources: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
+    pub discord_thread_history: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -62,6 +65,36 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                lark_resources: Some(_),
+                ..
+            }
+        ) && !flags.lark_resources
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/lark_resources"),
+            "lark_resource_writes_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Discord {
+                thread_history: true,
+                ..
+            }
+        ) && !flags.discord_thread_history
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/thread_history"),
+            "discord_thread_history_disabled",
+        ));
+    }
     if next.reply.thread_contract.is_some()
         && !flags.thread_contract
         && !current.is_some_and(|old| old.reply.thread_contract == next.reply.thread_contract)

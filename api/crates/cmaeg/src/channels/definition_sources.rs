@@ -74,10 +74,12 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             SourceRequest::Discord {
                 bot_id,
                 intents,
+                thread_history,
                 admission,
             } => Source::Discord {
                 bot_id: bot_id.clone(),
                 intents: *intents,
+                thread_history: *thread_history,
                 admission: admission.clone(),
             },
             SourceRequest::NyxidRelay {
@@ -89,6 +91,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_id,
                 trust_normalized,
                 verify_raw_event,
+                lark_resources,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -100,6 +103,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 bot_id: bot_id.clone(),
                 trust_normalized: *trust_normalized,
                 verify_raw_event: *verify_raw_event,
+                lark_resources: lark_resources.clone(),
                 admission: admission.clone(),
             },
             SourceRequest::Custom {

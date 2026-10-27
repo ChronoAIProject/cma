@@ -6,6 +6,8 @@ use utoipa::ToSchema;
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_thread_history_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_auto_activation_enabled: Option<bool>,
@@ -18,6 +20,8 @@ pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_media_writes_enabled: Option<bool>,
     pub relay_raw_verification_writes_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lark_resource_writes_enabled: Option<bool>,
     pub multi_consumer_writes_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     pub thread_contract_writes_enabled: bool,
@@ -62,6 +66,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
         native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
         native_discord_auto_activation_enabled: Some(
             state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
@@ -76,6 +81,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
                 .is_some_and(|relay| relay.native_media_enabled()),
         ),
         relay_raw_verification_writes_enabled: state.relay_raw_verification_writes_enabled,
+        lark_resource_writes_enabled: Some(state.lark_resource_writes_enabled),
         multi_consumer_writes_enabled: state.multi_consumer_writes_enabled,
         native_bot_mentions_writes_enabled: state.native_bot_mentions_writes_enabled,
         thread_contract_writes_enabled: state.thread_contract_writes_enabled,

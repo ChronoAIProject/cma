@@ -422,6 +422,15 @@ Provider binding management uses `client.providerBindings.put/get/delete/ensureC
 `streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
 Gateway wire types and `signWebhook` are exported under `cmaeg`.
 
+Native Discord thread context is opt-in. When ordinary context advertises
+`capabilities.thread_history: true`, call
+`readEventContext(eventRef, { includeThreadHistory: true })` to read at most 20
+text messages strictly before that event in the same thread. The optional
+`thread_history` includes author/timestamps and attachment counts, without
+download links or message action references. There is no caller-supplied channel,
+pagination or history backfill; ordinary calls make no Discord history request.
+The gateway gate and native source's `thread_history: true` must both be enabled.
+
 Connection setup uses `getChannelCapabilities`, `createChannelConnection`,
 `listChannelConnections`, `getChannelConnection`, and `cancelChannelConnection`.
 Use the creator-token client and supply `{agentKey, owner?}` to creation: the

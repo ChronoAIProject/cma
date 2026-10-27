@@ -21,11 +21,12 @@ pub(crate) fn launch_request(
     channel: Arc<ResolvedChannel>,
     platform: Platform,
     verified: VerifiedCallback,
-    facts: RelayFacts,
+    mut facts: RelayFacts,
     keys: &MasterKeyRing,
     received_at: Instant,
     now: i64,
 ) -> Result<Built, &'static str> {
+    super::lark_resources::bind(&channel, platform, &verified.payload, &mut facts);
     let payload = verified.payload;
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};

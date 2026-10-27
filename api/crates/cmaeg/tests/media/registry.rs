@@ -163,7 +163,9 @@ async fn each_locator_reaches_only_its_source_and_only_with_its_activity_source(
             if locator_kind == kind_name {
                 let expected: &[u8] = match locator {
                     AttachmentSource::Discord { .. } => b"discord",
-                    AttachmentSource::NyxidRelay { .. } => b"nyxid",
+                    AttachmentSource::NyxidRelay { .. } | AttachmentSource::LarkResource { .. } => {
+                        b"nyxid"
+                    }
                     AttachmentSource::Telegram { .. } => b"telegram",
                     AttachmentSource::Url { .. } => b"url",
                     AttachmentSource::Inline { .. } => b"inline",

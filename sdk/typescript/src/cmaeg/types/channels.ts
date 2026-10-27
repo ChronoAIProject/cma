@@ -127,12 +127,20 @@ export const CustomAttachmentsSchema = object({
 });
 export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
+export const LarkResourceBindingSchema = object({
+  user_service_id: text,
+  catalog_service_id: text,
+  app_id: text,
+});
+export type LarkResourceBinding = Output<typeof LarkResourceBindingSchema>;
+
 export const SourceRequestSchema = tagged(
   {
     discord: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
       intents: integer,
+      thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: object({
@@ -151,6 +159,7 @@ export const SourceRequestSchema = tagged(
       route_ids: array(text),
       trust_normalized: optional(boolean),
       verify_raw_event: optional(boolean),
+      lark_resources: optional(nullable(LarkResourceBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -341,6 +350,7 @@ export const SourceSchema = tagged(
       admission: AdmissionPolicySchema,
       bot_id: text,
       intents: integer,
+      thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: object({
@@ -360,6 +370,7 @@ export const SourceSchema = tagged(
       route_ids: array(text),
       trust_normalized: optional(boolean),
       verify_raw_event: optional(boolean),
+      lark_resources: optional(nullable(LarkResourceBindingSchema)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({

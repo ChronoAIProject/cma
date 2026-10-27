@@ -174,7 +174,7 @@ export class Cmaeg {
   sendTyping(ref: string, options?: OperationOptions) {
     return this.#tools.sendTyping(ref, options);
   }
-  readEventContext(ref: string, options?: OperationOptions) {
+  readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
     return this.#tools.readEventContext(ref, options);
   }
 }

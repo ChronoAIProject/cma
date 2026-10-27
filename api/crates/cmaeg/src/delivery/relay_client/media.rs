@@ -76,6 +76,7 @@ impl RelayClient {
             message_id: message_id.clone(),
             thread_reply: *thread_reply,
             native_media: true,
+            complete_text: false,
         })
     }
 }

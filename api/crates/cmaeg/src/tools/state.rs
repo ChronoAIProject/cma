@@ -21,6 +21,9 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
+    /// Match the delivery engine's complete ordinary relay mode and wait budget.
+    pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise templates only after the WhatsApp relay contract is verified.
@@ -302,11 +305,20 @@ impl ToolsState {
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
-        // Native media materialization and platform uploads share a bounded 60 s
-        // transport attempt. Existing text/typing/edit calls keep their 8 s budget.
+        // These include queueing/pacing before the exchange. Routed tool replies
+        // use their separate 20 s window and 30 s claims before reaching this path.
+        // Structured relay replies can fall back to complete text after the
+        // engine checks their Activity. Their outer wait is also 18 s; native
+        // card/control transport still uses the configured ordinary timeout.
         let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. } if !message.native_attachments.is_empty())
         {
             Duration::from_secs(65)
+        } else if self.complete_replies_enabled
+            && matches!(&command, DeliveryCommand::Reply { event, message, .. }
+                if matches!(event.reply, cmaeg_core::seal::ReplyAddress::NyxidRelay { .. })
+                    && message.whatsapp_template.is_none())
+        {
+            crate::delivery::relay_client::COMPLETE_REPLY_TOOL_TIMEOUT
         } else {
             Duration::from_secs(8)
         };

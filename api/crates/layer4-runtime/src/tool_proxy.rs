@@ -20,7 +20,9 @@ const MAX_REQUEST_BYTES: usize = 128 * 1024;
 // JSON and its escaped text encoding. Retain a finite bound for that envelope.
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const BODY_DEADLINE: Duration = Duration::from_secs(5);
-const UPSTREAM_DEADLINE: Duration = Duration::from_secs(10);
+// Native upload tools can await the gateway for 65 s. Keep a bounded response
+// margin without inspecting protocol payloads or changing gateway send leases.
+const UPSTREAM_DEADLINE: Duration = Duration::from_secs(70);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ToolProxyConfig {
