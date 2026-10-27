@@ -138,6 +138,21 @@ impl Cmaeg {
         request.root = true;
         self.client.request(request).await
     }
+    /// Edit native media with a stable key. Retain the returned next message reference;
+    /// retry an uncertain outcome only with the same reference, body and key.
+    pub async fn update_message_with_idempotency(
+        &self,
+        message_ref: &str,
+        idempotency_key: &str,
+        message: &OutboundMessage,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "messages", message_ref, "update"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Request typing without assuming the target supports it.
     pub async fn send_typing(&self, event_ref: &str) -> Result<TypingReceipt> {
         let segments = ["v1", "events", event_ref, "typing"];

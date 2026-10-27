@@ -1,7 +1,7 @@
 import { ThreadCapabilitiesSchema } from './thread-lifecycle.js';
 import { LarkRegionSchema } from './primitives.js';
 import { LarkResourceBindingSchema } from './channels.js';
-import { NativeMediaCapabilitiesSchema } from './messages.js';
+import { NativeMediaCapabilitiesSchema, NativeMediaEditCapabilitiesSchema } from './messages.js';
 import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
 import {
   AcceptedStatusSchema,
@@ -303,6 +303,7 @@ export const ThreadHistorySchema = object({
 export type ThreadHistory = Output<typeof ThreadHistorySchema>;
 
 export const CapabilitiesSchema = object({
+  native_media_edits: optional(nullable(NativeMediaEditCapabilitiesSchema)),
   thread_history: optional(nullable(boolean)),
   thread_lifecycle: optional(nullable(ThreadCapabilitiesSchema)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
@@ -310,6 +311,7 @@ export const CapabilitiesSchema = object({
   whatsapp_template_components: optional(nullable(array(text))),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
+  forms: optional(nullable(boolean)),
   buttons: text,
   cards: text,
   edit: boolean,

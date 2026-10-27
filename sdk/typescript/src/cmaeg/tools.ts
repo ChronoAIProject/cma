@@ -146,9 +146,16 @@ export class CmaegTools {
     });
   }
 
-  updateMessage(messageRef: string, message: OutboundMessage, options: OperationOptions = {}) {
+  /** Native media updates require a stable caller key; retain the returned message_ref. */
+  updateMessage(
+    messageRef: string,
+    message: OutboundMessage,
+    options: OperationOptions & { idempotencyKey?: string } = {},
+  ) {
+    const { idempotencyKey, ...operationOptions } = options;
     return read(this.config, `/v1/messages/${segment(messageRef)}/update`, IntentReceiptSchema, {
-      ...options,
+      ...operationOptions,
+      ...(idempotencyKey === undefined ? {} : { headers: { 'Idempotency-Key': idempotencyKey } }),
       method: 'POST',
       body: input(OutboundMessageSchema, message),
     });

@@ -3,6 +3,8 @@ mod channels;
 pub use channels::*;
 mod sources;
 pub use sources::*;
+mod native_media_update;
+pub use native_media_update::*;
 mod messages;
 pub use messages::*;
 mod message_effects;
