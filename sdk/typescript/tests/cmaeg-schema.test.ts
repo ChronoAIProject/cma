@@ -164,6 +164,7 @@ describe('CMAEG attachment locators', () => {
       'discord',
       'lark_resource',
       'whatsapp',
+      'native_lark',
     ]);
     for (const example of locators) expect(AttachmentSourceSchema(example)).toEqual(example);
     for (const example of examples.Attachment ?? [])

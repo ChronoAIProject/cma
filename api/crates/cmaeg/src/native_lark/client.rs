@@ -60,6 +60,7 @@ pub struct Client {
 impl Client {
     pub fn production() -> Result<Self, crate::ConfigError> {
         let http = reqwest::Client::builder()
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
             .build()
@@ -159,6 +160,13 @@ impl Client {
         identity: &NativeLarkIdentity,
         credentials: &NativeLarkCredentials,
     ) -> Result<(), Error> {
+        self.verified_token(identity, credentials).await.map(|_| ())
+    }
+    pub(crate) async fn verified_token(
+        &self,
+        identity: &NativeLarkIdentity,
+        credentials: &NativeLarkCredentials,
+    ) -> Result<Secret, Error> {
         let token = self.token(identity, credentials).await?;
         let value = self
             .call(
@@ -172,7 +180,7 @@ impl Client {
         if value["bot"]["open_id"].as_str() != Some(&identity.bot_open_id) {
             return Err(Error::Rejected);
         }
-        Ok(())
+        Ok(token)
     }
     pub(crate) async fn send_text(
         &self,

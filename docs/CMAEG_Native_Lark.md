@@ -1,6 +1,6 @@
 # Native Lark / Feishu separate-app source
 
-The `native_lark` source receives ordinary text, recall notifications and human reaction add/remove notifications directly from a separately provisioned, single-tenant custom app. It has its own encrypted credentials, callback URL and native text reply path. Existing NyxID sources and their webhooks are independent.
+The `native_lark` source receives ordinary text, independently enabled [inbound media](CMAEG_Native_Lark_Media.md), recall notifications and human reaction add/remove notifications directly from a separately provisioned, single-tenant custom app. It has its own encrypted credentials, callback URL and native text reply path. Existing NyxID sources and their webhooks are independent.
 
 Both `CMAEG_NATIVE_LARK_WRITES_ENABLED` and `CMAEG_NATIVE_LARK_INTAKE_ENABLED` default to `false`, including in the deployment manifest. Compatible readers must deploy before authoring is enabled. The source also requires durable routed admission/recovery, routing authoring and providers configured for response replay. Local validation is not live platform acceptance.
 
@@ -30,7 +30,7 @@ Supply an atomic `credentials.native_lark` object containing `app_secret`, `encr
 
 Configure the required Encrypt Key and Verification Token on the app, then subscribe to:
 
-- `im.message.receive_v1` for text intake.
+- `im.message.receive_v1` for text and enabled media intake.
 - `im.message.recalled_v1` for recall notifications.
 - `im.message.reaction.created_v1` and `im.message.reaction.deleted_v1` for human reaction deltas.
 
@@ -42,7 +42,7 @@ Grant the documented receive/recall and reaction-read permissions for the conver
 
 Only verified bounded message facts are retained; the verification token is removed before normalization. The endpoint returns successful acceptance only after durable routing admission. A 2.5-second local deadline leaves room within the documented three-second platform acknowledgment window. Unavailable storage or paused durable admission returns HTTP 503. Platform retries and duplicate delivery are expected; successful delivery can also repeat.
 
-An original text message is keyed by region, app, tenant, bot and platform `message_id`. Duplicate receive envelopes reuse the committed selection. Different text or sender/chat facts under that key conflict; the gateway does not convert them into an edit. Notifications use their provider event ID, retain the original conversation and consumer targets, and never rerun current addressing rules to expand that selection. Current source, credential revision, provider and consumer authority are rechecked before execution and sending. Removing the source, rotating any of its credentials, changing its admission policy, or removing the selected consumer revokes retained work.
+An original message is keyed by region, app, tenant, bot and platform `message_id`. Duplicate receive envelopes reuse the committed selection. Different text, media resource keys or sender/chat facts under that key conflict; the gateway does not convert them into an edit. Notifications use their provider event ID, retain the original conversation and consumer targets, and never rerun current addressing rules to expand that selection. Current source, credential revision, provider and consumer authority are rechecked before execution and sending. Removing the source, rotating any of its credentials, changing its admission policy, or removing the selected consumer revokes retained work.
 
 Recall notifications become `cma.message.deleted.v1` with `recall_type` and an **unknown actor**, because the platform does not provide the deleting operator ID. Reactions become `cma.message.reaction.updated.v1` with `operation: "add" | "remove"` and `reaction.emoji_type`. They are deltas, with no inferred previous state, complete replacement set, clear-all operation or provider reaction ID. These events confer no delete/edit/reaction mutation authority.
 
@@ -56,4 +56,4 @@ The sender checks current source/credential authority before each send, respects
 
 The regional endpoints follow the official [v3 custom-app token](https://open.feishu.cn/document/server-docs/authentication-management/access-token/tenant_access_token_internal.md), [create-message](https://open.feishu.cn/document/server-docs/im-v1/message/create.md), and [reply-message](https://open.feishu.cn/document/server-docs/im-v1/message/reply.md) contracts. The platform marks this v3 token endpoint as historical; its newer OAuth token endpoint has a different request/response contract and is not used by this increment. Text is rendered into chunks of at most 6,000 characters; the client additionally bounds UTF-8 text at 28 KiB and the full serialized request at 150 KiB. Redirects are disabled and response reads are bounded.
 
-The initial native source supports text output only. Native media, cards/forms, outgoing edit/delete/reaction tools, cross-app adoption and incoming edit propagation are outside this increment. Attachment and control support is not advertised for this source. No verified incoming edit delivery/revision contract has been established; `update_time` alone is insufficient.
+The native source supports text output only. Inbound image/file/audio/video and rich-post resources use the independent [native media gate](CMAEG_Native_Lark_Media.md) and existing attachment read pipeline. Outgoing native media, cards/forms, edit/delete/reaction tools, cross-app adoption and incoming edit propagation are outside this increment. Native output attachments and controls are not advertised for this source. No verified incoming edit delivery/revision contract has been established; `update_time` alone is insufficient.

@@ -233,6 +233,7 @@ pub(crate) async fn serve(
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
     .with_native_lark_intake(config.native_lark_intake_enabled)
+    .with_native_lark_media(config.native_lark_media_enabled)
     .with_whatsapp_media(config.native_whatsapp_media_enabled)
     .with_routed(
         routed

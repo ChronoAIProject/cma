@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttachmentSource {
+    #[serde(rename = "native_lark")]
+    NativeLark {
+        message_id: String,
+        resource_key: String,
+        resource_kind: LarkResourceKind,
+        source_revision: String,
+    },
     /// Signed native WhatsApp media, fetched through current Meta custody.
     #[serde(rename = "whatsapp")]
     Whatsapp {
