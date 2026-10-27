@@ -169,14 +169,6 @@ impl RelayClient {
     pub(super) fn telegram_media_effects_enabled(&self) -> bool {
         self.telegram_media_effects
     }
-    /// Gate new card issuance until every reader understands retained Lark cards.
-    pub fn with_lark_cards(mut self, enabled: bool) -> Self {
-        self.lark_cards = enabled;
-        self
-    }
-    pub(super) fn lark_cards_enabled(&self) -> bool {
-        self.lark_cards
-    }
     /// Issue enriched text references only after every gateway reader supports them.
     /// Retained references remain editable when issuance is disabled again.
     pub fn with_text_edits(mut self, enabled: bool) -> Self {
