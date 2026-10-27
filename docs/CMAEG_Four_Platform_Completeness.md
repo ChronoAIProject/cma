@@ -166,6 +166,14 @@ inbound media stay enabled. The desired user-testing activation also enables
 relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
 Native Lark/Feishu and Discord forms plus Discord card effects were subsequently
 enabled after PR #1148 deployment and fresh isolated Custom verification.
+After PR #1151, compatible Gateway/Web readers and another isolated Custom
+campaign were verified before enabling Telegram message-event enrollment,
+Discord message-change intake and reaction enrollment, native WhatsApp source
+setup, and exact-source Lark message-effect enrollment. Source consent and
+platform credentials remain required. These activation values support owner
+setup/testing; they do not establish native-platform delivery acceptance. The
+new WhatsApp inbound/outbound media and Telegram/Discord upload-effect gates
+remain off pending their separate compatible-reader release.
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test

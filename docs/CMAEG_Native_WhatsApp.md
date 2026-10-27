@@ -16,10 +16,13 @@ change, or external send is part of this implementation.
 
 ## Reader deployment and authoring
 
-`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false`; the deployment
-ConfigMap explicitly retains that value pending connected Meta setup acceptance. Deploy compatible
-readers everywhere before enabling authoring: old readers cannot decode the new
-source, credentials or sealed reply address. Native authoring also requires
+`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false` in code. The deployment
+ConfigMap enables owner setup and testing after compatible Gateway/Web readers
+and isolated Custom-channel acceptance were verified. This activation does not
+claim connected Meta acceptance; the owner must still configure and test the
+dedicated app. Keep compatible readers everywhere after enabling authoring:
+older readers cannot decode the new source, credentials or sealed reply address.
+Native authoring also requires
 `CMAEG_MULTI_CONSUMER_WRITES_ENABLED`, `CMAEG_ROUTED_ADMISSION_ENABLED` and
 `CMAEG_ROUTED_RECOVERY_ENABLED`. Every active consumer must use a provider with
 durable response recovery. Retained work uses the existing global recovery scan;
