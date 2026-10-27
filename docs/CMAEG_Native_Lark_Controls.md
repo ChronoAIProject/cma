@@ -1,6 +1,6 @@
 # Native Lark / Feishu interactive cards
 
-The separate `native_lark` app has a direct JSON 2.0 card path for cards, buttons, choices and the bounded form subset. It uses the app and credentials already recorded on the native source. NyxID relay card and form settings retain their separate transport and authority. This implementation must pass the gateway validation suite and separately authorized platform acceptance before activation; source and injected transport checks do not prove live platform acceptance.
+The separate `native_lark` app has a direct JSON 2.0 card path for cards, buttons, choices and the bounded form subset. It uses the app and credentials already recorded on the native source. NyxID relay card and form settings retain their separate transport and authority. Owner-testing activation follows the gateway validation suite, compatible-reader rollout and fresh Custom verification. Connected platform acceptance remains a separate owner test; source and injected transport checks do not prove it.
 
 ## Activation and discovery
 
