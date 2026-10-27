@@ -383,6 +383,8 @@ Installation is additive and preserves the immutable creation profile.
 
 ## Service access decisions
 
+Managed keys include the exact backing nodes required by the approved services. CMA obtains a complete NyxID v1 scope plan and sends its digest as a creation precondition; broad node/service grants remain disabled. Missing, incomplete or changed plans refuse issuance. Renewal resolves the current configured routes again. If a service moves to another node, the old key fails closed until a new scoped key is issued; hot replacement revokes the old key before reporting success. Route-only Bot keys keep empty service and node grants.
+
 `agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.
 Each request has an `id`, exact `agent_id`, `services`, `reason` and durable `status`.
 `approveAccessRequest` sends the owner's explicit service selection with a stable

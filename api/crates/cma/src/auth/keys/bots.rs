@@ -16,12 +16,14 @@ impl KeyIssuer {
         } else {
             self.resolve_bot_services(token, services, owner).await?
         };
+        let plan = self.scope_plan(token, &allowed, owner).await?;
         let expires_at = key_expiry(SystemTime::now());
         let mut body = serde_json::json!({
             "name":name,"scopes":KEY_SCOPES,"allowed_service_ids":allowed,
             "allowed_node_ids":[],"allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false,
             "expires_at":layer2_core::rfc3339_at(expires_at)
         });
+        plan.apply(&mut body);
         if let layer2_core::resource_access::ResourceOwner::Organization { subject } = owner {
             body["target_org_id"] = subject.as_str().into();
         }
@@ -41,7 +43,7 @@ impl KeyIssuer {
         let response = super::super::provider_http::read_json(response)
             .await
             .map_err(|_| KeyIssuerError::UnexpectedAuthority)?;
-        minted_key_from_response(response, &allowed, expires_at)
+        minted_key_from_response(response, &allowed, &plan.allowed_node_ids, expires_at)
             .ok_or(KeyIssuerError::UnexpectedAuthority)
     }
 
