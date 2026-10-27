@@ -7,6 +7,7 @@ import {
   MessageEffectReceiptSchema,
   MessageEffectsCapabilitiesSchema,
   MessageReactionRequestSchema,
+  ReceivedMessageContextSchema,
   TelegramReactionSchema,
 } from '../src/cmaeg/types.js';
 
@@ -24,6 +25,7 @@ describe('confirmed message effects', () => {
       MessageEffectReceipt: MessageEffectReceiptSchema,
       MessageEffectsCapabilities: MessageEffectsCapabilitiesSchema,
       MessageReactionRequest: MessageReactionRequestSchema,
+      ReceivedMessageContext: ReceivedMessageContextSchema,
       TelegramReaction: TelegramReactionSchema,
     })) {
       expect(examples[name]?.length).toBeGreaterThan(0);

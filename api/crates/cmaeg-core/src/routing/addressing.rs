@@ -197,7 +197,10 @@ fn bot_username(source: Option<&Source>) -> Option<&str> {
         Source::Telegram { bot_username, .. } | Source::NyxidRelay { bot_username, .. } => {
             bot_username.as_deref()
         }
-        Source::Custom { .. } | Source::Discord { .. } | Source::Whatsapp { .. } => None,
+        Source::NativeLark(_)
+        | Source::Custom { .. }
+        | Source::Discord { .. }
+        | Source::Whatsapp { .. } => None,
     }
 }
 

@@ -1,6 +1,13 @@
 import { SecretSchema } from './primitives.js';
 import { array, integer, nullable, object, optional, text, type Output } from '../../schema.js';
 
+export const NativeLarkCredentialsSchema = object({
+  app_secret: SecretSchema,
+  encrypt_key: SecretSchema,
+  verification_token: SecretSchema,
+});
+export type NativeLarkCredentials = Output<typeof NativeLarkCredentialsSchema>;
+
 export const WhatsappCredentialsSchema = object({
   app_secret: SecretSchema,
   access_token: SecretSchema,
@@ -15,6 +22,7 @@ export const HmacSecretRequestSchema = object({ key_id: text, secret: SecretSche
 export type HmacSecretRequest = Output<typeof HmacSecretRequestSchema>;
 
 export const CredentialsRequestSchema = object({
+  native_lark: optional(nullable(NativeLarkCredentialsSchema)),
   whatsapp: optional(nullable(WhatsappCredentialsSchema)),
   agent_key: SecretSchema,
   channel_key: optional(nullable(SecretSchema)),
@@ -26,6 +34,7 @@ export const CredentialsRequestSchema = object({
 export type CredentialsRequest = Output<typeof CredentialsRequestSchema>;
 
 export const CredentialPatchSchema = object({
+  native_lark: optional(nullable(NativeLarkCredentialsSchema)),
   whatsapp: optional(nullable(WhatsappCredentialsSchema)),
   agent_key: optional(nullable(SecretSchema)),
   channel_key: optional(nullable(SecretSchema)),

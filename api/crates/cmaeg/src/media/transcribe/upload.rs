@@ -205,6 +205,7 @@ fn count_refusal(target: &MediaTarget, attachment: &Attachment, refusal: SpendRe
         SourceKind::Telegram { .. } => "telegram",
         SourceKind::Discord { .. } => "discord",
         SourceKind::NyxidRelay { .. } => "nyxid_relay",
+        SourceKind::NativeLark(_) => "native_lark",
         SourceKind::Custom => "custom",
     };
     let kind = match attachment.kind {

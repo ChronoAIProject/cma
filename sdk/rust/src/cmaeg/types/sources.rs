@@ -1,5 +1,5 @@
 //! Source wire types for the independent CMAEG v1 protocol.
-use super::{AdmissionPolicy, CustomAuth, Platform};
+use super::{AdmissionPolicy, CustomAuth, Platform, Secret};
 use serde::{Deserialize, Serialize};
 
 /// CMAEG `CustomAttachments` wire shape.
@@ -17,6 +17,9 @@ pub struct CustomAttachments {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Separate native app, independent of NyxID relay sources.
+    #[serde(rename = "native_lark")]
+    NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API, independent of relay sources.
     #[serde(rename = "whatsapp")]
     Whatsapp {
@@ -26,7 +29,10 @@ pub enum Source {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
-        /// Admission policy for raw private senders and conversations.
+        /// Explicit existing-group opt-in for an Official Business Account phone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group_ids: Option<Vec<String>>,
+        /// Admission policy for original participants and private/group conversations.
         admission: AdmissionPolicy,
     },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
@@ -111,6 +117,9 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Separate native app, independent of NyxID relay sources.
+    #[serde(rename = "native_lark")]
+    NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API, independent of relay sources.
     #[serde(rename = "whatsapp")]
     Whatsapp {
@@ -120,7 +129,10 @@ pub enum SourceRequest {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
-        /// Admission policy for raw private senders and conversations.
+        /// Explicit existing-group opt-in for an Official Business Account phone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group_ids: Option<Vec<String>>,
+        /// Admission policy for original participants and private/group conversations.
         admission: AdmissionPolicy,
     },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
@@ -203,6 +215,9 @@ pub enum SourceRequest {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceKind {
+    /// Separate native app, independent of NyxID relay sources.
+    #[serde(rename = "native_lark")]
+    NativeLark(NativeLarkIdentity),
     /// Native Meta app/account/phone identities.
     #[serde(rename = "whatsapp")]
     Whatsapp {
@@ -264,4 +279,60 @@ pub struct LarkMessageEffectsBinding {
     /// Permit adding, replacing and clearing the reaction retained by CMA.
     #[serde(default)]
     pub reaction: bool,
+}
+
+/// Native regional identity, scoped to one separately provisioned custom app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeLarkIdentity {
+    /// Regional API and app home.
+    pub region: LarkRegion,
+    /// Custom app ID.
+    pub app_id: String,
+    /// Exact receiving tenant key.
+    pub tenant_key: String,
+    /// App-scoped bot open ID, independently verified.
+    pub bot_open_id: String,
+}
+/// Native API region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LarkRegion {
+    /// International Lark.
+    Lark,
+    /// China Feishu.
+    Feishu,
+}
+/// Separate native source. Configure a new app; never replace a NyxID webhook.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeLarkSource {
+    /// Must be true to acknowledge separate app provisioning.
+    pub separate_app: bool,
+    /// Exact app, tenant, region and receiving bot.
+    pub identity: NativeLarkIdentity,
+    /// Original sender/chat and human reaction admission.
+    pub admission: AdmissionPolicy,
+}
+
+/// Secrets supplied only to native app authoring; never present in public definitions.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeLarkCredentials {
+    /// Custom app secret.
+    pub app_secret: Secret,
+    /// Required encrypted callback key.
+    pub encrypt_key: Secret,
+    /// Required callback verification token.
+    pub verification_token: Secret,
+}
+
+/// Owner-visible native Discord activation state. Future state identifiers are retained.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeDiscordActivation {
+    /// Selected, pending_discovery, capacity_exceeded, or a configuration refusal.
+    pub state: String,
+    /// Safe explanation without credentials or other channel identities.
+    pub detail: String,
+    /// Maximum records selected by this process.
+    pub capacity: usize,
+    /// Current process selection count, not a socket count.
+    pub selected_records: usize,
 }

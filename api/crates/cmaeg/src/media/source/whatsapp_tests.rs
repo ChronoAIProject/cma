@@ -354,3 +354,42 @@ async fn native_locator_uses_the_shared_media_service_text_preparation_and_cache
         "the second read reuses the shared derived cache"
     );
 }
+
+#[tokio::test]
+async fn native_whatsapp_group_media_requires_exact_group_participant_and_current_allowlist() {
+    use crate::whatsapp::groups::tests::{reply, source_group, GROUP};
+    for defect in 0..5 {
+        let mut f = Fixture::new();
+        Arc::make_mut(&mut f.channel).definition.sources = vec![source_group()];
+        f.activity.conversation.kind = cmaeg_core::activity::ConversationKind::Group;
+        f.activity.conversation.id = GROUP.into();
+        let mut address = reply();
+        address.message_id = "wamid.media".into();
+        match defect {
+            1 => address.group_id = "other".into(),
+            2 => address.participant_id = "447700900999".into(),
+            3 => {
+                Arc::make_mut(&mut f.channel).definition.sources =
+                    vec![crate::whatsapp::tests::source()]
+            }
+            4 => address.message_id = "wamid.other".into(),
+            _ => {}
+        }
+        f.event.reply = ReplyAddress::WhatsappGroup(address);
+        f.event.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(&f.activity));
+        if defect == 0 {
+            f.transport.success();
+            assert_eq!(&f.source.fetch(f.request()).await.unwrap().bytes[..], BYTES);
+        } else {
+            assert_eq!(
+                f.source.fetch(f.request()).await.unwrap_err(),
+                if defect == 3 {
+                    FetchError::Unauthorized
+                } else {
+                    FetchError::NotRetrievable
+                }
+            );
+            assert!(f.transport.calls.lock().unwrap().is_empty());
+        }
+    }
+}

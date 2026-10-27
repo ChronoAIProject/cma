@@ -25,7 +25,7 @@ pub use attachments::{
 };
 pub use context::{
     Capabilities, ConsumerSummary, ContextResponse, NativeMediaCapabilities,
-    NativeStickerCapabilities, PublicActivity,
+    NativeStickerCapabilities, NativeVideoCapabilities, PublicActivity,
 };
 pub(crate) use download_access::{Authorized, Refusal};
 pub(crate) use media_links::safe_name;
@@ -35,6 +35,7 @@ pub use media_links::{
 };
 pub use message_effects::discord::DiscordEffectsClient;
 pub use message_effects::lark_transport::LarkEffectsClient;
+pub use message_effects::whatsapp::{ReceivedMessageContext, WhatsappReactionsClient};
 pub use message_effects::{MessageEffectReceipt, MessageEffectsCapabilities, MessageEffectsClient};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;
