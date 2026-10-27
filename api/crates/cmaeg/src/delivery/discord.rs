@@ -181,12 +181,12 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
-        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable_content(message) {
+        if confirmed == 1 && parts.len() == 1 {
             if let DeliveryOutcome::Confirmed {
                 platform_message_id: Some(id),
             } = &receipt.delivery
             {
-                receipt.message_ref = self.discord_message_ref(ctx.channel, event, id);
+                receipt.message_ref = self.discord_message_ref(ctx.channel, event, id, message);
             }
         }
         (receipt, effects)
