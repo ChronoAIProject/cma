@@ -2691,6 +2691,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
+| `GET /v1/whatsapp/{channel_id}` | Verify the native WhatsApp webhook against the channel's exact configured Meta challenge token. |
+| `POST /v1/whatsapp/{channel_id}` | Receive a signed native WhatsApp webhook for the channel's exact app, business account and phone. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
 | `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |

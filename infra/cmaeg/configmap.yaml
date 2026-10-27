@@ -23,6 +23,8 @@ data:
   # Separate exact-message write authority, after compatible reader rollout.
   CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED: "false"
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
+  # Upgrade retained message-context readers before accepting owner opt-ins.
+  CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED: "false"
   # Keep native Meta source authoring off until compatible readers and setup acceptance.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "false"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
