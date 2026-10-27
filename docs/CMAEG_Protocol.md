@@ -1017,6 +1017,10 @@ message receipt and current revision. Missing/unbound, expired, superseded,
 wrong-actor/chat/message/platform/revision and out-of-range actions fail closed.
 CMA derives selected values from the saved options and uses CAS to consume one
 click. Redelivery retains a stable platform-prefixed event ID and idempotency key.
+If both CAS attempts conflict, the callback returns retryable 503
+`interaction_store_unavailable`; contention does not consume or refuse the click.
+Retry still enforces the current source policy and the original actor, message
+and revision. An already consumed exact replay retains its first result.
 
 Lark normally omits `chat_type` on a card action. CMA recovers private/group kind
 only from that exact bound record before applying current source ACLs; an explicit
