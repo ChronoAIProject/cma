@@ -119,7 +119,7 @@ impl Sender {
             crate::telemetry::names::PLATFORM,
             match &event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
-                ReplyAddress::Whatsapp { .. } => "whatsapp",
+                ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_) => "whatsapp",
                 ReplyAddress::Telegram { .. } => "telegram",
                 ReplyAddress::Discord { .. } => "discord",
                 _ => "custom",
@@ -138,7 +138,10 @@ impl Sender {
         if matches!(event.reply, ReplyAddress::NativeLark(_)) {
             return self.native_lark_reply(ctx, event, message).await;
         }
-        if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+        if matches!(
+            event.reply,
+            ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_)
+        ) {
             return self.whatsapp_reply(ctx, event, message).await;
         }
         if message

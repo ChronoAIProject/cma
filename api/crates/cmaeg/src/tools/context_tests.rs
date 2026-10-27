@@ -273,3 +273,67 @@ fn native_whatsapp_template_discovery_requires_verified_private_destination_and_
         );
     }
 }
+
+#[test]
+fn native_whatsapp_group_discovery_retains_exact_participant_and_supported_subset() {
+    use crate::{
+        ingress::routing_plan::fixture,
+        whatsapp::{
+            groups::tests::{reply, source_group, GROUP},
+            tests::credentials,
+        },
+    };
+    use cmaeg_core::{activity::ConversationKind, seal::ReplyAddress};
+    let mut request = fixture::request(|_| {}, fixture::message("hello"));
+    let channel = std::sync::Arc::make_mut(&mut request.channel);
+    channel.definition.sources = vec![source_group()];
+    channel.definition.secrets.whatsapp = Some(credentials());
+    request.activity.source = SourceKind::Whatsapp {
+        app_id: "12345".into(),
+        waba_id: "23456".into(),
+        phone_number_id: "34567".into(),
+    };
+    request.activity.actor.id = "447700900123".into();
+    request.activity.conversation.id = GROUP.into();
+    request.activity.conversation.kind = ConversationKind::Group;
+    let mut event = request
+        .event_ref
+        .open(&fixture::keys(), fixture::NOW)
+        .unwrap()
+        .payload;
+    event.reply = ReplyAddress::WhatsappGroup(reply());
+    assert!(native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    assert!(!native_whatsapp_templates(
+        false,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    assert!(!native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        false
+    ));
+    request.activity.actor.id = "447700900999".into();
+    assert!(!native_whatsapp_templates(
+        true,
+        channel,
+        &event,
+        &request.activity,
+        true
+    ));
+    let media = NativeMediaCapabilities::native_whatsapp_group(true).unwrap();
+    assert_eq!(media.kinds, vec!["image", "file", "audio", "video"]);
+    assert!(media.sticker.is_none());
+    assert!(media.video.is_some());
+    assert!(!media.mime_types.unwrap().contains(&"image/webp".to_owned()));
+}

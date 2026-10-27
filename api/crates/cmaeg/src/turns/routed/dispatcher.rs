@@ -368,6 +368,13 @@ pub(super) fn validate_current(
     {
         return Err(ExecutionError::AuthorityChanged);
     }
+    if matches!(
+        target.launch.event.reply,
+        cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+    ) && crate::whatsapp::credentials(&current.definition, &target.launch.event.reply).is_none()
+    {
+        return Err(ExecutionError::AuthorityChanged);
+    }
     let consumer = current
         .definition
         .consumer(Some(&target.launch.consumer))

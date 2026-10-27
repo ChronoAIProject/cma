@@ -12,6 +12,7 @@ pub(crate) struct PreparedTemplate {
     pub(super) recipient: String,
     pub(super) body: Vec<u8>,
     pub(super) media: bool,
+    pub(super) group: bool,
 }
 impl PreparedTemplate {
     pub(crate) fn new(
@@ -20,13 +21,50 @@ impl PreparedTemplate {
         parent: &str,
         template: &WhatsappTemplate,
     ) -> Result<Self, Error> {
-        if !valid_meta_id(phone) || !valid_meta_id(recipient) || !valid_message_id(parent) {
+        Self::prepare(phone, recipient, parent, template, false)
+    }
+    pub(crate) fn for_group(
+        reply: &cmaeg_core::channel::whatsapp::WhatsappGroupReply,
+        template: &WhatsappTemplate,
+    ) -> Result<Self, Error> {
+        reply.validate().map_err(|_| Error::Invalid)?;
+        if template.components.iter().any(|component| {
+            matches!(
+                component,
+                cmaeg_core::message::WhatsappTemplateComponent::Button { .. }
+            )
+        }) {
+            return Err(Error::Invalid);
+        }
+        Self::prepare(
+            &reply.phone_number_id,
+            &reply.group_id,
+            &reply.message_id,
+            template,
+            true,
+        )
+    }
+    fn prepare(
+        phone: &str,
+        recipient: &str,
+        parent: &str,
+        template: &WhatsappTemplate,
+        group: bool,
+    ) -> Result<Self, Error> {
+        if !valid_meta_id(phone)
+            || !(if group {
+                cmaeg_core::channel::whatsapp::valid_group_id(recipient)
+            } else {
+                valid_meta_id(recipient)
+            })
+            || !valid_message_id(parent)
+        {
             return Err(Error::Invalid);
         }
         template.validate().map_err(|_| Error::Invalid)?;
         validate_links(template).map_err(|_| Error::Invalid)?;
         let body = serde_json::to_vec(&json!({
-            "messaging_product":"whatsapp", "recipient_type":"individual", "to":recipient,
+            "messaging_product":"whatsapp", "recipient_type":if group {"group"}else{"individual"}, "to":recipient,
             "context":{"message_id":parent}, "type":"template", "template":template,
         }))
         .map_err(|_| Error::Invalid)?;
@@ -40,6 +78,7 @@ impl PreparedTemplate {
             recipient: recipient.into(),
             body,
             media: template.has_media(),
+            group,
         })
     }
 }

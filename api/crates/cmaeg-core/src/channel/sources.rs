@@ -192,11 +192,13 @@ fn validate_source(
     match source {
         Source::NativeLark(source) => source.validate(secrets.native_lark.as_ref()),
         Source::Whatsapp {
+            group_ids,
             app_id,
             waba_id,
             phone_number_id,
             admission,
         } => super::whatsapp::validate(
+            group_ids,
             app_id,
             waba_id,
             phone_number_id,

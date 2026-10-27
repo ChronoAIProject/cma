@@ -195,6 +195,32 @@ impl Client {
         })
     }
 
+    pub(crate) async fn send_group_media(
+        &self,
+        credentials: &WhatsappCredentials,
+        reply: &cmaeg_core::channel::whatsapp::WhatsappGroupReply,
+        uploaded: UploadedMedia,
+    ) -> Result<String, Error> {
+        reply.validate().map_err(|_| Error::Invalid)?;
+        if uploaded.phone != reply.phone_number_id
+            || uploaded.kind == "sticker"
+            || credentials.validate().is_err()
+        {
+            return Err(Error::Invalid);
+        }
+        let mut body = json!({"messaging_product":"whatsapp","recipient_type":"group","to":reply.group_id,"context":{"message_id":reply.message_id},"type":uploaded.kind});
+        body[uploaded.kind] = uploaded.metadata;
+        let result = self
+            .call(
+                Method::POST,
+                Self::endpoint(&format!("{}/messages", reply.phone_number_id))?,
+                credentials.access_token.as_str(),
+                Some(body),
+            )
+            .await?;
+        Self::group_message_identity(&result, &reply.group_id)
+    }
+
     /// Only an upload result from this phone can become a recipient message.
     pub(crate) async fn send_media(
         &self,

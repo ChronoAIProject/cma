@@ -5,7 +5,7 @@ import {
   nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
-import { credentialsPatch, object, records, text, type Fields } from './model';
+import { credentialsPatch, object, records, strings, text, type Fields } from './model';
 
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -55,8 +55,40 @@ export function validateRelayAuthoring(
     if (source.type === 'whatsapp') {
       const saved = oldSources.some((old) => old.type === 'whatsapp');
       const replacement = credentialsPatch(credentials, false)?.whatsapp;
+      const groups = strings(source.group_ids);
+      if (
+        source.group_ids !== undefined &&
+        (!Array.isArray(source.group_ids) ||
+          source.group_ids.length !== groups.length ||
+          groups.length > 16 ||
+          new Set(groups).size !== groups.length ||
+          groups.some((id) => !/^[A-Za-z0-9_+/=-]{1,512}$/.test(id)))
+      )
+        throw new Error('Enter at most 16 unique, exact WhatsApp group IDs.');
+      const retained = oldSources.some(
+        (old) =>
+          old.type === 'whatsapp' &&
+          canonical({ ...old, group_ids: undefined }) ===
+            canonical({ ...source, group_ids: undefined }) &&
+          groups.every((id) => strings(old.group_ids).includes(id)),
+      );
+      if (
+        discovery.authoring?.native_whatsapp_groups_writes_enabled !== true &&
+        groups.some(
+          (id) =>
+            !oldSources.some(
+              (old) =>
+                old.type === 'whatsapp' &&
+                ['app_id', 'waba_id', 'phone_number_id'].every((key) => old[key] === source[key]) &&
+                strings(old.group_ids).includes(id),
+            ),
+        )
+      )
+        throw new Error(
+          'New WhatsApp group opt-ins are disabled on this gateway. Your draft has been retained.',
+        );
       const reason = nativeWhatsappUnavailable(discovery, !saved);
-      if (reason && (!unchanged || replacement))
+      if (reason && (!retained || replacement))
         throw new Error(`${reason} Your draft has been retained.`);
       if (!saved && !replacement) throw new Error('Enter all three WhatsApp credentials.');
       if (
@@ -68,7 +100,9 @@ export function validateRelayAuthoring(
           'Enter the numeric Meta app, WhatsApp Business account and phone number IDs.',
         );
       if (object(next.partition).key === 'thread')
-        throw new Error('Direct WhatsApp uses private chats. Choose a conversation partition.');
+        throw new Error(
+          'Direct WhatsApp uses private chats or explicitly allowed groups. Choose a conversation partition.',
+        );
       continue;
     }
     if (

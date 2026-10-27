@@ -66,6 +66,45 @@ fn identity(f: &Fixture, id: &str) -> EventIdentity {
     }
 }
 #[tokio::test]
+async fn native_whatsapp_group_callbacks_cannot_consume_private_controls() {
+    use crate::whatsapp::groups::tests::{source_group, GROUP};
+    for named in [false, true] {
+        for list in [false, true] {
+            let f = Fixture::new(named).await;
+            let card = f.card(list, true).await;
+            let locator = Fixture::locator(&card, list);
+            let private = f.raw(&locator, "wamid.private-control");
+            let mut raw = f.raw(&locator, "wamid.group-control");
+            raw["group_id"] = GROUP.into();
+            let body = envelope(vec![raw]);
+            assert!(webhook::extract(&source_group(), &body).unwrap().is_empty());
+            let mut verified = f.verified(private.clone(), vec![]);
+            verified.source = source_group();
+            verified.message.group_id = Some(GROUP.into());
+            verified.body = body;
+            let (state, _scheduler) = ingress(&f);
+            let state = state.with_whatsapp_groups(true);
+            let writes = f.server.memory.writes.load(Ordering::SeqCst);
+            assert!(matches!(
+                state.launch_whatsapp_verified(
+                    verified, state.inflight.clone().try_acquire_owned().unwrap()
+                ).await,
+                LaunchOutcome::Refused(problem) if problem.status == 400
+            ));
+            assert_eq!(f.server.memory.writes.load(Ordering::SeqCst), writes);
+            assert!(matches!(
+                state
+                    .launch_whatsapp_verified(
+                        f.verified(private, vec![]),
+                        state.inflight.clone().try_acquire_owned().unwrap()
+                    )
+                    .await,
+                LaunchOutcome::Admitted { .. }
+            ));
+        }
+    }
+}
+#[tokio::test]
 async fn native_whatsapp_controls_commit_only_original_owner_and_restore_rebatched_callback() {
     for named in [false, true] {
         for list in [false, true] {

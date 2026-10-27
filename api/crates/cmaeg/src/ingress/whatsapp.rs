@@ -50,6 +50,14 @@ pub(crate) fn launch(
     now: i64,
 ) -> Result<LaunchRequest, ()> {
     let message = &verified.message;
+    if message.group_id.is_some()
+        && matches!(
+            message.content,
+            Content::Control { .. } | Content::Reaction { .. }
+        )
+    {
+        return Err(());
+    }
     let Source::Whatsapp {
         app_id,
         waba_id,
@@ -126,8 +134,12 @@ pub(crate) fn launch(
             kind: ActorKind::Unknown,
         },
         conversation: ActivityConversation {
-            id: message.sender.clone(),
-            kind: ConversationKind::Private,
+            id: message.conversation().into(),
+            kind: if message.group_id.is_some() {
+                ConversationKind::Group
+            } else {
+                ConversationKind::Private
+            },
             thread_id: None,
         },
         source: source_kind(&verified.source).ok_or(())?,
@@ -157,12 +169,33 @@ pub(crate) fn launch(
         partition_key,
         conversation_id: conversation_id.clone(),
         expires_at: now + 1800,
-        reply: ReplyAddress::Whatsapp {
-            app_id: app_id.clone(),
-            waba_id: waba_id.clone(),
-            phone_number_id: phone_number_id.clone(),
-            recipient_id: message.sender.clone(),
-            message_id: reply_target.clone(),
+        reply: if let Some(group_id) = &message.group_id {
+            ReplyAddress::WhatsappGroup(cmaeg_core::channel::whatsapp::WhatsappGroupReply {
+                revision: crate::whatsapp::group_revision(
+                    &verified.source,
+                    verified
+                        .channel
+                        .definition
+                        .secrets
+                        .whatsapp
+                        .as_ref()
+                        .ok_or(())?,
+                ),
+                app_id: app_id.clone(),
+                waba_id: waba_id.clone(),
+                phone_number_id: phone_number_id.clone(),
+                group_id: group_id.clone(),
+                participant_id: message.sender.clone(),
+                message_id: reply_target.clone(),
+            })
+        } else {
+            ReplyAddress::Whatsapp {
+                app_id: app_id.clone(),
+                waba_id: waba_id.clone(),
+                phone_number_id: phone_number_id.clone(),
+                recipient_id: message.sender.clone(),
+                message_id: reply_target.clone(),
+            }
         },
         consumer: None,
         lineage: None,

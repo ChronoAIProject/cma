@@ -1,4 +1,6 @@
 use super::{lark_fixture::App, *};
+#[path = "whatsapp_group_context_tests.rs"]
+mod group_context_tests;
 use crate::channels::definition::fixture as definition_fixture;
 use crate::{
     net::exchange::{HttpReply, TransportError},
