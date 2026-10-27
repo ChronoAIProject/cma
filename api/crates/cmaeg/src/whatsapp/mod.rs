@@ -1,5 +1,6 @@
 //! Native Meta WhatsApp Cloud API. NyxID relay integration is independent.
 mod client;
+mod interactive;
 pub(crate) mod management;
 pub(crate) mod media;
 pub(crate) mod outbound;
@@ -33,3 +34,6 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 pub(crate) mod media_tests;
+
+#[cfg(test)]
+mod interactive_tests;

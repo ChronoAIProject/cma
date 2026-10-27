@@ -12,6 +12,15 @@ impl RelayClient {
         self.native_whatsapp_templates
     }
 
+    /// Issue native controls only after compatible card and admission readers serve.
+    pub fn with_native_whatsapp_interactions(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_interactions = enabled;
+        self
+    }
+    pub(crate) fn native_whatsapp_interactions_enabled(&self) -> bool {
+        self.native_whatsapp_interactions
+    }
+
     pub fn with_native_whatsapp_outbound_media(mut self, enabled: bool) -> Self {
         self.native_whatsapp_outbound_media = enabled;
         self

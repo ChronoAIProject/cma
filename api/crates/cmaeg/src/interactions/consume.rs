@@ -29,13 +29,17 @@ impl InteractionStore {
             let platform_matches = if let Some(kind) = card.whatsapp {
                 data.starts_with(kind.prefix())
                     && revision == Some(card.revision)
-                    && matches!(
-                        &activity.source,
-                        cmaeg_core::activity::SourceKind::NyxidRelay {
-                            platform: cmaeg_core::channel::Platform::Whatsapp,
-                            route_id
-                        } if route_id == route
-                    )
+                    && (if let Some(authority) = &card.native_whatsapp {
+                        authority.current(&card, channel, activity)
+                    } else {
+                        matches!(
+                            &activity.source,
+                            cmaeg_core::activity::SourceKind::NyxidRelay {
+                                platform: cmaeg_core::channel::Platform::Whatsapp,
+                                route_id
+                            } if route_id == route
+                        )
+                    })
                     && activity.conversation.kind == cmaeg_core::activity::ConversationKind::Private
                     && activity.thread.is_none()
             } else {
@@ -68,11 +72,22 @@ impl InteractionStore {
                         callback_id,
                         index,
                     ))
-                || card.reference.is_none()
-                || card
-                    .destination
-                    .as_ref()
-                    .is_none_or(|d| d.platform_id != platform_message_id)
+            {
+                return Err(Error::Denied);
+            }
+            // A native callback can race the confirmed-send binding. Preserve its
+            // retry opportunity, but never consume an unbound/uncertain card.
+            if card.reference.is_none() || card.destination.is_none() {
+                return Err(if card.native_whatsapp.is_some() {
+                    Error::Unavailable
+                } else {
+                    Error::Denied
+                });
+            }
+            if card
+                .destination
+                .as_ref()
+                .is_none_or(|d| d.platform_id != platform_message_id)
             {
                 return Err(Error::Denied);
             }
@@ -231,10 +246,15 @@ impl InteractionStore {
         .await
         .map(|(result, time, card)| {
             let owner = card
-                .lark
+                .native_whatsapp
                 .as_ref()
-                .and_then(|identity| identity.form.as_ref())
-                .map(|form| form.owner.clone())
+                .map(|authority| authority.owner.clone())
+                .or_else(|| {
+                    card.lark
+                        .as_ref()
+                        .and_then(|identity| identity.form.as_ref())
+                        .map(|form| form.owner.clone())
+                })
                 .or_else(|| card.callback_owner.map(Into::into));
             (result, time, owner)
         })

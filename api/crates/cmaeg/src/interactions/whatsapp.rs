@@ -1,4 +1,4 @@
-//! Bounded reply buttons and single-choice lists over NyxID's interactive metadata.
+//! Bounded reply buttons and single-choice lists for native and relay WhatsApp.
 use super::{Card, Error, WhatsappKind};
 use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::{
@@ -26,6 +26,14 @@ pub(crate) fn eligible(
     event: &EventRefPayload,
     activity: &Activity,
 ) -> bool {
+    if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+        return event.lineage.is_none()
+            && channel.definition.routing.is_some()
+            && super::owner::eligible(channel, event, activity)
+            && channel.definition.source_of(&activity.source).is_some()
+            && crate::whatsapp::credentials(&channel.definition, &event.reply)
+                .is_some_and(|credentials| credentials.validate().is_ok());
+    }
     let ReplyAddress::NyxidRelay {
         platform: Platform::Whatsapp,
         route_id,
@@ -59,9 +67,11 @@ pub(super) fn numeric(value: &str) -> bool {
 
 pub(super) fn valid_record(card: &Card) -> bool {
     let Some(kind) = card.whatsapp else {
-        return true;
+        return card.native_whatsapp.is_none();
     };
-    card.lark.is_none()
+    super::whatsapp_authority::valid(card)
+        && card.discord.is_none()
+        && card.lark.is_none()
         && card.thread.is_none()
         && card.revision > 0
         && numeric(&card.actor)

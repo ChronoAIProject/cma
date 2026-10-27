@@ -200,6 +200,7 @@ impl App {
             telegram_effects: None,
             whatsapp_templates_enabled: false,
             whatsapp_interactions_enabled: false,
+            native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             native_media_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
