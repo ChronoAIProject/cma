@@ -738,7 +738,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/AttachmentSource",
-                "description": "A preview image; only a Telegram locator on a native Telegram activity."
+                "description": "A platform preview from the same native Telegram or Lark message."
               },
               {
                 "type": "null"
@@ -836,6 +836,37 @@
       "AttachmentSource": {
         "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
         "oneOf": [
+          {
+            "description": "Exact resource of an authenticated native Lark/Feishu message.",
+            "properties": {
+              "message_id": {
+                "type": "string"
+              },
+              "resource_key": {
+                "type": "string"
+              },
+              "resource_kind": {
+                "$ref": "#/components/schemas/LarkResourceKind"
+              },
+              "source_revision": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "native_lark"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message_id",
+              "resource_key",
+              "resource_kind",
+              "source_revision",
+              "type"
+            ],
+            "type": "object"
+          },
           {
             "description": "Signed native WhatsApp media; temporary download URLs are never retained.",
             "properties": {
@@ -1686,6 +1717,16 @@
           "typing": {
             "type": "boolean"
           },
+          "whatsapp_template_components": {
+            "description": "Group templates accept header/body components only; absent for other transports.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "whatsapp_templates": {
             "description": "Approved WhatsApp template replies only; no callbacks or initiated sends.",
             "type": [
@@ -2523,6 +2564,17 @@
           "provider_binding_id": {
             "$ref": "#/components/schemas/BindingId"
           },
+          "received_message": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReceivedMessageContext",
+                "description": "Reaction-only reference to the exact received native WhatsApp message."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
           },
@@ -2628,6 +2680,16 @@
               "null"
             ]
           },
+          "native_lark": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeLarkCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "telegram_bot_token": {
             "oneOf": [
               {
@@ -2692,6 +2754,16 @@
               "$ref": "#/components/schemas/HmacSecretRequest"
             },
             "type": "array"
+          },
+          "native_lark": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeLarkCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "telegram_bot_token": {
             "oneOf": [
@@ -3001,6 +3073,13 @@
         "properties": {
           "custom_event_url": {
             "type": "string"
+          },
+          "native_lark_webhook_url": {
+            "description": "Configure only on a separately provisioned native app. Never replace a NyxID callback.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "nyxid_callback_url": {
             "type": "string"
@@ -3407,6 +3486,13 @@
         ],
         "type": "object"
       },
+      "LarkRegion": {
+        "enum": [
+          "lark",
+          "feishu"
+        ],
+        "type": "string"
+      },
       "LarkResourceBinding": {
         "additionalProperties": false,
         "properties": {
@@ -3570,7 +3656,7 @@
             "type": "boolean"
           },
           "scope": {
-            "description": "Only an exact confirmed native bot message; never arbitrary chat/message IDs.",
+            "description": "Exact bot-message or received-user-message authority; never arbitrary IDs.",
             "type": "string"
           }
         },
@@ -3700,6 +3786,72 @@
         ],
         "type": "object"
       },
+      "NativeLarkCredentials": {
+        "additionalProperties": false,
+        "properties": {
+          "app_secret": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "encrypt_key": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "verification_token": {
+            "$ref": "#/components/schemas/Secret"
+          }
+        },
+        "required": [
+          "app_secret",
+          "encrypt_key",
+          "verification_token"
+        ],
+        "type": "object"
+      },
+      "NativeLarkIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "bot_open_id": {
+            "description": "Independently checked using the app's bot-info endpoint.",
+            "type": "string"
+          },
+          "region": {
+            "$ref": "#/components/schemas/LarkRegion"
+          },
+          "tenant_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "region",
+          "app_id",
+          "tenant_key",
+          "bot_open_id"
+        ],
+        "type": "object"
+      },
+      "NativeLarkSource": {
+        "additionalProperties": false,
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/AdmissionPolicy"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/NativeLarkIdentity"
+          },
+          "separate_app": {
+            "description": "Must be true: this source requires a separate native app and webhook.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "separate_app",
+          "identity",
+          "admission"
+        ],
+        "type": "object"
+      },
       "NativeMediaCapabilities": {
         "properties": {
           "kinds": {
@@ -3764,6 +3916,17 @@
               {
                 "$ref": "#/components/schemas/NativeStickerCapabilities",
                 "description": "Exact structural sticker limits; absent when sticker delivery is unsupported."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "video": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeVideoCapabilities",
+                "description": "Exact structural video profile; absent when no bounded profile is declared."
               },
               {
                 "type": "null"
@@ -3874,6 +4037,76 @@
           "max_frames",
           "max_duration_ms",
           "min_frame_duration_ms"
+        ],
+        "type": "object"
+      },
+      "NativeVideoCapabilities": {
+        "description": "Bounded structural video profile; full decoding and provider acceptance remain separate.",
+        "properties": {
+          "audio_codec": {
+            "type": "string"
+          },
+          "fast_start_required": {
+            "type": "boolean"
+          },
+          "max_audio_tracks": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_frame_rate": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_samples": {
+            "description": "Total samples across video and optional audio tracks.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_slices_per_frame": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "progressive_only": {
+            "type": "boolean"
+          },
+          "video_codec": {
+            "type": "string"
+          },
+          "video_profile": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_codec",
+          "video_profile",
+          "audio_codec",
+          "max_audio_tracks",
+          "max_width",
+          "max_height",
+          "max_frame_rate",
+          "max_duration_ms",
+          "max_samples",
+          "progressive_only",
+          "max_slices_per_frame",
+          "fast_start_required"
         ],
         "type": "object"
       },
@@ -4499,6 +4732,21 @@
         ],
         "type": "object"
       },
+      "ReceivedMessageContext": {
+        "properties": {
+          "effects": {
+            "$ref": "#/components/schemas/MessageEffectsCapabilities"
+          },
+          "message_ref": {
+            "$ref": "#/components/schemas/MessageRef"
+          }
+        },
+        "required": [
+          "message_ref",
+          "effects"
+        ],
+        "type": "object"
+      },
       "RecordId": {
         "type": "string"
       },
@@ -4668,6 +4916,19 @@
               "null"
             ]
           },
+          "native_lark_intake_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_writes_enabled": {
+            "description": "Separate native custom app only; never replaces a NyxID webhook.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_media_writes_enabled": {
             "description": "The configured relay accepts new native attachments; platform limits still apply.",
             "type": [
@@ -4682,6 +4943,13 @@
             ]
           },
           "native_whatsapp_auto_activation_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_whatsapp_groups_writes_enabled": {
+            "description": "Owner opt-in to existing OBA groups; independent of group issuance.",
             "type": [
               "boolean",
               "null"
@@ -5301,6 +5569,27 @@
       "Source": {
         "oneOf": [
           {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NativeLarkSource"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "native_lark"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
             "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",
             "properties": {
               "admission": {
@@ -5308,6 +5597,14 @@
               },
               "app_id": {
                 "type": "string"
+              },
+              "group_ids": {
+                "description": "Explicit existing group IDs; empty keeps private-only behavior.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
               },
               "phone_number_id": {
                 "type": "string"
@@ -5583,6 +5880,27 @@
       "SourceKind": {
         "oneOf": [
           {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NativeLarkIdentity"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "native_lark"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
             "properties": {
               "app_id": {
                 "type": "string"
@@ -5689,6 +6007,29 @@
       "SourceRequest": {
         "oneOf": [
           {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NativeLarkSource",
+                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "native_lark"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+          },
+          {
             "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",
             "properties": {
               "admission": {
@@ -5696,6 +6037,14 @@
               },
               "app_id": {
                 "type": "string"
+              },
+              "group_ids": {
+                "description": "Explicit existing group IDs; empty keeps private-only behavior.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
               },
               "phone_number_id": {
                 "type": "string"
@@ -8711,6 +9060,76 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/native-lark/{channel_id}": {
+      "post": {
+        "operationId": "receiveNativeLarkEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-lark-request-timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-lark-request-nonce",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-lark-signature",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
         ]
       }
     },

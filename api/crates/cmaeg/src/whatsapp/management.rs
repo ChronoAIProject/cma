@@ -23,7 +23,10 @@ pub(crate) async fn verify(
         .as_ref()
         .ok_or_else(|| invalid("native WhatsApp credentials required"))?;
     if previous.is_some_and(|old| {
-        old.sources.contains(source) && old.secrets.whatsapp.as_ref() == Some(credentials)
+        old.sources
+            .iter()
+            .any(|old| super::groups::retained_or_reduced(old, source))
+            && old.secrets.whatsapp.as_ref() == Some(credentials)
     }) {
         return Ok(());
     }
@@ -32,20 +35,22 @@ pub(crate) async fn verify(
         None => super::Client::production()
             .map_err(|_| invalid("native WhatsApp credential verification unavailable"))?,
     };
-    client
-        .verify_custody(source, credentials)
-        .await
-        .map_err(|error| {
-            invalid(match error {
-                super::Error::CustodyUnproved => {
-                    "Meta did not prove this token's app and WABA phone binding"
-                }
-                super::Error::Rejected | super::Error::Invalid => {
-                    "Meta rejected native WhatsApp credentials or permissions"
-                }
-                _ => "Meta custody verification is unavailable; retry without changing the source",
-            })
+    let result = async {
+        client.verify_custody(source, credentials).await?;
+        client.verify_source_groups(source, credentials).await
+    }
+    .await;
+    result.map_err(|error| {
+        invalid(match error {
+            super::Error::CustodyUnproved => {
+                "Meta did not prove the app, WABA phone binding or opted-in group custody"
+            }
+            super::Error::Rejected | super::Error::Invalid => {
+                "Meta rejected native WhatsApp credentials or permissions"
+            }
+            _ => "Meta custody verification is unavailable; retry without changing the source",
         })
+    })
 }
 
 pub(crate) fn initialize(

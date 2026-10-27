@@ -25,6 +25,14 @@ pub fn delivery(
             sinks.iter().filter_map(|s| webhook(&s.url)).collect()
         }
         None if matches!(destination, Destination::Origin) => match reply {
+            ReplyAddress::NativeLark(reply) => vec![recipient(
+                "native_lark_chat",
+                &reply.chat_id,
+                reply.thread_id.clone(),
+            )],
+            ReplyAddress::WhatsappGroup(reply) => {
+                vec![recipient("whatsapp", &reply.group_id, None)]
+            }
             ReplyAddress::Whatsapp { recipient_id, .. } => {
                 vec![recipient("whatsapp_chat", recipient_id, None)]
             }

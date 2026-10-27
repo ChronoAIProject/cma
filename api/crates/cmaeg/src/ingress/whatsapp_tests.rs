@@ -6,6 +6,8 @@ use super::{
     whatsapp::VerifiedWhatsappMessage,
     IngressState,
 };
+#[path = "whatsapp_group_tests.rs"]
+mod group_tests;
 #[path = "whatsapp_http_tests.rs"]
 mod http_tests;
 #[path = "whatsapp_media_tests.rs"]
@@ -97,8 +99,10 @@ impl Setup {
         let body = envelope(messages);
         VerifiedWhatsappMessage {
             channel: self.channel.clone(),
-            source: source(),
-            message: webhook::extract(&source(), &body).unwrap().remove(0),
+            source: self.channel.definition.sources[0].clone(),
+            message: webhook::extract(&self.channel.definition.sources[0], &body)
+                .unwrap()
+                .remove(0),
             body,
             received: Instant::now(),
             received_at: fixture::NOW,
@@ -256,6 +260,7 @@ async fn native_whatsapp_confirmed_outbound_reaction_is_limited_to_receipt_consu
     let owner = &original.targets[0].launch;
     let receipt = Receipt {
         kind: "native_whatsapp_receipt_v1".into(),
+        group: None,
         original: original.identity.clone(),
         source: original.activity.source.clone(),
         recipient: "447700900123".into(),

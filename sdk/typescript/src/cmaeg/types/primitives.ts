@@ -1,4 +1,4 @@
-import { enumeration, text, type Output } from '../../schema.js';
+import { enumeration, object, text, type Output } from '../../schema.js';
 
 export const AcceptedStatusSchema = enumeration('accepted');
 export type AcceptedStatus = Output<typeof AcceptedStatusSchema>;
@@ -172,3 +172,14 @@ export type ProblemCode = Output<typeof ProblemCodeSchema>;
 
 export const TypingOutcomeSchema = enumeration('sent', 'unsupported');
 export type TypingOutcome = Output<typeof TypingOutcomeSchema>;
+
+/** Region of a separately provisioned native Lark/Feishu custom app. */
+export const LarkRegionSchema = enumeration('lark', 'feishu');
+export type LarkRegion = Output<typeof LarkRegionSchema>;
+export const NativeLarkIdentitySchema = object({
+  region: LarkRegionSchema,
+  app_id: text,
+  tenant_key: text,
+  bot_open_id: text,
+});
+export type NativeLarkIdentity = Output<typeof NativeLarkIdentitySchema>;

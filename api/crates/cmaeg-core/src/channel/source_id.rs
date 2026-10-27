@@ -38,7 +38,7 @@ impl SourceId {
     pub fn parse(value: &str) -> Result<Self, ValidationError> {
         let known = matches!(
             value,
-            "telegram" | "discord" | "whatsapp" | "custom" | AGENT_SOURCE_ID
+            "native_lark" | "telegram" | "discord" | "whatsapp" | "custom" | AGENT_SOURCE_ID
         ) || value.strip_prefix(RELAY_PREFIX).is_some_and(|platform| {
             PLATFORMS
                 .iter()
@@ -106,6 +106,7 @@ impl Source {
     /// The slot this configured source occupies.
     pub fn source_id(&self) -> SourceId {
         match self {
+            Self::NativeLark(_) => SourceId("native_lark".into()),
             Self::Whatsapp { .. } => SourceId::whatsapp(),
             Self::Telegram { .. } => SourceId::telegram(),
             Self::Discord { .. } => SourceId::discord(),
@@ -119,6 +120,7 @@ impl SourceKind {
     /// The slot of the source an activity arrived on.
     pub fn source_id(&self) -> SourceId {
         match self {
+            Self::NativeLark(_) => SourceId("native_lark".into()),
             Self::Whatsapp { .. } => SourceId::whatsapp(),
             Self::Telegram { .. } => SourceId::telegram(),
             Self::Discord { .. } => SourceId::discord(),

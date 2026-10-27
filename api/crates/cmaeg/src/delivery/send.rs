@@ -119,7 +119,7 @@ impl Sender {
             crate::telemetry::names::PLATFORM,
             match &event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
-                ReplyAddress::Whatsapp { .. } => "whatsapp",
+                ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_) => "whatsapp",
                 ReplyAddress::Telegram { .. } => "telegram",
                 ReplyAddress::Discord { .. } => "discord",
                 _ => "custom",
@@ -135,7 +135,13 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+        if matches!(event.reply, ReplyAddress::NativeLark(_)) {
+            return self.native_lark_reply(ctx, event, message).await;
+        }
+        if matches!(
+            event.reply,
+            ReplyAddress::Whatsapp { .. } | ReplyAddress::WhatsappGroup(_)
+        ) {
             return self.whatsapp_reply(ctx, event, message).await;
         }
         if message
@@ -362,6 +368,7 @@ impl Sender {
                     result.message_ref = MessageRef::seal(
                         &MessageRefPayload {
                             discord_message: None,
+                            whatsapp_reaction: None,
                             lark_effect: None,
                             telegram_effect: None,
                             channel_id: event.channel_id.clone(),

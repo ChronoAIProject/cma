@@ -1,3 +1,4 @@
+import { LarkRegionSchema } from './primitives.js';
 import { LarkResourceBindingSchema } from './channels.js';
 import { NativeMediaCapabilitiesSchema } from './messages.js';
 import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
@@ -80,6 +81,13 @@ export const AttachmentSourceSchema = tagged(
       type: enumeration('discord'),
     }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    native_lark: object({
+      type: enumeration('native_lark'),
+      message_id: text,
+      resource_key: text,
+      resource_kind: LarkResourceKindSchema,
+      source_revision: text,
+    }),
     lark_resource: object({
       type: enumeration('lark_resource'),
       message_id: text,
@@ -166,6 +174,13 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    native_lark: object({
+      type: enumeration('native_lark'),
+      region: LarkRegionSchema,
+      app_id: text,
+      tenant_key: text,
+      bot_open_id: text,
+    }),
     whatsapp: object({
       app_id: text,
       waba_id: text,
@@ -290,6 +305,7 @@ export const CapabilitiesSchema = object({
   thread_history: optional(nullable(boolean)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
   whatsapp_templates: optional(nullable(boolean)),
+  whatsapp_template_components: optional(nullable(array(text))),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
   buttons: text,
@@ -310,7 +326,14 @@ export const PublicActivitySchema = object({
 });
 export type PublicActivity = Output<typeof PublicActivitySchema>;
 
+export const ReceivedMessageContextSchema = object({
+  message_ref: text,
+  effects: MessageEffectsCapabilitiesSchema,
+});
+export type ReceivedMessageContext = Output<typeof ReceivedMessageContextSchema>;
+
 export const ContextResponseSchema = object({
+  received_message: optional(nullable(ReceivedMessageContextSchema)),
   thread_history: optional(nullable(ThreadHistorySchema)),
   activity: PublicActivitySchema,
   activity_verified: boolean,

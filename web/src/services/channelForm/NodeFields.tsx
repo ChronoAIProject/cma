@@ -1,9 +1,11 @@
 import type { Denied } from '../client';
 import {
   nativeDiscordUnavailable,
+  nativeLarkUnavailable,
   nativeWhatsappUnavailable,
   useRelayCapabilities,
 } from '../RelayCapabilities';
+import { NativeLarkCredentialsFields } from './NativeLarkSourceFields';
 import { WhatsappCredentialsFields } from './WhatsappSourceFields';
 import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { Button } from '../../ui/Button';
@@ -66,6 +68,15 @@ export function NodeFields({
                       { value: 'nyxid_relay', label: 'NyxID messaging connection' },
                       { value: 'telegram', label: 'Direct Telegram bot' },
                       {
+                        value: 'native_lark',
+                        label: 'Direct Lark / Feishu app',
+                        unavailable:
+                          nativeLarkUnavailable(discovery) ??
+                          (sources.some((other, i) => i !== index && other.type === 'native_lark')
+                            ? 'A channel can have only one direct Lark / Feishu producer.'
+                            : undefined),
+                      },
+                      {
                         value: 'whatsapp',
                         label: 'Direct WhatsApp Business',
                         unavailable: nativeWhatsappUnavailable(discovery),
@@ -94,6 +105,13 @@ export function NodeFields({
                     )
                   }
                 />
+                {source.type === 'native_lark' ? (
+                  <NativeLarkCredentialsFields
+                    value={credentials}
+                    onChange={onCredentials}
+                    create={create || index >= sourceCount}
+                  />
+                ) : null}
                 {source.type === 'whatsapp' ? (
                   <WhatsappCredentialsFields
                     value={credentials}
@@ -101,7 +119,7 @@ export function NodeFields({
                     create={create}
                   />
                 ) : null}
-                {!create && source.type !== 'whatsapp' ? (
+                {!create && !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
                   <CredentialsFields
                     value={credentials}
                     onChange={onCredentials}

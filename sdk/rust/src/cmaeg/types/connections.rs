@@ -148,6 +148,12 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// Separate native app authoring gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_writes_enabled: Option<bool>,
+    /// Native webhook intake gate, independent of authoring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_intake_enabled: Option<bool>,
     /// Native Telegram owners may enable durable edit and reaction notifications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_telegram_message_events_enabled: Option<bool>,
@@ -169,6 +175,9 @@ pub struct RelayAuthoringCapabilities {
     /// New native Meta WhatsApp source and credential writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_writes_enabled: Option<bool>,
+    /// Owner opt-in to existing OBA groups, independent of group issuance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_groups_writes_enabled: Option<bool>,
     /// Durable admission/recovery and routing authoring prerequisites are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_auto_activation_enabled: Option<bool>,

@@ -430,6 +430,32 @@
       },
       "variant": "photo",
       "width": 1
+    },
+    {
+      "duration_seconds": 1,
+      "emoji": "fixture",
+      "filename": "fixture",
+      "height": 1,
+      "kind": "video",
+      "mime_type": "fixture",
+      "reference": "native-lark:om_native_media:file_native_video",
+      "size_bytes": 1,
+      "source": {
+        "type": "native_lark",
+        "message_id": "om_native_media",
+        "resource_key": "file_native_video",
+        "resource_kind": "file",
+        "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "thumbnail": {
+        "type": "native_lark",
+        "message_id": "om_native_media",
+        "resource_key": "img_native_cover",
+        "resource_kind": "image",
+        "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "variant": "photo",
+      "width": 1
     }
   ],
   "AttachmentKind": [
@@ -481,6 +507,13 @@
       "message_id": "wamid.media-fixture",
       "media_id": "45678",
       "sha256": "0101010101010101010101010101010101010101010101010101010101010101"
+    },
+    {
+      "type": "native_lark",
+      "message_id": "om_native_media",
+      "resource_key": "file_native_video",
+      "resource_kind": "file",
+      "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ],
   "AttachmentImage": [
@@ -790,6 +823,20 @@
           "max_frames": 128,
           "max_duration_ms": 10000,
           "min_frame_duration_ms": 8
+        },
+        "video": {
+          "audio_codec": "aac_lc",
+          "fast_start_required": true,
+          "max_audio_tracks": 1,
+          "max_duration_ms": 600000,
+          "max_frame_rate": 60,
+          "max_height": 1080,
+          "max_samples": 65536,
+          "max_slices_per_frame": 1,
+          "max_width": 1920,
+          "progressive_only": true,
+          "video_codec": "h264",
+          "video_profile": "baseline"
         }
       },
       "whatsapp_templates": true,
@@ -800,7 +847,11 @@
         "reaction": true,
         "scope": "confirmed_native_bot_message"
       },
-      "thread_history": true
+      "thread_history": true,
+      "whatsapp_template_components": [
+        "header",
+        "body"
+      ]
     }
   ],
   "ChannelCreateRequest": [
@@ -821,6 +872,11 @@
           "app_secret": "fixture-app-secret",
           "access_token": "fixture-access-token",
           "verify_token": "fixture-verify-token"
+        },
+        "native_lark": {
+          "app_secret": "fixture-native-app-secret",
+          "encrypt_key": "fixture-native-encrypt-key",
+          "verification_token": "fixture-native-verify-token"
         }
       },
       "name": "fixture",
@@ -1333,7 +1389,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1634,7 +1691,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1942,7 +2000,8 @@
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
             "telegram_webhook_url": "fixture",
-            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+            "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2243,7 +2302,8 @@
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
             "telegram_webhook_url": "fixture",
-            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+            "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2552,7 +2612,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2856,7 +2917,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2903,6 +2965,11 @@
           "app_secret": "fixture-app-secret",
           "access_token": "fixture-access-token",
           "verify_token": "fixture-verify-token"
+        },
+        "native_lark": {
+          "app_secret": "fixture-native-app-secret",
+          "encrypt_key": "fixture-native-encrypt-key",
+          "verification_token": "fixture-native-verify-token"
         }
       },
       "expected_version": 1,
@@ -3181,6 +3248,20 @@
             "max_frames": 128,
             "max_duration_ms": 10000,
             "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
           }
         },
         "whatsapp_templates": true,
@@ -3191,7 +3272,11 @@
           "reaction": true,
           "scope": "confirmed_native_bot_message"
         },
-        "thread_history": true
+        "thread_history": true,
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ]
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3224,6 +3309,16 @@
           }
         ],
         "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000
+        }
       }
     },
     {
@@ -3340,6 +3435,20 @@
             "max_frames": 128,
             "max_duration_ms": 10000,
             "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
           }
         },
         "whatsapp_templates": true,
@@ -3350,7 +3459,11 @@
           "reaction": true,
           "scope": "confirmed_native_bot_message"
         },
-        "thread_history": true
+        "thread_history": true,
+        "whatsapp_template_components": [
+          "header",
+          "body"
+        ]
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3383,6 +3496,16 @@
           }
         ],
         "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000
+        }
       }
     }
   ],
@@ -3413,6 +3536,11 @@
         "app_secret": "fixture-app-secret",
         "access_token": "fixture-access-token",
         "verify_token": "fixture-verify-token"
+      },
+      "native_lark": {
+        "app_secret": "fixture-native-app-secret",
+        "encrypt_key": "fixture-native-encrypt-key",
+        "verification_token": "fixture-native-verify-token"
       }
     }
   ],
@@ -3433,6 +3561,11 @@
         "app_secret": "fixture-app-secret",
         "access_token": "fixture-access-token",
         "verify_token": "fixture-verify-token"
+      },
+      "native_lark": {
+        "app_secret": "fixture-native-app-secret",
+        "encrypt_key": "fixture-native-encrypt-key",
+        "verification_token": "fixture-native-verify-token"
       }
     }
   ],
@@ -3482,7 +3615,8 @@
       "custom_event_url": "fixture",
       "nyxid_callback_url": "fixture",
       "telegram_webhook_url": "fixture",
-      "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+      "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+      "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
     }
   ],
   "EventAccepted": [
@@ -4572,6 +4706,22 @@
       "phone_number_id": "34567",
       "admission": {
         "type": "all"
+      },
+      "group_ids": [
+        "opaque+group/id=="
+      ]
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
       }
     }
   ],
@@ -4603,6 +4753,13 @@
       "app_id": "12345",
       "waba_id": "23456",
       "phone_number_id": "34567"
+    },
+    {
+      "type": "native_lark",
+      "region": "feishu",
+      "app_id": "cli_separate_app",
+      "tenant_key": "native_tenant",
+      "bot_open_id": "ou_separate_bot"
     }
   ],
   "SourceRequest": [
@@ -4736,6 +4893,22 @@
       "phone_number_id": "34567",
       "admission": {
         "type": "all"
+      },
+      "group_ids": [
+        "opaque+group/id=="
+      ]
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
       }
     }
   ],
@@ -4867,7 +5040,10 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": false,
         "native_whatsapp_auto_activation_enabled": false,
-        "native_whatsapp_writes_enabled": false
+        "native_whatsapp_writes_enabled": false,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false,
+        "native_whatsapp_groups_writes_enabled": true
       },
       "agent_tools": [
         {
@@ -4918,7 +5094,10 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": true,
         "native_whatsapp_auto_activation_enabled": true,
-        "native_whatsapp_writes_enabled": true
+        "native_whatsapp_writes_enabled": true,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false,
+        "native_whatsapp_groups_writes_enabled": true
       },
       "agent_tools": [
         {
@@ -4978,7 +5157,10 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": true,
         "native_whatsapp_auto_activation_enabled": true,
-        "native_whatsapp_writes_enabled": true
+        "native_whatsapp_writes_enabled": true,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false,
+        "native_whatsapp_groups_writes_enabled": true
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5887,6 +6069,20 @@
         "max_frames": 128,
         "max_duration_ms": 10000,
         "min_frame_duration_ms": 8
+      },
+      "video": {
+        "audio_codec": "aac_lc",
+        "fast_start_required": true,
+        "max_audio_tracks": 1,
+        "max_duration_ms": 600000,
+        "max_frame_rate": 60,
+        "max_height": 1080,
+        "max_samples": 65536,
+        "max_slices_per_frame": 1,
+        "max_width": 1920,
+        "progressive_only": true,
+        "video_codec": "h264",
+        "video_profile": "baseline"
       }
     },
     {
@@ -5894,7 +6090,8 @@
         "image",
         "file",
         "audio",
-        "sticker"
+        "sticker",
+        "video"
       ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
@@ -5911,7 +6108,9 @@
         "audio/mpeg",
         "audio/mp4",
         "audio/ogg",
-        "image/webp"
+        "image/webp",
+        "video/mp4",
+        "video/3gpp"
       ],
       "max_total_bytes": 8388608,
       "max_image_bytes": 5000000,
@@ -5924,6 +6123,20 @@
         "max_frames": 128,
         "max_duration_ms": 10000,
         "min_frame_duration_ms": 8
+      },
+      "video": {
+        "audio_codec": "aac_lc",
+        "fast_start_required": true,
+        "max_audio_tracks": 1,
+        "max_duration_ms": 600000,
+        "max_frame_rate": 60,
+        "max_height": 1080,
+        "max_samples": 65536,
+        "max_slices_per_frame": 1,
+        "max_width": 1920,
+        "progressive_only": true,
+        "video_codec": "h264",
+        "video_profile": "baseline"
       }
     }
   ],
@@ -6330,7 +6543,10 @@
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": false,
       "native_whatsapp_auto_activation_enabled": false,
-      "native_whatsapp_writes_enabled": false
+      "native_whatsapp_writes_enabled": false,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6365,7 +6581,10 @@
       "native_whatsapp_auto_activation_enabled": false,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6400,7 +6619,10 @@
       "native_whatsapp_auto_activation_enabled": false,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6435,7 +6657,10 @@
       "native_whatsapp_auto_activation_enabled": true,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false,
+      "native_whatsapp_groups_writes_enabled": true
     }
   ],
   "PrepareOutboundMessage": [
@@ -6717,6 +6942,67 @@
       "max_frames": 128,
       "max_duration_ms": 10000,
       "min_frame_duration_ms": 8
+    }
+  ],
+  "LarkRegion": [
+    "lark",
+    "feishu"
+  ],
+  "NativeLarkCredentials": [
+    {
+      "app_secret": "fixture-native-app-secret",
+      "encrypt_key": "fixture-native-encrypt-key",
+      "verification_token": "fixture-native-verify-token"
+    }
+  ],
+  "NativeLarkIdentity": [
+    {
+      "region": "feishu",
+      "app_id": "cli_separate_app",
+      "tenant_key": "native_tenant",
+      "bot_open_id": "ou_separate_bot"
+    }
+  ],
+  "NativeLarkSource": [
+    {
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      }
+    }
+  ],
+  "NativeVideoCapabilities": [
+    {
+      "audio_codec": "aac_lc",
+      "fast_start_required": true,
+      "max_audio_tracks": 1,
+      "max_duration_ms": 600000,
+      "max_frame_rate": 60,
+      "max_height": 1080,
+      "max_samples": 65536,
+      "max_slices_per_frame": 1,
+      "max_width": 1920,
+      "progressive_only": true,
+      "video_codec": "h264",
+      "video_profile": "baseline"
+    }
+  ],
+  "ReceivedMessageContext": [
+    {
+      "message_ref": "fixture-received-message-reference",
+      "effects": {
+        "delete": false,
+        "reaction": true,
+        "scope": "received_native_user_message",
+        "max_reactions": 1,
+        "expires_at": 1800000000
+      }
     }
   ]
 }

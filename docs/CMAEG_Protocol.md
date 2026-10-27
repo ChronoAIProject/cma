@@ -900,6 +900,13 @@ differs is whether the gateway can corroborate the platform's own event.
 | Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; authenticated `card.action.trigger` is handled only for a bound CMA card as described below, and other `header.event_type` values are refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is a bot and is refused as `bot_sender` unless the source explicitly opts in below; anything else is `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media, video and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media/video messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Rich-text posts are admitted too, flattened by the observer into the message text: the title, text, links, mentions rendered as names with the pinned bot's own mention removed, emotions, code blocks and rules; embedded images and videos are listed as attachments, non-retrievable unless the exact resource binding below is configured, and a long post is truncated at 32 KiB with a marker. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
 | Discord, Slack, WhatsApp with `trust_normalized:true` | The normalized envelope is trusted as-is. A definition without an admitted verification mode has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
+The pinned Lark/Feishu relay filters native recall and reaction events before
+callback construction. Incoming message-event support cannot be enabled by
+widening this observer or its activity hint. See the
+[incoming-event contract audit and native-source plan](CMAEG_Lark_Incoming_Message_Events.md)
+for the verified native fields, single-webhook constraint and unresolved edit
+delivery contract. Existing outgoing Lark message effects are a separate path.
+
 Discord and WhatsApp may instead use `verify_raw_event:true` to correlate the
 signed original event and normalize verified attachment descriptors. This mode
 is described in [raw verification](#explicit-discord-and-whatsapp-raw-verification);
@@ -2690,6 +2697,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/messages/{message_ref}/reaction` | `setMessageReaction` |
 | `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
+| `POST /v1/native-lark/{channel_id}` | Authenticate an encrypted callback from the separately provisioned native Lark/Feishu app. |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/whatsapp/{channel_id}` | Verify the native WhatsApp webhook against the channel's exact configured Meta challenge token. |
 | `POST /v1/whatsapp/{channel_id}` | Receive a signed native WhatsApp webhook for the channel's exact app, business account and phone. |
@@ -2967,7 +2975,9 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. Native Telegram and native Discord advertise
+before using native attachments. The separate `native_lark` source is text-only
+and never advertises this capability; its relay counterpart keeps the existing
+relay contract. Native Telegram and native Discord advertise
 this capability independently of the NyxID-specific relay gate. For relay
 sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
 always absent on custom events and relay platforms outside Telegram,
@@ -2975,10 +2985,10 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
-Native WhatsApp advertises a separate bounded subset only when
-`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker"]`,
+Native WhatsApp private replies advertise a separate bounded subset only when
+`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
-"audio/mpeg", "audio/mp4", "audio/ogg", "image/webp"]`,
+"audio/mpeg", "audio/mp4", "audio/ogg", "image/webp", "video/mp4", "video/3gpp"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
 on transports that do not declare them. Shared captions remain limited to 1024
@@ -2996,7 +3006,15 @@ Its optional `native_media.sticker` object reports required `width`/`height` 512
 frame headers are checked without pixel decoding. The sticker message contains
 only the upload ID. Legacy and unsupported transports omit that object; native
 Telegram/Discord and all NyxID replies/initiated sends refuse the new kind before
-any effect. Native video and other document formats remain unsupported. Public HTTPS sources use the existing pinned public
+any effect. Video accepts self-contained nonfragmented MP4/3GPP with one H.264
+Baseline track and zero or one AAC-LC track. Optional `native_media.video`
+(`NativeVideoCapabilities`) reports `video_codec: "h264"`, `video_profile: "baseline"`,
+`audio_codec: "aac_lc"`, `max_audio_tracks: 1`, `max_width: 1920`, `max_height: 1080`,
+`max_frame_rate: 60`, `max_duration_ms: 600000`, `max_samples: 65536` across tracks,
+`progressive_only: true`, `max_slices_per_frame: 1` and `fast_start_required: true`.
+Video supports captions; every sample range, timing table, parameter set and
+admitted I/P slice header is checked without full decoding. See the linked native
+media profile for further syntax restrictions. Other document formats remain unsupported. Public HTTPS sources use the existing pinned public
 address fetcher without Meta credentials, redirects or local-file access; inline
 sources retain the 65536-byte aggregate limit. Every attachment is prepared before
 any text/upload is sent. A native upload returns the sole media ID accepted by the
@@ -3127,13 +3145,45 @@ establish that condition. The flag is independent of the native-media and
 complete-reply gates, and neither of those gates enables text edit issuance.
 
 
+## Native WhatsApp existing-group opt-in
+
+Native `whatsapp` source and source-request objects accept optional `group_ids`,
+at most 16 unique opaque Meta IDs. Absent/empty values preserve private behavior.
+New opt-ins require `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` and advertised
+`relay_authoring.native_whatsapp_groups_writes_enabled: true`. New group intake
+and sends independently require `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED`. Current
+phone OBA status and existing group membership are verified read-only at authoring
+and before each effect. Exact retention/removal remains possible with writes off.
+
+Signed `messages[].group_id` becomes the group conversation; `messages[].from`
+remains the actor. Source allowlist and sender/chat/group admission rules all apply.
+The separate sealed `whatsapp_group` address retains app/WABA/phone, group, original
+participant and original message. It grants no private participant destination,
+new group management operations or arbitrary-message authority. Durable group
+receipts retain original default/named consumer custody in a separate namespace.
+Ambiguous acceptance, receipt failure and partial delivery remain unknown without
+automatic resend. See [native groups](CMAEG_Native_WhatsApp_Groups.md) for current
+Meta eligibility, bounded membership proof and connected v25 acceptance limits.
+
+Group media requires the existing independent media gates. Discovery omits sticker
+and `image/webp`; the existing image/PDF/audio/video profiles and limits apply.
+Eligible group template discovery includes `whatsapp_templates: true` and optional
+`whatsapp_template_components: ["header", "body"]`; all button components refuse
+before provider calls. Unsupported group controls/reactions/edit/delete remain
+unavailable.
+
 ## Approved WhatsApp template replies
 
 `OutboundMessage.whatsapp_template` is an optional typed object. It is accepted
-only for a NyxID WhatsApp relay event when
-`CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`; `readEventContext` then includes
-`capabilities.whatsapp_templates: true`. It is absent for other destinations and
-while disabled. The template must already be approved in the destination
+for a NyxID WhatsApp relay event when `CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`,
+or for a verified private native WhatsApp event (or an opted-in group under its
+additional groups gate) under the independent
+`CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED=true` gate. Both flags default to false
+in code; the source deployment manifest keeps the native gate false.
+`readEventContext` then includes `capabilities.whatsapp_templates: true`; native
+discovery also requires exact current source custody and a matching sealed
+recipient. The capability is absent for other destinations and while the
+applicable gate is disabled. The template must already be approved in the destination
 WhatsApp Business account. Meta validates approval, the language variant and
 placeholder compatibility; the gateway does not create or approve templates.
 
@@ -3171,13 +3221,33 @@ and template edits return an unsupported receipt without dispatch. Invalid
 shapes return `invalid_request` before admission. Template message references
 never advertise edit authority.
 
-Delivery uses the existing consumer authorization, pacing, route admission,
-commit gate and single-use reply credential path. The gateway serializes the
-exact bounded template into NyxID `reply.metadata.template` before entering the
-gate. One logical reply makes one relay request. A missing platform receipt,
-transport failure or 429 is `unknown` and is never automatically retried: the
-platform may have accepted the message. Ordinary messages that omit the field
-retain their existing serialized form and behavior.
+Both paths use existing consumer authorization, pacing, route admission and
+commit gates. For NyxID, the gateway serializes the exact bounded template into
+`reply.metadata.template` before the gate and uses the single-use relay reply
+credential. One logical reply makes one relay request. A missing platform
+receipt, transport failure or relay 429 is `unknown` and is never automatically
+retried: the platform may have accepted the message.
+
+For native replies, one `POST /v25.0/{phone_number_id}/messages` carries the typed
+`template`, sealed private recipient and original `context.message_id`. Source,
+credential revision and selected consumer authority are rechecked before the
+effect. Confirmation requires the WhatsApp product marker, exactly one matching
+recipient and one valid message ID, followed by an encrypted durable receipt
+bound to the original event, consumer, provider, partition and conversation.
+Transport/server uncertainty, malformed success or lost receipt persistence is
+`unknown`; the durable tool journal replays the result without resending.
+Native definite rejection and rate limiting retain the native adapter's existing
+`rejected` and `rate_limited` outcomes; the adapter does not retry either send.
+Native templates issue no message-edit reference.
+
+Template media remains a Meta ID or public HTTPS reference, checked by the same
+URL policy as relay templates. Meta resolves media and validates its ownership,
+format and approval. This does not use `native_attachments` upload/byte profiles
+or require their independent gate. Text-only templates keep the 8-second native
+transport budget; media templates allow up to 60 seconds for Meta processing.
+Existing routed claim and send windows still bound execution and are not extended.
+The native template flag grants neither owner-initiated delivery nor interactive
+callbacks. Ordinary messages that omit the field retain their existing behavior.
 
 ## Relay authoring discovery and setup
 
@@ -3230,6 +3300,19 @@ and its agent authorization through the existing public workflow.
 
 
 ## WhatsApp native choices
+
+Native `whatsapp` events use the independent default-off
+`CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED` gate and the same public buttons/list
+subset below. They send directly with the sealed native phone/recipient/context
+and preserve authenticated callbacks through durable admission to the original
+default or named consumer, provider conversation and partition. The optional
+native card authority and native WhatsApp interaction payload require compatible
+Gateway readers before issuance, and retained callbacks remain supported with
+issuance off. Native foreign controls are refused; callback titles never provide
+action values. Native sends are not automatically retried after uncertainty.
+See [native WhatsApp controls](CMAEG_Native_WhatsApp_Controls.md) for exact source,
+actor, confirmed binding, expiry and replay checks. The relay-specific behavior
+below is unchanged.
 
 For a raw-verified WhatsApp private event, `readEventContext` reports
 `buttons:"native_interactive"` when `CMAEG_WHATSAPP_INTERACTIONS_ENABLED=true`.
@@ -3976,3 +4059,7 @@ or ineligible native forms, with no fallback after authority or write failures.
 Retained callbacks, edits and exact lost-inbox recovery remain supported when
 issuance is disabled. See [native Discord forms](CMAEG_Native_Discord_Forms.md)
 for limits, rollback rules, official reference pin and local/live evidence bounds.
+
+### Native separate-app Lark / Feishu ingress
+
+`POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
