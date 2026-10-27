@@ -42,6 +42,7 @@ async fn anonymous_reactions_preserve_original_targets_partition_topic_and_unkno
         assert_eq!(plan.activity.actor.kind, ActorKind::Unknown);
         assert_ne!(plan.activity.actor.id, original.activity.actor.id);
         assert_eq!(plan.activity.conversation, original.activity.conversation);
+        assert_eq!(plan.targets.len(), original.targets.len());
         for (actual, expected) in plan.targets.iter().zip(&original.targets) {
             assert_eq!(actual.launch.consumer, expected.launch.consumer);
             assert_eq!(actual.launch.provider, expected.launch.provider);
