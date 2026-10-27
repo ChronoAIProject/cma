@@ -13,6 +13,8 @@ mod profile;
 pub use profile::*;
 mod primitives;
 pub use primitives::*;
+mod attachment_source;
+pub use attachment_source::*;
 mod activities;
 pub use activities::*;
 mod channel_activity;
