@@ -36,6 +36,7 @@ fn payload() -> MessageRefPayload {
     };
     MessageRefPayload {
         route_id: a.route(),
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: Some(Box::new(a)),
         channel_id: "cmaeg1.ch.fixture".parse().unwrap(),
