@@ -23,6 +23,7 @@ struct Stored {
     owner: String,
     blob: Vec<u8>,
     version: u64,
+    expires_at: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -113,8 +114,19 @@ impl FakeCma {
                 owner: owner.to_owned(),
                 blob,
                 version: 1,
+                expires_at: None,
             },
         );
+    }
+
+    /// Model store TTL removal without advancing the application's wall clock.
+    #[allow(dead_code)]
+    pub fn expire_at(&self, now: i64) {
+        self.state
+            .records
+            .lock()
+            .unwrap()
+            .retain(|_, row| row.expires_at.is_none_or(|expiry| expiry > now));
     }
 
     pub fn records(&self) -> BTreeMap<String, StoredView> {
@@ -155,6 +167,7 @@ struct PutRequest {
     owner: String,
     blob: String,
     expected_version: Option<u64>,
+    expires_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,6 +201,7 @@ async fn put_record(
                 owner: body.owner.clone(),
                 blob,
                 version: 1,
+                expires_at: body.expires_at,
             },
         );
         return Json(json!({"record_id":record_id,"version":1,"updated_at":"now"})).into_response();
@@ -215,6 +229,7 @@ async fn put_record(
     }
     existing.owner = body.owner;
     existing.blob = blob;
+    existing.expires_at = body.expires_at;
     existing.version += 1;
     Json(json!({"record_id":record_id,"version":existing.version,"updated_at":"now"}))
         .into_response()

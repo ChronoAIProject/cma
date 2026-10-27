@@ -3268,6 +3268,16 @@
           }
         ],
         "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000
+        }
       }
     },
     {
@@ -3441,6 +3451,16 @@
           }
         ],
         "text_truncated": false
+      },
+      "received_message": {
+        "message_ref": "fixture-received-message-reference",
+        "effects": {
+          "delete": false,
+          "reaction": true,
+          "scope": "received_native_user_message",
+          "max_reactions": 1,
+          "expires_at": 1800000000
+        }
       }
     }
   ],
@@ -6913,6 +6933,18 @@
       "progressive_only": true,
       "video_codec": "h264",
       "video_profile": "baseline"
+    }
+  ],
+  "ReceivedMessageContext": [
+    {
+      "message_ref": "fixture-received-message-reference",
+      "effects": {
+        "delete": false,
+        "reaction": true,
+        "scope": "received_native_user_message",
+        "max_reactions": 1,
+        "expires_at": 1800000000
+      }
     }
   ]
 }

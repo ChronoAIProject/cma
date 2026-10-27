@@ -9,6 +9,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
+    /// Reaction-only authority for an original received native WhatsApp message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_reaction: Option<Box<super::whatsapp_reaction::WhatsappReactionAuthority>>,
     /// Exact native Discord message destination; issued only after reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord_message: Option<Box<DiscordMessageDestination>>,
@@ -34,6 +37,9 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(authority) = &self.whatsapp_reaction {
+            authority.validate(self)?;
+        }
         if let Some(effect) = &self.lark_effect {
             effect.validate(self)?;
         }
