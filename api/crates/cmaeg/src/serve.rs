@@ -211,6 +211,7 @@ pub(crate) async fn serve(
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_whatsapp_media(config.native_whatsapp_media_enabled)
     .with_routed(
         routed
             .as_ref()

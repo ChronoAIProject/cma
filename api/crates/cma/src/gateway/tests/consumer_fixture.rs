@@ -74,6 +74,7 @@ impl ConsumerGateway {
         let config = cmaeg::Config {
             native_telegram_message_events_writes_enabled: false,
             native_whatsapp_writes_enabled: false,
+            native_whatsapp_media_enabled: false,
             native_discord_writes_enabled: false,
             native_discord_thread_history_enabled: false,
             native_discord_reactions_enabled: false,
