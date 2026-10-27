@@ -58,8 +58,12 @@ card; callback-provided business values cannot change that authority. A sanitize
 durable inbox and Activity receipt precede one type-6 acknowledgement attempt
 within 2.5 seconds of the interaction's creation time. Uncertain acknowledgements
 are not retried. Exact consumed callbacks can recover their inbox after that
-deadline; new late clicks cannot consume a card. Controls in threads, multi-select,
-controls with native media and interactive card edits are not implemented.
+deadline; new late clicks cannot consume a card. Buttons and single-select controls
+also support verified existing thread types 10, 11 and 12. Issuance and fresh
+callbacks authenticate the exact channel, type, guild and parent; the saved card,
+Activity and reply retain that same thread. Exact consumed replay retains the
+original proof. Multi-select, controls with native media and interactive card
+edits are not implemented.
 
 Native receipt is persisted and observed before provider execution. Immutable
 inbox snapshots preserve routing and receipt time across replay. Verified thread
@@ -150,7 +154,7 @@ The controls loopback fixture exercises a real provider POST and a reply to the
 original card: one acknowledgement, one provider turn and one reply, with Activity
 visible first and the interaction token absent from retained/provider bytes.
 
-The latest deployed Activity sample, recorded in
+The earlier deployed Activity API sample, recorded in
 [Deployment readiness](CMA_Deployment_Readiness.md#live-channel-activity-and-flow-workspace-publication-from-pr-1122-2026-10-27),
 used an isolated production Custom Channel: the corresponding Activity snapshot
 was received over SSE **196 ms after the event HTTP POST was sent**. A latest-Activity GET at
@@ -160,6 +164,17 @@ provider turn. This demonstrates receipt visibility independent of provider
 completion in one API/SSE sample; it is not a percentile, authenticated production
 browser measurement or Telegram/WhatsApp/Lark/Discord delivery result. Browser
 journeys were checked locally. No external platform messages were sent.
+
+The subsequently deployed PR #1130 Web image keeps one live feed for the selected
+Channel, shared between the map preview and Activity dialog. In its isolated
+production Custom sample, the event appeared over SSE after **413 ms** and in the
+browser after **420 ms**, before provider completion at **10,108 ms**. Reopening
+the Channel displayed its latest record after **149 ms** and completed the
+entrance animation after **367 ms**. Reconnect retained one provider turn. These
+browser checks used production assets and API/SSE through a saved-token transport
+adapter; ordinary OAuth cookie login was not exercised. The fixture and its exact
+temporary key were retired. These are individual samples, not latency percentiles
+or external-platform delivery evidence.
 
 Remaining acceptance is explicit: complete the combined release checks and
 controlled Custom Channel verification, then obtain authorization for platform ingress, media, reply,
