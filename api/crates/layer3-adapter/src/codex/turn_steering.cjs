@@ -27,5 +27,5 @@ function turnSteering(source) {
   return source.replace("  async cancel(params) {", method + "  async cancel(params) {")
     .replace(").connect(acpJsonStream);", ")" + route + ".connect(acpJsonStream);");
 }
-module.exports = { turnSteering, sourceSha256 };
+module.exports = { turnSteering, sourceSha256, method, route };
 if (require.main === module) writeFileSync(bridgePath, turnSteering(readFileSync(bridgePath, "utf8")));
