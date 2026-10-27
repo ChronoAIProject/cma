@@ -175,8 +175,9 @@ export function SourceFields({
             <p className="channel-field-hint">
               Private and group message edits and reactions from identifiable users reach the agents
               that received the original message. Refresh the bot webhook after enabling this
-              setting. Reaction updates require bot administrator access. CMA does not yet support
-              anonymous reaction counts. Telegram does not provide general message deletion events.
+              setting. Reaction updates require bot administrator access. Anonymous reactions and
+              aggregate reaction counts keep the actor unknown and require open sender admission.
+              Telegram does not provide general message deletion events.
             </p>
             <Toggle
               label="Receive channel posts and edits"

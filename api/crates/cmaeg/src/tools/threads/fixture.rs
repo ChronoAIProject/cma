@@ -39,6 +39,7 @@ pub struct Memory {
     pub active: Value,
     pub archived: Value,
     pub message: Value,
+    pub delay: Option<(String, String, Duration)>,
     pub status: StatusCode,
     pub create_accepted: bool,
     pub hook: Option<Box<dyn FnOnce() + Send>>,
@@ -85,11 +86,33 @@ async fn platform(State(memory): State<Arc<Mutex<Memory>>>, request: Request<Bod
         serde_json::from_slice(&bytes).unwrap()
     };
     let method = parts.method.as_str();
-    let path = parts.uri.path();
-    let mut memory = memory.lock().unwrap();
+    let (response, delay) = {
+        let mut memory = memory.lock().unwrap();
+        let delay = memory
+            .delay
+            .as_ref()
+            .filter(|(verb, path, _)| verb == method && path == parts.uri.path())
+            .map(|(_, _, delay)| *delay);
+        (
+            platform_response(&mut memory, method, &parts.uri, body),
+            delay,
+        )
+    };
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
+    }
+    response
+}
+fn platform_response(
+    memory: &mut Memory,
+    method: &str,
+    uri: &axum::http::Uri,
+    body: Value,
+) -> Response {
+    let path = uri.path();
     memory
         .calls
-        .push((method.into(), parts.uri.to_string(), body.clone()));
+        .push((method.into(), uri.to_string(), body.clone()));
     if path == memory.hook_path && (memory.hook_method.is_empty() || memory.hook_method == method) {
         if let Some(hook) = memory.hook.take() {
             hook();
@@ -103,7 +126,7 @@ async fn platform(State(memory): State<Arc<Mutex<Memory>>>, request: Request<Bod
             return Json(memory.active.clone()).into_response();
         }
         if path.ends_with("/threads/archived/public") {
-            assert_eq!(parts.uri.query(), Some("limit=26"));
+            assert_eq!(uri.query(), Some("limit=26"));
             return Json(memory.archived.clone()).into_response();
         }
         if path.ends_with("/messages/700") {
@@ -235,6 +258,7 @@ impl App {
             active: json!({"threads":[thread("701",11,"98",false)],"members":[]}),
             archived: json!({"threads":[thread("702",11,"98",true)],"members":[],"has_more":false}),
             message: json!({"id":"700","channel_id":"98","type":0,"author":{"id":"51","bot":false}}),
+            delay: None,
             status: StatusCode::OK,
             create_accepted: true,
             hook: None,
