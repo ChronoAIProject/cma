@@ -367,6 +367,22 @@ Disabled or threaded contexts retain their advertised fallback capabilities. Nat
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
+### Native WhatsApp image and PDF replies
+
+Discover `capabilities.native_media` before using `native_attachments`. Native
+WhatsApp has an independent default-off gate and supports only JPEG/PNG `image`
+and PDF `file` attachments. The additive optional `mime_types`, `max_total_bytes`,
+`max_image_bytes` and `max_caption_chars` fields report that exact subset: 8 MiB
+aggregate bytes, 5,000,000 bytes per image and 1024 caption characters; shared
+metadata still limits captions to 1024 UTF-8 bytes. Existing limits remain four
+attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
+address validation. Matching MIME type and filename extension are required when
+provided; images must have 8-bit RGB/RGBA headers. Native audio/video/sticker and
+other document formats remain unavailable. The original event fixes the recipient
+and quoted message; clients cannot provide a Meta media ID. Confirmed replies
+record exact target receipts, while uncertain/partial sends must not be retried
+automatically. Actual Meta/client acceptance remains separate from local tests.
+
 ### Approved WhatsApp templates
 
 Approved WhatsApp templates use the optional `whatsapp_template` field on

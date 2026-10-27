@@ -84,14 +84,14 @@ impl Client {
         self.transport = transport;
         self
     }
-    fn endpoint(path: &str) -> Result<Url, Error> {
+    pub(super) fn endpoint(path: &str) -> Result<Url, Error> {
         Url::parse(&format!(
             "https://graph.facebook.com/{}/{path}",
             super::GRAPH_API_VERSION
         ))
         .map_err(|_| Error::Invalid)
     }
-    async fn call(
+    pub(super) async fn call(
         &self,
         method: Method,
         url: Url,
@@ -99,16 +99,26 @@ impl Client {
         body: Option<Value>,
     ) -> Result<Value, Error> {
         let mut headers = HeaderMap::new();
-        let mut auth =
-            HeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| Error::Invalid)?;
-        auth.set_sensitive(true);
-        headers.insert(AUTHORIZATION, auth);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let body = body
             .map(|value| serde_json::to_vec(&value))
             .transpose()
             .map_err(|_| Error::Invalid)?
             .unwrap_or_default();
+        self.call_bytes(method, url, bearer, headers, body).await
+    }
+    pub(super) async fn call_bytes(
+        &self,
+        method: Method,
+        url: Url,
+        bearer: &str,
+        mut headers: HeaderMap,
+        body: Vec<u8>,
+    ) -> Result<Value, Error> {
+        let mut auth =
+            HeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| Error::Invalid)?;
+        auth.set_sensitive(true);
+        headers.insert(AUTHORIZATION, auth);
         let reply = self
             .transport
             .exchange(method, url, headers, body, self.timeout)
@@ -221,6 +231,9 @@ impl Client {
             "messaging_product":"whatsapp", "recipient_type":"individual", "to":recipient,
             "context":{"message_id":parent}, "type":"text", "text":{"preview_url":false,"body":text}
         }))).await?;
+        Self::message_identity(&result, recipient)
+    }
+    pub(super) fn message_identity(result: &Value, recipient: &str) -> Result<String, Error> {
         if result["messaging_product"] != "whatsapp"
             || !result["contacts"].as_array().is_some_and(|contacts| {
                 contacts.len() == 1 && contacts[0]["wa_id"].as_str() == Some(recipient)
