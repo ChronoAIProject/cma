@@ -145,6 +145,7 @@ impl Sender {
             MessageRef::seal(
                 &MessageRefPayload {
                     discord_message: None,
+                    whatsapp_reaction: None,
                     lark_effect: None,
                     telegram_effect: None,
                     relay_message: self

@@ -264,6 +264,10 @@ pub(crate) async fn serve(
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
+        whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(
+            crate::whatsapp::Client::production()?,
+            config.native_whatsapp_reactions_enabled,
+        ))),
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects

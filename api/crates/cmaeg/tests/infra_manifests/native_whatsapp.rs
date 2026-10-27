@@ -14,6 +14,10 @@ fn native_whatsapp_authoring_allows_owner_setup_while_new_media_stays_off() {
         configmap_value(CONFIGMAP, "CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED"),
         Some("false")
     );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED"),
+        Some("false")
+    );
 }
 
 #[test]

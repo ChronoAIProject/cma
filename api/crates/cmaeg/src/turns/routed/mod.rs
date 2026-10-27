@@ -17,6 +17,7 @@ mod executor;
 mod journal;
 mod model;
 mod projection_store;
+mod received_message;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
@@ -40,6 +41,9 @@ pub use journal::Journal;
 pub use model::{
     ExecutionError, FrozenDelivery, FrozenTurn, Lease, Phase, RecoverySupport, TargetState,
 };
+#[cfg(test)]
+pub(crate) use received_message::bind_received_message_fixture;
+pub use received_message::current_received_message;
 pub use tool_replies::RoutedToolReplies;
 pub use tool_reply_store::ToolReplyStatus;
 
