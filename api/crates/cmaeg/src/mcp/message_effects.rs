@@ -1,7 +1,7 @@
 //! New effects are listed after reader rollout; retained references stay usable.
 use super::{
     results::ToolOutput,
-    tools::{definitions, describe, ToolSpec},
+    tools::{definitions, ToolSpec},
 };
 use crate::{auth::AgentCaller, tools::ToolsState};
 use cmaeg_core::{
@@ -42,16 +42,14 @@ const TOOLS: [ToolSpec; 3] = [
 pub(super) fn handles(name: &str) -> bool {
     TOOLS.iter().any(|tool| tool.name == name)
 }
-pub(super) fn list(media: bool, effects: bool) -> Value {
-    let mut value = super::tools::list(media);
-    if effects {
-        let definitions = definitions(Schemas::openapi());
-        value["tools"]
-            .as_array_mut()
-            .expect("tool array")
-            .extend(TOOLS.iter().map(|tool| describe(tool, &definitions)));
-    }
-    value
+pub(super) fn selected(enabled: bool) -> impl Iterator<Item = super::catalog::SelectedTool> {
+    TOOLS
+        .iter()
+        .filter(move |_| enabled)
+        .map(|spec| super::catalog::SelectedTool {
+            spec,
+            definitions: || definitions(Schemas::openapi()),
+        })
 }
 pub(super) async fn call(
     state: &ToolsState,
