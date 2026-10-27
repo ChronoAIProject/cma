@@ -22,10 +22,7 @@ impl MongoSandboxStore {
             }
         }
         if !baseline.iter().all(|service| services.contains(service))
-            || !authorization.authority_id.starts_with("personal:")
-            || authorization.authority_id.len() <= "personal:".len()
-            || authorization.authority_id.chars().any(char::is_control)
-            || authorization.policy_revision == 0
+            || !valid_owner_authorization(&authorization)
         {
             return Err(AgentAccessError::Invalid);
         }

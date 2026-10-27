@@ -8,6 +8,7 @@ use crate::auth::keys::{KeyIssuer, KeyIssuerError};
 use crate::auth::persistence::SecretValue;
 
 mod contracts;
+pub(crate) mod owner_tokens;
 mod provided;
 pub(crate) use contracts::*;
 
@@ -30,9 +31,9 @@ impl ManagedSandboxCredentials {
         })
     }
 
-    async fn owner_token(&self, owner: &SubjectId) -> Result<SecretValue, CredentialError> {
+    async fn owner_token(&self, sandbox: &Sandbox) -> Result<SecretValue, CredentialError> {
         self.tokens
-            .token_for(owner)
+            .token_for_sandbox(sandbox)
             .await
             .map_err(CredentialError::Unavailable)?
             .ok_or_else(|| {
@@ -65,7 +66,7 @@ impl ManagedSandboxCredentials {
             }
             return Ok(());
         }
-        let token = self.owner_token(&sandbox.owner).await?;
+        let token = self.owner_token(sandbox).await?;
         for revocation in revocations {
             self.issuer
                 .revoke(&revocation.provider_key_id, token.expose())
@@ -104,7 +105,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                 "provided credential is absent from custody".into(),
             ));
         }
-        let token = self.owner_token(&sandbox.owner).await?;
+        let token = self.owner_token(sandbox).await?;
         let minted = self
             .issuer
             .mint(
@@ -210,7 +211,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         if !sandbox.credential.source.is_managed() {
             return Ok(());
         }
-        let token = self.owner_token(&sandbox.owner).await?;
+        let token = self.owner_token(sandbox).await?;
         self.issuer
             .revoke(provider_key_id, token.expose())
             .await

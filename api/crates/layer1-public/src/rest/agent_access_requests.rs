@@ -155,6 +155,10 @@ pub(crate) async fn list(
     }
 }
 
+/// Approve with a direct owner login or verified owner access token. Independent
+/// clients require existing service/backing-resource authority. Runtime keys and
+/// delegated actors cannot approve; missing authority and connections return
+/// `agent_access_owner_authority_required` and `agent_access_service_connection_required`.
 #[utoipa::path(post, operation_id = "post_api_v1_agents_by_id_access_requests_by_request_id_approve", path = "/api/v1/agents/{id}/access-requests/{request_id}/approve", tag = "agents",
     params(("id" = String, Path), ("request_id" = String, Path), ("Idempotency-Key" = String, Header)),
     request_body = ApproveAgentAccessRequest,
@@ -236,6 +240,14 @@ fn problem(error: AgentAccessError) -> Response {
     let (status, code) = match error {
         AgentAccessError::Invalid => (StatusCode::BAD_REQUEST, "agent_access_invalid"),
         AgentAccessError::Forbidden => (StatusCode::FORBIDDEN, "agent_access_forbidden"),
+        AgentAccessError::OwnerAuthorityRequired => (
+            StatusCode::FORBIDDEN,
+            "agent_access_owner_authority_required",
+        ),
+        AgentAccessError::ServiceConnectionRequired => (
+            StatusCode::CONFLICT,
+            "agent_access_service_connection_required",
+        ),
         AgentAccessError::NotFound => (StatusCode::NOT_FOUND, "agent_access_not_found"),
         AgentAccessError::Conflict => (StatusCode::CONFLICT, "agent_access_conflict"),
         AgentAccessError::Unavailable => {
