@@ -49,3 +49,5 @@ mod whatsapp_controls;
 mod worker;
 
 mod lark_effects;
+
+mod native_media_ref;

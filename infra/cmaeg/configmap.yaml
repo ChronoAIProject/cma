@@ -32,6 +32,8 @@ data:
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "true"
   # Follow-up native Lark outbound media and effects remain disabled.
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "false"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "false"
   CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
