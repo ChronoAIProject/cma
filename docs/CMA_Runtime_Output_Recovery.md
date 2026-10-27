@@ -42,3 +42,25 @@ Deploy compatible API readers everywhere before enabling this runtime image for 
 ## Focused verification
 
 The runtime tests cover disconnect replay, cumulative ACK validation, 1,024-frame backlog delivery, byte/frame overflow, terminal transport replay, and both legacy mode transitions. Adapter tests cover a 302-frame backlog whose terminal precedes handshake completion. Core tests cover lost commit replies, lost acknowledgements, no-op cursor persistence, foreign and skipped positions, and old-terminal replay after a later turn. CMA tests enforce no acknowledgement before durable success. Mongo checkpoint tests exercise cursor persistence and exact replay after reopening the store.
+
+## Long turns, steering and interruption
+
+The API keeps a prompt waiter until the provider returns its result or the
+attachment closes. A turn has no wall-clock completion deadline: elapsed time
+cannot manufacture a failure, clear prompt evidence, or fail a later turn.
+Recoverable prompts remain owned by their original runtime across API reconnects.
+
+Steering uses a distinct adapter input and the pinned bridge's acknowledged
+`cma/steer` extension. The extension injects into the exact current native turn
+and never starts a new turn when that target is gone. It leaves the original
+prompt's cancellation ownership and terminal response intact. The adapter probes
+support before mutation; a retained older runtime returns an explicit unsupported
+result and retains its usable writer. Owners can update that Sandbox when idle.
+Cancel continues to await the original provider terminal result; successful
+command delivery alone does not claim the turn stopped.
+
+The pinned native regression holds model output indefinitely, injects steering
+twice, cancels the real native turn, and verifies exactly one turn with interrupted
+status. Adapter regression advances a live prompt by 90 minutes and verifies
+that it stays active and cancellable, including after an older runtime refuses
+steering. Existing live Sandboxes are not restarted to enable this extension.

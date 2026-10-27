@@ -185,3 +185,33 @@ persist across refreshes and API restarts in Agent Manager's independent
 index initialize additively at startup. Isolated database deployments must add
 this collection to the generated Agent Manager role before upgrading; explicit
 shared-schema deployments require no new database credential.
+
+### Direct owner service access
+
+Direct NyxID owner access tokens can approve requests and replace service scope
+without a browser login. CMA verifies the owner, current management permissions,
+finite token expiry and access to each selected service and its backing nodes.
+Runtime/Agent keys, relay tokens, service accounts and delegated actors cannot
+approve. The existing personal-resource ownership policy still applies.
+
+CMA stores the exact API token in encrypted credential custody and records only
+its authority reference with the decision. Deferred execution, credential
+issuance, renewal and revocation recover that same authority after restart and
+revalidate it; they never substitute a browser login. API tokens are not refreshed
+by CMA. Expired or revoked authority stops further credential operations with
+`owner_service_authority_required`; authorize further work with a current owner
+token. On the original Agent, submit a new idempotency key with both `services`
+and `expected_services` equal to the current scope. Once the prior request has
+settled or failed, this records fresh consent for that exact scope, including
+when credential rotation or revocation is still pending. Pending rotation
+continues at its existing scope generation; settled access performs an ordinary
+rotation with a fresh backing-node plan. Both preserve the prior audit, runtime
+and conversation. A changed scope remains a separate update after rotation settles. Replaying an old key returns its original
+result and never substitutes new authority.
+
+HTTP 403 `agent_access_owner_authority_required` requests a direct owner access
+token. HTTP 409 `agent_access_service_connection_required` means the owner must
+connect the service or authorize its backing resources through NyxID, then retry.
+The existing connection workflow remains available to browser owners. Missing
+scope-plan support or invalid provider evidence returns a temporary refusal;
+CMA never silently issues a service-only key.

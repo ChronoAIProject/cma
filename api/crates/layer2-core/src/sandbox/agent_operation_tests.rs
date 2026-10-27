@@ -407,7 +407,7 @@ async fn steer_and_interrupt_send_the_expected_runtime_inputs() {
     assert_eq!(receipt.turn_sequence, ACTIVE_TURN);
     assert!(matches!(
         steer_inputs.lock().unwrap().as_slice(),
-        [ConversationInput::Prompt(content)] if prompt_text(content) == "Narrow the search."
+        [ConversationInput::Steer(content)] if prompt_text(content) == "Narrow the search."
     ));
 
     let interrupt_store = Arc::new(InMemorySandboxStore::default());

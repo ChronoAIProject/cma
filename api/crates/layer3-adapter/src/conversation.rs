@@ -75,6 +75,8 @@ pub enum ConversationInput {
         permission: crate::PermissionLevel,
     },
     Prompt(Vec<ContentBlock>),
+    /// Inject input into the current native turn without starting another prompt.
+    Steer(Vec<ContentBlock>),
     RecoverablePrompt {
         content: Vec<ContentBlock>,
         prompt_id: crate::PromptIdentity,

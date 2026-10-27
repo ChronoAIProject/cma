@@ -18,6 +18,8 @@ use layer2_core::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 
 use super::*;
 
+#[path = "credential/node_access_tests.rs"]
+mod node_access_tests;
 #[path = "credential/provided_tests.rs"]
 mod provided_tests;
 
@@ -220,6 +222,7 @@ struct ProviderState {
     revoke_failures: AtomicUsize,
     revoked: Mutex<Vec<String>>,
     mint_requests: Mutex<Vec<serde_json::Value>>,
+    rebound: AtomicBool,
 }
 
 async fn services() -> Json<serde_json::Value> {
@@ -248,7 +251,7 @@ async fn mint(
         "scopes": "proxy read",
         "state_version": number,
         "allowed_service_ids": body["allowed_service_ids"],
-        "allowed_node_ids": [],
+        "allowed_node_ids": body["allowed_node_ids"],
         "allow_all_services": false,
         "allow_all_nodes": false
     }))
@@ -273,6 +276,8 @@ async fn provider() -> (String, Arc<ProviderState>, tokio::task::JoinHandle<()>)
     let state = Arc::new(ProviderState::default());
     let app = Router::new()
         .route("/api/v1/user-services", get(services))
+        .route("/api/v1/api-keys/scope-plan", post(node_access_tests::plan))
+        .route("/proxy", get(node_access_tests::proxy))
         .route("/api/v1/api-keys", post(mint))
         .route("/api/v1/api-keys/{id}", delete(revoke))
         .with_state(Arc::clone(&state));
