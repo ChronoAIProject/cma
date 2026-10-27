@@ -2568,7 +2568,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ReceivedMessageContext",
-                "description": "Reaction-only reference to the exact received native WhatsApp message."
+                "description": "Reaction-only reference to an exact retained native user message."
               },
               {
                 "type": "null"
@@ -5642,6 +5642,10 @@
                   "null"
                 ]
               },
+              "channel_posts": {
+                "description": "Admit native channel posts as non-human channel identities; requires message_events.",
+                "type": "boolean"
+              },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
@@ -6081,6 +6085,10 @@
                   "string",
                   "null"
                 ]
+              },
+              "channel_posts": {
+                "description": "Admit native channel posts as non-human channel identities; requires message_events.",
+                "type": "boolean"
               },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",

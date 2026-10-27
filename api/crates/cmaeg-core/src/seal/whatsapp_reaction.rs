@@ -42,6 +42,8 @@ impl WhatsappReactionAuthority {
             || self.received_at <= 0
             || self.expires_at <= self.received_at
             || self.expires_at > self.received_at.saturating_add(MAX_REACTION_AGE)
+            || message.received_reaction.is_some()
+            || message.native_lark_effect.is_some()
             || message.discord_message.is_some()
             || message.telegram_effect.is_some()
             || message.lark_effect.is_some()

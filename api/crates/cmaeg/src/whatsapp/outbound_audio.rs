@@ -2,8 +2,7 @@
 //! Payload decodability and delivery acceptance remain Meta's responsibility.
 #[path = "outbound_audio/mp4.rs"]
 mod mp4;
-#[path = "outbound_audio/ogg.rs"]
-mod ogg;
+use crate::media::outbound_profiles::ogg;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Format {

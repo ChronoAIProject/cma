@@ -183,3 +183,41 @@ it('distinguishes local buffering from confirmed recipient delivery', () => {
   expect(screen.queryByText('Delivery confirmed')).not.toBeInTheDocument();
   expect(screen.getByText('Recipient not reported', { exact: false })).toBeVisible();
 });
+
+it('shows asynchronous WhatsApp recipient outcomes separately from API acceptance', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const page = snapshot('produced');
+  const delivery = {
+    step: 'answer' as const,
+    destination: 'origin' as const,
+    outcome: 'confirmed' as const,
+    observed_at: '2026-10-27T00:00:04Z',
+    confirmed_at: '2026-10-27T00:00:04Z',
+    platform_message_id: 'wamid.reply',
+    recipients: [{ kind: 'whatsapp_chat', id: '447700900123', thread_id: null }],
+  };
+  page.items[0]!.consumers[0]!.deliveries = [delivery];
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(screen.getByText('Accepted by WhatsApp')).toBeVisible();
+  expect(screen.queryByText('Delivered to recipient')).not.toBeInTheDocument();
+  page.items[0]!.consumers[0]!.deliveries.push({
+    ...delivery,
+    step: 'platform_status',
+    outcome: 'read',
+    observed_at: '2026-10-27T00:00:09Z',
+    confirmed_at: '2026-10-27T00:00:07Z',
+  });
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(screen.getByText('Accepted by WhatsApp')).toBeVisible();
+  expect(screen.getByText('Read by recipient')).toBeVisible();
+  page.items[0]!.consumers[0]!.deliveries.push({
+    ...delivery,
+    step: 'platform_failure',
+    outcome: 'failed',
+  });
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(screen.getByText('WhatsApp could not deliver this message')).toBeVisible();
+  expect(screen.getByText('Read by recipient')).toBeVisible();
+  expect(Feed.instances).toHaveLength(1);
+});

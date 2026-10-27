@@ -110,8 +110,8 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
             if !private_shape(value) {
                 return Err(Error::Message);
             }
-            // Status-only deliveries are acknowledged; they never establish a
-            // message or reaction target and never start provider work.
+            // Status facts have a separate retained-receipt observer. They do
+            // not establish a message/reaction target or start provider work.
             let Some(raw_messages) = value.get("messages") else {
                 continue;
             };

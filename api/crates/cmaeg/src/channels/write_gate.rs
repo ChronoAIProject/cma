@@ -80,7 +80,7 @@ pub(crate) fn check(
                 ..
             }
         ) && !flags.telegram_message_events
-            && !current.is_some_and(|old| old.sources.contains(source))
+            && !current.is_some_and(|old| super::native_telegram::retains_opt_in(old, source))
     }) {
         return Err(ValidationError::new(
             format!("/sources/{index}/message_events"),

@@ -159,3 +159,67 @@ async fn telegram_message_events_locator_conflicts_require_exact_identity_revisi
         assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
     }
 }
+
+#[tokio::test]
+async fn telegram_anonymous_counts_authenticate_before_lookup_and_recover_without_duplicate_turns()
+{
+    let f = Fixture::new(true).await;
+    let raw = super::anonymous_tests::aggregate(&f);
+    let server = Server::new(&f).await;
+    assert_eq!(server.send(&raw, "wrong-secret").await.0, 401);
+    assert!(f.server.memory.rows.lock().unwrap().is_empty());
+    assert_eq!(server.send(&f.raw, "fixture-webhook").await.0, 202);
+    let (status, body) = server.send(&raw, "fixture-webhook").await;
+    assert_eq!(status, 202, "{body}");
+    assert_eq!(body["status"], "accepted");
+    let plan = f.plan("telegram:77:301").await.unwrap();
+    let before = f.server.memory.writes.load(Ordering::SeqCst);
+    drop(server);
+    let restored = Server::new(&f).await;
+    assert_eq!(restored.send(&raw, "fixture-webhook").await, (status, body));
+    assert_eq!(f.server.memory.writes.load(Ordering::SeqCst), before);
+    assert_eq!(f.plan("telegram:77:301").await.unwrap(), plan);
+    assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn native_channel_posts_authenticate_admit_durably_and_refuse_human_allowlists() {
+    for mode in 0..4 {
+        let mut f = super::channel_post_tests::channel_fixture().await;
+        let Source::Telegram {
+            channel_posts,
+            admission,
+            ..
+        } = &mut Arc::make_mut(&mut f.channel).definition.sources[0]
+        else {
+            panic!()
+        };
+        match mode {
+            1 => *channel_posts = false,
+            2 => *admission = serde_json::from_value(json!({"type":"allowlist","sender_ids":["telegram:chat:-100","42"]})).unwrap(),
+            3 => *admission = serde_json::from_value(json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"allowlist","ids":["-101"]},"groups":"all"})).unwrap(),
+            _ => {}
+        }
+        f.publish_channel();
+        let server = Server::new(&f).await;
+        assert_eq!(server.send(&f.raw, "wrong-secret").await.0, 401);
+        assert!(f.plan("telegram:77:101").await.is_none());
+        let (status, body) = server.send(&f.raw, "fixture-webhook").await;
+        assert_eq!(status, 202, "{body}");
+        if mode == 0 {
+            assert_eq!(body["status"], "accepted");
+            let original = f.plan("telegram:77:101").await.unwrap();
+            assert_eq!(original.activity.actor.kind, ActorKind::Unknown);
+            let (_, body) = server
+                .send(&super::channel_post_tests::edit(&f), "fixture-webhook")
+                .await;
+            assert_eq!(body["status"], "accepted");
+            assert!(f.plan("telegram:77:102").await.is_some());
+        } else {
+            assert_eq!(body["status"], "refused");
+            assert!(f.plan("telegram:77:101").await.is_none());
+            assert!(f.server.memory.rows.lock().unwrap().is_empty());
+        }
+        assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+    }
+}

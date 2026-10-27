@@ -17,6 +17,13 @@ pub(crate) mod lark_authority;
 pub(crate) mod lark_ledger;
 pub mod lark_transport;
 pub(crate) mod mutation;
+pub(crate) mod native_lark;
+pub(crate) mod native_lark_authority;
+pub(crate) mod native_lark_context;
+mod native_lark_execute;
+mod received;
+mod received_authority;
+mod received_transport;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 use super::{reply_targets::receipts, state::owner, ToolsState};
@@ -40,13 +47,19 @@ use utoipa::ToSchema;
 pub struct MessageEffectsClient {
     telegram: Arc<TelegramClient>,
     capacity: Semaphore,
+    received_issuance_enabled: bool,
 }
 impl MessageEffectsClient {
     pub fn new(telegram: Arc<TelegramClient>) -> Self {
         Self {
             telegram,
             capacity: Semaphore::new(32),
+            received_issuance_enabled: false,
         }
+    }
+    pub fn with_received_reactions(mut self, enabled: bool) -> Self {
+        self.received_issuance_enabled = enabled;
+        self
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -89,6 +102,23 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.received_reaction.is_some() {
+            return received::capabilities(
+                &message,
+                &channel,
+                caller,
+                self.received_reaction_client(&message),
+            );
+        }
+        if message.native_lark_effect.is_some() {
+            native_lark_authority::retained(self, &message).await?;
+            return native_lark::capabilities(
+                &message,
+                &channel,
+                caller,
+                self.native_lark_effects.is_some(),
+            );
+        }
         if message.whatsapp_reaction.is_some() {
             return whatsapp::capabilities(
                 &message,
@@ -195,6 +225,16 @@ impl ToolsState {
             ));
         }
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.received_reaction.is_some() {
+            return self
+                .received_message_reaction(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
+        if message.native_lark_effect.is_some() {
+            return self
+                .native_lark_message_effect(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
         if message.whatsapp_reaction.is_some() {
             return self
                 .whatsapp_message_reaction(caller, reference, request_id, effect, channel, message)
@@ -360,4 +400,19 @@ mod lark_card_tests;
 mod lark_custody_tests;
 
 #[cfg(test)]
+mod native_lark_fixture;
+#[cfg(test)]
+mod native_lark_race_tests;
+#[cfg(test)]
+mod native_lark_tests;
+#[cfg(test)]
 mod whatsapp_tests;
+
+#[cfg(test)]
+mod received_authority_tests;
+#[cfg(test)]
+mod received_fixture;
+#[cfg(test)]
+mod received_retry_tests;
+#[cfg(test)]
+mod received_tests;

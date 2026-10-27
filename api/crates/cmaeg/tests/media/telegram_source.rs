@@ -111,6 +111,7 @@ impl Files {
         let channel = resolved(|definition| {
             definition.sources = vec![Source::Telegram {
                 message_events: false,
+                channel_posts: false,
                 bot_id: BOT_ID.into(),
                 bot_username: None,
                 admission: AdmissionPolicy::All {},
@@ -265,6 +266,7 @@ async fn a_bot_no_longer_configured_or_without_a_token_is_not_retrievable() {
     let other_bot = Files::new(|definition| {
         definition.sources = vec![Source::Telegram {
             message_events: false,
+            channel_posts: false,
             bot_id: "78".into(),
             bot_username: None,
             admission: AdmissionPolicy::All {},

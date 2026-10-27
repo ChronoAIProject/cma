@@ -4,6 +4,10 @@ use std::sync::atomic::Ordering;
 #[path = "events_fixture.rs"]
 mod fixture;
 use fixture::Fixture;
+#[path = "anonymous_reaction_tests.rs"]
+mod anonymous_tests;
+#[path = "channel_post_tests.rs"]
+mod channel_post_tests;
 #[path = "events_http_tests.rs"]
 mod http_tests;
 
@@ -133,12 +137,6 @@ async fn telegram_message_events_require_exact_target_author_thread_and_attribut
     let mut mixed = f.edit();
     mixed["message"] = f.raw["message"].clone();
     assert!(f.verified(&mixed).await.is_err());
-    for kind in ["edited_channel_post", "message_reaction_count"] {
-        assert!(matches!(
-            event(&json!({"update_id":200,kind:{}})),
-            Err(Error::Refused(Refusal::SystemSender))
-        ));
-    }
     assert!(!requested(
         &json!({"update_id":1,"deleted_messages":{"message_ids":[5]}})
     ));

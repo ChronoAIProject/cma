@@ -5,6 +5,22 @@ use cmaeg_core::{
     ValidationError,
 };
 
+/// Retaining a saved source or removing only channel-post access is an opt-out.
+pub(super) fn retains_opt_in(current: &ChannelDefinition, source: &Source) -> bool {
+    if current.sources.contains(source) {
+        return true;
+    }
+    let mut before = source.clone();
+    let Source::Telegram { channel_posts, .. } = &mut before else {
+        return false;
+    };
+    if *channel_posts {
+        return false;
+    }
+    *channel_posts = true;
+    current.sources.contains(&before)
+}
+
 pub(super) fn initialize(
     state: &ManagementState,
     current: Option<&ChannelDefinition>,
@@ -79,5 +95,34 @@ mod tests {
             .unwrap()
             .get("message_events")
             .is_none());
+    }
+    #[test]
+    fn telegram_channel_posts_are_explicit_require_message_events_and_share_authoring_gate() {
+        let mut value = crate::channels::routing_fixture::routed();
+        value["sources"][0]["channel_posts"] = true.into();
+        let definition = crate::channels::routing_fixture::definition(value.clone());
+        assert!(definition.validate().is_err());
+        value["sources"][0]["message_events"] = true.into();
+        let definition = crate::channels::routing_fixture::definition(value);
+        definition.validate().unwrap();
+        let flags = crate::channels::write_gate::WriteFlags::default();
+        assert!(crate::channels::write_gate::check(None, &definition, flags).is_err());
+        crate::channels::write_gate::check(Some(&definition), &definition, flags).unwrap();
+        let mut prior = definition.clone();
+        let Source::Telegram { channel_posts, .. } = &mut prior.sources[0] else {
+            panic!()
+        };
+        *channel_posts = false;
+        assert!(serde_json::to_value(&prior.sources[0])
+            .unwrap()
+            .get("channel_posts")
+            .is_none());
+        assert!(crate::channels::write_gate::check(Some(&prior), &definition, flags).is_err());
+        crate::channels::write_gate::check(Some(&definition), &prior, flags).unwrap();
+        let Source::Telegram { bot_id, .. } = &mut prior.sources[0] else {
+            panic!()
+        };
+        *bot_id = "88".into();
+        assert!(crate::channels::write_gate::check(Some(&definition), &prior, flags).is_err());
     }
 }

@@ -80,7 +80,16 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
                 .unwrap();
             bytes
         }
-        "application/pdf" => b"%PDF-1.7\nfixture\n%%EOF".to_vec(),
+        mime if document::tests::fixtures()
+            .iter()
+            .any(|(kind, _)| kind.mime() == mime) =>
+        {
+            document::tests::fixtures()
+                .into_iter()
+                .find(|(kind, _)| kind.mime() == mime)
+                .unwrap()
+                .1
+        }
         "image/webp" => sticker::tests::fixtures()[0].1.to_vec(),
         mime if mime.starts_with("video/") => video::tests::fixtures()
             .into_iter()
@@ -154,7 +163,7 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
         assert!(calls[0].2.windows(bytes.len()).any(|chunk| chunk == bytes));
         assert_eq!(calls[1].0.path(), "/v25.0/34567/messages");
         let body: Value = serde_json::from_slice(&calls[1].2).unwrap();
-        let kind = if mime == "application/pdf" {
+        let kind = if item.kind == NativeMediaKind::File {
             "document"
         } else if mime == "image/webp" {
             "sticker"
