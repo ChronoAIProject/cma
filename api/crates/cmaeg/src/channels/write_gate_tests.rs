@@ -557,3 +557,46 @@ fn native_thread_history_requires_its_gate_but_retention_and_removal_are_allowed
 
 #[path = "write_gate_whatsapp_groups_tests.rs"]
 mod whatsapp_groups;
+
+#[test]
+fn native_thread_lifecycle_is_independent_consent_and_retained_settings_can_be_removed() {
+    let mut next = definition(
+        json!([{"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"},"thread_lifecycle":true}]),
+    );
+    next.secrets.discord_bot_token = Some(Secret::new("lifecycle-gate-fixture"));
+    let flags = WriteFlags {
+        native_discord: true,
+        discord_thread_history: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        check(None, &next, flags).unwrap_err(),
+        ValidationError::new(
+            "/sources/0/thread_lifecycle",
+            "discord_thread_lifecycle_disabled"
+        )
+    );
+    check(
+        None,
+        &next,
+        WriteFlags {
+            discord_thread_lifecycle: true,
+            ..flags
+        },
+    )
+    .unwrap();
+    check(Some(&next), &next, flags).unwrap();
+    let mut removed = next.clone();
+    let cmaeg_core::channel::Source::Discord {
+        thread_lifecycle, ..
+    } = &mut removed.sources[0]
+    else {
+        panic!()
+    };
+    *thread_lifecycle = false;
+    check(Some(&next), &removed, flags).unwrap();
+    assert!(serde_json::to_value(&removed.sources[0])
+        .unwrap()
+        .get("thread_lifecycle")
+        .is_none());
+}

@@ -91,6 +91,7 @@ pub(crate) async fn serve(
     state.native_telegram_durable_admission_enabled =
         config.routing.recovery_enabled && config.routing.admission_enabled;
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
+    state.native_discord_thread_lifecycle_enabled = config.native_discord_thread_lifecycle_enabled;
     state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
@@ -247,6 +248,11 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        discord_threads: config
+            .native_discord_thread_lifecycle_enabled
+            .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreads::new))
+            .transpose()?
+            .map(std::sync::Arc::new),
         discord_thread_history: config
             .native_discord_thread_history_enabled
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))

@@ -100,6 +100,7 @@ impl App {
         let (delivery, receiver) = mpsc::channel(16);
         let state = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
             complete_replies_enabled: false,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,

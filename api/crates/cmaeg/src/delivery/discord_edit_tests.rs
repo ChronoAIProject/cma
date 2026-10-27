@@ -224,6 +224,7 @@ async fn native_edit_authority_refuses_revoked_source_owner_consumer_key_or_reco
             6 => {
                 current.definition.sources = vec![Source::Discord {
                     thread_history: false,
+                    thread_lifecycle: false,
                     bot_id: "88".into(),
                     intents: 37377,
                     admission: AdmissionPolicy::All {},
