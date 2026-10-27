@@ -151,6 +151,7 @@ pub struct Config {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
+    pub native_whatsapp_media_enabled: bool,
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
@@ -271,6 +272,9 @@ impl Config {
             )?,
             native_whatsapp_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
+            )?,
+            native_whatsapp_media_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED",
             )?,
             native_discord_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_WRITES_ENABLED",

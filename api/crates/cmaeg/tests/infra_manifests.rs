@@ -12,6 +12,8 @@ use cmaeg::media::transform::MEDIA_ROOT;
 mod console;
 #[path = "infra_manifests/fixtures.rs"]
 mod fixtures;
+#[path = "infra_manifests/native_whatsapp.rs"]
+mod native_whatsapp;
 
 use fixtures::{set_config, with_memory};
 
@@ -36,14 +38,6 @@ fn native_telegram_message_events_wait_for_compatible_reader_rollout() {
             CONFIGMAP,
             "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED"
         ),
-        Some("false")
-    );
-}
-
-#[test]
-fn native_whatsapp_authoring_stays_off_pending_reader_rollout_and_meta_acceptance() {
-    assert_eq!(
-        configmap_value(CONFIGMAP, "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED"),
         Some("false")
     );
 }
