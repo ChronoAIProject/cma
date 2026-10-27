@@ -167,7 +167,7 @@ async fn final_custody_and_anchor_checks_discard_even_empty_pages() {
                 3 => definition.owner.subject = "changed-owner".into(),
                 4 => crate::channels::definition::fixture::replace_default_credential(
                     definition,
-                    Some(Secret::new("changed-provider-token")),
+                    Some("changed-provider-token"),
                 ),
                 5 => crate::channels::definition::fixture::replace_default_binding(
                     definition,
