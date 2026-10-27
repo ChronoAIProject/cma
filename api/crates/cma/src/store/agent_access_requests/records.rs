@@ -302,10 +302,7 @@ impl AgentAccessRecord {
             let services = services.iter().map(ToString::to_string).collect::<Vec<_>>();
             layer2_core::sandbox::agent_access::validate_access_services(&services)?;
             if command_key_hash.len() != 64
-                || !authorization.authority_id.starts_with("personal:")
-                || authorization.authority_id.len() <= "personal:".len()
-                || authorization.authority_id.chars().any(char::is_control)
-                || authorization.policy_revision == 0
+                || !valid_owner_authorization(authorization)
                 || !self
                     .proposal
                     .services

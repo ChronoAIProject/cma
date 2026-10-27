@@ -383,6 +383,28 @@ Installation is additive and preserves the immutable creation profile.
 
 ## Service access decisions
 
+Direct NyxID owner access tokens can approve requests and replace service scope
+without a browser login. CMA verifies the owner, current management permissions,
+finite token expiry and access to each selected service and its backing nodes.
+Runtime/Agent keys, relay tokens, service accounts and delegated actors cannot
+approve. The existing personal-resource ownership policy still applies.
+
+CMA stores the exact API token in encrypted credential custody and records only
+its authority reference with the decision. Deferred execution, credential
+issuance, renewal and revocation recover that same authority after restart and
+revalidate it; they never substitute a browser login. API tokens are not refreshed
+by CMA. Expired or revoked authority stops further credential operations with
+`owner_service_authority_required`; authorize further work with a current owner
+token. Already settled access can be reauthorized with a new key and the current
+`expected_services`, even when the desired services are unchanged.
+
+HTTP 403 `agent_access_owner_authority_required` requests a direct owner access
+token. HTTP 409 `agent_access_service_connection_required` means the owner must
+connect the service or authorize its backing resources through NyxID, then retry.
+The existing connection workflow remains available to browser owners. Missing
+scope-plan support or invalid provider evidence returns a temporary refusal;
+CMA never silently issues a service-only key.
+
 Managed keys include the exact backing nodes required by the approved services. CMA obtains a complete NyxID v1 scope plan and sends its digest as a creation precondition; broad node/service grants remain disabled. Missing, incomplete or changed plans refuse issuance. Renewal resolves the current configured routes again. If a service moves to another node, the old key fails closed until a new scoped key is issued; hot replacement revokes the old key before reporting success. Route-only Bot keys keep empty service and node grants.
 
 `agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.
