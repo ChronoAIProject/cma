@@ -116,7 +116,7 @@ async fn mongo_bindings_cas_reopen_reconfigure_and_conversation_races() {
 
     let mut plan = value.profile.clone();
     plan.profile_digest = format!("sha256:{}", "b".repeat(64));
-    plan.agent.system_prompt = "New instruction".into();
+    plan.name = "Renamed binding".into();
     let changed = value
         .reconfigure(plan, value.key_sha256.clone(), NOW.into())
         .unwrap();

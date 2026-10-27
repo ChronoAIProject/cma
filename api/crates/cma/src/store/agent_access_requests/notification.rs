@@ -210,8 +210,18 @@ async fn admitted(
     let Some(AgentAccessDecision::Approved { authorization, .. }) = &record.decision else {
         return Err(AgentAccessError::Invalid.into());
     };
+    // Service consent has a stronger namespace than ordinary command custody.
+    // The callback uses the same exact token through normal command admission.
+    let mut command_authorization = authorization.clone();
+    if let Some(api) = command_authorization
+        .authority_id
+        .strip_prefix("owner-api:")
+    {
+        command_authorization.authority_id = format!("api:{api}");
+    }
     let expected = record.notification_command()?;
-    let scope = authorization.idempotency_scope(&record.requester.agent_id, expected.kind());
+    let scope =
+        command_authorization.idempotency_scope(&record.requester.agent_id, expected.kind());
     let key =
         command_key_digest(&record.notification_key()).map_err(|_| AgentAccessError::Invalid)?;
     let Some(value) = store

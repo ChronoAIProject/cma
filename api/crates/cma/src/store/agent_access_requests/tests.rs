@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::sandbox::store::AgentProvenanceStore;
+use layer2_core::sandbox::store::{AgentProvenanceStore, SandboxStore};
 use std::sync::Arc;
 
 pub(crate) async fn approved_fixture() -> (
@@ -64,6 +64,33 @@ pub(crate) async fn approved_fixture() -> (
             AgentAccessPhase::Connecting,
             AgentAccessPhase::WaitingQuiet,
             AgentAccessProgress::default(),
+        )
+        .await
+        .unwrap();
+    (client, database, store, record)
+}
+
+pub(crate) async fn approved_scoped_fixture() -> (
+    mongodb::Client,
+    String,
+    Arc<MongoSandboxStore>,
+    AgentAccessRecord,
+) {
+    let (client, database, store, record) = approved_fixture().await;
+    let mut sandbox = store
+        .get_sandbox(&record.requester.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Owner replacement compares a nonempty current scope. The generic tool
+    // proposal fixture starts empty and is not a valid replacement request.
+    sandbox.credential.reaches = vec![ServiceId::new("original-service")];
+    sandbox.validate().unwrap();
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id":sandbox.id.as_str()},
+            doc! {"$set":crate::store::sandboxes::sandbox_replacement_fields(&sandbox).unwrap()},
         )
         .await
         .unwrap();
