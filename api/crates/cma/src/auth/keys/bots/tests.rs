@@ -25,7 +25,7 @@ async fn mint(
     requests.lock().await.push(body.clone());
     Json(
         json!({"id":"minted-org-key","full_key":"fixture-credential","state_version":1,"scopes":"proxy read",
-        "allowed_service_ids":body["allowed_service_ids"],"allowed_node_ids":[],"allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false}),
+        "allowed_service_ids":body["allowed_service_ids"],"allowed_node_ids":body["allowed_node_ids"],"allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false}),
     )
 }
 
@@ -34,6 +34,12 @@ async fn org_bot_scope_uses_only_exact_org_connection_and_native_target_owner() 
     let requests = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route("/api/v1/user-services", get(inventory))
+        .route(
+            "/api/v1/api-keys/scope-plan",
+            post(|Json(body): Json<Value>| async move {
+                Json(scope_plan_fixture("person", &body, &["node-one"]))
+            }),
+        )
         .route("/api/v1/api-keys", post(mint))
         .with_state(requests.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

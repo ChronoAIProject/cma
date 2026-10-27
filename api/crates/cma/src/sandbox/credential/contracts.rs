@@ -97,6 +97,9 @@ pub(crate) enum CredentialError {
 #[async_trait::async_trait]
 pub(crate) trait OwnerTokenSource: Send + Sync {
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String>;
+    async fn token_for_sandbox(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
+        self.token_for(&sandbox.owner).await
+    }
 }
 
 #[async_trait::async_trait]

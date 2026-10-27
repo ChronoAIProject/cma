@@ -7,6 +7,7 @@ use layer2_core::ServiceId;
 use mongodb::bson::{doc, Document};
 use serde::{Deserialize, Serialize};
 
+use super::valid_owner_authorization;
 use crate::store::sandbox_mongo::{read_record, record_bson, DOCUMENT_SCHEMA_VERSION};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +93,9 @@ pub(crate) struct AgentAccessNotificationIntent {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentAccessProgress {
+    /// Fresh owner consent for this exact scope; the earlier audit stays intact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renewed_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_intent: Option<AgentAccessNotificationIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,8 +109,9 @@ pub(crate) struct AgentAccessProgress {
 }
 impl AgentAccessProgress {
     pub(super) fn extends(&self, previous: &Self) -> bool {
-        (previous.notification_intent.is_none()
-            || self.notification_intent == previous.notification_intent)
+        self.renewed_from == previous.renewed_from
+            && (previous.notification_intent.is_none()
+                || self.notification_intent == previous.notification_intent)
             && (previous.hot_update.is_none() || self.hot_update == previous.hot_update)
             && (previous.pause_operation_id.is_none()
                 || self.pause_operation_id == previous.pause_operation_id)
@@ -302,10 +307,7 @@ impl AgentAccessRecord {
             let services = services.iter().map(ToString::to_string).collect::<Vec<_>>();
             layer2_core::sandbox::agent_access::validate_access_services(&services)?;
             if command_key_hash.len() != 64
-                || !authorization.authority_id.starts_with("personal:")
-                || authorization.authority_id.len() <= "personal:".len()
-                || authorization.authority_id.chars().any(char::is_control)
-                || authorization.policy_revision == 0
+                || !valid_owner_authorization(authorization)
                 || !self
                     .proposal
                     .services

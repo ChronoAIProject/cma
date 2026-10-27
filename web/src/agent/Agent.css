@@ -183,6 +183,7 @@
 }
 
 .message__usage,
+.message__duration,
 .message__delivery {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;

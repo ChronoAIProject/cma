@@ -61,6 +61,7 @@ impl Reply {
 }
 
 struct ProviderControl {
+    scope_allowed: std::sync::atomic::AtomicBool,
     discovery: RwLock<Reply>,
     userinfo: RwLock<Reply>,
     introspection: RwLock<Reply>,
@@ -132,6 +133,7 @@ impl Fixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let control = Arc::new(ProviderControl {
+            scope_allowed: std::sync::atomic::AtomicBool::new(true),
             discovery: RwLock::new(Reply::json(json!({
                 "authorization_endpoint": format!("{base}/authorize"),
                 "token_endpoint": format!("{base}/token"),
@@ -159,6 +161,29 @@ impl Fixture {
             .route("/userinfo", get(userinfo))
             .route("/introspect", post(introspection))
             .route("/token", post(exchange))
+            .route(
+                "/api/v1/user-services",
+                get(|| async {
+                    axum::Json(json!([{"id":"connected-github","slug":"github","is_active":true}]))
+                }),
+            )
+            .route(
+                "/api/v1/api-keys/scope-plan",
+                post(
+                    |State(control): State<Arc<ProviderControl>>,
+                     axum::Json(body): axum::Json<Value>| async move {
+                        if !control.scope_allowed.load(Ordering::SeqCst) {
+                            return StatusCode::FORBIDDEN.into_response();
+                        }
+                        axum::Json(crate::auth::keys::scope_plan_fixture(
+                            "owner",
+                            &body,
+                            &["owner-node"],
+                        ))
+                        .into_response()
+                    },
+                ),
+            )
             .route("/api/v1/orgs/org/authorization", get(organization))
             .with_state(control.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
