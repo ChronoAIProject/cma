@@ -53,7 +53,6 @@ fn message(
         route_id: a.route(),
         platform_message_id: a.reply.message_id.clone(),
         received_reaction: None,
-        received_reaction: None,
         native_lark_effect: Some(Box::new(a)),
         channel_id,
         event_id,
