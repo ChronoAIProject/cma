@@ -106,7 +106,7 @@ pub(crate) fn custody(
         "channel":channel.id,"record":channel.pointer.record_id,"owner":channel.definition.owner,
         "source":source,"routing":channel.definition.routing,"consumer":event.consumer,
         "provider":consumer.provider,"consumer_key":channel.consumer_key_hash(event.consumer.as_ref())?,
-        "provider_credential":crate::channels::definition::hash_secret(consumer.credential?.as_str()),
+        "consumer_credential":crate::channels::definition::hash_secret(consumer.credential?.as_str()),
         "event":event,"activity":activity}),
     ))
 }
