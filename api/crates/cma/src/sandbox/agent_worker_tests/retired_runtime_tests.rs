@@ -3,6 +3,7 @@ use layer2_core::sandbox::store::WorkspaceAdmissionStore;
 use layer2_core::sandbox::{SandboxCheckpointConversation, SandboxCheckpointRef};
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
+mod public_api;
 
 async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
     let mut parent = harness
