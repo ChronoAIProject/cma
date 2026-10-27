@@ -28,9 +28,9 @@ data:
   CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED: "true"
   CMAEG_DISCORD_INTERACTIONS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
-  CMAEG_DISCORD_CARD_EDITS_ENABLED: "false"
+  CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
   # Enable new multi-select cards only after every serving and rollback reader is compatible.
-  CMAEG_DISCORD_MULTISELECT_ENABLED: "false"
+  CMAEG_DISCORD_MULTISELECT_ENABLED: "true"
   # Deploy form authority/submission readers before issuing native Lark/Feishu forms.
   CMAEG_LARK_FORMS_ENABLED: "false"
   # Explicit canonical channel record IDs; selected records also require durable routed recovery.
