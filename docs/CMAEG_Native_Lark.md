@@ -2,7 +2,7 @@
 
 The `native_lark` source receives ordinary text, independently enabled [inbound media](CMAEG_Native_Lark_Media.md), recall notifications and human reaction add/remove notifications directly from a separately provisioned, single-tenant custom app. It has its own encrypted credentials, callback URL and native text/media reply path. Existing NyxID sources and their webhooks are independent.
 
-Both `CMAEG_NATIVE_LARK_WRITES_ENABLED` and `CMAEG_NATIVE_LARK_INTAKE_ENABLED` default to `false`, including in the deployment manifest. Compatible readers must deploy before authoring is enabled. The source also requires durable routed admission/recovery, routing authoring and providers configured for response replay. Local validation is not live platform acceptance.
+Both `CMAEG_NATIVE_LARK_WRITES_ENABLED` and `CMAEG_NATIVE_LARK_INTAKE_ENABLED` default to `false` in code. The deployment manifest enables owner setup and testing after the accepted PR #1157 compatible-reader rollout; connected native acceptance remains unverified. See the [activation record](CMAEG_Operations.md#native-lark-and-whatsapp-owner-testing-activation-2026-10-28). The source also requires durable routed admission/recovery, routing authoring and providers configured for response replay. Local validation is not live platform acceptance.
 
 ## Provision a separate app
 
