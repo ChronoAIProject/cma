@@ -1,4 +1,4 @@
-use super::{native_lark_fixture::Fixture, *};
+use super::native_lark_fixture::Fixture;
 use cmaeg_core::channel::{LarkRegion, Secret, Source};
 use serde_json::json;
 use std::sync::atomic::Ordering;
