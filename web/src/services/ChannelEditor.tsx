@@ -12,6 +12,7 @@ import {
 } from './channelForm/RoutingFields';
 import {
   channelDraft,
+  channelCredentials,
   channelRequest,
   confirmedDraft,
   object,
@@ -55,6 +56,7 @@ export interface Channel {
     custom_event_url: string;
     nyxid_callback_url: string;
     telegram_webhook_url?: string;
+    whatsapp_webhook_url?: string;
   };
 }
 export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
@@ -78,6 +80,7 @@ interface Pending {
   method: 'POST' | 'PUT';
   section: EditorSection;
   kind: 'channel' | 'routing';
+  credentialKeys: readonly string[];
 }
 export function ChannelEditor({
   channel,
@@ -121,13 +124,9 @@ export function ChannelEditor({
         if (request.kind === 'channel') {
           setDraft((current) => confirmedDraft(current, channelDraft(value), request.section));
           setCredentials((current) =>
-            request.method === 'POST'
-              ? {}
-              : Object.fromEntries(
-                  Object.entries(current).filter(
-                    ([key]) => !Object.hasOwn(nodeCredentials(current, request.section), key),
-                  ),
-                ),
+            Object.fromEntries(
+              Object.entries(current).filter(([key]) => !request.credentialKeys.includes(key)),
+            ),
           );
         } else {
           const confirmed = object(value.definition.routing);
@@ -160,12 +159,15 @@ export function ChannelEditor({
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
       const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      const selectedCredentials = baseline
+        ? nodeCredentials(credentials, section, projected)
+        : channelCredentials(credentials, projected, true);
       if (kind === 'channel')
         validateRelayAuthoring(
           discovery,
           projected,
           baseline ? channelDraft(baseline) : undefined,
-          baseline ? nodeCredentials(credentials, section) : credentials,
+          selectedCredentials,
         );
       const body =
         kind === 'routing'
@@ -181,12 +183,7 @@ export function ChannelEditor({
                 ),
               ),
             }
-          : channelRequest(
-              projected,
-              baseline ? nodeCredentials(credentials, section) : credentials,
-              baseline,
-              record,
-            );
+          : channelRequest(projected, selectedCredentials, baseline, record);
       const request: Pending = {
         key: crypto.randomUUID(),
         body: JSON.stringify(body),
@@ -197,6 +194,9 @@ export function ChannelEditor({
         method: baseline ? 'PUT' : 'POST',
         section,
         kind,
+        credentialKeys: Object.keys(object(body.credentials)).flatMap((key) =>
+          key === 'hmac_secrets' ? ['hmac_secrets', 'replace_hmac'] : [key],
+        ),
       };
       setPending(request);
       void send(request);

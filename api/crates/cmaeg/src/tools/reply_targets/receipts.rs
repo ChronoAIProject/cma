@@ -191,7 +191,8 @@ impl Store {
                 409,
                 if matches!(
                     expected.kind.as_str(),
-                    "telegram_message_effect_v1"
+                    "lark_message_effect_v1"
+                        | "telegram_message_effect_v1"
                         | "discord_message_effect_v1"
                         | "discord_card_effect_v1"
                 ) {

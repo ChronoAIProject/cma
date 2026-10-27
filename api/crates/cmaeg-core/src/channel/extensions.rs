@@ -11,6 +11,7 @@ pub struct Extensions {
     /// Optional native automated-group admission, unreadable by older readers.
     pub native_bot_mentions: bool,
     pub lark_resources: bool,
+    pub lark_message_effects: bool,
     /// Verified native thread contract, unreadable by older readers.
     pub thread_contract: bool,
     /// Multi-consumer routing.
@@ -28,6 +29,15 @@ impl Extensions {
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
             native_bot_mentions: def.sources.iter().any(super::Source::native_bot_mentions),
+            lark_message_effects: def.sources.iter().any(|source| {
+                matches!(
+                    source,
+                    super::Source::NyxidRelay {
+                        lark_message_effects: Some(_),
+                        ..
+                    }
+                )
+            }),
             lark_resources: def.sources.iter().any(|source| {
                 matches!(
                     source,
@@ -60,5 +70,6 @@ impl Extensions {
             && !self.native_bot_mentions
             && !self.thread_contract
             && !self.lark_resources
+            && !self.lark_message_effects
     }
 }

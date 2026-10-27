@@ -201,6 +201,7 @@ async fn call(
 /// Count a spend refusal against the item, by its activity source and kind.
 fn count_refusal(target: &MediaTarget, attachment: &Attachment, refusal: SpendRefusal) {
     let source = match target.activity.source {
+        SourceKind::Whatsapp { .. } => "whatsapp",
         SourceKind::Telegram { .. } => "telegram",
         SourceKind::Discord { .. } => "discord",
         SourceKind::NyxidRelay { .. } => "nyxid_relay",

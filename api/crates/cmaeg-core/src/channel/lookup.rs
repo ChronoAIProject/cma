@@ -10,6 +10,19 @@ impl ChannelDefinition {
     pub fn source_of(&self, kind: &SourceKind) -> Option<&Source> {
         self.sources.iter().find(|source| match (kind, source) {
             (
+                SourceKind::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                },
+                Source::Whatsapp {
+                    app_id: app,
+                    waba_id: account,
+                    phone_number_id: phone,
+                    ..
+                },
+            ) => app_id == app && waba_id == account && phone_number_id == phone,
+            (
                 SourceKind::Telegram { bot_id, .. },
                 Source::Telegram {
                     bot_id: configured, ..
@@ -47,7 +60,7 @@ impl ChannelDefinition {
             Source::Telegram { bot_username, .. } | Source::NyxidRelay { bot_username, .. } => {
                 bot_username.as_deref()
             }
-            Source::Custom { .. } | Source::Discord { .. } => None,
+            Source::Whatsapp { .. } | Source::Custom { .. } | Source::Discord { .. } => None,
         }
     }
 

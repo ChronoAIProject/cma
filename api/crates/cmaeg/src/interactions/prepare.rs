@@ -189,6 +189,7 @@ impl InteractionStore {
             None
         };
         let mut card = Card {
+            lark_delete: None,
             discord_form_launch: None,
             discord_edit: None,
             discord_effect: None,

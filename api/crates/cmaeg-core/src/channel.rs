@@ -19,7 +19,7 @@ pub use discord::valid_id as valid_discord_id;
 mod extensions;
 pub mod lark_resources;
 mod lookup;
-pub use lark_resources::{LarkResourceBinding, LarkResourceKind};
+pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkResourceKind};
 mod partition;
 mod platform;
 mod routing;
@@ -27,6 +27,7 @@ mod routing_validation;
 mod secrets;
 mod source_id;
 mod telegram;
+pub mod whatsapp;
 pub use consumer::{
     Consumer, ConsumerReply, ConsumerView, DefaultConsumer, EffectiveReply, PublishPolicy,
     ReplyChoice,
@@ -43,6 +44,7 @@ pub use routing::{
 };
 pub use secrets::{ChannelSecrets, Secret};
 pub use source_id::{SourceId, AGENT_SOURCE_ID};
+pub use whatsapp::WhatsappCredentials;
 mod sources;
 mod validation;
 pub use platform::Platform;
@@ -116,7 +118,17 @@ impl ProviderTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
+    /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
+    Whatsapp {
+        app_id: String,
+        waba_id: String,
+        phone_number_id: String,
+        admission: AdmissionPolicy,
+    },
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        message_events: bool,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -151,6 +163,9 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -216,7 +231,8 @@ impl AdmissionPolicy {
 impl Source {
     pub fn native_bot_mentions(&self) -> bool {
         match self {
-            Self::Telegram { admission, .. }
+            Self::Whatsapp { admission, .. }
+            | Self::Telegram { admission, .. }
             | Self::Discord { admission, .. }
             | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
             Self::Custom { .. } => false,
@@ -443,6 +459,9 @@ impl ChannelDefinition {
         });
         // Emitted only when present, so a legacy blob keeps its exact bytes and
         // an older image, which refuses the unknown key, can still read it.
+        if let Some(credentials) = &self.secrets.whatsapp {
+            secrets["whatsapp"] = credentials.private_json();
+        }
         if let Some(token) = &self.secrets.discord_bot_token {
             secrets["discord_bot_token"] = json!(token.as_str());
         }

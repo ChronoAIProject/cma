@@ -140,6 +140,14 @@ impl Worker {
             resolver: ingress.resolver.clone(),
             api: DiscordApi::new()?
                 .with_thread_metadata(thread_metadata)
+                .with_reactions(
+                    crate::config::discord_reactions_from_env()
+                        .map_err(|_| GatewayError::InvalidConfiguration)?,
+                )
+                .with_message_events(
+                    crate::config::discord_message_events_from_env()
+                        .map_err(|_| GatewayError::InvalidConfiguration)?,
+                )
                 .with_components(ingress.clone()),
             activity: ingress.activity.clone(),
         });

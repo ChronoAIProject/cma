@@ -1,4 +1,4 @@
-//! Actual Custom HTTP ingress, encrypted records, provider HTTP, and routed execution.
+//! Actual authenticated HTTP ingress, encrypted records, provider HTTP, and routed execution.
 use super::{adapter_test_server::HttpServer, executor_tests, scheduler::*, *};
 use crate::{
     auth::webhook,
@@ -102,6 +102,10 @@ impl App {
         edit(&mut value);
         let definition = routing_fixture::definition(value);
         definition.validate().unwrap();
+        let native_telegram = definition
+            .sources
+            .iter()
+            .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }));
         let pointer = ChannelPointer {
             v: 1,
             record_id: definition.record_id.clone(),
@@ -182,6 +186,8 @@ impl App {
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            lark_effects_issuance_enabled: false,
+            lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
             native_discord_edits_enabled: false,
@@ -221,7 +227,11 @@ impl App {
             store.clone(),
             schedule,
             keys.clone(),
-            BTreeSet::from([record]),
+            if native_telegram {
+                BTreeSet::new()
+            } else {
+                BTreeSet::from([record])
+            },
             BTreeSet::from(["cma_codex".into()]),
             BTreeSet::from(["cma_codex".into()]),
         )
@@ -231,16 +241,22 @@ impl App {
             .with_activity_observer(observer)
             .with_media_enabled(media.is_some())
             .with_routed(Some(Arc::new(routed)));
-        let router = crate::http::events::router(CustomIngressState {
-            ingress,
-            waiters: waiters.clone(),
-        })
+        let router = if native_telegram {
+            crate::http::telegram::router(ingress)
+        } else {
+            crate::http::events::router(CustomIngressState {
+                ingress,
+                waiters: waiters.clone(),
+            })
+        }
         .merge(crate::http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!(
-            "http://{}/v1/channels/{channel}/events",
-            listener.local_addr().unwrap()
-        );
+        let path = if native_telegram {
+            format!("/v1/telegram/{channel}")
+        } else {
+            format!("/v1/channels/{channel}/events")
+        };
+        let url = format!("http://{}{path}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });

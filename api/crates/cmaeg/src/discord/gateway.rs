@@ -38,7 +38,9 @@ impl GatewayClient {
             || bot_id.len() > 32
             || !bot_id.bytes().all(|b| b.is_ascii_digit())
             || intents & ((1 << 9) | (1 << 12)) == 0
-            || intents & !MESSAGE_INTENTS != 0
+            || intents & !(MESSAGE_INTENTS | REACTION_INTENTS) != 0
+            || (intents & (1 << 10) != 0 && intents & (1 << 9) == 0)
+            || (intents & (1 << 13) != 0 && intents & (1 << 12) == 0)
         {
             return Err(GatewayError::InvalidConfiguration);
         }

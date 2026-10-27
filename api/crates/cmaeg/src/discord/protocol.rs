@@ -6,6 +6,8 @@ use url::Url;
 
 // GUILDS, GUILD_MESSAGES, DIRECT_MESSAGES and privileged MESSAGE_CONTENT.
 pub const MESSAGE_INTENTS: u64 = 1 | (1 << 9) | (1 << 12) | (1 << 15);
+/// Explicit owner opt-in; never added to the legacy default.
+pub const REACTION_INTENTS: u64 = (1 << 10) | (1 << 13);
 pub(super) const FRAME_LIMIT: usize = 1024 * 1024;
 pub(super) const QUEUE_LIMIT: usize = 4;
 

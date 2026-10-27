@@ -140,6 +140,9 @@ pub fn build_update(
     }
     let mut credentials = current.secrets.clone();
     if let Some(patch) = &request.credentials {
+        if let Some(whatsapp) = &patch.whatsapp {
+            credentials.whatsapp = Some(whatsapp.clone());
+        }
         if let Some(agent_key) = &patch.agent_key {
             if agent_key.as_str().is_empty() {
                 return Err(ValidationError::new(
@@ -170,6 +173,12 @@ pub fn build_update(
         }
     }
     let sources = build_sources(&request.sources)?;
+    if !sources
+        .iter()
+        .any(|source| matches!(source, Source::Whatsapp { .. }))
+    {
+        credentials.whatsapp = None;
+    }
     if current
         .sources
         .iter()
@@ -259,6 +268,7 @@ pub(super) fn validate_definition(
     validate_consumer_owners(definition)?;
     validate_consumer_keys(definition)?;
     let credentials = CredentialsRequest {
+        whatsapp: definition.secrets.whatsapp.clone(),
         agent_key: definition
             .secrets
             .provider_credential
@@ -376,6 +386,9 @@ impl ChannelCreateRequest {
         if let Some(admission) = &self.connection_admission {
             value["connection_admission"] =
                 serde_json::to_value(admission).expect("admission serializes");
+        }
+        if let Some(credentials) = &self.credentials.whatsapp {
+            value["whatsapp"] = serde_json::json!({"app_secret": hash_secret(credentials.app_secret.as_str()), "access_token": hash_secret(credentials.access_token.as_str()), "verify_token": hash_secret(credentials.verify_token.as_str())});
         }
         // Omit absent additions so retained creation fingerprints stay stable.
         if let Some(token) = &self.credentials.discord_bot_token {

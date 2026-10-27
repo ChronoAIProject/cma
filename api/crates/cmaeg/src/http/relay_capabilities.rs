@@ -6,13 +6,21 @@ use utoipa::ToSchema;
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_telegram_message_events_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_reactions_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_auto_activation_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_capacity: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_auto_activation_enabled: Option<bool>,
     pub dynamic_sources_writes_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_messages_writes_enabled: Option<bool>,
@@ -22,6 +30,8 @@ pub struct RelayAuthoringCapabilities {
     pub relay_raw_verification_writes_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lark_resource_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lark_message_effects_writes_enabled: Option<bool>,
     pub multi_consumer_writes_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     pub thread_contract_writes_enabled: bool,
@@ -66,12 +76,22 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        native_telegram_message_events_enabled: Some(
+            state.native_telegram_message_events_writes_enabled
+                && state.native_telegram_durable_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
         native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
+        native_discord_reactions_enabled: Some(state.native_discord_reactions_enabled),
         native_discord_writes_enabled: Some(state.native_discord_writes_enabled),
         native_discord_auto_activation_enabled: Some(
             state.native_discord.discovery_enabled() && state.native_discord_admission_enabled,
         ),
         native_discord_capacity: Some(crate::discord::selection::MAX_RECORDS),
+        native_whatsapp_writes_enabled: Some(state.native_whatsapp_writes_enabled),
+        native_whatsapp_auto_activation_enabled: Some(
+            state.native_whatsapp_admission_enabled && state.multi_consumer_writes_enabled,
+        ),
         dynamic_sources_writes_enabled: state.dynamic_sources_writes_enabled,
         outbound_messages_writes_enabled: Some(state.outbound_messages_writes_enabled),
         native_media_writes_enabled: Some(
@@ -82,6 +102,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
         ),
         relay_raw_verification_writes_enabled: state.relay_raw_verification_writes_enabled,
         lark_resource_writes_enabled: Some(state.lark_resource_writes_enabled),
+        lark_message_effects_writes_enabled: Some(state.lark_message_effects_writes_enabled),
         multi_consumer_writes_enabled: state.multi_consumer_writes_enabled,
         native_bot_mentions_writes_enabled: state.native_bot_mentions_writes_enabled,
         thread_contract_writes_enabled: state.thread_contract_writes_enabled,

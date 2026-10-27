@@ -150,8 +150,12 @@ pub struct Config {
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
+    pub native_whatsapp_writes_enabled: bool,
+    pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
+    pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
     pub ingress: IngressConfig,
@@ -256,14 +260,26 @@ impl Config {
             dynamic_sources_writes_enabled: routing::write_flag(
                 "CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED",
             )?,
+            native_discord_reactions_enabled: routing::write_flag(
+                "CMAEG_DISCORD_REACTIONS_ENABLED",
+            )?,
             native_discord_thread_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED",
+            )?,
+            native_telegram_message_events_writes_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            native_whatsapp_writes_enabled: routing::write_flag(
+                "CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED",
             )?,
             native_discord_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_WRITES_ENABLED",
             )?,
             relay_raw_verification_writes_enabled: routing::write_flag(
                 "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
+            )?,
+            lark_message_effects_writes_enabled: routing::write_flag(
+                "CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED",
             )?,
             lark_resource_writes_enabled: routing::write_flag(
                 "CMAEG_LARK_RESOURCE_WRITES_ENABLED",
@@ -446,46 +462,7 @@ fn positive_duration(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn duration_defaults_are_positive() {
-        assert_eq!(
-            positive_duration("__missing_cmaeg_key__", 2_000)
-                .unwrap()
-                .as_millis(),
-            2_000
-        );
-    }
-    #[test]
-    fn origins_keep_public_callbacks_strict_and_allow_configured_cluster_services() {
-        for value in [
-            "https://gateway.example/",
-            "https://u:p@gateway.example",
-            "https://gateway.example/path",
-            "https://gateway.example?q=1",
-            "http://public.example",
-            "file:///tmp/fixture",
-        ] {
-            assert!(validate_origin(CMAEG_PUBLIC_URL, value).is_err());
-        }
-        for value in [
-            "http://127.0.0.1:8090",
-            "http://[::1]:8090",
-            "https://gateway.example",
-        ] {
-            assert!(validate_origin(CMAEG_PUBLIC_URL, value).is_ok());
-        }
-        assert!(validate_origin(CMAEG_CMA_BASE_URL, "http://cma-api.chrono-bot.svc").is_ok());
-        assert!(validate_origin(CMAEG_NYXID_BASE_URL, "http://nyxid.chrono-bot.svc").is_ok());
-        assert!(validate_origin(CMAEG_PUBLIC_URL, "http://cmaeg.chrono-bot.svc").is_err());
-        assert_eq!(
-            validate_origin(CMAEG_CMA_BASE_URL, "https://CMA.EXAMPLE:443").unwrap(),
-            "https://cma.example"
-        );
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod public_api_tests;

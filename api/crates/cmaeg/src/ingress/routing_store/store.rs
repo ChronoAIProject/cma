@@ -54,6 +54,16 @@ impl PlanStore {
         }
         self.replay_inner(request, source_body, true).await
     }
+    pub(crate) async fn replay_message_event(
+        &self,
+        request: &crate::ingress::launch::LaunchRequest,
+        source_body: &[u8],
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        if !crate::ingress::message_event::shape(&request.activity) {
+            return Err(AdmissionError::Invalid);
+        }
+        self.replay_inner(request, source_body, true).await
+    }
     async fn replay_inner(
         &self,
         request: &crate::ingress::launch::LaunchRequest,
