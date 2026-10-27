@@ -133,3 +133,60 @@ async fn message_events_cannot_retarget_another_owner_source_channel_or_provider
         );
     }
 }
+
+#[tokio::test]
+async fn message_events_ignore_new_targets_but_refuse_removed_or_rebound_original_consumer() {
+    use crate::channels::routing_fixture as channel;
+    let server = Server::start().await;
+    let original_request = fixture::request(
+        |value| value["routing"]["default_targets"] = json!([fixture::REVIEWER]),
+        fixture::message("original"),
+    );
+    let original = server
+        .store()
+        .admit(
+            &Candidate::prepare(
+                &original_request,
+                &fixture::routed(&original_request),
+                b"original",
+                &fixture::keys(),
+                fixture::NOW,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    for change in 0..3 {
+        let request = fixture::request(
+            |value| {
+                value["routing"]["default_targets"] = json!(["default", fixture::NYX]);
+                if change == 1 {
+                    value["routing"]["consumers"]
+                        .as_array_mut()
+                        .unwrap()
+                        .remove(0);
+                    value["secrets"]["consumer_keys"]
+                        .as_array_mut()
+                        .unwrap()
+                        .remove(0);
+                }
+                if change == 2 {
+                    value["routing"]["consumers"][0] =
+                        channel::consumer(fixture::REVIEWER, "reviewer", "nyxbot");
+                }
+            },
+            notification(&original_request.activity),
+        );
+        let result = message_event::bind(request, &original, &fixture::keys(), fixture::NOW);
+        if change == 0 {
+            let (_, plan) = result.unwrap();
+            assert_eq!(plan.targets.len(), 1);
+            assert_eq!(plan.targets[0].consumer.as_str(), fixture::REVIEWER);
+        } else {
+            assert!(matches!(
+                result,
+                Err(crate::ingress::routing_plan::PlanError::ConsumerUnavailable)
+            ));
+        }
+    }
+}
