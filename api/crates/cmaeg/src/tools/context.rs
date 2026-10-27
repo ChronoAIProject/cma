@@ -75,6 +75,9 @@ pub struct Capabilities {
     pub native_media: Option<NativeMediaCapabilities>,
 }
 
+#[path = "context_video.rs"]
+mod video;
+pub use video::NativeVideoCapabilities;
 #[path = "context_sticker.rs"]
 mod sticker;
 pub use sticker::NativeStickerCapabilities;
