@@ -260,5 +260,34 @@ async fn mongo_owner_api_scope_admission_and_credential_custody_survive_restart(
         tokens.token_for_sandbox(&after).await.is_err(),
         "revoked API authority must not borrow the browser login"
     );
+    store
+        .fail_access_request(claimed.lease.as_ref().unwrap(), "owner_authority_revoked")
+        .await
+        .unwrap();
+    provider_expiry(&fixture, future_expiry()).await;
+    let fresh = token(json!({"sub":"owner","token_type":"access","jti":"renewed-consent"}));
+    let fresh_context = external_context(&fixture, &fresh).await;
+    let renewed = service
+        .replace_services(
+            &fresh_context,
+            &fresh,
+            &original.requester.agent_id,
+            vec!["github".into()],
+            vec!["github".into()],
+            "fresh-owner-consent",
+        )
+        .await
+        .unwrap();
+    assert_ne!(renewed.id, saved.id);
+    assert_eq!(
+        tokens
+            .token_for_sandbox(&after)
+            .await
+            .unwrap()
+            .unwrap()
+            .expose(),
+        fresh
+    );
+    assert_eq!(store.get_sandbox(&after.id).await.unwrap(), Some(after));
     client.database(&database).drop().await.unwrap();
 }

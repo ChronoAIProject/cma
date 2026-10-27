@@ -117,7 +117,7 @@ impl MongoSandboxStore {
             }
             fence(self, &snapshot, session).await?;
             let now = layer2_core::now_rfc3339();
-            let record = AgentAccessRecord {
+            let mut record = AgentAccessRecord {
                 id,
                 requester,
                 proposal,
@@ -145,6 +145,7 @@ impl MongoSandboxStore {
                 revision: 1,
                 error: None,
             };
+            super::authority::renew_current_scope(self, sandbox, &mut record, session).await?;
             self.agent_access_requests
                 .insert_one(document(&record)?)
                 .session(session)
