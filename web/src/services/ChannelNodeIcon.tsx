@@ -65,6 +65,7 @@ export function LarkFamilyGlyph({
 
 export function ChannelNodeIcon({ node }: { readonly node: ChannelNode }) {
   const identity = node.identity ?? '';
+  if (identity === 'toolsets') return <IconApiOutline14 size={16} />;
   if (identity === 'telegram') return <TelegramGlyph />;
   if (identity === 'discord') return <DiscordGlyph />;
   if (identity === 'lark' || identity === 'feishu')

@@ -180,3 +180,26 @@ it('keeps the plain action rows in the tab order and operable from the keyboard'
   await actor.keyboard('{Enter}');
   expect(onCreate).toHaveBeenCalledOnce();
 });
+
+it('keeps the Gateway creation action in the shared top row through collapse', async () => {
+  const onCreate = vi.fn();
+  const draw = (collapsed: boolean) => (
+    <Sidebar
+      collapsed={collapsed}
+      account={<span>Account</span>}
+      newAgent={{ label: 'New channel', icon: <IconGoalOutline16 />, onCreate }}
+      navigation={<span>Channels</span>}
+    />
+  );
+  const { rerender } = render(draw(false));
+  const action = screen.getByRole('button', { name: 'New channel' });
+  expect(action.closest('.sidebar__actions')).not.toBeNull();
+  expect(action.querySelector('svg')).not.toBeNull();
+  rerender(draw(true));
+  expect(screen.getByRole('button', { name: 'New channel' })).toHaveAttribute(
+    'title',
+    'New channel',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  expect(onCreate).toHaveBeenCalledOnce();
+});
