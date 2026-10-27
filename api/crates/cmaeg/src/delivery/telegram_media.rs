@@ -8,8 +8,9 @@ use super::{
 };
 use crate::{media::outbound, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
+    ids::MessageRef,
     message::OutboundMessage,
-    seal::{EventRefPayload, ReplyAddress},
+    seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
 };
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
@@ -63,6 +64,7 @@ impl Sender {
             return (receipt, effects);
         }
         let deadline = Instant::now() + Duration::from_secs(60);
+        let effect_issued_at = time::OffsetDateTime::now_utc().unix_timestamp();
         let route = crate::telegram::route(bot_id, chat_id);
         let prepared = async {
             let files = outbound::prepare(&message.native_attachments).await.ok()?;
@@ -176,7 +178,44 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
-        // A media receipt deliberately grants no text-edit or message-effect authority.
+        // The opaque public reference names one whole native message, never the
+        // first part of separate text/uploads. Captions stay on their own upload.
+        if total == 1
+            && confirmed == 1
+            && message.native_attachments.len() == 1
+            && self.relay.telegram_effects_enabled()
+            && self.relay.telegram_media_effects_enabled()
+        {
+            if let DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            } = &receipt.delivery
+            {
+                if let Ok(reference) = MessageRef::seal(
+                    &MessageRefPayload {
+                        discord_message: None,
+                        lark_effect: None,
+                        telegram_effect: None,
+                        channel_id: event.channel_id.clone(),
+                        event_id: event.event_id.clone(),
+                        platform_message_id: id.clone(),
+                        route_id: route,
+                        interaction_record_id: None,
+                        relay_message: None,
+                        consumer: event.consumer.clone(),
+                    },
+                    &self.keys,
+                ) {
+                    receipt.message_ref = crate::tools::message_effects::authority::enrich(
+                        &reference,
+                        event,
+                        ctx.channel,
+                        &self.keys,
+                        effect_issued_at,
+                        true,
+                    );
+                }
+            }
+        }
         (receipt, effects)
     }
 }

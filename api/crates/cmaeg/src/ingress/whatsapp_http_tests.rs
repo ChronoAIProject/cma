@@ -143,6 +143,80 @@ async fn native_whatsapp_http_authenticates_original_batch_before_durable_admiss
 }
 
 #[tokio::test]
+async fn native_whatsapp_http_signed_omitted_emoji_sample_maps_to_removal_and_replays() {
+    let mut setup = Setup::new().await;
+    let app = setup.http();
+    let original = envelope(vec![current(text("wamid.original", "hello"))]);
+    let response = call(app.clone(), setup.callback(original, true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    // Meta's documented full removal envelope, with fixture account/sender IDs
+    // and a current timestamp for authenticated HTTP admission.
+    // https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/reaction
+    let body = serde_json::to_vec(&json!({
+        "object": "whatsapp_business_account",
+        "entry": [{
+            "id": "23456",
+            "changes": [{
+                "value": {
+                    "messaging_product": "whatsapp",
+                    "metadata": {
+                        "display_phone_number": "15550783881",
+                        "phone_number_id": "34567"
+                    },
+                    "contacts": [{
+                        "profile": {"name": "Sheena Nelson"},
+                        "wa_id": "447700900123"
+                    }],
+                    "messages": [current(json!({
+                        "from": "447700900123",
+                        "id": "wamid.removal-sample",
+                        "type": "reaction",
+                        "reaction": {"message_id": "wamid.original"}
+                    }))]
+                },
+                "field": "messages"
+            }]
+        }]
+    }))
+    .unwrap();
+    let before = setup.server.memory.writes.load(Ordering::SeqCst);
+    let response = call(app.clone(), setup.callback(body.clone(), false)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), before);
+    let response = call(app.clone(), setup.callback(body.clone(), true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_response(response).await,
+        json!({"accepted":1,"refused":0})
+    );
+    let plan = setup
+        .server
+        .store()
+        .load(&setup.identity("wamid.removal-sample"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(plan.source_body, body);
+    assert_eq!(plan.activity.actor.id, "447700900123");
+    let ActivityKind::Event { ce, .. } = &plan.activity.kind else {
+        panic!()
+    };
+    assert_eq!(ce.r#type, "cma.message.reaction.updated.v1");
+    assert_eq!(ce.subject.as_deref(), Some("wamid.original"));
+    let data = ce.data.as_ref().unwrap();
+    assert_eq!(data["new_reactions"], json!([]));
+    assert!(data.get("old_reactions").is_none());
+    let before = setup.server.memory.writes.load(Ordering::SeqCst);
+    let response = call(app, setup.callback(body, true)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_response(response).await,
+        json!({"accepted":1,"refused":0})
+    );
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), before);
+}
+
+#[tokio::test]
 async fn native_whatsapp_http_unknown_targets_and_wrong_phone_never_launch() {
     let mut setup = Setup::new().await;
     let app = setup.http();

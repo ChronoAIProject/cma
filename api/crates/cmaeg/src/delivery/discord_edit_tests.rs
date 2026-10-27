@@ -15,6 +15,9 @@ use cmaeg_core::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+#[path = "discord_media_tests.rs"]
+mod media;
+
 fn message(text: &str) -> OutboundMessage {
     serde_json::from_value(json!({"text":text})).unwrap()
 }
