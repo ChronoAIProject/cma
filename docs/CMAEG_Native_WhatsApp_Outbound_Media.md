@@ -1,7 +1,7 @@
-# Native WhatsApp image, PDF, audio and sticker replies
+# Native WhatsApp image, PDF, audio, sticker and video replies
 
 Native WhatsApp event replies can upload JPEG/PNG images, PDF documents and the
-bounded audio and WebP sticker profiles below under the independent `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED` gate. It defaults to
+bounded audio, WebP sticker and MP4/3GPP video profiles below under the independent `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED` gate. It defaults to
 false in code and the checked-in ConfigMap. This gate does not depend on native
 inbound media or NyxID relay-media flags. Local fake Graph and record-store tests
 establish the composed implementation; no live Meta send or client acceptance
@@ -15,19 +15,20 @@ WhatsApp event, the enabled capability reports:
 
 | Field | Value |
 | --- | --- |
-| `kinds` | `image`, `file`, `audio`, `sticker` |
+| `kinds` | `image`, `file`, `audio`, `sticker`, `video` |
 | `sources` | `url`, `base64` |
-| `mime_types` | `image/jpeg`, `image/png`, `application/pdf`, `audio/aac`, `audio/amr`, `audio/mpeg`, `audio/mp4`, `audio/ogg`, `image/webp` |
+| `mime_types` | `image/jpeg`, `image/png`, `application/pdf`, `audio/aac`, `audio/amr`, `audio/mpeg`, `audio/mp4`, `audio/ogg`, `image/webp`, `video/mp4`, `video/3gpp` |
 | `max_attachments` | 4 |
 | `max_inline_bytes` | 65536 aggregate decoded inline bytes |
 | `max_total_bytes` | 8388608 aggregate inline/downloaded bytes |
 | `max_image_bytes` | 5000000 encoded bytes per image |
-| `max_caption_chars` | 1024 for image/PDF; shared metadata also caps captions at 1024 UTF-8 bytes; audio/sticker captions are refused |
+| `max_caption_chars` | 1024 for image/PDF/video; shared metadata also caps captions at 1024 UTF-8 bytes; audio/sticker captions are refused |
 | `sticker` | Exact sticker dimensions, byte ceilings and animation limits described below |
+| `video` | Exact video codec/profile and structural limits described below |
 
 `image` requires JPEG or PNG, and `file` requires PDF. Supplied MIME types must
 match the sniffed bytes. Supplied filename extensions must match the type
-(`jpg`/`jpeg`, `png`, `pdf`, `.webp`, or the audio extensions below); absent names get a
+(`jpg`/`jpeg`, `png`, `pdf`, `webp`, `mp4`, `3gp`, or the audio extensions below); absent names get a
 generated matching extension.
 Existing filename single-component and control-character validation applies.
 PNG headers must declare 8-bit RGB or RGBA. JPEG headers must declare 8-bit,
@@ -36,7 +37,7 @@ three-component baseline or progressive data. Images also retain the shared
 or rewrite pixels, inflate metadata or certify an entire file; Meta remains
 authoritative for complete file validity and client acceptance.
 
-Video, other document formats, templates, native controls mixed with
+Other document formats, templates, native controls mixed with
 media, explicit reply overrides and thread replies are refused before any
 platform write. Ordinary text and attachment captions remain separate.
 A media-only reply generates no placeholder message. The existing 128 KiB tool
@@ -193,13 +194,106 @@ boundaries, truncation/adversarial headers, unsupported transports, unknown
 upload/send and source revocation between upload and send. Connected v25 Meta
 acceptance remains pending.
 
+## Native video profile
+
+`kind: "video"` accepts `video/mp4` with `.mp4` and `video/3gpp` with `.3gp`.
+The major brand establishes the MIME type: MP4 accepts `isom`, `iso2`, `mp41`,
+`mp42` or `avc1`; 3GPP accepts `3gp4` through `3gp9`. Supplied MIME/extension
+must match. Missing metadata is derived from the validated container. Video
+messages carry the returned upload ID and optional caption, with no filename or
+hosted-media link. The existing caption and whole-reply byte limits apply; the
+8 MiB aggregate ceiling is stricter than Meta's 16 MB per-video limit.
+
+Discovery adds optional `native_media.video` (`NativeVideoCapabilities`):
+
+| Field | Value |
+| --- | --- |
+| `video_codec`, `video_profile` | `h264`, `baseline` |
+| `audio_codec`, `max_audio_tracks` | `aac_lc`, 1; a silent video is allowed |
+| `max_width`, `max_height` | 1920, 1080 display pixels |
+| `max_frame_rate` | 60 frames per second |
+| `max_duration_ms` | 600000 per track/movie |
+| `max_samples` | 65536 total across video and audio |
+| `progressive_only` | true |
+| `max_slices_per_frame` | 1 |
+| `fast_start_required` | true (`moov` before `mdat`) |
+
+The accepted container is self-contained, unencrypted and nonfragmented, with one
+`avc1` video track, zero or one AAC-LC `mp4a` track and one local media-data box.
+Playback rate and pixel aspect ratio must be one. No other tracks, external
+references, alternate descriptions or track-matrix transformations
+are admitted. Sample sizes, chunk mappings and every sample span must fit local
+media data; spans cannot overlap within or between tracks. Decode-time counts and
+durations, optional zero composition offsets, sync-sample indices and ordinary
+rate-one edit lists must agree. AAC uses the existing matched sample-entry and
+AudioSpecificConfig checks. Only the demonstrated AAC priming `roll` sample group
+is accepted. Unsupported boxes are refused in structural containers; bounded
+movie user metadata, video color/bitrate metadata and SEI payloads remain
+opaque and do not confer extra decoding support.
+
+AVC configuration requires one SPS and one PPS, at most 1024 bytes each, with
+matching Baseline profile/dimensions and bounded Exp-Golomb fields. Progressive
+8-bit 4:2:0 with square pixels uses CAVLC, POC type 0 or 2, no frame-number gaps, no slice groups,
+weighted prediction, redundant pictures, HRD or scaling/transform extensions.
+Every length-prefixed NAL span and emulation-prevention sequence is checked.
+Each video sample has one complete admitted I/P slice header; the first sample
+must be IDR and sync-table entries must match IDR samples. B/SP/SI slices, in-band
+parameter replacement, partition/extension NALs, reference-list modifications and
+adaptive reference marking are refused. Optional AUD and bounded framed SEI can
+precede the slice. There are at most 256 boxes per structural container and 256
+NALs per sample. This is intentionally narrower than all valid Baseline streams.
+
+These checks establish the supported structure and header profile. They do not
+entropy-decode slices or AAC payloads, reconstruct pixels, prove reference-frame
+correctness or certify full H.264 level conformance. Meta remains authoritative
+for complete compressed-payload validity and client acceptance. No new production
+binary, subprocess, dependency, deployment or resource configuration is introduced.
+The independent outbound-media gate remains default-off.
+
+The official [Meta video guidance](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/video-messages),
+read on 2026-10-28, permits H.264 with zero or one AAC stream and warns about
+High-profile/B-frame Android acceptance. This implementation chooses the bounded
+Baseline subset above and rejects High/Main/HEVC and other codecs. Graph remains
+pinned to v25.0; current documentation examples use v26.0 and are not connected
+v25 acceptance evidence.
+
+### Local video evidence
+
+Video fixtures reside in `api/crates/cmaeg/tests/fixtures/whatsapp-outbound`,
+separate from the transform self-test inventory. FFmpeg/ffprobe 8.1.1 was used
+only as a developer fixture tool. Both synthetic
+fixtures were independently identified as 64×48 Constrained Baseline, progressive,
+10 fps, 0.4 seconds and zero B-frames. The 3GPP fixture additionally has one
+44.1 kHz mono AAC-LC track. `trace_headers` independently exposed the SPS/PPS and
+slice syntax used by targeted negative mutations.
+
+```sh
+ffmpeg -v error -f lavfi -i 'testsrc2=size=64x48:rate=10:duration=0.4' -c:v libx264 -profile:v baseline -pix_fmt yuv420p -bf 0 -movflags +faststart -an whatsapp-baseline.mp4
+ffmpeg -v error -f lavfi -i 'testsrc2=size=64x48:rate=10:duration=0.4' -f lavfi -i 'sine=frequency=440:duration=0.4' -c:v libx264 -profile:v baseline -pix_fmt yuv420p -bf 0 -c:a aac -b:a 32k -ar 44100 -ac 1 -movflags +faststart -f 3gp whatsapp-baseline-aac.3gp
+```
+
+| Fixture | Bytes | SHA-256 |
+| --- | --- | --- |
+| `whatsapp-baseline.mp4` | 2637 | `4086e78f34a2f8ecc5c902a5439df79ca1a561201347247bb16f349e7953cdac` |
+| `whatsapp-baseline-aac.3gp` | 4883 | `72c0eb191b0835d5c28402e8253dd3c2dce9af6f96ca9425986cae39eb6ba435` |
+
+Tests include both real files, unlabeled MIME/extension derivation, media-only and
+mixed text/image/audio/video delivery, captions, sealed targets, per-write gates
+and stored receipts. Rejections include every truncated prefix, every sample's
+length/header corruption, overlapping ranges, external references, multiple audio
+tracks, fragment/encryption markers, timing/edit/sync inconsistencies, unsupported
+SPS/PPS modes, real High/B-frame, HEVC and VP9 files, and a B slice disguised by
+unchanged Baseline configuration. Whole-batch preflight, unknown upload/send,
+receipt loss and revocation stop later effects. Existing audio tests also cover
+the shared BMFF extraction. No live Meta send/client acceptance is claimed.
+
 ## Upload, send and revocation
 
 The sender uploads each bounded attachment using authenticated multipart
 `POST /v25.0/{phone_number_id}/media`, with `messaging_product=whatsapp`, MIME
 `type`, and the file bytes. A successful upload must return one valid numeric
 media ID. Only that upload result can construct the subsequent `image`,
-`document`, `audio` or `sticker` message; callers cannot supply a platform media ID or
+`document`, `audio`, `sticker` or `video` message; callers cannot supply a platform media ID or
 hosted-media link to bypass validation. The media result remains bound to its upload phone.
 
 `POST /v25.0/{phone_number_id}/messages` uses the sealed original private recipient
@@ -235,13 +329,14 @@ Read-only official documentation checked on 2026-10-27 and 2026-10-28:
 - [Meta Media](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media): multipart upload, bearer authentication, numeric upload ID, supported MIME types, image/color limits, media retention, and audio/video codec restrictions.
 - [Meta Image messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/image-messages): uploaded ID messages, recipient confirmation and 1024-character captions.
 - [Meta Sticker messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/sticker-messages): static/animated WebP, 100 KB/500 KB ceilings and ID-only sticker messages.
+- [Meta Video messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/video-messages): MP4/3GPP, H.264 with zero or one AAC stream, captions, provider 16 MB ceiling and client profile guidance.
 - [Meta Audio messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/audio-messages): basic uploaded-ID audio messages, the five supported audio MIME types and 16 MB provider ceiling; Ogg requires mono Opus and voice presentation is a separate flag.
 - [Meta Document messages](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/document-messages): document ID, filename and caption fields, supported PDF type and provider 100 MB ceiling.
 
 The current examples use Graph v26.0. CMA deliberately retains its pinned v25.0
 endpoint; these documentation checks and local v25-shaped transport tests do not
 prove connected v25 acceptance. CMA uses a conservative decimal 5,000,000-byte
-image ceiling and a stricter 8 MiB total reply ceiling than Meta's 16 MB audio
+image ceiling and a stricter 8 MiB total reply ceiling than Meta's 16 MB audio/video
 and 100 MB document limits.
 Free-form media replies remain subject to Meta's customer service window and
 current bot permissions. An authorized connected test of each supported type,
@@ -257,8 +352,8 @@ pipeline:
 - Audio beyond the bounded profiles above needs additional demonstrated codec
   and container checks. Voice presentation needs a separate typed request and
   capability contract; accepting Ogg Opus does not currently request it.
-- Video remains refused. The concrete follow-up plan below identifies the
-  remaining container and H.264 work; a matching MP4 signature is insufficient.
+- Video beyond the bounded profile above needs additional demonstrated codec,
+  parameter-set, sample and slice handling; general MP4 acceptance is not implied.
 - Other documents need exact UTF-8/plain-text and Office OLE/OOXML type checks,
   including bounded archive inspection where required, matching filename/MIME
   rules and fixtures. Merely labeling arbitrary bytes with an Office MIME type
@@ -267,39 +362,3 @@ pipeline:
 Each extension needs exact capability claims, SDK/OpenAPI synchronization where
 its public shape changes, negative and uncertainty tests, and separately
 an authorized connected Meta acceptance test.
-
-## Concrete video follow-up
-
-The [current Meta video documentation](https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/video-messages),
-checked read-only on 2026-10-28, lists MP4 (`video/mp4`, `.mp4`) and 3GPP
-(`video/3gpp`, `.3gp`), a 16 MB provider ceiling, H.264 video, and zero or one AAC
-audio stream. It warns that High-profile/B-frame combinations are unsupported
-by Android clients and recommends Main without B-frames or Baseline, with `moov`
-before `mdat`. The existing 8 MiB reply ceiling will remain stricter.
-
-A bounded implementation can reuse `whatsapp/outbound_audio/mp4.rs`'s borrowed
-box traversal, local data references and sample/chunk byte checks, after extracting
-them into a shared BMFF module. It must then:
-
-1. Distinguish permitted MP4/3GPP brands and matching MIME/extension; require a
-   non-fragmented, unencrypted, self-contained file with `moov` before media data.
-2. Admit exactly one `vide` track and at most one `soun` track, refuse every other
-   track, and validate every track's description, local chunk span and sample count.
-3. Require `avc1` with a bounded `avcC`; parse all sequence/picture parameter sets,
-   including bounded Exp-Golomb fields and emulation-prevention removal. Start
-   with a documented Baseline-only subset and consistent profile/dimension facts.
-4. Walk length-prefixed NAL units within every video sample, verify complete local
-   spans and admitted NAL types, and inspect slice headers to refuse B slices and
-   unsupported coding modes. Header profile labels alone cannot prove the payload
-   obeys those labels. This remains structural validation, not full decoding.
-5. Reuse the bounded AAC-LC configuration checks for the optional sole audio track.
-   Add real MP4 and 3GPP fixtures plus HEVC, High/B-frame, multi-audio, external,
-   fragmented, encrypted, truncated and misleading-header counterexamples.
-6. Only after these checks and composed send/receipt/failure tests pass, advertise
-   video and its exact limits. Add the existing 1024-character caption behavior,
-   retain per-effect revocation and uncertainty fences, and obtain separately
-   authorized connected Meta/client acceptance before activation.
-
-The existing production FFmpeg probe exposes codec type and duration rather than
-all required H.264 profile, stream and slice facts. No new runtime binary or an
-unverified probe assumption is introduced to substitute for this work.

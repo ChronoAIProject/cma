@@ -14,6 +14,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
+    /// Reaction-only reference to the exact received native WhatsApp message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_message: Option<super::ReceivedMessageContext>,
     /// Explicitly requested current text context of the original native thread.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<super::ThreadHistory>,
@@ -60,6 +63,9 @@ pub struct Capabilities {
     /// Approved WhatsApp template replies only; no callbacks or initiated sends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,
+    /// Group templates accept header/body components only; absent for other transports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template_components: Option<Vec<String>>,
     pub edit: bool,
     pub typing: bool,
     pub buttons: String,
@@ -75,12 +81,18 @@ pub struct Capabilities {
     pub native_media: Option<NativeMediaCapabilities>,
 }
 
+#[path = "context_video.rs"]
+mod video;
+pub use video::NativeVideoCapabilities;
 #[path = "context_sticker.rs"]
 mod sticker;
 pub use sticker::NativeStickerCapabilities;
 #[path = "context_media.rs"]
 mod media;
 pub use media::NativeMediaCapabilities;
+#[path = "context_whatsapp.rs"]
+mod whatsapp;
+use whatsapp::native_whatsapp_templates;
 
 impl Capabilities {
     pub fn custom() -> Self {
@@ -94,6 +106,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -101,6 +114,12 @@ impl Capabilities {
     pub fn native_discord() -> Self {
         Self {
             max_text_chars: 2000,
+            ..Self::plain_text()
+        }
+    }
+    pub fn native_lark() -> Self {
+        Self {
+            max_text_chars: 6000,
             ..Self::plain_text()
         }
     }
@@ -127,6 +146,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -144,6 +164,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -222,7 +243,9 @@ pub(super) fn inbound_media(
     let capabilities = media.capabilities();
     let visuals = match (capabilities.visuals, source) {
         (VisualKind::Keyframes, _) => VisualSupport::Keyframes,
-        (VisualKind::Thumbnail, SourceKind::Telegram { .. }) => VisualSupport::PlatformThumbnail,
+        (VisualKind::Thumbnail, SourceKind::Telegram { .. } | SourceKind::NativeLark(_)) => {
+            VisualSupport::PlatformThumbnail
+        }
         (VisualKind::Thumbnail, _) => VisualSupport::None,
     };
     let audience = media.audience(consumer);
@@ -298,7 +321,7 @@ pub(super) fn project(
                     None,
                 )
             }),
-        whatsapp_templates: (state.whatsapp_templates_enabled
+        whatsapp_templates: ((state.whatsapp_templates_enabled
             && matches!(
                 event.reply,
                 cmaeg_core::seal::ReplyAddress::NyxidRelay {
@@ -306,14 +329,41 @@ pub(super) fn project(
                     ..
                 }
             ))
+            || native_whatsapp_templates(
+                state.native_whatsapp_templates_enabled
+                    && (!matches!(
+                        event.reply,
+                        cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+                    ) || state.native_whatsapp_groups_enabled),
+                channel,
+                event,
+                &activity,
+                activity_verified,
+            ))
         .then_some(true),
-        native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+        native_media: if matches!(
+            event.reply,
+            cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+        ) {
+            NativeMediaCapabilities::native_whatsapp_group(
+                state.native_whatsapp_outbound_media_enabled
+                    && state.native_whatsapp_groups_enabled
+                    && native_whatsapp_templates(
+                        true,
+                        channel,
+                        event,
+                        &activity,
+                        activity_verified,
+                    ),
+            )
+        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
             NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
         } else {
             NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
         },
         inbound_media,
         ..match activity.source {
+            SourceKind::NativeLark(_) => Capabilities::native_lark(),
             SourceKind::Whatsapp { .. } => Capabilities::native_whatsapp(),
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
@@ -357,7 +407,13 @@ pub(super) fn project(
         activity_verified,
         state.lark_cards_enabled && consumer_controls,
     );
-    if state.whatsapp_interactions_enabled
+    let whatsapp_controls =
+        if matches!(event.reply, cmaeg_core::seal::ReplyAddress::Whatsapp { .. }) {
+            state.native_whatsapp_interactions_enabled
+        } else {
+            state.whatsapp_interactions_enabled
+        };
+    if whatsapp_controls
         && consumer_controls
         && activity_verified
         && crate::interactions::whatsapp::eligible(channel, event, &activity)
@@ -389,7 +445,9 @@ pub(super) fn project(
         capabilities.buttons = "none".into();
         capabilities.cards = "none".into();
     }
+    whatsapp::group_capabilities(&mut capabilities, event);
     ContextResponse {
+        received_message: None,
         thread_history: None,
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),

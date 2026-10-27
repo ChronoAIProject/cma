@@ -117,7 +117,8 @@ impl PartitionRule {
                 Source::Custom { .. } if !is_custom_key(self.key_for(&SourceKind::Custom)) => {
                     return Err(ValidationError::new("/partition/key", CUSTOM_KEYS));
                 }
-                Source::Whatsapp { .. }
+                Source::NativeLark(_)
+                | Source::Whatsapp { .. }
                 | Source::Telegram { .. }
                 | Source::Discord { .. }
                 | Source::NyxidRelay { .. }

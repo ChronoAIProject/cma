@@ -1,8 +1,8 @@
 //! Channels wire types for the independent CMAEG v1 protocol.
 use super::{
-    BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission, NyxIdIdentity,
-    PartitionKey, ProviderSlug, RecordId, RoutingPolicy, Secret, Source, SourceRequest,
-    ThreadContract,
+    BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission,
+    NativeDiscordActivation, NativeLarkCredentials, NyxIdIdentity, PartitionKey, ProviderSlug,
+    RecordId, RoutingPolicy, Secret, Source, SourceRequest, ThreadContract,
 };
 use serde::{Deserialize, Serialize};
 
@@ -182,6 +182,9 @@ pub struct WhatsappWebhookResponse {
 /// CMAEG `CredentialPatch` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialPatch {
+    /// Encrypted credentials for the separate native custom app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark: Option<NativeLarkCredentials>,
     /// Atomic native Meta credentials; kept encrypted by the gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp: Option<WhatsappCredentials>,
@@ -208,6 +211,9 @@ pub struct CredentialPatch {
 /// CMAEG `CredentialsRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialsRequest {
+    /// Encrypted credentials for the separate native custom app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark: Option<NativeLarkCredentials>,
     /// Atomic native Meta credentials; kept encrypted by the gateway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp: Option<WhatsappCredentials>,
@@ -251,6 +257,9 @@ pub enum CustomAuth {
 /// CMAEG `EndpointResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct EndpointResponse {
+    /// Native callback URL; configure only on a separate app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_webhook_url: Option<String>,
     /// Native Meta callback endpoint for manual dedicated-app setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_webhook_url: Option<String>,
@@ -478,17 +487,4 @@ impl BotMessageAdmission {
     fn is_deny(&self) -> bool {
         *self == Self::Deny
     }
-}
-
-/// Owner-visible native Discord activation state. Future state identifiers are retained.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct NativeDiscordActivation {
-    /// Selected, pending_discovery, capacity_exceeded, or a configuration refusal.
-    pub state: String,
-    /// Safe explanation without credentials or other channel identities.
-    pub detail: String,
-    /// Maximum records selected by this process.
-    pub capacity: usize,
-    /// Current process selection count, not a socket count.
-    pub selected_records: usize,
 }

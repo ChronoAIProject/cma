@@ -41,6 +41,8 @@ pub struct EventRefPayload {
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
 pub enum ReplyAddress {
+    NativeLark(crate::channel::NativeLarkReply),
+    WhatsappGroup(crate::channel::whatsapp::WhatsappGroupReply),
     Whatsapp {
         app_id: String,
         waba_id: String,
@@ -82,6 +84,8 @@ pub enum ReplyAddress {
 impl fmt::Debug for ReplyAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NativeLark(reply) => reply.fmt(formatter),
+            Self::WhatsappGroup(reply) => reply.fmt(formatter),
             Self::Whatsapp {
                 app_id,
                 waba_id,
@@ -286,6 +290,8 @@ impl EventRefPayload {
             })?;
         }
         match &self.reply {
+            ReplyAddress::NativeLark(reply) => reply.validate()?,
+            ReplyAddress::WhatsappGroup(reply) => reply.validate()?,
             ReplyAddress::Whatsapp {
                 app_id,
                 waba_id,

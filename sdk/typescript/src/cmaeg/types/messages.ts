@@ -152,6 +152,21 @@ export const NativeStickerCapabilitiesSchema = object({
   min_frame_duration_ms: integer,
 });
 export type NativeStickerCapabilities = Output<typeof NativeStickerCapabilitiesSchema>;
+export const NativeVideoCapabilitiesSchema = object({
+  video_codec: text,
+  video_profile: text,
+  audio_codec: text,
+  max_audio_tracks: integer,
+  max_width: integer,
+  max_height: integer,
+  max_frame_rate: integer,
+  max_duration_ms: integer,
+  max_samples: integer,
+  progressive_only: boolean,
+  max_slices_per_frame: integer,
+  fast_start_required: boolean,
+});
+export type NativeVideoCapabilities = Output<typeof NativeVideoCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({
   kinds: array(text),
   sources: array(text),
@@ -162,6 +177,7 @@ export const NativeMediaCapabilitiesSchema = object({
   max_image_bytes: optional(nullable(integer)),
   max_caption_chars: optional(nullable(integer)),
   sticker: optional(nullable(NativeStickerCapabilitiesSchema)),
+  video: optional(nullable(NativeVideoCapabilitiesSchema)),
 });
 export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
 

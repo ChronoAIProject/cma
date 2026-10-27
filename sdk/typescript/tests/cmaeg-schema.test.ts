@@ -164,6 +164,7 @@ describe('CMAEG attachment locators', () => {
       'discord',
       'lark_resource',
       'whatsapp',
+      'native_lark',
     ]);
     for (const example of locators) expect(AttachmentSourceSchema(example)).toEqual(example);
     for (const example of examples.Attachment ?? [])
@@ -400,7 +401,7 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
   expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   const native = {
     ...legacy,
-    kinds: ['image', 'file', 'audio', 'sticker'],
+    kinds: ['image', 'file', 'audio', 'sticker', 'video'],
     mime_types: [
       'image/jpeg',
       'image/png',
@@ -411,10 +412,26 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
       'audio/mp4',
       'audio/ogg',
       'image/webp',
+      'video/mp4',
+      'video/3gpp',
     ],
     max_total_bytes: 8388608,
     max_image_bytes: 5000000,
     max_caption_chars: 1024,
+    video: {
+      video_codec: 'h264',
+      video_profile: 'baseline',
+      audio_codec: 'aac_lc',
+      max_audio_tracks: 1,
+      max_width: 1920,
+      max_height: 1080,
+      max_frame_rate: 60,
+      max_duration_ms: 600000,
+      max_samples: 65536,
+      progressive_only: true,
+      max_slices_per_frame: 1,
+      fast_start_required: true,
+    },
     sticker: {
       width: 512,
       height: 512,

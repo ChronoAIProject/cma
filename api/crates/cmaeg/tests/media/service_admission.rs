@@ -231,9 +231,17 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        native_lark_writes_enabled: false,
+        native_lark_intake_enabled: false,
+        native_lark_media_enabled: false,
         native_whatsapp_writes_enabled: false,
+        native_whatsapp_groups_writes_enabled: false,
         native_whatsapp_media_enabled: false,
         native_whatsapp_outbound_media_enabled: false,
+        native_whatsapp_interactions_enabled: false,
+        native_whatsapp_reactions_enabled: false,
+        native_whatsapp_templates_enabled: false,
+        native_whatsapp_groups_enabled: false,
         native_bot_mentions_writes_enabled: false,
         thread_contract_writes_enabled: false,
         multi_consumer_writes_enabled: false,

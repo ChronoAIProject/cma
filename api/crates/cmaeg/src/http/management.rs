@@ -87,6 +87,9 @@ pub struct ProviderResponse {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EndpointResponse {
+    /// Configure only on a separately provisioned native app. Never replace a NyxID callback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_webhook_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whatsapp_webhook_url: Option<String>,
     pub nyxid_callback_url: String,

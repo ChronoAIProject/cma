@@ -302,3 +302,41 @@ async fn native_whatsapp_http_media_authenticates_original_bytes_before_retainin
     );
     assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
 }
+
+#[tokio::test]
+async fn native_whatsapp_signed_group_ingress_applies_original_participant_and_group_chat_policy() {
+    use crate::whatsapp::groups::tests::{group_text, source_group, GROUP};
+    for defect in 0..4 {
+        let mut setup = Setup::new().await;
+        let mut source = serde_json::to_value(source_group()).unwrap();
+        source["admission"] = json!({"type":"scoped","senders":{"type":"allowlist","ids":[if defect==1 {GROUP} else {"447700900123"}]},"chats":{"type":"allowlist","ids":[if defect==2 {"447700900123"} else {GROUP}]},"groups":if defect==3 {"deny"} else {"all"}});
+        Arc::make_mut(&mut setup.channel).definition.sources =
+            vec![serde_json::from_value(source).unwrap()];
+        setup.state = setup.state.with_whatsapp_groups(true);
+        let app = setup.http();
+        let body = envelope(vec![current(group_text("wamid.http-group"))]);
+        let response = call(app.clone(), setup.callback(body.clone(), false)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = call(app, setup.callback(body, true)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_response(response).await,
+            if defect == 0 {
+                json!({"accepted":1,"refused":0})
+            } else {
+                json!({"accepted":0,"refused":1})
+            }
+        );
+        let stored = setup
+            .server
+            .store()
+            .load(&setup.identity("wamid.http-group"))
+            .await
+            .unwrap();
+        assert_eq!(stored.is_some(), defect == 0);
+        if let Some(plan) = stored {
+            assert_eq!(plan.activity.actor.id, "447700900123");
+            assert_eq!(plan.activity.conversation.id, GROUP);
+        }
+    }
+}
