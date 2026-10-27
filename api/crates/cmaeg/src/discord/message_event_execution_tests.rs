@@ -235,15 +235,24 @@ async fn discord_message_changes_execute_once_in_original_provider_conversation_
     }
     assert_eq!(f.direct_calls(), 0);
     assert_eq!(&*f.fixture.memory.channel_calls.lock().unwrap(), &["100"]);
-    assert_eq!(
-        f.plans
-            .recover_all_page(None, 32)
-            .await
-            .unwrap()
+    // Recovery pages bound shared interaction heads, not just admission plans.
+    // Journal and delivery rows can place the third plan on a later page.
+    let mut plans = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = f
             .plans
-            .len(),
-        3
-    );
+            .recover_all_page(cursor.as_deref(), 32)
+            .await
+            .unwrap();
+        assert!(page.issues.is_empty());
+        plans.extend(page.plans);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(plans.len(), 3);
     let after = activity
         .latest(&f.channel.owner.subject, &f.fixture.record)
         .await
