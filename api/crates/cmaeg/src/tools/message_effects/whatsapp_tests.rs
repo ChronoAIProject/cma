@@ -758,7 +758,7 @@ async fn native_whatsapp_reaction_discovery_uses_its_own_issuance_flag() {
         .unwrap();
     assert!(effect
         .description
-        .contains("received native WhatsApp, Lark or Feishu user message"));
+        .contains("received native Telegram, Discord, WhatsApp, Lark or Feishu user message"));
     assert!(tools
         .iter()
         .any(|tool| tool.name == "readMessageCapabilities"));
