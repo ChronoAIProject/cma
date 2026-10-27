@@ -106,7 +106,11 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
             .backend
             .set_inventory_unavailable(state == "unavailable");
         for _ in 0..3 {
-            harness.run(&ready.id, SystemTime::now()).await;
+            harness
+                .worker
+                .run_one(&ready.id, SystemTime::now())
+                .await
+                .unwrap();
         }
         let stopped = harness.stored(&ready.id).await;
         // Even the unavailable-inventory case must leave the unrelated runtime
@@ -125,6 +129,10 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
         if state != "absent" {
             assert_eq!(stopped.status, AgentStatus::Paused);
             assert_eq!(stopped.work.step, AgentWorkStep::CloseProcess);
+            assert!(
+                stopped.work.attempts > 0,
+                "{state} must record the refused cleanup attempt"
+            );
             assert_eq!(
                 call(&app, &ready, Method::DELETE, "").await,
                 StatusCode::CONFLICT
@@ -163,7 +171,11 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
         }
         let effects = harness.backend.requests().await;
         for _ in 0..4 {
-            harness.run(&ready.id, SystemTime::now()).await;
+            harness
+                .worker
+                .run_one(&ready.id, SystemTime::now())
+                .await
+                .unwrap();
         }
         assert_eq!(harness.stored(&ready.id).await.status, AgentStatus::Deleted);
         assert_eq!(
