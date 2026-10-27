@@ -140,6 +140,14 @@ pub(super) fn admitted(card: &Card, channel: &ResolvedChannel, activity: &Activi
 
 fn reply_matches(event: &EventRefPayload, activity: &Activity) -> bool {
     match (&event.reply, &activity.source) {
+        (ReplyAddress::NativeLark(reply), SourceKind::NativeLark(identity)) => {
+            &reply.identity == identity
+                && reply.chat_id == activity.conversation.id
+                && reply.thread_id == activity.conversation.thread_id
+                && activity.thread.is_none()
+                && activity.actor.kind == cmaeg_core::activity::ActorKind::Human
+        }
+
         (
             ReplyAddress::NyxidRelay {
                 platform, route_id, ..

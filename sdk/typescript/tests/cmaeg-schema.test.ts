@@ -22,6 +22,11 @@ import {
   DefaultReplySchema,
   RoutingPolicySchema,
   SourceRequestSchema,
+  ThreadListSchema,
+  ThreadReceiptSchema,
+  ThreadCapabilitiesSchema,
+  CreateThreadRequestSchema,
+  ManageThreadRequestSchema,
   SourceSchema,
 } from '../src/cmaeg/types.js';
 
@@ -443,4 +448,29 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
     },
   };
   expect(NativeMediaCapabilitiesSchema(native)).toEqual(native);
+});
+
+it('round-trips bounded thread lifecycle contracts and preserves absent consent', () => {
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, unknown[]>;
+  for (const [name, schema] of [
+    ['ThreadList', ThreadListSchema],
+    ['ThreadReceipt', ThreadReceiptSchema],
+    ['ThreadCapabilities', ThreadCapabilitiesSchema],
+    ['CreateThreadRequest', CreateThreadRequestSchema],
+    ['ManageThreadRequest', ManageThreadRequestSchema],
+  ] as const) {
+    for (const value of fixtures[name] ?? []) expect(schema(value)).toEqual(value);
+  }
+  const legacy = { type: 'discord', bot_id: '77', intents: 37377, admission: { type: 'all' } };
+  expect(SourceSchema(legacy)).toEqual(legacy);
+  expect(SourceRequestSchema(legacy)).toEqual(legacy);
+  expect(SourceSchema({ ...legacy, thread_lifecycle: true })).toEqual({
+    ...legacy,
+    thread_lifecycle: true,
+  });
 });

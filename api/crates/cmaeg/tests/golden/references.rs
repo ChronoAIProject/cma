@@ -141,6 +141,7 @@ fn default_event_refs_keep_their_canonical_plaintext_for_every_reply_address() {
 fn default_message_refs_keep_their_canonical_plaintext() {
     let plain = MessageRefPayload {
         discord_message: None,
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: None,
         whatsapp_reaction: None,
@@ -156,6 +157,7 @@ fn default_message_refs_keep_their_canonical_plaintext() {
     };
     let interaction = MessageRefPayload {
         discord_message: None,
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: None,
         whatsapp_reaction: None,
