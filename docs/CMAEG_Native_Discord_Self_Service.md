@@ -11,9 +11,11 @@ The bot must already exist, be installed in the intended server, have access to
 its channels and have Message Content Intent enabled in the Discord Developer
 Portal. Native intake supports ordinary human messages and the existing text and
 attachment paths. Bot messages are unsupported. Native buttons and single-select
-callbacks require separate [operator enablement](CMAEG_Native_Discord_Interactions.md)
-and currently exclude threads. Only single-shard bots are supported. Proven thread behavior has its own
-contract and gates; ordinary conversation partitioning is the baseline here.
+callbacks require separate [operator enablement](CMAEG_Native_Discord_Interactions.md).
+They support ordinary channels and verified existing threads with retained thread
+proof and authenticated channel checks. Only single-shard bots are supported.
+Proven thread behavior has its own contract and gates; ordinary conversation
+partitioning is the baseline here.
 
 ## Deployment gates
 
