@@ -121,6 +121,7 @@ pub(crate) fn project(
         capabilities.forms = Some(forms);
         capabilities.edit = true;
         capabilities.message_effects = Some(crate::tools::MessageEffectsCapabilities {
+            media_edit: None,
             delete: true,
             reaction: true,
             scope: "confirmed_native_card".into(),
