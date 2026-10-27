@@ -105,9 +105,14 @@ relay native uploads, relay text edits, Lark cards and WhatsApp interactions/tem
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
-messages to external recipients. Complete replies remain disabled: the current
-five-second whole-request budget can expire during a valid multipart send, so
-its timeout ownership must be corrected before switching existing replies.
+messages to external recipients. Complete replies remain disabled pending actual
+upstream delivery/receipt acceptance and retained-runtime compatibility checks.
+The implemented complete-reply exchange/tool budgets are 15 s/18 s; native media
+and media-bearing WhatsApp templates use 60 s/65 s outside routed execution.
+Text-only templates retain their configured exchange timeout and 8 s tool wait.
+Routed delivery retains its independent 20 s window. Compatible new runtimes
+wait 70 s for tools; retained runtimes may still cut off at 10 s. These finite
+budgets do not guarantee that every valid multipart send finishes in time.
 
 Activation requires the following release sequence:
 

@@ -2533,7 +2533,8 @@ to control legacy part exchanges, card/edit and non-media template exchanges
 automatic/tool replies retain their 20 s window and 30 s claims/target leases.
 The opaque runtime tool proxy waits 70 s in compatible runtime images, covering
 both ordinary reply waits and the existing 60 s exchange/65 s non-routed
-native-upload wait. It does not extend the routed window. Existing Sandbox
+native-upload or media-template wait. Text-only templates retain the 8 s tool
+wait and configured exchange timeout. It does not extend the routed window. Existing Sandbox
 runtimes retain their pinned image and may still cut off at 10 s. A timeout or cancellation after dispatch proves no absence of
 platform effects. Valid long replies can still exceed these finite budgets and
 remain unknown without replay; a 64-part payload cap is not a timing guarantee. A fake

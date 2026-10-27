@@ -2395,7 +2395,8 @@ capability negotiation or per-part completion metadata.
    Sandbox restart. Long platform sends may exceed these budgets; the 64-part
    cap is not a completion-time promise. Do not infer failure to send from a
    timeout. Legacy part/card/edit/non-media template exchanges keep the configured
-   timeout (`CMAEG_NYXID_REPLY_TIMEOUT_MS=5000` by default). Native media
+   timeout (`CMAEG_NYXID_REPLY_TIMEOUT_MS=5000` by default). Native media,
+   including WhatsApp templates with image, video or document headers,
    retains 60 s/65 s for non-routed sends, which fits the compatible runtime
    proxy budget. The routed 20 s window remains independent; no lease or claim
    duration is extended.
