@@ -9,6 +9,7 @@ pub enum RecordKind {
     Connection,
     Interaction,
     ThreadFence,
+    WhatsappFlow,
 }
 
 impl RecordKind {
@@ -18,6 +19,7 @@ impl RecordKind {
             Self::Connection => super::mongo::CONNECTIONS,
             Self::Interaction => super::mongo::INTERACTIONS,
             Self::ThreadFence => super::mongo::THREAD_FENCES,
+            Self::WhatsappFlow => super::mongo::WHATSAPP_FLOWS,
         }
     }
 }

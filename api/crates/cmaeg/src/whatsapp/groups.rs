@@ -187,8 +187,22 @@ pub(crate) fn retained_or_reduced(previous: &Source, next: &Source) -> bool {
         return false;
     }
     let mut stripped = next.clone();
-    if let Source::Whatsapp { group_ids, .. } = &mut stripped {
+    if let Source::Whatsapp {
+        group_ids,
+        forms_enabled,
+        ..
+    } = &mut stripped
+    {
         *group_ids = old.clone();
+        if !*forms_enabled {
+            if let Source::Whatsapp {
+                forms_enabled: previous_forms,
+                ..
+            } = previous
+            {
+                *forms_enabled = *previous_forms;
+            }
+        }
     }
     &stripped == previous
 }

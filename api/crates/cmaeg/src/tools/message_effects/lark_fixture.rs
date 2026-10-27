@@ -230,6 +230,7 @@ impl App {
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,
             native_media_edits: None,
+            native_whatsapp_forms: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: true,
             lark_effects: Some(Arc::new(

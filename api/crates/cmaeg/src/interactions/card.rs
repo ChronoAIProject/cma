@@ -46,6 +46,9 @@ pub struct Card {
     /// Native source and exact default/named dispatch custody; absent on relay cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp: Option<super::whatsapp_authority::Authority>,
+    /// Static Flow authority is exclusive of native and relay button/list cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_flow: Option<Box<super::whatsapp_flow::Authority>>,
     /// Separate direct-app identity, receipt and recoverable click; absent on relay cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark: Option<super::native_lark::Authority>,
