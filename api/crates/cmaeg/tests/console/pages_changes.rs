@@ -115,15 +115,18 @@ impl SourceChanges for RecordingSources {
                     .map(|secret| secret.secret.as_str().to_owned()),
             );
             let source = match request.source {
+                SourceRequest::NativeLark(source) => Source::NativeLark(source),
                 SourceRequest::Whatsapp {
                     app_id,
                     waba_id,
                     phone_number_id,
+                    group_ids,
                     admission,
                 } => Source::Whatsapp {
                     app_id,
                     waba_id,
                     phone_number_id,
+                    group_ids,
                     admission,
                 },
                 SourceRequest::Telegram { bot_id, .. } if bot_id == "refuse" => {

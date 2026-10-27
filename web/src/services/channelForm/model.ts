@@ -38,6 +38,13 @@ export function defaultProfile(owner = ''): Fields {
   };
 }
 export function defaultSource(type: string): Fields {
+  if (type === 'native_lark')
+    return {
+      type,
+      separate_app: false,
+      identity: { region: 'lark', app_id: '', tenant_key: '', bot_open_id: '' },
+      admission: { type: 'allowlist', sender_ids: [] },
+    };
   if (type === 'whatsapp')
     return { type, app_id: '', waba_id: '', phone_number_id: '', admission: { type: 'all' } };
   if (type === 'discord')
@@ -99,6 +106,8 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
 /** Private drafts stay local until the matching producer is saved. */
 export function producerCredentialKeys(type: unknown): readonly string[] {
   switch (type) {
+    case 'native_lark':
+      return ['native_lark'];
     case 'whatsapp':
       return ['whatsapp'];
     case 'discord':
@@ -132,6 +141,17 @@ export function channelCredentials(values: Fields, draft: Fields, create: boolea
 }
 export function credentialsPatch(values: Fields, create: boolean): Fields | undefined {
   const patch: Fields = {};
+  const nativeLark = object(values.native_lark);
+  const nativeKeys = ['app_secret', 'encrypt_key', 'verification_token'];
+  if (nativeKeys.some((key) => text(nativeLark[key]) !== '')) {
+    if (nativeKeys.some((key) => text(nativeLark[key]) === ''))
+      throw new Error('Enter all three Lark / Feishu credentials to replace the saved bundle.');
+    if (nativeKeys.some((key) => !/^[!-~]{16,512}$/.test(text(nativeLark[key]))))
+      throw new Error(
+        'Lark / Feishu credentials must each contain 16–512 printable ASCII characters without spaces.',
+      );
+    patch.native_lark = Object.fromEntries(nativeKeys.map((key) => [key, text(nativeLark[key])]));
+  }
   const whatsapp = object(values.whatsapp);
   const bundle = ['app_secret', 'access_token', 'verify_token'];
   if (bundle.some((key) => text(whatsapp[key]) !== '')) {

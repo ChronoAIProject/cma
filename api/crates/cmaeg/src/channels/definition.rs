@@ -140,6 +140,9 @@ pub fn build_update(
     }
     let mut credentials = current.secrets.clone();
     if let Some(patch) = &request.credentials {
+        if let Some(value) = &patch.native_lark {
+            credentials.native_lark = Some(value.clone());
+        }
         if let Some(whatsapp) = &patch.whatsapp {
             credentials.whatsapp = Some(whatsapp.clone());
         }
@@ -173,6 +176,9 @@ pub fn build_update(
         }
     }
     let sources = build_sources(&request.sources)?;
+    if !sources.iter().any(|s| matches!(s, Source::NativeLark(_))) {
+        credentials.native_lark = None;
+    }
     if !sources
         .iter()
         .any(|source| matches!(source, Source::Whatsapp { .. }))
@@ -268,6 +274,7 @@ pub(super) fn validate_definition(
     validate_consumer_owners(definition)?;
     validate_consumer_keys(definition)?;
     let credentials = CredentialsRequest {
+        native_lark: definition.secrets.native_lark.clone(),
         whatsapp: definition.secrets.whatsapp.clone(),
         agent_key: definition
             .secrets
@@ -387,6 +394,9 @@ impl ChannelCreateRequest {
             value["connection_admission"] =
                 serde_json::to_value(admission).expect("admission serializes");
         }
+        if let Some(c) = &self.credentials.native_lark {
+            value["native_lark"] = serde_json::json!({"app_secret":hash_secret(c.app_secret.as_str()),"encrypt_key":hash_secret(c.encrypt_key.as_str()),"verification_token":hash_secret(c.verification_token.as_str())});
+        }
         if let Some(credentials) = &self.credentials.whatsapp {
             value["whatsapp"] = serde_json::json!({"app_secret": hash_secret(credentials.app_secret.as_str()), "access_token": hash_secret(credentials.access_token.as_str()), "verify_token": hash_secret(credentials.verify_token.as_str())});
         }
@@ -427,6 +437,14 @@ pub(crate) mod fixture {
     pub(crate) fn replace_default_agent_key(definition: &mut ChannelDefinition, agent_key: &str) {
         definition.secrets.agent_key_hash = hash_secret(agent_key);
         definition.secrets.provider_credential = Some(Secret::new(agent_key));
+    }
+
+    /// Change only the stored serving credential for rotation/revocation fixtures.
+    pub(crate) fn replace_default_credential(
+        definition: &mut ChannelDefinition,
+        credential: Option<&str>,
+    ) {
+        definition.secrets.provider_credential = credential.map(Secret::new);
     }
 
     /// Model a stored binding replacement to test revocation of old authority.

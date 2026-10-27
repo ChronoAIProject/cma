@@ -1,0 +1,119 @@
+import { nativeLarkUnavailable, useRelayCapabilities } from '../RelayCapabilities';
+import { AdmissionFields } from './AdmissionFields';
+import { Choice, Section, TextField, Toggle } from './Fields';
+import { object, type Fields } from './model';
+
+export function NativeLarkSourceFields({
+  value,
+  onChange,
+}: {
+  value: Fields;
+  onChange: (value: Fields) => void;
+}) {
+  const identity = object(value.identity);
+  const unavailable = nativeLarkUnavailable(useRelayCapabilities(), false);
+  const setIdentity = (key: string, next: string) =>
+    onChange({ ...value, identity: { ...identity, [key]: next } });
+  return (
+    <>
+      <Section
+        title="Lark / Feishu app"
+        description="Receive text messages, recalls and human reaction changes through a separate custom app."
+      >
+        <Choice
+          label="App region"
+          value={identity.region}
+          options={[
+            { value: 'lark', label: 'Lark (international)' },
+            { value: 'feishu', label: 'Feishu (China)' },
+          ]}
+          onChange={(region) => setIdentity('region', region)}
+        />
+        <TextField
+          label="App ID"
+          value={identity.app_id}
+          onChange={(next) => setIdentity('app_id', next)}
+          required
+          hint="Use the separate app’s cli_ identifier from the selected region."
+        />
+        <TextField
+          label="Tenant key"
+          value={identity.tenant_key}
+          onChange={(next) => setIdentity('tenant_key', next)}
+          required
+          hint="The exact tenant in which this app is installed."
+        />
+        <TextField
+          label="Bot open ID"
+          value={identity.bot_open_id}
+          onChange={(next) => setIdentity('bot_open_id', next)}
+          required
+          hint="Use this app’s ou_ bot identity. Identities from another app cannot be reused."
+        />
+        <Toggle
+          label="This is a separate app with its own webhook"
+          value={value.separate_app}
+          onChange={(separate_app) => onChange({ ...value, separate_app })}
+          hint="Lark / Feishu allows one request URL per app. Keep existing NyxID app webhooks unchanged."
+        />
+        <p className="channel-field-hint">
+          Enable the bot, publish and install this app in the selected tenant, and add it to the
+          conversations it should receive. After saving, copy its Lark / Feishu webhook URL into
+          this app and configure the same Encrypt Key and Verification Token.
+        </p>
+        <p className="channel-field-hint">
+          Subscribe to im.message.receive_v1, im.message.recalled_v1, im.message.reaction.created_v1
+          and im.message.reaction.deleted_v1. Grant the app receive, recall and reaction-read
+          permissions for those conversations, and send-message permission for text replies. Saving
+          verifies app and bot identity; it does not configure subscriptions.
+        </p>
+        {unavailable ? (
+          <p className="channel-field-hint">{unavailable} Saved settings are retained.</p>
+        ) : null}
+      </Section>
+      <AdmissionFields
+        value={value.admission}
+        onChange={(admission) => onChange({ ...value, admission })}
+        allowBotMessages={false}
+        allowReplyToBot={false}
+      />
+    </>
+  );
+}
+
+export function NativeLarkCredentialsFields({
+  value,
+  onChange,
+  create = false,
+}: {
+  value: Fields;
+  onChange: (value: Fields) => void;
+  create?: boolean;
+}) {
+  const credentials = object(value.native_lark);
+  return (
+    <Section title="Lark / Feishu credentials">
+      <p className="channel-field-hint">
+        {create
+          ? 'Enter all three credentials for this separate app.'
+          : 'Leave all three fields empty to keep saved credentials. To replace them, enter all three.'}{' '}
+        Saved secrets are never displayed. Each value must contain 16–512 printable ASCII characters
+        without spaces.
+      </p>
+      {[
+        ['app_secret', 'App secret'],
+        ['encrypt_key', 'Encrypt Key'],
+        ['verification_token', 'Verification Token'],
+      ].map(([key, label]) => (
+        <TextField
+          key={key}
+          label={label!}
+          value={credentials[key!]}
+          onChange={(next) => onChange({ ...value, native_lark: { ...credentials, [key!]: next } })}
+          secret
+          required={create}
+        />
+      ))}
+    </Section>
+  );
+}

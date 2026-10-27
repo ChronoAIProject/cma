@@ -4,6 +4,8 @@ use super::*;
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 enum ReplyAddressWire {
+    NativeLark(crate::channel::NativeLarkReply),
+    WhatsappGroup(crate::channel::whatsapp::WhatsappGroupReply),
     Whatsapp {
         app_id: String,
         waba_id: String,
@@ -51,6 +53,8 @@ impl Serialize for ReplyAddress {
         S: Serializer,
     {
         let wire = match self {
+            Self::NativeLark(reply) => ReplyAddressWire::NativeLark(reply.clone()),
+            Self::WhatsappGroup(reply) => ReplyAddressWire::WhatsappGroup(reply.clone()),
             Self::Whatsapp {
                 app_id,
                 waba_id,
@@ -120,6 +124,8 @@ impl<'de> Deserialize<'de> for ReplyAddress {
         D: Deserializer<'de>,
     {
         Ok(match ReplyAddressWire::deserialize(deserializer)? {
+            ReplyAddressWire::NativeLark(reply) => Self::NativeLark(reply),
+            ReplyAddressWire::WhatsappGroup(reply) => Self::WhatsappGroup(reply),
             ReplyAddressWire::Whatsapp {
                 app_id,
                 waba_id,

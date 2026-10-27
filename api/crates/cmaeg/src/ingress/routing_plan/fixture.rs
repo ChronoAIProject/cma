@@ -92,9 +92,10 @@ pub fn request(edit: impl FnOnce(&mut Value), activity: Activity) -> LaunchReque
                 reply_token: cmaeg_core::channel::Secret::new("reply-fixture"),
                 reply_token_expires_at: NOW + 100,
             },
-            SourceKind::Custom | SourceKind::Discord { .. } | SourceKind::Whatsapp { .. } => {
-                ReplyAddress::None
-            }
+            SourceKind::NativeLark(_)
+            | SourceKind::Custom
+            | SourceKind::Discord { .. }
+            | SourceKind::Whatsapp { .. } => ReplyAddress::None,
         },
         consumer: None,
         lineage: None,

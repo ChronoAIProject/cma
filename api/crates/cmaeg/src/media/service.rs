@@ -6,6 +6,8 @@
 //! never see the reply token: they hold a [`MediaTarget`] whose Debug omits
 //! it, and every fetch happens inside a job. [`compose`] is the only place
 //! that chooses implementations; everything else depends on the seams.
+#[path = "service_native_lark.rs"]
+mod native_lark;
 use super::{
     budget::{ChannelLimiter, InflightBytes, JobPermits, ResponseBudget},
     cache::CacheKey,
@@ -167,6 +169,11 @@ impl MediaService {
         artifact: Artifact,
         wait: Duration,
     ) -> JobOutcome<Derived, DeriveError> {
+        let native = match self.refresh_native(target, index).await {
+            Ok(target) => target,
+            Err(error) => return JobOutcome::Failed(error.into()),
+        };
+        let target = native.as_ref().unwrap_or(target);
         let refreshed;
         let target =
             if let Some(locator @ cmaeg_core::activity::AttachmentSource::LarkResource { .. }) =
@@ -213,7 +220,13 @@ impl MediaService {
             return JobOutcome::Failed(DeriveError::RateLimited);
         }
         let job = self.job(target, index, artifact);
-        self.jobs.run(key, channel, wait, job).await
+        let result = self.jobs.run(key, channel, wait, job).await;
+        if matches!(result, JobOutcome::Ready(_)) {
+            if let Err(error) = self.refresh_native(target, index).await {
+                return JobOutcome::Failed(error.into());
+            }
+        }
+        result
     }
 
     /// Start `artifact` of attachment `index` in the background when a
@@ -416,7 +429,13 @@ pub fn compose(
         .with_discord(Arc::new(super::source::discord::DiscordFileSource::new(
             crate::discord::DiscordRest::new()?,
         )))
-        .with_whatsapp(Arc::new(super::source::whatsapp::WhatsappFileSource::new())),
+        .with_whatsapp(Arc::new(super::source::whatsapp::WhatsappFileSource::new()))
+        .with_native_lark(Arc::new(
+            super::source::native_lark::NativeLarkFileSource::new(
+                crate::native_lark::Client::production()?,
+                deps.resolver.clone(),
+            ),
+        )),
     );
     let decode = Arc::new(Semaphore::new(1));
     // An empty CMAEG_STT_URL leaves speech-to-text off.

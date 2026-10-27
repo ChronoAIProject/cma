@@ -82,6 +82,12 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
         }
         "application/pdf" => b"%PDF-1.7\nfixture\n%%EOF".to_vec(),
         "image/webp" => sticker::tests::fixtures()[0].1.to_vec(),
+        mime if mime.starts_with("video/") => video::tests::fixtures()
+            .into_iter()
+            .find(|(kind, _)| *kind == mime)
+            .unwrap()
+            .1
+            .to_vec(),
         _ => audio::tests::fixtures()
             .into_iter()
             .find(|(kind, _)| *kind == mime)
@@ -90,7 +96,7 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
             .to_vec(),
     };
     serde_json::from_value(
-        json!({"kind":if mime == "image/webp" {"sticker"} else if mime.starts_with("image/") {"image"} else if mime.starts_with("audio/") {"audio"} else {"file"},
+        json!({"kind":if mime == "image/webp" {"sticker"} else if mime.starts_with("image/") {"image"} else if mime.starts_with("audio/") {"audio"} else if mime.starts_with("video/") {"video"} else {"file"},
         "source":{"type":"base64","data":STANDARD.encode(bytes)},"mime_type":mime,
         "caption":if mime.starts_with("audio/") || mime == "image/webp" {None} else {Some("A caption")}}),
     )
@@ -152,6 +158,8 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
             "document"
         } else if mime == "image/webp" {
             "sticker"
+        } else if mime.starts_with("video/") {
+            "video"
         } else if mime.starts_with("audio/") {
             "audio"
         } else {
@@ -316,4 +324,19 @@ async fn native_whatsapp_upload_result_cannot_move_to_another_phone() {
         Err(Error::Invalid)
     );
     assert_eq!(graph.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn native_whatsapp_video_derives_mime_and_extension_from_unlabeled_container() {
+    for (mime, _) in video::tests::fixtures() {
+        let mut item = attachment(mime);
+        item.mime_type = None;
+        let upload = prepared(&item).await.unwrap();
+        let multipart = String::from_utf8_lossy(&upload.body);
+        assert!(multipart.contains(&format!("Content-Type: {mime}")));
+        let extension = if mime == "video/mp4" { "mp4" } else { "3gp" };
+        assert!(multipart.contains(&format!(".{extension}\"\r\n")));
+        assert_eq!(upload.kind, "video");
+        assert_eq!(upload.metadata, json!({"caption":"A caption"}));
+    }
 }

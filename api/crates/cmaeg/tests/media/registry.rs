@@ -183,6 +183,7 @@ async fn each_locator_reaches_only_its_source_and_only_with_its_activity_source(
             .map(|source| source.calls.load(Ordering::SeqCst));
             if locator_kind == kind_name {
                 let expected: &[u8] = match locator {
+                    AttachmentSource::NativeLark { .. } => b"native_lark",
                     AttachmentSource::Whatsapp { .. } => b"whatsapp",
                     AttachmentSource::Discord { .. } => b"discord",
                     AttachmentSource::NyxidRelay { .. } | AttachmentSource::LarkResource { .. } => {

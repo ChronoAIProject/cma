@@ -50,6 +50,8 @@ pub async fn create(
             .map_err(ManagementError::Invalid)?;
             super::native_discord::initialize(state, &mut definition)?;
             super::native_telegram::initialize(state, None, &mut definition)?;
+            crate::native_lark::management::initialize(state, None, &mut definition)?;
+            crate::native_lark::management::verify(state, None, &definition).await?;
             crate::whatsapp::management::initialize(state, &mut definition)?;
             crate::whatsapp::management::verify(state, None, &definition).await?;
             definition.creation = Some(ChannelCreation {

@@ -1,4 +1,4 @@
-//! The native inbox alone may admit a card's immutable single consumer.
+//! Verified native ingress alone may admit a card's immutable single consumer.
 use super::{
     launch::LaunchRequest,
     routing_plan::{ConsumerLaunch, PlanError, RoutedPlan},
@@ -10,7 +10,10 @@ use cmaeg_core::{
 
 pub(crate) fn shape(activity: &cmaeg_core::activity::Activity) -> bool {
     matches!(activity.kind, ActivityKind::Interaction(_))
-        && matches!(activity.source, SourceKind::Discord { .. })
+        && matches!(
+            activity.source,
+            SourceKind::Discord { .. } | SourceKind::Whatsapp { .. }
+        )
         && activity.routing.as_ref().is_some_and(|routing| {
             routing.resolution == RouteResolution::Interaction
                 && routing.targets.len() == 1
