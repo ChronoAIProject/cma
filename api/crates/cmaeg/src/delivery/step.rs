@@ -120,6 +120,7 @@ async fn send_text(
 ) -> bool {
     let message = OutboundMessage {
         whatsapp_template: None,
+        native_media_update: None,
         native_attachments: Vec::new(),
         thread_reply: state.thread_reply,
         text: Some(text),

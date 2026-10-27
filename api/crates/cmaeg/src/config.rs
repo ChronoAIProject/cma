@@ -5,6 +5,9 @@ use std::{env, net::SocketAddr, sync::Arc};
 use crate::providers::ProviderRegistry;
 use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
+mod origins;
+pub(crate) use origins::validate_origin;
+use origins::{parse_api_advertisement, required_origin, validate_public_api_url};
 
 mod cache;
 mod console;
@@ -157,6 +160,10 @@ pub struct Config {
     pub native_lark_media_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
     pub native_whatsapp_groups_enabled: bool,
+    pub native_telegram_media_edits_enabled: bool,
+    pub native_discord_media_edits_enabled: bool,
+    pub native_lark_controls_enabled: bool,
+    pub native_lark_forms_enabled: bool,
     pub native_lark_message_effects_enabled: bool,
     pub native_lark_received_reactions_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
@@ -172,6 +179,7 @@ pub struct Config {
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_thread_lifecycle_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
@@ -280,6 +288,9 @@ impl Config {
             native_discord_reactions_enabled: routing::write_flag(
                 "CMAEG_DISCORD_REACTIONS_ENABLED",
             )?,
+            native_discord_thread_lifecycle_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED",
+            )?,
             native_discord_thread_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED",
             )?,
@@ -295,6 +306,16 @@ impl Config {
             native_whatsapp_groups_enabled: routing::write_flag(
                 "CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED",
             )?,
+            native_telegram_media_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED",
+            )?,
+            native_discord_media_edits_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED",
+            )?,
+            native_lark_controls_enabled: routing::write_flag(
+                "CMAEG_NATIVE_LARK_CONTROLS_ENABLED",
+            )?,
+            native_lark_forms_enabled: routing::write_flag("CMAEG_NATIVE_LARK_FORMS_ENABLED")?,
             native_lark_message_effects_enabled: routing::write_flag(
                 "CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED",
             )?,
@@ -404,92 +425,6 @@ impl ManagementConfig {
             tools_nyxid_slug,
         })
     }
-}
-
-fn parse_api_advertisement(value: Option<&str>) -> Result<bool, ConfigError> {
-    match value {
-        None | Some("true") => Ok(true),
-        Some("false") => Ok(false),
-        _ => Err(ConfigError::InvalidManagement {
-            detail: format!("{CMAEG_ADVERTISE_PUBLIC_API_URL} must be true or false"),
-        }),
-    }
-}
-
-/// A trusted base used for generated links and routing, never taken from Host.
-fn validate_public_api_url(value: &str) -> Result<String, ConfigError> {
-    let url = Url::parse(value).map_err(|_| ConfigError::InvalidManagement {
-        detail: format!("{CMAEG_PUBLIC_API_URL} must be a public API base URL"),
-    })?;
-    validate_origin(CMAEG_PUBLIC_URL, &url.origin().ascii_serialization())?;
-    let path = url.path();
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || value.ends_with('/')
-        || value.len() > 2048
-        || value != url.as_str().trim_end_matches('/')
-        || (path != "/"
-            && path
-                .strip_prefix('/')
-                .unwrap_or_default()
-                .split('/')
-                .any(|part| {
-                    part.is_empty()
-                        || !part
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                }))
-    {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{CMAEG_PUBLIC_API_URL} must be a canonical HTTPS base with clean path segments and no credentials, query, fragment or trailing slash"),
-        });
-    }
-    Ok(value.to_owned())
-}
-
-fn required_origin(name: &'static str) -> Result<String, ConfigError> {
-    let value = env::var(name).map_err(|_| ConfigError::InvalidManagement {
-        detail: format!("{name} must be set"),
-    })?;
-    validate_origin(name, &value)
-}
-
-pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String, ConfigError> {
-    let url = Url::parse(value).map_err(|error| ConfigError::InvalidManagement {
-        detail: format!("{name} is not an origin URL: {error}"),
-    })?;
-    if url.host_str().is_none()
-        || url.username() != ""
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || (url.path() != "" && url.path() != "/")
-        || value.ends_with('/')
-    {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!(
-                "{name} must be an origin without credentials, path, query, or trailing slash"
-            ),
-        });
-    }
-    if url.scheme() != "https"
-        && !(url.scheme() == "http"
-            && url.host().is_some_and(|host| match host {
-                url::Host::Domain(domain) => {
-                    domain.eq_ignore_ascii_case("localhost")
-                        || (name != CMAEG_PUBLIC_URL && domain.ends_with(".svc"))
-                }
-                url::Host::Ipv4(address) => address.is_loopback(),
-                url::Host::Ipv6(address) => address.is_loopback(),
-            }))
-    {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{name} must use https (or loopback http for local tests)"),
-        });
-    }
-    Ok(url.as_str().trim_end_matches('/').to_owned())
 }
 
 #[cfg(test)]

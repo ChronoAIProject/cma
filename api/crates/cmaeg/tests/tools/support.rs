@@ -137,6 +137,7 @@ impl App {
         let message_ref = MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                native_media_edit: None,
                 received_reaction: None,
                 native_lark_effect: None,
                 whatsapp_reaction: None,
@@ -217,6 +218,7 @@ impl App {
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
             discord_thread_history: None,
+            discord_threads: None,
             complete_replies_enabled: false,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
@@ -224,6 +226,7 @@ impl App {
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_media_edits: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,

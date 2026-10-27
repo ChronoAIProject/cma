@@ -99,6 +99,7 @@ pub(crate) fn issue(
     };
     let mut message = MessageRefPayload {
         route_id: authority.route(),
+        native_media_edit: None,
         received_reaction: None,
         native_lark_effect: None,
         whatsapp_reaction: Some(Box::new(authority)),

@@ -13,6 +13,8 @@ pub mod activity;
 
 /// Verified opt-in native thread contract.
 pub mod thread;
+/// Bounded native thread lifecycle wire contract.
+pub mod thread_lifecycle;
 
 /// Neutral messages emitted by an agent turn.
 pub mod message;

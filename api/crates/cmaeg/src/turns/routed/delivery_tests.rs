@@ -21,14 +21,15 @@ pub(super) fn lane(setup: &Setup) -> (RoutedDelivery, mpsc::Receiver<DeliveryCom
     )
 }
 pub(super) fn effect() -> ReplayEffect {
-    ReplayEffect::Reply(OutboundMessage {
+    ReplayEffect::Reply(Box::new(OutboundMessage {
         text: Some("private replay answer".into()),
         blocks: vec![],
         reply_to: None,
+        native_media_update: None,
         native_attachments: vec![],
         whatsapp_template: None,
         thread_reply: false,
-    })
+    }))
 }
 pub(super) async fn accepted(setup: &Setup) -> Box<Lease> {
     let DispatchOutcome::Replay { lease, .. } = setup.dispatch().await.unwrap() else {

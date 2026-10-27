@@ -43,13 +43,18 @@ impl SelectedTool {
 fn selected(state: &ToolsState) -> Vec<SelectedTool> {
     let mut selected = tools::selected(state.media.is_some());
     let effects = state
-        .whatsapp_reactions
+        .native_media_edits
         .as_ref()
-        .is_some_and(|client| client.issuance_enabled)
+        .is_some_and(|c| c.telegram_issuance || c.discord_issuance)
         || state
-            .native_lark_effects
+            .whatsapp_reactions
             .as_ref()
-            .is_some_and(|c| c.confirmed_issuance_enabled || c.received_issuance_enabled)
+            .is_some_and(|client| client.issuance_enabled)
+        || state.native_lark_effects.as_ref().is_some_and(|c| {
+            c.confirmed_issuance_enabled
+                || c.received_issuance_enabled
+                || c.controls_issuance_enabled
+        })
         || (state.lark_effects_issuance_enabled && state.lark_effects.is_some())
         || state.received_reaction_enabled(
             cmaeg_core::seal::received_reaction::ReceivedReactionPlatform::Telegram,
@@ -64,6 +69,7 @@ fn selected(state: &ToolsState) -> Vec<SelectedTool> {
             .as_ref()
             .is_some_and(|client| client.card_effects_enabled());
     selected.extend(message_effects::selected(effects));
+    selected.extend(super::threads::selected(state.discord_threads.is_some()));
     selected
 }
 

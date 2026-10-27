@@ -24,6 +24,7 @@ pub(super) fn capabilities(
     lark_authority::check(message, channel, caller)?;
     let a = message.lark_effect.as_ref().expect("checked authority");
     Ok(MessageEffectsCapabilities {
+        media_edit: None,
         delete: enabled && a.binding.delete,
         reaction: enabled && a.binding.reaction,
         scope: "confirmed_native_bot_message".into(),
