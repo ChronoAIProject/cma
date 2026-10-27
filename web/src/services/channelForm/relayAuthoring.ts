@@ -23,6 +23,14 @@ export function validateRelayAuthoring(
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
     if (source.type === 'discord') {
+      if (
+        source.thread_history === true &&
+        !unchanged &&
+        discovery.authoring?.native_discord_thread_history_enabled !== true
+      )
+        throw new Error(
+          'New or changed thread history access is disabled on this gateway. Your draft has been retained.',
+        );
       const hasSavedNative = oldSources.some((old) => old.type === 'discord');
       const reason = nativeDiscordUnavailable(discovery, !hasSavedNative);
       if (
@@ -37,6 +45,14 @@ export function validateRelayAuthoring(
       continue;
     }
     if (source.type !== 'nyxid_relay') continue;
+    if (
+      source.lark_resources != null &&
+      discovery.authoring?.lark_resource_writes_enabled !== true &&
+      !unchanged
+    )
+      throw new Error(
+        'New or changed embedded media bindings are disabled on this gateway. Keep the saved source unchanged or remove its media binding. Your draft has been retained.',
+      );
     const platform = String(source.platform);
     const mode =
       source.verify_raw_event === true

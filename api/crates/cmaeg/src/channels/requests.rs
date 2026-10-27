@@ -75,6 +75,9 @@ pub enum SourceRequest {
     Discord {
         bot_id: String,
         intents: u64,
+        /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {
@@ -92,6 +95,8 @@ pub enum SourceRequest {
         /// Opt into verified Discord/WhatsApp facts without changing retained sources.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         verify_raw_event: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
         admission: AdmissionPolicy,
     },
     Custom {

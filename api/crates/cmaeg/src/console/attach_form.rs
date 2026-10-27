@@ -105,6 +105,7 @@ pub(crate) fn parse(form: &[u8]) -> Result<Parsed, &'static str> {
                 bot_id: fields.optional("bot_id"),
                 trust_normalized: fields.checked("trust_normalized"),
                 verify_raw_event: fields.checked("verify_raw_event"),
+                lark_resources: None,
                 admission: admission(&fields)?,
             }
         }

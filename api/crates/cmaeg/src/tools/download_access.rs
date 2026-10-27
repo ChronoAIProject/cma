@@ -143,6 +143,25 @@ impl ToolsState {
                     "attachment_not_found",
                 )
             })?;
+        let channel = if matches!(
+            attachment.source,
+            Some(cmaeg_core::activity::AttachmentSource::LarkResource { .. })
+        ) {
+            let current = self
+                .resolver
+                .resolve_current(channel.id.as_str())
+                .await
+                .map_err(|_| Refusal::revoked())?;
+            let consumer = current
+                .consumer(link.event.consumer.as_ref())
+                .ok_or_else(Refusal::revoked)?;
+            if !still_permitted(media, &current, &consumer, &link) {
+                return Err(Refusal::revoked());
+            }
+            current
+        } else {
+            channel
+        };
         if !source::configured(&channel, &activity, attachment.source.as_ref()) {
             return Err(Refusal::revoked());
         }

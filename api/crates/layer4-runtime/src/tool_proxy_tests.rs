@@ -4,6 +4,65 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use super::*;
 
+#[tokio::test]
+async fn proxy_waits_for_long_tool_receipt_but_bounds_one_unconfirmed_exchange() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::sync::Notify;
+    use tower::ServiceExt;
+    for (elapsed, expected) in [(62, StatusCode::OK), (71, StatusCode::BAD_GATEWAY)] {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (upstream, server) = serve(Router::new().route(
+            "/mcp",
+            post({
+                let (entered, release, calls) = (entered.clone(), release.clone(), calls.clone());
+                move || {
+                    let (entered, release, calls) =
+                        (entered.clone(), release.clone(), calls.clone());
+                    async move {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        entered.notify_one();
+                        release.notified().await;
+                        "{\"result\":\"confirmed\"}"
+                    }
+                }
+            }),
+        ))
+        .await;
+        let holder = CredentialHolder::new();
+        install(&holder, 1).await;
+        let app = router(
+            ToolProxyConfig {
+                upstream: format!("{upstream}/mcp").parse().unwrap(),
+            },
+            holder,
+        );
+        let pending = tokio::spawn(app.oneshot(Request::post("/").body(Body::from("{}")).unwrap()));
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        // Only loopback IO establishes the pending exchange; all elapsed
+        // upstream latency is simulated. No external endpoint is contacted.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(elapsed)).await;
+        tokio::task::yield_now().await;
+        release.notify_one();
+        tokio::time::resume();
+        let response = tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+}
+
 #[test]
 fn endpoint_configuration_is_optional_and_cannot_redirect_credentials() {
     assert!(ToolProxyConfig::from_env(&BTreeMap::new())
