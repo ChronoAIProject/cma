@@ -25,6 +25,9 @@ pub fn delivery(
             sinks.iter().filter_map(|s| webhook(&s.url)).collect()
         }
         None if matches!(destination, Destination::Origin) => match reply {
+            ReplyAddress::Whatsapp { recipient_id, .. } => {
+                vec![recipient("whatsapp_chat", recipient_id, None)]
+            }
             ReplyAddress::Telegram {
                 chat_id, thread_id, ..
             } => vec![recipient("telegram_chat", chat_id, thread_id.clone())],

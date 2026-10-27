@@ -127,6 +127,8 @@ pub struct RelayClient {
     discord_card_edits: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    pub whatsapp: crate::whatsapp::Client,
+    pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub telegram: crate::telegram::TelegramClient,
     pub discord: crate::discord::DiscordRest,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
@@ -207,10 +209,6 @@ impl RelayClient {
     pub(super) fn complete_replies(&self) -> bool {
         self.complete_replies
     }
-    pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
-        self.telegram = client;
-        self
-    }
     pub fn with_interactions(
         mut self,
         store: std::sync::Arc<crate::interactions::InteractionStore>,
@@ -251,6 +249,8 @@ impl RelayClient {
             consumer_interactions: false,
             telegram_effects: false,
             interactions: None,
+            whatsapp: crate::whatsapp::Client::production()?,
+            whatsapp_receipts: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
             discord: crate::discord::DiscordRest::new()?,
         })

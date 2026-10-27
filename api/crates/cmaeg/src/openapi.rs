@@ -42,6 +42,8 @@ use utoipa::OpenApi;
         http::management::rekey_channel,
         http::callbacks::callback,
         http::telegram::callback,
+        http::whatsapp::challenge,
+        http::whatsapp::callback,
         http::events::receive_event,
         http::tools::reply_to_event,
         http::tools::update_message,

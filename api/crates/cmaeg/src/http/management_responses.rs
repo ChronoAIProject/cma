@@ -32,6 +32,11 @@ pub(super) fn channel_response(
         version,
         provider,
         endpoints: EndpointResponse {
+            whatsapp_webhook_url: definition
+                .sources
+                .iter()
+                .any(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
+                .then(|| format!("{}/v1/whatsapp/{}", state.advertised_api_url(), channel_id)),
             nyxid_callback_url: format!(
                 "{}/v1/callbacks/{}",
                 state.advertised_api_url(),
