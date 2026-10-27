@@ -171,6 +171,9 @@ pub(crate) fn reference(
     keys: &MasterKeyRing,
     base: Option<&MessageRef>,
 ) -> Option<MessageRef> {
+    if !current.ready() {
+        return None;
+    }
     let destination = destination(&original.event)?;
     let mut payload = match base {
         Some(reference) => reference.open(keys).ok()?.payload,
