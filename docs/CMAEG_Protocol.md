@@ -2691,6 +2691,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
+| `GET /v1/whatsapp/{channel_id}` | Verify the native WhatsApp webhook against the channel's exact configured Meta challenge token. |
+| `POST /v1/whatsapp/{channel_id}` | Receive a signed native WhatsApp webhook for the channel's exact app, business account and phone. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
 | `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |
@@ -2715,6 +2717,17 @@ or native managed creation. Bot Management Mode is an additional capability of
 an ordinary bot, not an exclusive replacement for a normal conversational bot.
 The owner enables it in official @BotFather; the gateway discovers it through
 `getMe.can_manage_bots`. No public API claims to enable that mode silently.
+
+The authenticated capability response also includes optional `agent_tools`, an
+array of `{name, description, read_only, destructive, idempotent, open_world}`.
+Names, descriptions and behavior hints come from the same tool definitions and
+runtime selection as MCP `tools/list`. Older servers may omit the catalog;
+missing or null means availability was not reported, while an empty array means
+no tools are advertised. Entries describe server tools and do not grant access
+to a channel, source, event, attachment or message. They do not attest that a
+provider installed the MCP server. Callers still need the existing agent
+credential and sealed references, and per-event capabilities remain authoritative.
+The response retains creator authentication and `Cache-Control: no-store`.
 
 The provider-facing connection operations are generic:
 

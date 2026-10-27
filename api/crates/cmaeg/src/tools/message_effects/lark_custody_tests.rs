@@ -87,3 +87,23 @@ async fn lark_named_consumer_revocation_also_prevents_confirmed_receipt_replay()
         assert_eq!(f.writes().len(), 1, "{changed}");
     }
 }
+
+#[tokio::test]
+async fn lark_retained_effect_is_callable_after_discovery_is_disabled() {
+    let mut f = App::new(Platform::Lark).await;
+    let reference = f.reference().await;
+    f.state.lark_effects_issuance_enabled = false;
+    assert!(!crate::mcp::catalog::view(&f.state)
+        .iter()
+        .any(|tool| tool.name == "deleteMessage"));
+    assert_eq!(
+        f.state
+            .delete_message(f.caller(), &reference, "retained")
+            .await
+            .unwrap()
+            .delivery
+            .kind(),
+        "confirmed"
+    );
+    assert_eq!(f.writes().len(), 1);
+}
