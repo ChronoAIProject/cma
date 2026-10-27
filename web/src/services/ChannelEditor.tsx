@@ -55,6 +55,7 @@ export interface Channel {
     custom_event_url: string;
     nyxid_callback_url: string;
     telegram_webhook_url?: string;
+    whatsapp_webhook_url?: string;
   };
 }
 export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
