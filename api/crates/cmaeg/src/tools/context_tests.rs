@@ -159,3 +159,19 @@ fn a_removed_consumer_is_answered_as_an_expired_reference() {
         (ProblemCode::EventRefExpired, 410, Some("consumer_removed"))
     );
 }
+
+#[test]
+fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
+    assert!(NativeMediaCapabilities::native_whatsapp(false).is_none());
+    let capability = NativeMediaCapabilities::native_whatsapp(true).unwrap();
+    assert_eq!(capability.kinds, ["image", "file"]);
+    assert_eq!(
+        capability.mime_types.unwrap(),
+        ["image/jpeg", "image/png", "application/pdf"]
+    );
+    assert_eq!(capability.max_image_bytes, Some(5_000_000));
+    assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));
+    assert_eq!(capability.max_caption_chars, Some(1024));
+    assert_eq!(capability.max_attachments, 4);
+    assert_eq!(capability.max_inline_bytes, 65536);
+}

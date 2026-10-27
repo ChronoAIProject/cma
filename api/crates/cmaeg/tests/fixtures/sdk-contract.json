@@ -771,7 +771,17 @@
         "sources": [
           "url",
           "base64"
-        ]
+        ],
+        "mime_types": [
+          "image/jpeg",
+          "image/png",
+          "application/pdf",
+          "audio/mpeg",
+          "video/mp4"
+        ],
+        "max_total_bytes": 8388608,
+        "max_image_bytes": 5000000,
+        "max_caption_chars": 1024
       },
       "whatsapp_templates": true,
       "message_effects": {
@@ -3143,7 +3153,17 @@
           "sources": [
             "url",
             "base64"
-          ]
+          ],
+          "mime_types": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/mpeg",
+            "video/mp4"
+          ],
+          "max_total_bytes": 8388608,
+          "max_image_bytes": 5000000,
+          "max_caption_chars": 1024
         },
         "whatsapp_templates": true,
         "message_effects": {
@@ -3283,7 +3303,17 @@
           "sources": [
             "url",
             "base64"
-          ]
+          ],
+          "mime_types": [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/mpeg",
+            "video/mp4"
+          ],
+          "max_total_bytes": 8388608,
+          "max_image_bytes": 5000000,
+          "max_caption_chars": 1024
         },
         "whatsapp_templates": true,
         "message_effects": {
@@ -5811,7 +5841,37 @@
       "sources": [
         "url",
         "base64"
-      ]
+      ],
+      "mime_types": [
+        "image/jpeg",
+        "image/png",
+        "application/pdf",
+        "audio/mpeg",
+        "video/mp4"
+      ],
+      "max_total_bytes": 8388608,
+      "max_image_bytes": 5000000,
+      "max_caption_chars": 1024
+    },
+    {
+      "kinds": [
+        "image",
+        "file"
+      ],
+      "max_attachments": 4,
+      "max_inline_bytes": 65536,
+      "sources": [
+        "url",
+        "base64"
+      ],
+      "mime_types": [
+        "image/jpeg",
+        "image/png",
+        "application/pdf"
+      ],
+      "max_total_bytes": 8388608,
+      "max_image_bytes": 5000000,
+      "max_caption_chars": 1024
     }
   ],
   "NativeMediaKind": [
