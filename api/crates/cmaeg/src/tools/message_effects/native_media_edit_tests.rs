@@ -7,6 +7,8 @@ use crate::native_media::{
 };
 use cmaeg_core::message::NativeMediaKind;
 use std::sync::atomic::Ordering;
+#[path = "native_media_decoration_tests.rs"]
+mod decoration_tests;
 #[path = "native_media_send_tests.rs"]
 mod send_tests;
 
@@ -69,6 +71,7 @@ async fn media_app() -> (App, MessageRef) {
         revision: 0,
         snapshot,
         last_operation: None,
+        status: None,
         expires_at: original.expires_at,
         version: 0,
     };
@@ -421,6 +424,7 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
         revision: 0,
         snapshot,
         last_operation: None,
+        status: None,
         expires_at: original.expires_at,
         version: 0,
     };
@@ -549,6 +553,7 @@ async fn native_media_named_consumer_scope_never_falls_back_to_default() {
         revision: 0,
         snapshot: original.snapshot.clone(),
         last_operation: None,
+        status: None,
         expires_at: original.expires_at,
         version: 0,
     };

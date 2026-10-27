@@ -5,6 +5,9 @@ mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
 pub(crate) mod media_edit;
+mod media_presentation;
+#[cfg(test)]
+mod media_presentation_tests;
 mod thread_history;
 pub(crate) mod threads;
 use crate::{

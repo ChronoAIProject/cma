@@ -7,6 +7,8 @@ use super::{
 use cmaeg_core::{channel::Secret, message::NativeMediaKind};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+#[path = "media_presentation_tests.rs"]
+mod presentation_tests;
 fn document(caption: &str) -> Value {
     json!({"message_id":800,"chat":{"id":-42},"message_thread_id":7,
         "from":{"id":77,"is_bot":true},"caption":caption,
@@ -22,9 +24,19 @@ async fn media_caption_uses_exact_message_without_thread_parameter_or_send_fallb
         StatusCode::OK,
         json!({"ok":true,"result":document("")}),
     ));
+    let current = media_edit::snapshot(
+        &document("old"),
+        "77",
+        "-42",
+        Some("7"),
+        "800",
+        NativeMediaKind::File,
+    )
+    .unwrap();
+    let patch = serde_json::from_value(json!({"caption":""})).unwrap();
     let edit = f
         .api
-        .prepare_media_edit("-42", "800", NativeMediaKind::File, "", None)
+        .prepare_media_edit("-42", "800", &current, &patch, None)
         .await
         .unwrap();
     let result = f.api.edit_media(&token(), edit).await.unwrap();
@@ -45,7 +57,7 @@ async fn media_caption_uses_exact_message_without_thread_parameter_or_send_fallb
     let body: Value = serde_json::from_slice(&calls[0].body).unwrap();
     assert_eq!(
         body,
-        json!({"chat_id":"-42","message_id":"800","caption":""})
+        json!({"chat_id":"-42","message_id":"800","caption":"","caption_entities":[]})
     );
 }
 #[tokio::test]
@@ -61,9 +73,22 @@ async fn media_replacement_is_multipart_with_json_input_media_and_exact_bytes() 
         mime: "application/octet-stream".into(),
         caption: None,
     };
+    let current = media_edit::snapshot(
+        &document("retained"),
+        "77",
+        "-42",
+        Some("7"),
+        "800",
+        NativeMediaKind::File,
+    )
+    .unwrap();
+    let patch = serde_json::from_value(
+        json!({"replacement":{"kind":"file","source":{"type":"base64","data":"AQIDBA=="}}}),
+    )
+    .unwrap();
     let edit = f
         .api
-        .prepare_media_edit("-42", "800", NativeMediaKind::File, "retained", Some(file))
+        .prepare_media_edit("-42", "800", &current, &patch, Some(file))
         .await
         .unwrap();
     f.api.edit_media(&token(), edit).await.unwrap();
