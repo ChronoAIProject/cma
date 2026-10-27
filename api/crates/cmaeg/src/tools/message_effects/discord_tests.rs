@@ -37,6 +37,9 @@ use tokio::{
     task::JoinHandle,
 };
 
+#[path = "discord_media_tests.rs"]
+mod media;
+
 struct App {
     backend: fake_cma::FakeCma,
     platform: Platform,
@@ -48,6 +51,7 @@ struct App {
     base: String,
     engine: Option<DeliveryEngine>,
     server: Option<JoinHandle<()>>,
+    media_effects: bool,
 }
 impl Drop for App {
     fn drop(&mut self) {
@@ -134,6 +138,7 @@ impl App {
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             native_media_enabled: false,
+            native_whatsapp_outbound_media_enabled: false,
             relay_text_edits_enabled: false,
             native_discord_edits_enabled: true,
             discord_effects_issuance_enabled: true,
@@ -172,6 +177,7 @@ impl App {
             base: String::new(),
             engine: None,
             server: None,
+            media_effects: false,
         };
         app.restart().await;
         app
@@ -190,7 +196,8 @@ impl App {
         let mut transport = RelayClient::new("http://127.0.0.1:1", Duration::from_secs(1))
             .unwrap()
             .with_native_discord_edits(self.state.native_discord_edits_enabled)
-            .with_native_discord_effects(self.state.discord_effects_issuance_enabled);
+            .with_native_discord_effects(self.state.discord_effects_issuance_enabled)
+            .with_native_discord_media_effects(self.media_effects);
         transport.discord = self.platform.api.clone();
         self.state.delivery = Arc::new(ShardedScheduler::new(sender));
         self.engine = Some(DeliveryEngine::start(
@@ -210,6 +217,13 @@ impl App {
         }));
     }
     async fn send(&self) -> crate::delivery::intents::IntentReceipt {
+        self.send_message(serde_json::from_value(json!({"text":"hello"})).unwrap())
+            .await
+    }
+    async fn send_message(
+        &self,
+        message: cmaeg_core::message::OutboundMessage,
+    ) -> crate::delivery::intents::IntentReceipt {
         let (receipt, received) = oneshot::channel();
         let channel = self
             .state
@@ -223,7 +237,7 @@ impl App {
                 trace: tracing::Span::none(),
                 channel,
                 event: self.event.clone(),
-                message: serde_json::from_value(json!({"text":"hello"})).unwrap(),
+                message,
                 source: ReplySource::Tool,
                 receipt,
             })

@@ -21,6 +21,8 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+#[path = "telegram_media_effect_tests.rs"]
+mod effects;
 fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
     let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
