@@ -139,6 +139,8 @@ async fn manager_operations_use_native_platform_fields_and_keep_tokens_private()
         json!([
             "message",
             "edited_message",
+            "channel_post",
+            "edited_channel_post",
             "callback_query",
             "message_reaction",
             "message_reaction_count"

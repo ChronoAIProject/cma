@@ -1500,6 +1500,18 @@ is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 Telegram source, or `{type:"custom"}`.
 NyxID managed Telegram bots may identify the transport as `telegram-new`; CMAEG
 accepts that alias and normalizes it to the canonical Telegram protocol platform.
+Direct native Telegram sources optionally declare `message_events: true` for retained
+original edit/reaction routing and `channel_posts: true` for native channel posts
+and edits. Both fields default to false; channel posts require message events and
+its authoring/durable recovery prerequisites. Channel posts use
+`actor: {id:"telegram:chat:<channel_id>",kind:"unknown"}` and conversation kind
+`channel`, without a topic. Their undisclosed publisher cannot satisfy a human
+sender allowlist; open senders, current chat policy and non-private addressing
+rules are required. Edits retain the original admitted consumers, conversation
+and sealed channel destination. Human message-effect authority, discussion-group
+comments and channel direct-message topics are not inferred. See the
+[native Telegram message events contract](CMAEG_Native_Telegram_Message_Events.md).
+
 Activity kind is one of:
 
 | Type | Fields |
