@@ -192,6 +192,7 @@ impl Store {
                 if matches!(
                     expected.kind.as_str(),
                     "lark_message_effect_v1"
+                        | "native_lark_message_effect_v1"
                         | "telegram_message_effect_v1"
                         | "discord_message_effect_v1"
                         | "discord_card_effect_v1"

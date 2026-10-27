@@ -1,6 +1,7 @@
 //! Native Lark/Feishu custom apps are distinct from every NyxID relay source.
 mod client;
 pub(crate) mod content;
+pub(crate) mod effects;
 pub use client::{Client, Error, Transport};
 pub(crate) mod management;
 pub(crate) mod message;

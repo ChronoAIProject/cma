@@ -59,6 +59,7 @@ impl Sender {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_lark());
+        let editable = !media && parts.len() == 1;
         let mut result = IntentReceipt {
             rendering,
             ..rejected("empty_message")
@@ -105,13 +106,14 @@ impl Sender {
         };
         let mut confirmed = 0;
         let mut first = None;
+        let mut retained = None;
         while let Some(operation) = operations.pop_front() {
             let Ok(Some(_pace)) = timeout_at(deadline, self.pacing.acquire(&route)).await else {
                 result.delivery = rejected("pacing_capacity").delivery;
                 break;
             };
             let token = timeout_at(deadline, async {
-                if media {
+                if media || self.relay.native_lark_effects {
                     self.relay
                         .native_lark
                         .verified_token(&reply.identity, credentials)
@@ -208,7 +210,8 @@ impl Sender {
                         break;
                     }
                     if first.is_none() {
-                        first = Some(id)
+                        first = Some(id);
+                        retained = Some(receipt);
                     }
                     result.delivery = DeliveryOutcome::Confirmed {
                         platform_message_id: first.clone(),
@@ -237,6 +240,19 @@ impl Sender {
             result.delivery = DeliveryOutcome::Unknown {
                 reason: "native_lark_partial_delivery".into(),
             }
+        }
+        if self.relay.native_lark_effects
+            && confirmed == 1
+            && matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
+        {
+            result.message_ref = retained.as_ref().and_then(|receipt| {
+                crate::tools::message_effects::native_lark_authority::confirmed(
+                    ctx.channel,
+                    receipt,
+                    editable,
+                    &self.keys,
+                )
+            });
         }
         (result, effects)
     }

@@ -171,6 +171,7 @@ impl Sender {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
                                 discord_message: None,
+                                native_lark_effect: None,
                                 whatsapp_reaction: None,
                                 lark_effect: None,
                                 telegram_effect: None,

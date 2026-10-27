@@ -167,6 +167,7 @@ async fn a_replacement_keeps_its_consumer_and_refuses_a_reference_for_another() 
     let message: OutboundMessage = serde_json::from_value(json!({"text": "Done"})).unwrap();
     let foreign = MessageRefPayload {
         discord_message: None,
+        native_lark_effect: None,
         whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,
