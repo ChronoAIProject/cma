@@ -22,6 +22,11 @@ pub struct Config {
     pub replay_idle: bool,
     pub replay_tail: String,
     pub post_status: u16,
+    pub post_error_body: Option<String>,
+    pub post_error_content_type: String,
+    pub post_error_response_id: bool,
+    pub post_error_idle: bool,
+    pub post_error_transport_failure: bool,
     pub post_idle: bool,
     pub native_agent: String,
     pub corrupt_acceptance: bool,
@@ -41,6 +46,11 @@ impl Default for Config {
             replay_idle: false,
             replay_tail: String::new(),
             post_status: 200,
+            post_error_body: None,
+            post_error_content_type: "application/json".into(),
+            post_error_response_id: false,
+            post_error_idle: false,
+            post_error_transport_failure: false,
             post_idle: false,
             native_agent: "agt_native".into(),
             corrupt_acceptance: false,
@@ -170,8 +180,28 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         }
     }
     if post && config.post_status != 200 {
-        return Response::builder().status(config.post_status).header("content-type","application/json")
-        .body(Body::from(json!({"error":{"code":if config.post_status==400 {"invalid_json"} else {"response_unavailable"}}}).to_string())).unwrap();
+        let mut response = Response::builder()
+            .status(config.post_status)
+            .header("content-type", config.post_error_content_type);
+        if config.post_error_response_id {
+            response = response.header("x-cma-response-id", "resp_accepted");
+        }
+        let body = config.post_error_body.unwrap_or_else(|| {
+                json!({"error":{"code":if config.post_status==400 {"invalid_json"} else {"response_unavailable"}}}).to_string()
+            });
+        let body = if config.post_error_idle {
+            Body::from_stream(
+                stream::once(async move { Ok::<_, Infallible>(body) }).chain(stream::pending()),
+            )
+        } else if config.post_error_transport_failure {
+            Body::from_stream(stream::iter([
+                Ok(body),
+                Err(std::io::Error::other("fixture error body truncated")),
+            ]))
+        } else {
+            Body::from(body)
+        };
+        return response.body(body).unwrap();
     }
     if parts.method == axum::http::Method::GET
         && parts.uri.path().starts_with("/bindings/")
