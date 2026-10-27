@@ -4814,7 +4814,8 @@
       },
       "group_ids": [
         "opaque+group/id=="
-      ]
+      ],
+      "forms_enabled": true
     },
     {
       "type": "native_lark",
@@ -5002,7 +5003,8 @@
       },
       "group_ids": [
         "opaque+group/id=="
-      ]
+      ],
+      "forms_enabled": true
     },
     {
       "type": "native_lark",
@@ -5151,7 +5153,9 @@
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
         "native_lark_controls_enabled": false,
-        "native_lark_forms_enabled": false
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false
       },
       "agent_tools": [
         {
@@ -5207,7 +5211,9 @@
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
         "native_lark_controls_enabled": false,
-        "native_lark_forms_enabled": false
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false
       },
       "agent_tools": [
         {
@@ -5272,7 +5278,9 @@
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
         "native_lark_controls_enabled": false,
-        "native_lark_forms_enabled": false
+        "native_lark_forms_enabled": false,
+        "native_whatsapp_forms_enabled": false,
+        "native_whatsapp_flow_writes_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6660,7 +6668,9 @@
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
       "native_lark_controls_enabled": false,
-      "native_lark_forms_enabled": false
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6700,7 +6710,9 @@
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
       "native_lark_controls_enabled": false,
-      "native_lark_forms_enabled": false
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6740,7 +6752,9 @@
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
       "native_lark_controls_enabled": false,
-      "native_lark_forms_enabled": false
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6780,7 +6794,9 @@
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
       "native_lark_controls_enabled": false,
-      "native_lark_forms_enabled": false
+      "native_lark_forms_enabled": false,
+      "native_whatsapp_forms_enabled": false,
+      "native_whatsapp_flow_writes_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -7197,6 +7213,114 @@
       "replacement_kinds": [
         "file"
       ]
+    }
+  ],
+  "FormCustomerMessage": [
+    "not_sent",
+    "attempted"
+  ],
+  "FormPreparationReceipt": [
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "pending",
+      "retry_after_ms": 1000
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "ready",
+      "preparation_ref": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "declined",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "uncertain",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "not_sent",
+      "status": "revoked",
+      "reason": "fixture"
+    },
+    {
+      "preparation_id": "fixture",
+      "expires_at": 1900000000,
+      "customer_message": "attempted",
+      "status": "delivery",
+      "receipt": {
+        "delivery": {
+          "outcome": "confirmed",
+          "platform_message_id": "fixture"
+        },
+        "message_ref": "fixture",
+        "rendering": {
+          "blocks": [
+            {
+              "index": 1,
+              "outcome": {
+                "type": "exact"
+              }
+            }
+          ],
+          "outcome": "rendered"
+        }
+      }
+    }
+  ],
+  "FormPreparationState": [
+    {
+      "status": "pending",
+      "retry_after_ms": 1000
+    },
+    {
+      "status": "ready",
+      "preparation_ref": "fixture"
+    },
+    {
+      "status": "declined",
+      "reason": "fixture"
+    },
+    {
+      "status": "uncertain",
+      "reason": "fixture"
+    },
+    {
+      "status": "revoked",
+      "reason": "fixture"
+    },
+    {
+      "status": "delivery",
+      "receipt": {
+        "delivery": {
+          "outcome": "confirmed",
+          "platform_message_id": "fixture"
+        },
+        "message_ref": "fixture",
+        "rendering": {
+          "blocks": [
+            {
+              "index": 1,
+              "outcome": {
+                "type": "exact"
+              }
+            }
+          ],
+          "outcome": "rendered"
+        }
+      }
     }
   ]
 }

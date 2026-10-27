@@ -7,7 +7,7 @@ use cmaeg::{
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -53,9 +53,12 @@ fn main() {
     };
     match arguments.as_slice() {
         [] => serve(),
-        [command @ ("--migrate" | "--print-runtime-role" | "--print-migration-role")] => {
-            run_database_command(command)
-        }
+        [command @ ("--migrate"
+        | "--print-runtime-role"
+        | "--print-migration-role"
+        | "--migrate-whatsapp-forms"
+        | "--print-whatsapp-forms-runtime-role"
+        | "--print-whatsapp-forms-migration-role")] => run_database_command(command),
         ["--import-legacy-records", path] => run_import(path),
         ["--audit-custom-attachments"] => audit(false),
         ["--audit-custom-attachments", "--clear"] => audit(true),
@@ -167,10 +170,17 @@ fn run_database_command(command: &str) {
     if let Err(error) = runtime.block_on(async {
         let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)
             .map_err(|_| "CMAEG_MONGODB_DATABASE is missing or not valid UTF-8")?;
-        if command != "--migrate" {
+        if command != "--migrate" && command != "--migrate-whatsapp-forms" {
             println!(
                 "{}",
-                cmaeg::records::mongo::role(&database, command == "--print-migration-role")
+                if command.contains("whatsapp-forms") {
+                    cmaeg::records::mongo::whatsapp_flows_role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else {
+                    cmaeg::records::mongo::role(&database, command == "--print-migration-role")
+                }
             );
             return Ok::<(), &'static str>(());
         }
@@ -179,9 +189,12 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
-        cmaeg::records::mongo::migrate(&client.database(&database))
-            .await
-            .map_err(|_| "Gateway schema migration failed; details withheld")?;
+        if command == "--migrate-whatsapp-forms" {
+            cmaeg::records::mongo::migrate_whatsapp_flows(&client.database(&database)).await
+        } else {
+            cmaeg::records::mongo::migrate(&client.database(&database)).await
+        }
+        .map_err(|_| "Gateway schema migration failed; details withheld")?;
         Ok(())
     }) {
         fail(error);

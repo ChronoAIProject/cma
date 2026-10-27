@@ -99,7 +99,6 @@ pub use media::NativeMediaCapabilities;
 #[path = "context_whatsapp.rs"]
 mod whatsapp;
 use whatsapp::native_whatsapp_templates;
-
 impl Capabilities {
     pub fn custom() -> Self {
         Self {
@@ -382,6 +381,14 @@ pub(super) fn project(
         }
     }
     super::message_effects::native_lark_context::project(
+        state,
+        channel,
+        event,
+        &activity,
+        activity_verified,
+        &mut capabilities,
+    );
+    whatsapp::project_forms(
         state,
         channel,
         event,

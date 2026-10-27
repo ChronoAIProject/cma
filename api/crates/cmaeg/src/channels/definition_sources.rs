@@ -64,12 +64,14 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
         result.push(match source {
             SourceRequest::NativeLark(source) => Source::NativeLark(source.clone()),
             SourceRequest::Whatsapp {
+                forms_enabled,
                 group_ids,
                 app_id,
                 waba_id,
                 phone_number_id,
                 admission,
             } => Source::Whatsapp {
+                forms_enabled: *forms_enabled,
                 group_ids: group_ids.clone(),
                 app_id: app_id.clone(),
                 waba_id: waba_id.clone(),

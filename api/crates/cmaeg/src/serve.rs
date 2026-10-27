@@ -7,7 +7,7 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    connections, console, delivery, http, ingress, interactions, mcp, media, providers, records,
+    connections, console, delivery, http, ingress, interactions, mcp, media, providers,
     router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
@@ -82,6 +82,11 @@ pub(crate) async fn serve(
     state.native_lark = Some(std::sync::Arc::new(
         crate::native_lark::Client::production()?
     ));
+    let whatsapp_forms_ready = state.records.whatsapp_flows_ready().await;
+    state.native_whatsapp_forms_enabled =
+        config.native_whatsapp_forms_enabled && whatsapp_forms_ready;
+    state.native_whatsapp_flow_writes_enabled =
+        config.native_whatsapp_flow_writes_enabled && whatsapp_forms_ready;
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
     state.native_whatsapp_groups_writes_enabled = config.native_whatsapp_groups_writes_enabled;
     state.native_whatsapp_admission_enabled =
@@ -126,6 +131,15 @@ pub(crate) async fn serve(
         (*state.records).clone(),
         state.master_keys.clone(),
         providers.clone(),
+    ));
+    let whatsapp_forms = std::sync::Arc::new(crate::whatsapp::forms::service::Forms::new(
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        state.resolver.clone(),
+        interactions.as_ref().clone(),
+        whatsapp.clone(),
+        state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
+        state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
     ));
     let native_lark_controls = config.native_lark_controls_enabled
         && config.native_lark_intake_enabled
@@ -277,6 +291,7 @@ pub(crate) async fn serve(
             config.native_telegram_media_edits_enabled,
             config.native_discord_media_edits_enabled,
         ))),
+        native_whatsapp_forms: Some(whatsapp_forms.clone()),
         native_lark_effects: Some(std::sync::Arc::new(
             tools::NativeLarkEffectsClient::new(
                 crate::native_lark::Client::production()?,
@@ -345,6 +360,13 @@ pub(crate) async fn serve(
         ingress.clone(),
         state.readiness.clone(),
     );
+    let mut whatsapp_form_worker = whatsapp_forms_ready.then(|| {
+        crate::whatsapp::forms::worker::Worker::start(
+            ingress.clone(),
+            whatsapp_forms.provisioner.clone(),
+            state.readiness.clone(),
+        )
+    });
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
         state.native_discord.clone(),
@@ -388,17 +410,26 @@ pub(crate) async fn serve(
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        wait_for_shutdown_signal().await;
+        shutdown::wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
         native_lark_controls.stop();
+        if let Some(worker) = &whatsapp_form_worker {
+            worker.stop();
+        }
         if let Some(worker) = &native_discord {
             worker.stop();
         }
         if let Some(worker) = &routed_worker {
             worker.stop_scheduling();
         }
-        let (turns_drained, routed_drained, native_drained, lark_controls_drained) = tokio::join!(
+        let (
+            turns_drained,
+            routed_drained,
+            native_drained,
+            lark_controls_drained,
+            whatsapp_forms_drained,
+        ) = tokio::join!(
             tracker.drain(deadline),
             async {
                 match &mut routed_worker {
@@ -412,8 +443,17 @@ pub(crate) async fn serve(
                     None => true,
                 }
             },
-            native_lark_controls.drain(deadline)
+            native_lark_controls.drain(deadline),
+            async {
+                match &mut whatsapp_form_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            }
         );
+        if !whatsapp_forms_drained {
+            tracing::warn!("native WhatsApp Form drain incomplete; durable write fences retained");
+        }
         if !lark_controls_drained {
             tracing::warn!("native Lark callback drain incomplete; consumed cards retain recovery");
         }
@@ -451,40 +491,9 @@ pub(crate) async fn serve(
     Ok(())
 }
 
-/// The CMA channel-record client, authenticated as the gateway service.
-pub(crate) async fn record_client(
-    config: &Config,
-    service_auth: service_auth::ServiceAuth,
-) -> Result<records::RecordClient, records::RecordError> {
-    let client = records::RecordClient::new(
-        &config.management.cma_base_url,
-        config.management.cma_service_token.as_str(),
-    )?
-    .with_service_auth(service_auth);
-    crate::serve_storage::record_client(client).await
-}
+#[path = "serve_shutdown.rs"]
+mod shutdown;
 
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
-        match terminate {
-            Ok(mut signal) => {
-                tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
-                        if let Err(error) = result { tracing::warn!(%error, "ctrl-c signal listener stopped"); }
-                    }
-                    _ = signal.recv() => {}
-                }
-            }
-            Err(error) => {
-                tracing::warn!(%error, "SIGTERM listener unavailable; waiting for ctrl-c");
-                let _ = tokio::signal::ctrl_c().await;
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
-}
+#[path = "serve_record_client.rs"]
+mod record_client_impl;
+pub(crate) use record_client_impl::record_client;

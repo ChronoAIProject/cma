@@ -28,6 +28,10 @@ pub struct RelayAuthoringCapabilities {
     pub native_discord_capacity: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_forms_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_whatsapp_flow_writes_enabled: Option<bool>,
     /// Owner opt-in to existing OBA groups; independent of group issuance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_whatsapp_groups_writes_enabled: Option<bool>,
@@ -120,6 +124,12 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
         ),
         native_discord_capacity: Some(crate::discord::selection::MAX_RECORDS),
         native_whatsapp_writes_enabled: Some(state.native_whatsapp_writes_enabled),
+        native_whatsapp_forms_enabled: Some(
+            state.native_whatsapp_forms_enabled && state.native_whatsapp_admission_enabled,
+        ),
+        native_whatsapp_flow_writes_enabled: Some(
+            state.native_whatsapp_flow_writes_enabled && state.native_whatsapp_admission_enabled,
+        ),
         native_whatsapp_groups_writes_enabled: Some(
             state.native_whatsapp_groups_writes_enabled
                 && state.native_whatsapp_writes_enabled

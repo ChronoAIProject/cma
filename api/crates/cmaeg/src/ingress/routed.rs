@@ -6,6 +6,8 @@ mod native_lark;
 mod native_lark_control;
 #[path = "routed_whatsapp.rs"]
 mod whatsapp;
+#[path = "routed_whatsapp_flow.rs"]
+mod whatsapp_flow;
 
 use super::{
     launch::{LaunchOutcome, LaunchRequest},

@@ -1,4 +1,6 @@
-use super::{failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS};
+use super::{
+    failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MIGRATIONS, RECORDS, SESSIONS, WHATSAPP_FLOWS,
+};
 use crate::records::RecordError;
 use futures_util::TryStreamExt;
 use mongodb::{
@@ -58,13 +60,15 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || !COLLECTIONS.contains(&collection)
+                || (!COLLECTIONS.contains(&collection) && collection != WHATSAPP_FLOWS)
             {
                 return Err(invalid());
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if collection != MIGRATIONS {
+                let allowed = if collection == WHATSAPP_FLOWS {
+                    &["find", "insert", "update", "listIndexes"][..]
+                } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]
                 } else {
                     &["find"][..]
@@ -147,7 +151,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         (INTERACTIONS, interaction_validator),
         (
             MIGRATIONS,
-            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[2]}}}},
+            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema","whatsapp_forms"]},"version":{"enum":[1,2]}}}},
         ),
     ] {
         match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{

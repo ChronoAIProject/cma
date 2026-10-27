@@ -22,7 +22,9 @@ pub trait Authority: Send + Sync {
         _target: &'a StoredTarget,
     ) -> BoxFuture<'a, Result<(), ExecutionError>> {
         Box::pin(async move {
-            if native_lark_control(plan) {
+            if native_lark_control(plan)
+                || crate::interactions::whatsapp_flow::shape(&plan.activity)
+            {
                 Err(ExecutionError::AuthorityChanged)
             } else {
                 Ok(())
@@ -40,6 +42,14 @@ impl Authority for ChannelResolver {
         Box::pin(async move {
             if native_lark_control(plan) {
                 self.native_lark_control_current(current, &plan.activity, &target.launch.event)
+                    .await
+                    .map_err(|e| match e {
+                        crate::interactions::Error::Denied => ExecutionError::AuthorityChanged,
+                        crate::interactions::Error::Unavailable => ExecutionError::Unavailable,
+                    })?;
+            }
+            if crate::interactions::whatsapp_flow::shape(&plan.activity) {
+                self.whatsapp_flow_current(current, &plan.activity, &target.launch.event)
                     .await
                     .map_err(|e| match e {
                         crate::interactions::Error::Denied => ExecutionError::AuthorityChanged,
@@ -417,7 +427,19 @@ pub(super) fn validate_current(
         || current.definition.record_id != plan.identity.record_id
         || current.definition.owner.subject != plan.identity.owner
         || current.definition.routing.is_none()
-        || current.definition.source_of(&plan.activity.source) != Some(&plan.source)
+        || !current
+            .definition
+            .source_of(&plan.activity.source)
+            .is_some_and(|source| {
+                if matches!(source, cmaeg_core::channel::Source::Whatsapp { .. })
+                    && !crate::interactions::whatsapp_flow::shape(&plan.activity)
+                {
+                    crate::whatsapp::legacy_source(source)
+                        == crate::whatsapp::legacy_source(&plan.source)
+                } else {
+                    source == &plan.source
+                }
+            })
         || current
             .definition
             .creation
