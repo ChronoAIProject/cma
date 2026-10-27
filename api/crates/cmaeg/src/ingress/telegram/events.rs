@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use cmaeg_core::{
-    activity::{Activity, ActivityKind, Actor, ActorKind},
+    activity::{Activity, ActivityKind, ActorKind},
     channel::Source,
     cloudevent::CloudEvent,
     ids::{EventId, IdempotencyKey},
