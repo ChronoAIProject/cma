@@ -115,6 +115,17 @@ impl SourceChanges for RecordingSources {
                     .map(|secret| secret.secret.as_str().to_owned()),
             );
             let source = match request.source {
+                SourceRequest::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                    admission,
+                } => Source::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                    admission,
+                },
                 SourceRequest::Telegram { bot_id, .. } if bot_id == "refuse" => {
                     return Err(SourceChangeError::Invalid {
                         pointer: "/source/bot_id".into(),

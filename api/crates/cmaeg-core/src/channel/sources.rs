@@ -33,6 +33,12 @@ pub(super) fn validate_legacy_sources(
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
         match source {
+            Source::Whatsapp { .. } => {
+                return Err(ValidationError::new(
+                    &pointer,
+                    "native_whatsapp_writes_disabled",
+                ))
+            }
             Source::Discord { .. } => {
                 return Err(ValidationError::new(
                     &pointer,
@@ -81,7 +87,7 @@ pub(super) fn validate_extended_sources(
             "must contain at most eight sources",
         ));
     }
-    let (mut telegram, mut discord, mut custom) = (false, false, false);
+    let (mut telegram, mut discord, mut whatsapp, mut custom) = (false, false, false, false);
     let mut platforms = BTreeSet::<Platform>::new();
     let mut routes = BTreeSet::<&str>::new();
     let mut identity: Option<(&str, &str, &str)> = None;
@@ -90,6 +96,7 @@ pub(super) fn validate_extended_sources(
         let duplicated = match source {
             Source::Telegram { .. } => std::mem::replace(&mut telegram, true),
             Source::Discord { .. } => std::mem::replace(&mut discord, true),
+            Source::Whatsapp { .. } => std::mem::replace(&mut whatsapp, true),
             Source::Custom { .. } => std::mem::replace(&mut custom, true),
             Source::NyxidRelay { .. } => false,
         };
@@ -175,6 +182,19 @@ fn validate_source(
         }
     }
     match source {
+        Source::Whatsapp {
+            app_id,
+            waba_id,
+            phone_number_id,
+            admission,
+        } => super::whatsapp::validate(
+            app_id,
+            waba_id,
+            phone_number_id,
+            admission,
+            secrets.whatsapp.as_ref(),
+            pointer,
+        ),
         Source::Discord {
             bot_id,
             intents,

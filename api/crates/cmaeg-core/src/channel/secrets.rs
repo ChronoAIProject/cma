@@ -40,6 +40,8 @@ impl<'de> Deserialize<'de> for Secret {
 pub struct ChannelSecrets {
     pub agent_key_hash: String,
     #[serde(default, skip_serializing)]
+    pub whatsapp: Option<super::WhatsappCredentials>,
+    #[serde(default, skip_serializing)]
     pub channel_key: Option<Secret>,
     #[serde(default, skip_serializing)]
     pub hmac_secrets: Vec<(String, Secret)>,

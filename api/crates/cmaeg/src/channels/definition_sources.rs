@@ -62,6 +62,17 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             }
         }
         result.push(match source {
+            SourceRequest::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+                admission,
+            } => Source::Whatsapp {
+                app_id: app_id.clone(),
+                waba_id: waba_id.clone(),
+                phone_number_id: phone_number_id.clone(),
+                admission: admission.clone(),
+            },
             SourceRequest::Telegram {
                 message_events,
                 bot_id,
@@ -129,6 +140,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
 
 pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
     ChannelSecrets {
+        whatsapp: credentials.whatsapp.clone(),
         agent_key_hash: hash_secret(credentials.agent_key.as_str()),
         channel_key: credentials.channel_key.clone(),
         hmac_secrets: credentials

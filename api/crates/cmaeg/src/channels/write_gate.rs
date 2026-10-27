@@ -42,6 +42,7 @@ pub struct WriteFlags {
     /// Exact proxy bindings are admitted only after compatible readers deploy.
     pub lark_resources: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
+    pub native_whatsapp: bool,
     pub native_discord: bool,
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
@@ -155,6 +156,26 @@ pub(crate) fn check(
             ));
         }
     }
+    let whatsapp = |d: &ChannelDefinition| {
+        (
+            d.sources
+                .iter()
+                .filter(|s| matches!(s, Source::Whatsapp { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            d.secrets.whatsapp.clone(),
+        )
+    };
+    let next_whatsapp = whatsapp(next);
+    if (!next_whatsapp.0.is_empty() || next_whatsapp.1.is_some())
+        && !flags.native_whatsapp
+        && !current.is_some_and(|old| whatsapp(old) == next_whatsapp)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_whatsapp_writes_disabled",
+        ));
+    }
     let discord = |d: &ChannelDefinition| {
         (
             d.sources
@@ -220,7 +241,7 @@ fn dynamic_sources(definition: &ChannelDefinition) -> bool {
     let mut legacy = definition.clone();
     legacy
         .sources
-        .retain(|s| !matches!(s, Source::Discord { .. }));
+        .retain(|s| !matches!(s, Source::Discord { .. } | Source::Whatsapp { .. }));
     if legacy.sources.is_empty() && !definition.sources.is_empty() {
         return definition.partition.custom_key.is_some();
     }

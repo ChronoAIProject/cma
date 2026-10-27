@@ -125,6 +125,12 @@ impl Capabilities {
             ..Self::plain_text()
         }
     }
+    pub fn native_whatsapp() -> Self {
+        Self {
+            max_text_chars: 4096,
+            ..Self::plain_text()
+        }
+    }
     pub fn native_telegram() -> Self {
         Self {
             typing: true,
@@ -328,6 +334,7 @@ pub(super) fn project(
         ),
         inbound_media,
         ..match activity.source {
+            SourceKind::Whatsapp { .. } => Capabilities::native_whatsapp(),
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
             SourceKind::Discord { .. } => Capabilities {
