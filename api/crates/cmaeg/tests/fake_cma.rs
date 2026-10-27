@@ -76,6 +76,12 @@ impl FakeCma {
                 "/api/v1/gateway/interaction-records/{record_id}",
                 put(put_record).get(get_record).delete(delete_record),
             )
+            // Explicit test adapter for the local Mongo WhatsApp retention class.
+            // It shares the Interaction rows, but never changes the legacy route.
+            .route(
+                "/test/whatsapp-reaction-records/{record_id}",
+                put(put_record),
+            )
             // Test-only transport for the dedicated Mongo-backed persistent domain.
             .route(
                 "/api/v1/gateway/thread-fence-records/{record_id}",
@@ -209,9 +215,18 @@ async fn put_record(
     let Json(body) = body.unwrap();
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let interaction = uri.path().contains("/interaction-records/");
-    if if interaction {
-        body.expires_at
-            .is_none_or(|expiry| expiry <= now || expiry > now + 7 * 86400)
+    let whatsapp_reaction = uri.path().starts_with("/test/whatsapp-reaction-records/");
+    if if interaction || whatsapp_reaction {
+        body.expires_at.is_none_or(|expiry| {
+            expiry <= now
+                || expiry
+                    > now
+                        + if whatsapp_reaction {
+                            30 * 86400
+                        } else {
+                            7 * 86400
+                        }
+        })
     } else {
         body.expires_at.is_some()
     } {

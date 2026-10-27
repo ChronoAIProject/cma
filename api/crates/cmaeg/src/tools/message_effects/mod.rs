@@ -134,7 +134,11 @@ impl ToolsState {
                 &message,
                 &channel,
                 caller,
-                self.whatsapp_reactions.is_some(),
+                self.whatsapp_reactions.is_some()
+                    && self
+                        .resolver
+                        .record_client()
+                        .whatsapp_reaction_storage_available(),
             );
         }
         if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
