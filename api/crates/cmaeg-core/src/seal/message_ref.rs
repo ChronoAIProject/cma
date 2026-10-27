@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
-    /// Exact native Discord text destination; issued only after reader rollout.
+    /// Exact native Discord message destination; issued only after reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord_message: Option<Box<DiscordMessageDestination>>,
     /// Optional authority for new native Telegram delete/reaction tools.
@@ -38,6 +38,12 @@ impl MessageRefPayload {
             effect.validate(self)?;
         }
         if let Some(destination) = &self.discord_message {
+            if destination.effects_only && destination.effects.is_none() {
+                return Err(ValidationError::new(
+                    "/discord_message/effects_only",
+                    "effects-only destination requires a validity window",
+                ));
+            }
             if let Some(window) = &destination.effects {
                 if window.issued_at <= 0
                     || window.expires_at <= window.issued_at
@@ -60,7 +66,7 @@ impl MessageRefPayload {
             {
                 return Err(ValidationError::new(
                     "/discord_message",
-                    "exact native Discord text destination required",
+                    "exact native Discord message destination required",
                 ));
             }
         }
@@ -118,6 +124,10 @@ pub struct DiscordMessageDestination {
     /// New effect authority is opt-in; retained edit-only references omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effects: Option<DiscordEffectWindow>,
+    /// Media uploads grant delete/own-reaction authority, never message updates.
+    /// Omitted for existing text references to preserve their serialized identity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub effects_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

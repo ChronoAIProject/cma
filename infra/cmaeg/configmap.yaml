@@ -115,6 +115,8 @@ data:
   # Issue native Discord edit references only after every gateway reader is upgraded.
   CMAEG_NATIVE_DISCORD_EDITS_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: "true"
+  # Reader-first: effects-only media references require every retained reader.
+  CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: "false"
   # Persist verified native thread metadata only after compatible readers are deployed.
   # Explicit bounded history reads still require source consent and an exact original thread.
   CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED: "true"
