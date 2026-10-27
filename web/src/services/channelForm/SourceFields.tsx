@@ -34,7 +34,10 @@ export function SourceFields({
     );
   return (
     <>
-      <Section title={value.type === 'telegram' ? 'Telegram bot' : 'NyxID connection'}>
+      <Section
+        title={value.type === 'telegram' ? 'Telegram bot' : 'NyxID connection'}
+        description="Identify the bot and connection that send messages into this channel."
+      >
         {value.type === 'nyxid_relay' ? (
           <>
             <Choice
@@ -170,7 +173,10 @@ function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields
   const set = (key: string, next: unknown) => onChange(optional(value, key, next));
   return (
     <>
-      <Section title="Custom event authentication">
+      <Section
+        title="Custom event authentication"
+        description="Choose how your application authenticates incoming HTTP events. The prompt template controls how event data is presented to the agent."
+      >
         <Choice
           label="Authentication method"
           value={auth.type}
@@ -203,7 +209,10 @@ function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields
           multiline
         />
       </Section>
-      <Section title="Event attachments">
+      <Section
+        title="Event attachments"
+        description="Allow the agent to receive files from specific HTTPS origins in your event payload."
+      >
         <Toggle
           label="Accept event attachments"
           value={value.attachments != null}
@@ -229,7 +238,10 @@ function CustomSource({ value, onChange }: { value: Fields; onChange: (v: Fields
           </>
         ) : null}
       </Section>
-      <Section title="Event data validation">
+      <Section
+        title="Event data validation"
+        description="Optionally require incoming event data to match a schema before it reaches the agent."
+      >
         {value.schema != null ? (
           <>
             <ValueBuilder

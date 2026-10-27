@@ -1,13 +1,23 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore, type RefObject } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+  type ReactNode,
+} from 'react';
 import {
   Background,
   Controls,
   Handle,
   Position,
+  MarkerType,
   ReactFlow,
   useReactFlow,
   type Node,
   type NodeProps,
+  type Edge,
 } from '@xyflow/react';
 import { ChannelNodeIcon } from './ChannelNodeIcon';
 import type { ChannelNode, ChannelSelection } from './channelTopology';
@@ -16,13 +26,14 @@ import '@xyflow/react/dist/style.css';
 type CardData = Record<string, unknown> & {
   value: ChannelNode;
   selected: boolean;
+  stacked: boolean;
   inspectorId?: string;
   onSelect?: (selection: ChannelSelection) => void;
 };
 type CardNode = Node<CardData, 'delivery'>;
 function Card({ data }: NodeProps<CardNode>) {
   const { value } = data;
-  const label = `${value.selection.kind === 'producer' ? 'Producer' : value.selection.kind === 'consumer' ? 'Consumer' : 'Channel'}: ${value.title} (${value.subtitle})`;
+  const label = `${value.key === 'toolsets' ? 'Toolsets' : value.selection.kind === 'producer' ? 'Producer' : value.selection.kind === 'consumer' ? 'Consumer' : 'Channel'}: ${value.title} (${value.subtitle})`;
   const content = (
     <>
       <span className="channel-map__icon" aria-hidden="true" data-identity={value.identity}>
@@ -39,8 +50,8 @@ function Card({ data }: NodeProps<CardNode>) {
   );
   return (
     <>
-      {value.selection.kind !== 'producer' ? (
-        <Handle type="target" position={Position.Left} />
+      {value.selection.kind !== 'producer' && value.key !== 'toolsets' ? (
+        <Handle type="target" position={data.stacked ? Position.Top : Position.Left} />
       ) : null}
       {data.onSelect ? (
         <button
@@ -66,7 +77,7 @@ function Card({ data }: NodeProps<CardNode>) {
         </div>
       )}
       {value.selection.kind !== 'consumer' ? (
-        <Handle type="source" position={Position.Right} />
+        <Handle type="source" position={data.stacked ? Position.Bottom : Position.Right} />
       ) : null}
     </>
   );
@@ -81,40 +92,101 @@ const subscribe = (notify: () => void) => {
 
 export function DeliveryFlowCanvas({
   groups,
+  toolsets,
+  overlay,
   selected,
   onSelect,
   inspectorId,
   illustrative = false,
 }: {
   readonly groups: readonly (readonly ChannelNode[])[];
+  readonly toolsets?: ChannelNode;
+  readonly overlay?: ReactNode;
   readonly selected?: string;
   readonly onSelect?: (selection: ChannelSelection) => void;
   readonly inspectorId?: string;
   readonly illustrative?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  const [stacked, setStacked] = useState(false);
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setStacked(element.clientWidth < 640));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const overlayElement = useRef<HTMLDivElement>(null);
+  const [overlayHeight, setOverlayHeight] = useState(0);
+  const hasOverlay = overlay !== undefined;
+  useEffect(() => {
+    const element = overlayElement.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setOverlayHeight(element.clientHeight));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasOverlay]);
+  const padding = useMemo(
+    () => ({
+      top: `${overlayHeight + 48}px` as const,
+      bottom: '64px' as const,
+      left: '32px' as const,
+      right: '32px' as const,
+    }),
+    [overlayHeight],
+  );
   const reduced = useSyncExternalStore(
     subscribe,
     () => window.matchMedia(motion).matches,
     () => false,
   );
   const nodes = useMemo<CardNode[]>(
-    () =>
-      groups.flatMap((group, column) =>
+    () => [
+      ...groups.flatMap((group, column) =>
         group.map((value, row) => ({
           id: value.key,
-          type: 'delivery',
-          position: { x: column * 360, y: (row - (group.length - 1) / 2) * 120 },
+          type: 'delivery' as const,
+          position: stacked
+            ? {
+                x: 0,
+                y:
+                  (groups.slice(0, column).reduce((total, values) => total + values.length, 0) +
+                    row +
+                    (toolsets && column > 1 ? 1 : 0)) *
+                  120,
+              }
+            : { x: column * 360, y: (row - (group.length - 1) / 2) * 120 },
           width: 240,
           height: 88,
-          data: { value, selected: value.key === selected, onSelect, inspectorId },
+          data: { value, stacked, selected: value.key === selected, onSelect, inspectorId },
         })),
       ),
-    [groups, selected, onSelect, inspectorId],
+      ...(toolsets
+        ? [
+            {
+              id: toolsets.key,
+              type: 'delivery' as const,
+              position: stacked
+                ? { x: 0, y: ((groups[0]?.length ?? 0) + (groups[1]?.length ?? 0)) * 120 }
+                : { x: 360, y: Math.max(180, ((groups[1]?.length ?? 1) - 1) * 60 + 180) },
+              width: 240,
+              height: 88,
+              data: {
+                value: toolsets,
+                stacked,
+                selected: toolsets.key === selected,
+                onSelect,
+                inspectorId,
+              },
+            },
+          ]
+        : []),
+    ],
+    [groups, toolsets, selected, onSelect, inspectorId, stacked],
   );
-  const edges = useMemo(
-    () =>
-      groups.flatMap((group, column) =>
+  const edges = useMemo<Edge[]>(
+    () => [
+      ...groups.flatMap((group, column) =>
         column === 0
           ? []
           : (groups[column - 1] ?? []).flatMap((source) =>
@@ -123,20 +195,53 @@ export function DeliveryFlowCanvas({
                 source: source.key,
                 target: target.key,
                 type: 'smoothstep',
-                animated: illustrative && !reduced,
+                animated: !reduced,
+                markerEnd: {
+                  type: MarkerType.ArrowClosed,
+                  color: 'var(--dsw-alias-label-tertiary)',
+                  width: 16,
+                  height: 16,
+                },
               })),
             ),
       ),
-    [groups, illustrative, reduced],
+      ...(toolsets
+        ? (groups[2] ?? []).map((target) => ({
+            id: `${toolsets.key}:${target.key}`,
+            source: toolsets.key,
+            target: target.key,
+            type: 'smoothstep',
+            className: 'delivery-flow__tool-access',
+            label: 'Tool access',
+            animated: false,
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: 'var(--dsw-alias-label-tertiary)',
+              width: 16,
+              height: 16,
+            },
+          }))
+        : []),
+    ],
+    [groups, toolsets, reduced],
   );
   return (
-    <div ref={container} className="delivery-flow" data-illustrative={illustrative || undefined}>
+    <div
+      ref={container}
+      className="delivery-flow"
+      data-illustrative={illustrative || undefined}
+      style={
+        stacked && !illustrative
+          ? { minHeight: overlayHeight + nodes.length * 120 + 120 }
+          : undefined
+      }
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
+        fitViewOptions={{ padding }}
         minZoom={0.35}
         maxZoom={1.4}
         nodesDraggable={false}
@@ -156,10 +261,15 @@ export function DeliveryFlowCanvas({
           'controls.fitView.ariaLabel': 'Fit delivery map',
         }}
       >
-        <ViewportFit container={container} reduced={reduced} />
+        <ViewportFit container={container} reduced={reduced} padding={padding} />
         <Background gap={24} size={1} />
-        {!illustrative ? <Controls showInteractive={false} /> : null}
+        {!illustrative ? <Controls showInteractive={false} fitViewOptions={{ padding }} /> : null}
       </ReactFlow>
+      {overlay ? (
+        <div ref={overlayElement} className="delivery-flow__overlay">
+          {overlay}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -167,9 +277,16 @@ export function DeliveryFlowCanvas({
 function ViewportFit({
   container,
   reduced,
+  padding,
 }: {
   readonly container: RefObject<HTMLDivElement | null>;
   readonly reduced: boolean;
+  readonly padding: {
+    top: `${number}px`;
+    bottom: `${number}px`;
+    left: `${number}px`;
+    right: `${number}px`;
+  };
 }) {
   const { fitView } = useReactFlow();
   useEffect(() => {
@@ -180,7 +297,7 @@ function ViewportFit({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (element.clientWidth > 0)
-          void fitView({ padding: 0.2, maxZoom: 1, duration: reduced ? 0 : 200 });
+          void fitView({ padding, maxZoom: 1, duration: reduced ? 0 : 200 });
       });
     };
     const observer = new ResizeObserver(fit);
@@ -190,6 +307,6 @@ function ViewportFit({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [container, fitView, reduced]);
+  }, [container, fitView, reduced, padding]);
   return null;
 }

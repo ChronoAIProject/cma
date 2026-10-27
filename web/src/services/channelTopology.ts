@@ -1,7 +1,10 @@
 import type { Channel } from './ChannelEditor';
 
 export type ChannelSelection =
-  { kind: 'channel' } | { kind: 'producer'; index: number } | { kind: 'consumer'; id: string };
+  | { kind: 'channel' }
+  | { kind: 'toolsets' }
+  | { kind: 'producer'; index: number }
+  | { kind: 'consumer'; id: string };
 export interface ChannelNode {
   key: string;
   selection: ChannelSelection;
@@ -25,7 +28,7 @@ export const selectionKey = (selection: ChannelSelection): string =>
     ? `producer-${selection.index}`
     : selection.kind === 'consumer'
       ? `consumer-${selection.id}`
-      : 'channel';
+      : selection.kind;
 export function platformName(value: unknown): string {
   const known: Record<string, string> = {
     telegram: 'Telegram',
@@ -111,7 +114,15 @@ export function channelNodes(channel: Channel) {
       };
     }),
   ];
-  return { producers, consumers };
+  const toolsets: ChannelNode = {
+    key: 'toolsets',
+    selection: { kind: 'toolsets' },
+    identity: 'toolsets',
+    title: 'Agent toolsets',
+    subtitle: 'Messaging and event tools',
+    detail: 'Explore tools and availability',
+  };
+  return { producers, consumers, toolsets };
 }
 export function admissionSummary(value: unknown): string {
   const policy = object(value);
