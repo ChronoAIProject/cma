@@ -1,9 +1,17 @@
 //! Explicit, durable effects on confirmed native bot messages.
 pub(crate) mod authority;
 pub(crate) mod discord;
+mod discord_card;
+#[cfg(test)]
+mod discord_card_failures;
+#[cfg(test)]
+pub(crate) mod discord_card_fixture;
+#[cfg(test)]
+mod discord_card_races;
+#[cfg(test)]
+mod discord_card_tests;
 #[cfg(test)]
 mod discord_tests;
-mod serial;
 use super::{reply_targets::receipts, state::owner, ToolsState};
 use crate::{
     auth::AgentCaller,
@@ -74,6 +82,11 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
+            return self
+                .discord_card_capabilities(caller, reference, channel, message)
+                .await;
+        }
         if message.discord_message.is_some() {
             return discord::capabilities(&message, &channel, self.discord_effects.is_some());
         }
@@ -147,6 +160,11 @@ impl ToolsState {
             ));
         }
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
+            return self
+                .discord_card_effect(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
         if message.discord_message.is_some() {
             return self
                 .discord_message_effect(caller, reference, request_id, effect, channel, message)
