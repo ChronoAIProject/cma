@@ -52,6 +52,7 @@ impl Authority {
             bot_id,
             intents,
             admission,
+            ..
         } = source
         else {
             unreachable!()

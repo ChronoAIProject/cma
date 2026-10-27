@@ -17,7 +17,9 @@ mod custom_attachments;
 pub(crate) mod discord;
 pub use discord::valid_id as valid_discord_id;
 mod extensions;
+pub mod lark_resources;
 mod lookup;
+pub use lark_resources::{LarkResourceBinding, LarkResourceKind};
 mod partition;
 mod platform;
 mod routing;
@@ -124,6 +126,9 @@ pub enum Source {
     Discord {
         bot_id: String,
         intents: u64,
+        /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {
@@ -143,6 +148,9 @@ pub enum Source {
         /// Verify Discord/WhatsApp raw facts; omitted on retained normalized sources.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         verify_raw_event: bool,
+        /// Optional exact NyxID connection for embedded Lark/Feishu resources.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<LarkResourceBinding>,
         admission: AdmissionPolicy,
     },
     Custom {

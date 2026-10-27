@@ -423,3 +423,134 @@ fn verified_relay_mode_requires_its_own_writes_and_retains_exact_existing_source
         check(Some(&opted), &restored, WriteFlags::default()).unwrap();
     }
 }
+
+#[test]
+fn lark_resources_require_own_gate_and_carry_or_remove_without_reauthoring() {
+    let base = legacy();
+    let mut raw = base.to_blob_json();
+    raw["sources"][0]["bot_id"] = json!("ou_receiver");
+    raw["sources"][0]["lark_resources"] = json!({"user_service_id":"connection-one","catalog_service_id":"catalog-one","app_id":"cli_source"});
+    let opted: ChannelDefinition = serde_json::from_value(raw).unwrap();
+    opted.validate().unwrap();
+    let disabled = Err(ValidationError::new(
+        "/sources/0/lark_resources",
+        "lark_resource_writes_disabled",
+    ));
+    assert_eq!(check(None, &opted, WriteFlags::default()), disabled);
+    assert_eq!(
+        check(
+            Some(&base),
+            &opted,
+            WriteFlags {
+                dynamic_sources: true,
+                multi_consumer: true,
+                ..Default::default()
+            }
+        ),
+        disabled
+    );
+    check(
+        None,
+        &opted,
+        WriteFlags {
+            lark_resources: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut renamed = opted.clone();
+    renamed.name = "Unrelated edit".into();
+    check(Some(&opted), &renamed, WriteFlags::default()).unwrap();
+    check(Some(&opted), &base, WriteFlags::default()).unwrap();
+    let mut changed = opted.clone();
+    if let cmaeg_core::channel::Source::NyxidRelay {
+        lark_resources: Some(binding),
+        ..
+    } = &mut changed.sources[0]
+    {
+        binding.user_service_id = "connection-two".into();
+    }
+    assert_eq!(
+        check(Some(&opted), &changed, WriteFlags::default()),
+        disabled
+    );
+    assert!(!Extensions::of(&opted).legacy_compatible());
+}
+
+#[test]
+fn lark_binding_requires_independent_bot_pin_regional_raw_source_and_credential() {
+    let mut raw = legacy().to_blob_json();
+    raw["sources"][0]["bot_id"] = json!("ou_receiver");
+    raw["sources"][0]["lark_resources"] = json!({"user_service_id":"connection-one","catalog_service_id":"catalog-one","app_id":"cli_source"});
+    for (pointer, value) in [
+        ("/sources/0/bot_id", Value::Null),
+        ("/sources/0/bot_id", json!("cli_wrong_kind")),
+        ("/sources/0/platform", json!("telegram")),
+        ("/sources/0/trust_normalized", json!(true)),
+        ("/sources/0/lark_resources/app_id", json!("ou_wrong_kind")),
+        (
+            "/sources/0/lark_resources/user_service_id",
+            json!("../other"),
+        ),
+        (
+            "/sources/0/lark_resources/catalog_service_id",
+            json!("other?connection=1"),
+        ),
+        ("/secrets/channel_key", Value::Null),
+    ] {
+        let mut invalid = raw.clone();
+        if pointer == "/sources/0/trust_normalized" {
+            invalid["sources"][0]["trust_normalized"] = value;
+        } else {
+            *invalid.pointer_mut(pointer).unwrap() = value;
+        }
+        let definition: ChannelDefinition = serde_json::from_value(invalid).unwrap();
+        assert!(definition.validate().is_err(), "{pointer}");
+    }
+    // Existing sources still omit the opt-in rather than publishing a new null property.
+    assert!(serde_json::to_value(legacy()).unwrap()["sources"][0]
+        .get("lark_resources")
+        .is_none());
+}
+
+#[test]
+fn native_thread_history_requires_its_gate_but_retention_and_removal_are_allowed() {
+    let mut next = definition(
+        json!([{"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"},"thread_history":true}]),
+    );
+    next.secrets.discord_bot_token = Some(Secret::new("history-gate-fixture"));
+    let flags = WriteFlags {
+        native_discord: true,
+        ..Default::default()
+    };
+    let error = check(None, &next, flags).unwrap_err();
+    assert_eq!(
+        error,
+        ValidationError::new(
+            "/sources/0/thread_history",
+            "discord_thread_history_disabled"
+        )
+    );
+    check(
+        None,
+        &next,
+        WriteFlags {
+            discord_thread_history: true,
+            ..flags
+        },
+    )
+    .unwrap();
+    let mut renamed = next.clone();
+    renamed.name = "rename".into();
+    check(Some(&next), &renamed, flags).unwrap();
+    let cmaeg_core::channel::Source::Discord { thread_history, .. } = &mut renamed.sources[0]
+    else {
+        panic!()
+    };
+    *thread_history = false;
+    check(Some(&next), &renamed, flags).unwrap();
+    assert!(serde_json::to_value(&renamed.sources[0])
+        .unwrap()
+        .get("thread_history")
+        .is_none());
+}

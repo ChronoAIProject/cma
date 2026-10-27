@@ -40,6 +40,7 @@ impl RelayClient {
             message_id: message_id.clone(),
             thread_reply: false,
             native_media: false,
+            complete_text: false,
         };
         let result = self
             .send_prepared(Credential::ChannelKey(secret), &prepared)
