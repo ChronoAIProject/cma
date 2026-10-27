@@ -1,6 +1,6 @@
 //! Native component through durable admission, real provider and Discord reply.
 use super::{
-    components_fixture::{message, FixtureState},
+    components_fixture::{message, multiselect_message, FixtureState},
     inbox_dispatch::InboxDispatcher,
 };
 use crate::{
@@ -38,22 +38,35 @@ fn frames(thread: bool) -> Vec<Value> {
 }
 #[tokio::test]
 async fn native_component_runs_real_provider_once_and_replies_to_original_card() {
-    run(false, false).await;
+    run(false, false, false).await;
 }
 #[tokio::test]
 async fn native_thread_buttons_and_selects_run_one_original_consumer_and_reply_in_same_thread() {
     for select in [false, true] {
-        run(true, select).await;
+        run(true, select, false).await;
     }
 }
-async fn run(thread: bool, select: bool) {
+#[tokio::test]
+async fn native_discord_multiselect_executes_one_whole_set_and_preserves_named_thread_reply() {
+    for thread in [false, true] {
+        run(thread, true, true).await;
+    }
+}
+async fn run(thread: bool, select: bool, multi: bool) {
     let mut fixture = if thread {
         FixtureState::named_thread(11).await
+    } else if multi {
+        FixtureState::named().await
     } else {
         FixtureState::new().await
     };
     fixture.settle_context_message().await;
-    let card = fixture.card(&message(select)).await;
+    let outbound = if multi {
+        multiselect_message()
+    } else {
+        message(select)
+    };
+    let card = fixture.card(&outbound).await;
     let mut raw = fixture.callback(
         card.markup[0]["components"][0]["custom_id"]
             .as_str()
@@ -64,7 +77,11 @@ async fn run(thread: bool, select: bool) {
     }
     if select {
         raw["data"]["component_type"] = 3.into();
-        raw["data"]["values"] = json!(["1"]);
+        raw["data"]["values"] = if multi {
+            json!(["1", "0"])
+        } else {
+            json!(["1"])
+        };
     }
     fixture.receive(raw.clone(), 2).await.unwrap();
     {
@@ -192,30 +209,45 @@ async fn run(thread: bool, select: bool) {
         assert_eq!(body["allowed_mentions"]["parse"], json!([]));
         assert_eq!(body["message_reference"]["message_id"], "800");
     }
-    assert_eq!(
-        provider
-            .memory
-            .lock()
-            .unwrap()
+    {
+        let memory = provider.memory.lock().unwrap();
+        let turns: Vec<_> = memory
             .seen
             .iter()
             .filter(|call| call.method == "POST" && call.uri == "/api/v2/responses")
-            .count(),
-        1
-    );
+            .collect();
+        assert_eq!(turns.len(), 1);
+        assert!(
+            memory
+                .seen
+                .iter()
+                .all(|call| !String::from_utf8_lossy(&call.body)
+                    .contains("private-interaction-token"))
+        );
+        if multi {
+            let body: Value = serde_json::from_slice(&turns[0].body).unwrap();
+            let context = &body["event_context"];
+            assert_eq!(
+                context["conversation_id"],
+                fixture.original.conversation_id.as_str()
+            );
+            assert_eq!(
+                context["activity"]["conversation"],
+                serde_json::to_value(&fixture.context.activity.conversation).unwrap()
+            );
+            assert_eq!(
+                context["activity"]["routing"]["targets"][0]["id"],
+                fixture.original.consumer.as_ref().unwrap().as_str()
+            );
+            assert_eq!(context["activity"]["kind"]["block_id"], "scope");
+            assert_eq!(context["activity"]["kind"]["action_id"], "scope");
+            assert_eq!(
+                context["activity"]["kind"]["values"]["selected"],
+                json!(["private-read", "private-write"])
+            );
+        }
+    }
     assert_eq!(f.direct_calls(), 0);
-    assert!(!serde_json::to_string(
-        &provider
-            .memory
-            .lock()
-            .unwrap()
-            .seen
-            .iter()
-            .map(|call| &call.body)
-            .collect::<Vec<_>>()
-    )
-    .unwrap()
-    .contains("private-interaction-token"));
     let after = activity
         .latest(&f.channel.owner.subject, &f.fixture.record)
         .await
