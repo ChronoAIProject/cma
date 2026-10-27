@@ -24,10 +24,30 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        if self.relay.discord_interactions_enabled()
-            && crate::interactions::discord::requested(message)
-        {
-            return self.discord_controls(ctx, event, message).await;
+        if self.relay.discord_interactions_enabled() {
+            if crate::interactions::discord::requested(message) {
+                return self.discord_controls(ctx, event, message, None).await;
+            }
+            if self.relay.discord_forms_enabled()
+                && super::discord_controls::form_eligible(message)
+                && event.lineage.is_none()
+                && event.activity_sha256.is_some()
+                && (event.consumer.is_none() || self.relay.consumer_interactions_enabled())
+            {
+                let Some(store) = &self.relay.interactions else {
+                    return (unsupported(), SendEffects::default());
+                };
+                let Ok(context) = store.event_context(ctx.channel, event).await else {
+                    return (unsupported(), SendEffects::default());
+                };
+                if crate::interactions::discord::eligible(ctx.channel, event, &context.activity) {
+                    return self
+                        .discord_controls(ctx, event, message, Some(context))
+                        .await;
+                }
+                // Verified but ineligible context retains its established text
+                // rendering. No card, platform write or fresh authority exists.
+            }
         }
         let effects = SendEffects::default();
         let ReplyAddress::Discord {

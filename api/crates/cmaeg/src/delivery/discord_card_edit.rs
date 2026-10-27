@@ -34,6 +34,7 @@ impl Sender {
             Ok(Admission::Ready(candidate)) => candidate,
             Err(_) => return unsupported(),
         };
+        let form = crate::interactions::discord_form::schema(message).is_ok();
         let Some(identity) = candidate.card.discord.as_ref() else {
             return unsupported();
         };
@@ -44,12 +45,14 @@ impl Sender {
                 && !self.relay.discord_multiselect_enabled()
                 && !discord::multiselect_requested(&candidate.card.message))
             || (message.thread_reply && candidate.conversation.thread_id.is_none())
-            || discord::render_replacement(
-                message,
-                "00000000000000000000000000000000",
-                candidate.card.revision.saturating_add(1),
-            )
-            .is_err()
+            || (form && identity.form.is_none() && !self.relay.discord_forms_enabled())
+            || (!form
+                && discord::render_replacement(
+                    message,
+                    "00000000000000000000000000000000",
+                    candidate.card.revision.saturating_add(1),
+                )
+                .is_err())
         {
             return unsupported();
         }
@@ -57,7 +60,10 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        if form {
+            crate::interactions::discord_form::report(message, &mut rendering);
+        }
         if parts.len() != 1 || (parts[0].text.is_empty() && !discord::requested(message)) {
             return unsupported();
         }

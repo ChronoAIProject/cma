@@ -149,6 +149,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let consumer_interactions = config::consumer_interactions_from_env()?;
     let whatsapp_interactions = config::whatsapp_interactions_from_env()?;
     let discord_interactions = config::discord_interactions_from_env()?;
+    let discord_forms = config::discord_forms_from_env()?;
     let discord_card_effects = config::discord_card_effects_from_env()?;
     let discord_card_edits = config::discord_card_edits_from_env()?;
     let discord_multiselect = config::discord_multiselect_from_env()?;
@@ -168,6 +169,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         whatsapp_templates,
         whatsapp_interactions,
         discord_interactions,
+        discord_forms,
         discord_multiselect,
         discord_card_edits,
         discord_card_effects,

@@ -26,7 +26,11 @@ impl InteractionStore {
         ),
         Error,
     > {
-        let (id, _, _) = super::card::decode(custom)?;
+        let id = if custom.starts_with("cdf1:") || custom.starts_with("cdm1:") {
+            super::discord_form::decode(custom, custom.split(':').next().unwrap_or(""))?.0
+        } else {
+            super::card::decode(custom)?.0
+        };
         let (card, _) = self.load(&id).await?;
         let identity = card.discord.ok_or(Error::Denied)?;
         Ok((identity.thread, card.consumed.is_some()))
@@ -94,6 +98,7 @@ impl InteractionStore {
                     return Err(Error::Denied);
                 }
                 card.consumed = Some(Click {
+                    form_launch: None,
                     event_id: activity.event_id.to_string(),
                     callback_id: click.id.into(),
                     action: resolved.index,
