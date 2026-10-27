@@ -2723,6 +2723,9 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/consumers/{consumer_id}/test` | `testChannelConsumer` |
 | `PUT /v1/channels/{channel_id}/routing` | `updateChannelRouting` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
+| `GET /v1/events/{event_ref}/threads` | `listEventThreads` |
+| `POST /v1/events/{event_ref}/threads` | `createEventThread` |
+| `POST /v1/thread-operations` | `manageThread` |
 | `GET /v1/events/{event_ref}/attachments/{index}` | `readEventAttachment` |
 | `GET /v1/media/content` | `downloadMedia` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
@@ -4153,6 +4156,10 @@ Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards
 source's `thread_lifecycle:true` consent enable the lifecycle tools below. This
 consent is independent of `thread_history`. Both settings are required when the
 operation executes, including retained thread references; the default is off.
+The Gateway must also have the separately migrated persistent thread-fence Mongo
+collection and runtime grants described in [Operations](CMAEG_Operations.md#native-discord-thread-lifecycle-rollout).
+Absent or invalid optional storage suppresses lifecycle capability issuance and
+fails execution closed; the base deployment remains usable with lifecycle off.
 `relay_authoring.native_discord_thread_lifecycle_enabled` advertises the gate.
 Eligible event context includes `capabilities.thread_lifecycle` only after the
 server restores the exact retained native inbox and original selected consumer.
