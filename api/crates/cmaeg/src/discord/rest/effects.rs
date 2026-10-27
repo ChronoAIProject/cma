@@ -236,7 +236,7 @@ impl DiscordRest {
         Ok(url)
     }
 
-    async fn effect_request(
+    pub(super) async fn effect_request(
         &self,
         token: &Secret,
         method: Method,

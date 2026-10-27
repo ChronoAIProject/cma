@@ -7,6 +7,7 @@ use super::{
 };
 mod destinations;
 mod durable;
+mod native_lark_control_tests;
 mod native_lark_tests;
 mod native_whatsapp_control_tests;
 mod native_whatsapp_document_tests;
@@ -123,6 +124,7 @@ fn setup() -> (
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
         whatsapp_template: None,
+        native_media_update: None,
         native_attachments: Vec::new(),
         thread_reply: false,
         text: Some(text),

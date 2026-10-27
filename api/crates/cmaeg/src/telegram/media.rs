@@ -88,12 +88,12 @@ impl TelegramClient {
     }
 
     /// Every native upload is a single attempt. An unconfirmed write is never retried.
-    pub(crate) async fn send_media(
+    pub(crate) async fn send_media_result(
         &self,
         token: &Secret,
         bot: &str,
         upload: MediaUpload,
-    ) -> Result<String, Error> {
+    ) -> Result<Value, Error> {
         if !media_token_matches(token, bot) {
             return Err(Error::Rejected);
         }
@@ -123,7 +123,18 @@ impl TelegramClient {
                 Error::Unconfirmed
             });
         }
-        message_identity(&value["result"], &upload.chat, upload.thread.as_deref())
+        message_identity(&value["result"], &upload.chat, upload.thread.as_deref())?;
+        Ok(value["result"].clone())
+    }
+
+    pub(crate) async fn send_media(
+        &self,
+        token: &Secret,
+        bot: &str,
+        upload: MediaUpload,
+    ) -> Result<String, Error> {
+        let value = self.send_media_result(token, bot, upload).await?;
+        positive(&value["message_id"])
     }
 
     /// Text in a media batch uses the same sealed topic and stricter receipt check.
@@ -155,7 +166,11 @@ pub(crate) fn media_token_matches(token: &Secret, bot: &str) -> bool {
             .split_once(':')
             .is_some_and(|(id, _)| id == bot)
 }
-fn message_identity(value: &Value, chat: &str, thread: Option<&str>) -> Result<String, Error> {
+pub(super) fn message_identity(
+    value: &Value,
+    chat: &str,
+    thread: Option<&str>,
+) -> Result<String, Error> {
     let actual_chat = value["chat"]["id"].as_i64().map(|id| id.to_string());
     let actual_thread = value.get("message_thread_id").map(positive).transpose()?;
     // These individual send methods cannot produce albums. Telegram redirects

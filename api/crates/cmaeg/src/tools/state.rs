@@ -21,9 +21,11 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_media_edits: Option<Arc<crate::native_media::Client>>,
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
+    pub discord_threads: Option<Arc<super::DiscordThreads>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
@@ -116,7 +118,9 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.received_reaction.is_some()
+        let channel = if message.native_media_edit.is_some()
+            || message.received_reaction.is_some()
+            || crate::interactions::native_lark::is_reference(&message)
             || message.native_lark_effect.is_some()
             || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()
@@ -157,6 +161,13 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
+            if message.native_media_update.is_some() {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "native_media_update_requires_updateMessage",
+                ));
+            }
             let (channel, event, _) = self
                 .authorize_event(caller, reference, "replyToEvent")
                 .await?;
@@ -203,42 +214,6 @@ impl ToolsState {
                 }
             }
             Ok(result)
-        }
-        .await;
-        observation.finish(if result.is_ok() { "success" } else { "error" });
-        result
-    }
-    pub async fn update(
-        &self,
-        caller: AgentCaller,
-        reference: &MessageRef,
-        message: OutboundMessage,
-    ) -> Result<IntentReceipt, Problem> {
-        let mut observation = crate::telemetry::operations::Operation::new(
-            crate::telemetry::names::TOOL_DURATION,
-            crate::telemetry::names::TOOL,
-            "updateMessage",
-        );
-        let result = async {
-            validate(&message)?;
-            let (channel, message_ref, _) = self
-                .authorize_message(caller, reference, "updateMessage")
-                .await?;
-            if message_ref.native_lark_effect.is_some() {
-                return self.native_lark_update(caller, reference, &message).await;
-            }
-            let (receipt, received) = oneshot::channel();
-            self.deliver(
-                DeliveryCommand::Update {
-                    trace: tracing::Span::current(),
-                    channel,
-                    message_ref,
-                    message,
-                    receipt,
-                },
-                received,
-            )
-            .await
         }
         .await;
         observation.finish(if result.is_ok() { "success" } else { "error" });
@@ -305,6 +280,7 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
+            response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
             Ok(response)
         }
         .await;
@@ -343,6 +319,7 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
+        response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(
@@ -412,7 +389,7 @@ impl ToolsState {
 ///
 /// Refusals log the channel hash, the tool and the outcome class only, never
 /// a key, hash or reference.
-pub(super) fn owner(
+pub(crate) fn owner(
     caller: AgentCaller,
     channel: &ResolvedChannel,
     issued_to: Option<&ConsumerId>,

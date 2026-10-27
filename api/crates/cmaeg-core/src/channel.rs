@@ -153,6 +153,9 @@ pub enum Source {
         /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         thread_history: bool,
+        /// Explicit opt-in to bounded native Discord thread lifecycle operations.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_lifecycle: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {

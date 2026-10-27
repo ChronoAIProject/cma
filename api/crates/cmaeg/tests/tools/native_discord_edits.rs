@@ -82,6 +82,7 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
                 channel_id: "99".into(),
                 authority_sha256: [3; 32],
             })),
+            native_media_edit: None,
             received_reaction: None,
             native_lark_effect: None,
             whatsapp_reaction: None,
@@ -129,6 +130,7 @@ async fn native_card_edit_authorization_rechecks_current_record_after_cached_key
     let reference = MessageRef::seal(
         &MessageRefPayload {
             discord_message: None,
+            native_media_edit: None,
             received_reaction: None,
             native_lark_effect: None,
             whatsapp_reaction: None,

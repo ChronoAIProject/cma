@@ -201,6 +201,7 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         assert_eq!(key["minLength"], 1);
         assert_eq!(key["maxLength"], 128);
         assert_eq!(key["pattern"], "^[!-~]+$");
+        assert_native_media_update_extension(tool, previous, &key);
         if tool["name"] == "replyToEvent" {
             let direct = tool["inputSchema"]["properties"]
                 .as_object_mut()
@@ -226,6 +227,71 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         }
     }
     assert_eq!(*list, golden);
+}
+
+fn assert_native_media_update_extension(tool: &mut Value, previous: &Value, reply_key: &Value) {
+    let definitions = tool["inputSchema"]["$defs"].as_object_mut().unwrap();
+    let patch = definitions.remove("NativeMediaUpdate").unwrap();
+    assert_eq!(
+        patch,
+        json!({
+            "additionalProperties": false,
+            "properties": {
+                "caption": {"description": "Telegram visible caption; Discord attachment description (alt text).", "type": "string"},
+                "replacement": {"$ref": "#/$defs/NativeMediaReplacement"},
+                "text": {"description": "Discord visible message content. Unsupported for Telegram media updates.", "type": "string"}
+            },
+            "type": "object"
+        })
+    );
+    let replacement = definitions.remove("NativeMediaReplacement").unwrap();
+    let mut expected = previous["inputSchema"]["$defs"]["NativeAttachment"].clone();
+    expected["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("caption");
+    assert_eq!(replacement, expected);
+    let field = definitions["OutboundMessage"]["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("native_media_update")
+        .unwrap();
+    assert_eq!(
+        field,
+        json!({
+            "$ref": "#/$defs/NativeMediaUpdate",
+            "description": "Explicit single-media update; accepted only by updateMessage."
+        })
+    );
+    let key = definitions["UpdateArguments"]["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("idempotency_key")
+        .unwrap();
+    let mut expected_key = reply_key.clone();
+    expected_key["description"] =
+        json!("Required only for native_media_update. Omitted for compatible legacy updates.");
+    assert_eq!(key, expected_key);
+    if tool["name"] == "updateMessage" {
+        let direct = tool["inputSchema"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("idempotency_key")
+            .unwrap();
+        assert_eq!(direct, key);
+        assert_eq!(tool["annotations"]["idempotentHint"], false);
+        let description = tool["description"].as_str().unwrap();
+        for phrase in [
+            "explicit media-edit reference authority",
+            "keep the same key and patch on retry",
+            "never change keys after an unknown outcome",
+            "Caption means visible Telegram caption or Discord attachment alt text",
+            "text means visible Discord content",
+        ] {
+            assert!(description.contains(phrase));
+        }
+        tool["description"] = previous["description"].clone();
+    }
 }
 
 #[tokio::test]
