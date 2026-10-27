@@ -115,9 +115,13 @@ Meta reactions become `ActivityKind::Event` with CloudEvent type
 `cma.message.reaction.updated.v1`. `subject` and `data.message_id` contain the
 native target ID. Data includes `original_event_id`, `original_author`,
 `new_reactions` and `provider_timestamp`. A nonempty emoji is the sender's current
-replacement state; an empty string is removal. `old_reactions` is absent because
-Meta does not supply it. The reacting account remains `unknown`; the original
-author is a bot only when an exact confirmed CMA send receipt proves that fact.
+replacement state. Meta's [reaction webhook reference](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/reaction)
+documents removal by omitting the `emoji` field. CMA maps that omission and an
+explicit empty string to `new_reactions: []`; a present null, non-string,
+control-containing or oversized value remains invalid. `old_reactions` is absent
+because Meta does not supply it. The reacting account remains `unknown`; the
+original author is a bot only when an exact confirmed CMA send receipt proves
+that fact. This inbound contract does not establish outbound reaction removal.
 
 Incoming targets must exist in a retained, admitted ordinary-message plan for
 the exact source and private sender. Outgoing targets require an encrypted
