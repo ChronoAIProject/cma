@@ -30,7 +30,6 @@ Timeouts, malformed success bodies, wrong response identities, post-write storag
 
 Telegram provides no generic Bot API message-read endpoint. Discord performs an exact message/channel pre-read. Neither reviewed edit API offers a conditional revision or If-Match contract; local fences coordinate CMA replicas, not independent applications using the same credentials. Provider metadata and transformed media are not a server byte-digest proof. The official contracts are [Telegram Bot API](https://core.telegram.org/bots/api#editmessagemedia) and [Discord Edit Message](https://docs.discord.com/developers/resources/message#edit-message).
 
-
 Edit authority requires a plain supported single-media response. Telegram auto
 caption entities and Discord automatic embeds can make an otherwise successful
 upload ineligible for edits. Failure to store optional edit-enrichment records
@@ -38,3 +37,8 @@ also omits edit authority. These cases preserve confirmed ordinary delivery and
 any separately valid effects-only reference; they never resend the upload.
 Wrong message/destination/bot identity and ambiguous provider writes remain
 unknown. Exact-reference `media_edit` capability absence is authoritative.
+
+Optional pre-send metadata outages omit edit enrichment while ordinary send
+checks still apply. A verified custody contradiction refuses the send. Discord's
+shared provider cooldown remains authoritative when an optional read observes a
+real rate limit; skipping enrichment does not bypass that throttle.

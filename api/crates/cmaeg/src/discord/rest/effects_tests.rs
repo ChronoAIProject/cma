@@ -20,6 +20,7 @@ pub(crate) struct Memory {
     pub user: Value,
     pub emoji: Value,
     pub guild: Value,
+    pub media_channel_status: Option<StatusCode>,
     pub writes: Vec<(Method, String)>,
     pub reject_write: Option<(usize, StatusCode)>,
     pub exhaust_write: Option<usize>,
@@ -47,6 +48,7 @@ impl Fixture {
             user: json!({"id":"77","bot":true}),
             emoji: json!({"id":"500","name":"party","available":true}),
             guild: json!({"id":"99","guild_id":"88"}),
+            media_channel_status: None,
             writes: vec![],
             reject_write: None,
             exhaust_write: None,
@@ -94,7 +96,10 @@ async fn handle(
         return match uri.path() {
             "/api/v10/users/@me" => Json(memory.user.clone()).into_response(),
             "/api/v10/channels/99/messages/800" => Json(memory.message.clone()).into_response(),
-            "/api/v10/channels/99" => Json(memory.guild.clone()).into_response(),
+            "/api/v10/channels/99" => match memory.media_channel_status {
+                Some(status) => status.into_response(),
+                None => Json(memory.guild.clone()).into_response(),
+            },
             "/api/v10/guilds/88/emojis/500" => Json(memory.emoji.clone()).into_response(),
             _ => StatusCode::NOT_FOUND.into_response(),
         };

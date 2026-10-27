@@ -207,3 +207,22 @@ async fn optional_telegram_identity_outage_skips_edit_enrichment_without_retryin
         1
     );
 }
+
+#[tokio::test]
+async fn optional_discord_channel_read_outage_preserves_ordinary_upload() {
+    let (mut app, _) = media_app().await;
+    let _provider = enable(&mut app, false).await;
+    app.platform.memory.lock().unwrap().media_channel_status =
+        Some(StatusCode::SERVICE_UNAVAILABLE);
+    let receipt = app.send_message(upload("alt", None)).await;
+    assert_eq!(receipt.delivery.kind(), "confirmed");
+    assert!(receipt
+        .message_ref
+        .unwrap()
+        .open(&app.state.keys)
+        .unwrap()
+        .payload
+        .native_media_edit
+        .is_none());
+    assert_eq!(app.platform.memory.lock().unwrap().writes.len(), 1);
+}
