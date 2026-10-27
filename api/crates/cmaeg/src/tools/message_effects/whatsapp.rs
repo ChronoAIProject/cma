@@ -81,6 +81,10 @@ impl ToolsState {
                 .await;
         }
         if !verified
+            || !self
+                .resolver
+                .record_client()
+                .whatsapp_reaction_storage_available()
             || !self.whatsapp_reactions.as_ref()?.issuance_enabled
             || !matches!(
                 activity.source,
@@ -161,7 +165,37 @@ impl ToolsState {
         let retained_until = authority
             .received_at
             .saturating_add(cmaeg_core::seal::whatsapp_reaction::MAX_REACTION_AGE);
-        let store = receipts::Store::new(self.resolver.record_client(), self.keys.clone());
+        let store =
+            receipts::Store::whatsapp_reaction(self.resolver.record_client(), self.keys.clone());
+        // Legacy HTTP storage can replay existing results but cannot admit a new
+        // thirty-day claim or fence under its seven-day write contract.
+        if !self
+            .resolver
+            .record_client()
+            .whatsapp_reaction_storage_available()
+        {
+            let receipt = store
+                .lookup_scoped(
+                    "whatsapp_received_reaction_v1",
+                    "cmaeg.whatsapp-received-reaction.v1",
+                    scope,
+                    request_id,
+                    receipts::hash(&effect),
+                    &channel.definition.owner.subject,
+                    retained_until,
+                )
+                .await?
+                .ok_or_else(|| {
+                    Problem::new(
+                        ProblemCode::Internal,
+                        503,
+                        "whatsapp_reaction_retention_unsupported",
+                    )
+                })?;
+            return Ok(MessageEffectReceipt {
+                delivery: receipt.delivery,
+            });
+        }
         let claim = match store
             .claim_scoped(
                 "whatsapp_received_reaction_v1",
