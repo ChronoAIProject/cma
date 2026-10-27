@@ -1,7 +1,7 @@
 //! Checked sample/chunk byte ranges; callers decide overlap and timing policy.
 use super::{one, u32_at, Atom};
 use std::ops::Range;
-pub(in crate::whatsapp::outbound) fn sample_ranges(
+pub(crate) fn sample_ranges(
     top: &[Atom<'_>],
     table: &[Atom<'_>],
     limit: usize,

@@ -16,6 +16,8 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
     .unwrap();
     MessageRefPayload {
         discord_message: None,
+        received_reaction: None,
+        native_lark_effect: None,
         whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,
@@ -318,4 +320,86 @@ fn whatsapp_received_reaction_authority_preserves_legacy_bytes_and_bounds_exact_
             "defect {defect}"
         );
     }
+}
+
+#[test]
+fn received_reaction_scope_has_fixed_window_exact_ids_and_no_edit_delete_authority() {
+    use cmaeg_core::seal::received_reaction::{
+        ReceivedReactionAuthority, ReceivedReactionPlatform as Native, MAX_AGE,
+    };
+    let keys = keys(1);
+    for platform in [Native::Telegram, Native::Discord] {
+        let mut message = payload(&keys);
+        let authority = ReceivedReactionAuthority {
+            platform,
+            bot_id: "77".into(),
+            chat_id: if platform == Native::Telegram {
+                "-100".into()
+            } else {
+                "99".into()
+            },
+            actor_id: "42".into(),
+            thread_id: Some(if platform == Native::Telegram {
+                "123".into()
+            } else {
+                "99".into()
+            }),
+            event_sha256: "a".repeat(64),
+            authority_sha256: "b".repeat(64),
+            received_at: 100,
+            expires_at: 100 + MAX_AGE,
+        };
+        message.route_id = authority.route();
+        message.platform_message_id = "800".into();
+        message.received_reaction = Some(Box::new(authority));
+        assert_eq!(
+            MessageRef::seal(&message, &keys)
+                .unwrap()
+                .open(&keys)
+                .unwrap()
+                .payload,
+            message
+        );
+        for defect in 0..12 {
+            let mut bad = message.clone();
+            let a = bad.received_reaction.as_mut().unwrap();
+            match defect {
+                0 => a.bot_id = "077".into(),
+                1 => a.actor_id = a.bot_id.clone(),
+                2 => a.chat_id = "0".into(),
+                3 => bad.platform_message_id = "800/../801".into(),
+                4 => a.thread_id = Some("0".into()),
+                5 => a.event_sha256 = "g".repeat(64),
+                6 => a.authority_sha256.clear(),
+                7 => a.expires_at += 1,
+                8 => a.expires_at = a.received_at,
+                9 => a.received_at = 0,
+                10 => bad.interaction_record_id = Some("card".into()),
+                11 => bad.consumer = Some(cmaeg_core::ids::ConsumerId::default_consumer()),
+                _ => unreachable!(),
+            }
+            assert!(
+                MessageRef::seal(&bad, &keys).unwrap().open(&keys).is_err(),
+                "{platform:?}: defect {defect}"
+            );
+        }
+        message.route_id = "telegram:77:-100".into();
+        assert!(MessageRef::seal(&message, &keys)
+            .unwrap()
+            .open(&keys)
+            .is_err());
+    }
+}
+
+#[test]
+fn legacy_message_reference_serialization_omits_received_reaction_scope() {
+    let keys = keys(1);
+    let message = payload(&keys);
+    let bytes = serde_json::to_vec(&message).unwrap();
+    let mut legacy = serde_json::to_value(&message).unwrap();
+    assert!(legacy.get("received_reaction").is_none());
+    legacy.as_object_mut().unwrap().remove("received_reaction");
+    let read: MessageRefPayload = serde_json::from_value(legacy).unwrap();
+    assert_eq!(read, message);
+    assert_eq!(serde_json::to_vec(&read).unwrap(), bytes);
 }

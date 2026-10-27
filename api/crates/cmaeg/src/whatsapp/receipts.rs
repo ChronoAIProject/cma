@@ -133,7 +133,6 @@ impl Store {
         self.load_inner(channel, source, recipient, message, now, false)
             .await
     }
-    #[cfg(test)]
     pub(crate) async fn load_group(
         &self,
         channel: &ChannelId,

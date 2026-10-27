@@ -54,6 +54,9 @@ pub enum Source {
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
+        /// Admit native channel posts with unknown channel actors; requires message_events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel_posts: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.
@@ -154,6 +157,9 @@ pub enum SourceRequest {
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_events: Option<bool>,
+        /// Admit native channel posts with unknown channel actors; requires message_events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        channel_posts: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.

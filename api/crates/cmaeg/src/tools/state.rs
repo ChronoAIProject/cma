@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
@@ -39,7 +40,9 @@ pub struct ToolsState {
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
-    /// Bounded native WhatsApp image/PDF/audio/sticker uploads, independently default-off.
+    /// Bounded native Lark image/document/audio/video uploads, independently default-off.
+    pub native_lark_outbound_media_enabled: bool,
+    /// Bounded native WhatsApp image/document/audio/sticker/video uploads, independently gated.
     pub native_whatsapp_outbound_media_enabled: bool,
     /// Approved native template replies, independently default-off from relay templates/uploads.
     pub native_whatsapp_templates_enabled: bool,
@@ -113,7 +116,9 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.whatsapp_reaction.is_some()
+        let channel = if message.received_reaction.is_some()
+            || message.native_lark_effect.is_some()
+            || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()
             || message.discord_message.is_some()
             || (message.interaction_record_id.is_some() && message.route_id.starts_with("discord:"))
@@ -219,6 +224,9 @@ impl ToolsState {
             let (channel, message_ref, _) = self
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;
+            if message_ref.native_lark_effect.is_some() {
+                return self.native_lark_update(caller, reference, &message).await;
+            }
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Update {

@@ -124,6 +124,15 @@ export const CustomAttachmentsSchema = object({
 });
 export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
+const TelegramSourceSchema = object({
+  message_events: optional(boolean),
+  channel_posts: optional(boolean),
+  admission: AdmissionPolicySchema,
+  bot_id: text,
+  bot_username: optional(nullable(text)),
+  type: enumeration('telegram'),
+});
+
 export const SourceRequestSchema = tagged(
   {
     native_lark: object({
@@ -147,13 +156,7 @@ export const SourceRequestSchema = tagged(
       thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
-    telegram: object({
-      message_events: optional(boolean),
-      admission: AdmissionPolicySchema,
-      bot_id: text,
-      bot_username: optional(nullable(text)),
-      type: enumeration('telegram'),
-    }),
+    telegram: TelegramSourceSchema,
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),
@@ -372,13 +375,7 @@ export const SourceSchema = tagged(
       thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
-    telegram: object({
-      message_events: optional(boolean),
-      admission: AdmissionPolicySchema,
-      bot_id: text,
-      bot_username: optional(nullable(text)),
-      type: enumeration('telegram'),
-    }),
+    telegram: TelegramSourceSchema,
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),

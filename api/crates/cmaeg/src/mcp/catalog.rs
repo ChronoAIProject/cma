@@ -46,7 +46,17 @@ fn selected(state: &ToolsState) -> Vec<SelectedTool> {
         .whatsapp_reactions
         .as_ref()
         .is_some_and(|client| client.issuance_enabled)
+        || state
+            .native_lark_effects
+            .as_ref()
+            .is_some_and(|c| c.confirmed_issuance_enabled || c.received_issuance_enabled)
         || (state.lark_effects_issuance_enabled && state.lark_effects.is_some())
+        || state.received_reaction_enabled(
+            cmaeg_core::seal::received_reaction::ReceivedReactionPlatform::Telegram,
+        )
+        || state.received_reaction_enabled(
+            cmaeg_core::seal::received_reaction::ReceivedReactionPlatform::Discord,
+        )
         || state.telegram_effects_issuance_enabled
         || state.discord_effects_issuance_enabled
         || state
