@@ -191,34 +191,6 @@ pub async fn callback(
             )
         }
     };
-    if !statuses.is_empty() {
-        let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
-            return problem(
-                StatusCode::TOO_MANY_REQUESTS,
-                ProblemCode::RateLimited,
-                "native_whatsapp_ingress_capacity",
-            );
-        };
-        use futures_util::{stream, StreamExt, TryStreamExt};
-        let observed = stream::iter(statuses.iter())
-            .map(|status| state.observe_whatsapp_status(&channel, source, status, now))
-            .buffer_unordered(8)
-            .try_collect::<Vec<_>>();
-        if !matches!(
-            tokio::time::timeout(Duration::from_secs(15), observed).await,
-            Ok(Ok(_))
-        ) {
-            let mut response = problem(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ProblemCode::ProviderUnavailable,
-                "native_whatsapp_status_persistence_pending",
-            );
-            response
-                .headers_mut()
-                .insert("retry-after", "5".parse().unwrap());
-            return response;
-        }
-    }
     // Establish ordinary-message authority first when a batch contains both the
     // original and its reaction. Distinct reactions retain provider timestamps.
     messages.sort_by_key(|message| matches!(message.content, Content::Reaction { .. }));
@@ -298,6 +270,36 @@ pub async fn callback(
                 result.refused += 1;
             }
             _ => result.refused += 1,
+        }
+    }
+    // A delayed status receipt must not hold up new incoming messages in a
+    // mixed Meta batch. Retried batches reuse the already admitted message IDs.
+    if !statuses.is_empty() {
+        let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
+            return problem(
+                StatusCode::TOO_MANY_REQUESTS,
+                ProblemCode::RateLimited,
+                "native_whatsapp_ingress_capacity",
+            );
+        };
+        use futures_util::{stream, StreamExt, TryStreamExt};
+        let observed = stream::iter(statuses.iter())
+            .map(|status| state.observe_whatsapp_status(&channel, source, status, now))
+            .buffer_unordered(8)
+            .try_collect::<Vec<_>>();
+        if !matches!(
+            tokio::time::timeout(Duration::from_secs(15), observed).await,
+            Ok(Ok(_))
+        ) {
+            let mut response = problem(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ProblemCode::ProviderUnavailable,
+                "native_whatsapp_status_persistence_pending",
+            );
+            response
+                .headers_mut()
+                .insert("retry-after", "5".parse().unwrap());
+            return response;
         }
     }
     Json(result).into_response()

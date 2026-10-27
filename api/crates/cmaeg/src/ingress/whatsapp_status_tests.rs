@@ -310,3 +310,40 @@ async fn group_statuses_keep_each_participant_under_the_original_group_consumer(
         before
     );
 }
+
+#[tokio::test]
+async fn pending_status_in_mixed_batch_does_not_block_or_duplicate_incoming_message() {
+    let fixture = StatusSetup::new().await;
+    let mut body: Value = serde_json::from_slice(&fixture.body("sent", 0)).unwrap();
+    let value = &mut body["entry"][0]["changes"][0]["value"];
+    value["statuses"][0]["id"] = "wamid.not-yet-retained".into();
+    value["messages"] = json!([current(text("wamid.mixed-incoming", "new message"))]);
+    let body = serde_json::to_vec(&body).unwrap();
+    let response = call(
+        fixture.app.clone(),
+        fixture.setup.callback(body.clone(), true),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let plan = fixture
+        .setup
+        .server
+        .store()
+        .load(&fixture.setup.identity("wamid.mixed-incoming"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        plan.activity.event_id,
+        fixture.setup.identity("wamid.mixed-incoming").event_id
+    );
+    assert_eq!(fixture.page().await.items.len(), 2);
+    let writes = fixture.setup.server.memory.writes.load(Ordering::SeqCst);
+    let response = call(fixture.app.clone(), fixture.setup.callback(body, true)).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        fixture.setup.server.memory.writes.load(Ordering::SeqCst),
+        writes
+    );
+    assert_eq!(fixture.page().await.items.len(), 2);
+}
