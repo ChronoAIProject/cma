@@ -57,9 +57,11 @@ Separately gated Discord and Telegram uploads can issue effects-only authority
 for one exact confirmed native message. The new default-off
 [native media edit gates](CMAEG_Native_Media_Edits.md) may additionally issue
 explicit revisioned edit authority for one supported attachment in one confirmed
-message. Historical effects-only references gain no editing authority. Multipart
-per-message references, albums, multiple-attachment edits and decorated-media
-editing remain pending; uncertain sends issue no authority. WhatsApp message
+message. Historical effects-only references gain no editing authority. Supported
+automatic Telegram caption entities and Discord generated previews/spoiler flags
+are preserved by the composed media-edit implementation. Unsupported authored
+formatting/embeds, multipart per-message references, albums and multiple-attachment
+edits remain pending; uncertain sends issue no authority. WhatsApp message
 editing remains unsupported. Native existing-group messaging has separate owner
 consent and independently controlled gates; account identity does not prove a
 human sender.
