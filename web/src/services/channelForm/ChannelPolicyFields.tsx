@@ -4,12 +4,12 @@ import { AdmissionFields } from './AdmissionFields';
 import { Choice, NumberField, Section, StringList, TextField, Toggle } from './Fields';
 import { object, optional, records, strings, type Fields } from './model';
 const partitionKeys = [
-  'conversation_and_sender',
-  'conversation',
-  'thread',
-  'fixed',
-  'event_subject',
-  'per_event',
+  { value: 'conversation_and_sender', label: 'Each sender in each conversation' },
+  { value: 'conversation', label: 'Each conversation' },
+  { value: 'thread', label: 'Each thread' },
+  { value: 'fixed', label: 'One shared conversation' },
+  { value: 'event_subject', label: 'Each event subject' },
+  { value: 'per_event', label: 'A new conversation for every event' },
 ];
 export function ChannelPolicyFields({
   value,
@@ -30,7 +30,10 @@ export function ChannelPolicyFields({
   const setReply = (key: string, next: unknown) => set('reply', optional(reply, key, next));
   return (
     <>
-      <Section title="Channel settings">
+      <Section
+        title="Channel settings"
+        description="Give the channel a recognizable name and manage any shared connection."
+      >
         <TextField
           label="Channel name"
           value={value.name}
@@ -62,7 +65,10 @@ export function ChannelPolicyFields({
           </>
         ) : null}
       </Section>
-      <Section title="Conversation grouping">
+      <Section
+        title="Conversation grouping"
+        description="Messages with the same grouping share an agent conversation and its history. Choose separate conversations when senders should not share context."
+      >
         <Choice
           label="Group incoming messages by"
           value={partition.key}
@@ -78,9 +84,13 @@ export function ChannelPolicyFields({
           onChange={(v) => set('partition', optional(partition, 'custom_key', v || undefined))}
         />
       </Section>
-      <Section title="Replies">
+      <Section
+        title="Replies"
+        description="Choose when answers are sent and where they go. The original conversation returns the answer to the sender."
+      >
         <Toggle
           label="Send final answers automatically"
+          hint="Send the agent’s completed answer without requiring an explicit reply tool call."
           value={reply.auto_final}
           onChange={(v) => setReply('auto_final', v)}
         />
@@ -157,7 +167,10 @@ export function ChannelPolicyFields({
           Add reply destination
         </Button>
       </Section>
-      <Section title="Native threads">
+      <Section
+        title="Native threads"
+        description="Keep supported platform threads connected to the same agent conversation."
+      >
         <Toggle
           label="Enable verified thread following"
           value={reply.thread_contract != null}

@@ -40,8 +40,9 @@ export function flowResponse(path) {
 export async function flowStyles(page, port) {
   await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
   await visit(page, port, 'domcontentloaded', '/event-gateway');
-  await ready(page, '.gateway-sidebar__channel', { label: 'style check channel' });
-  await page.click('.gateway-sidebar__channel');
+  const channelRow = '.gateway-sidebar [data-node-id="channel:style-record"] .tree-row__label';
+  await ready(page, channelRow, { label: 'style check channel' });
+  await page.click(channelRow);
   const scope = '.channel-map .delivery-flow .react-flow';
   await ready(page, `${scope} .react-flow__controls-button`, { label: 'Flow controls' });
   // A horizontal SVG path has zero bounding-box height despite a visible stroke.
@@ -68,7 +69,7 @@ export async function flowStyles(page, port) {
           ['', 'background-color', '--dsw-alias-bg-layer-2'],
           ['.react-flow__background', 'background-color', '--dsw-alias-bg-layer-2'],
           ['.react-flow__background-pattern.dots', 'fill', '--dsw-alias-border-l3'],
-          ['.react-flow__edge-path', 'stroke', '--dsw-alias-border-l3'],
+          ['.react-flow__edge-path', 'stroke', '--dsw-alias-label-tertiary'],
           ['.react-flow__handle', 'background-color', '--dsw-alias-bg-layer-1'],
           ['.react-flow__handle', 'border-top-color', '--dsw-alias-border-l3'],
           ['.react-flow__controls', 'box-shadow', '--dsw-shadow-lv1'],
@@ -99,8 +100,8 @@ export async function flowStyles(page, port) {
           }
         }
         for (const edge of flow.querySelectorAll('.react-flow__edge-path')) {
-          if (getComputedStyle(edge).strokeWidth !== '1px' || !edge.getAttribute('d'))
-            problems.push('Flow edge has no 1px rendered path');
+          if (getComputedStyle(edge).strokeWidth !== '1.5px' || !edge.getAttribute('d'))
+            problems.push('Flow edge has no 1.5px rendered path');
         }
         if (flow.getBoundingClientRect().height < 320)
           problems.push('Flow canvas is shorter than its 320px minimum');

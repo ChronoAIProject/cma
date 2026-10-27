@@ -92,6 +92,7 @@ const preview = () => screen.getByRole('region', { name: 'Latest channel activit
 const choose = async (name: string) => {
   const sidebar = screen.getByRole('region', { name: 'Channels' });
   await userEvent.click(await within(sidebar).findByRole('button', { name: new RegExp(name) }));
+  await screen.findByRole('region', { name: 'Latest channel activity' });
 };
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -195,4 +196,23 @@ it('shows a receipt without consumers and preserves each reported consumer outco
   expect(within(preview()).getByText('Reviewer · Queued')).toBeVisible();
   expect(within(preview()).getByText('Auditor · Refused')).toBeVisible();
   expect(within(preview()).queryByText('Delivery confirmed')).not.toBeInTheDocument();
+});
+
+it('shows only the latest three receipts beside Activity without adding a subscription', async () => {
+  setup();
+  await choose('First channel');
+  const page = snapshot('Latest receipt');
+  page.items = ['Latest receipt', 'Second receipt', 'Third receipt', 'Older receipt'].map(
+    (name) => snapshot(name).items[0]!,
+  );
+  act(() => Feed.instances[0]!.snapshot(page));
+  const latest = preview();
+  expect(within(latest).getByText('Latest receipt')).toBeVisible();
+  expect(within(latest).getByText('Second receipt')).toBeVisible();
+  expect(within(latest).getByText('Third receipt')).toBeVisible();
+  expect(within(latest).queryByText('Older receipt')).not.toBeInTheDocument();
+  const overlay = latest.closest('.delivery-flow__overlay')!;
+  expect(within(overlay as HTMLElement).getByRole('button', { name: 'Activity' })).toBeVisible();
+  expect(screen.queryByText('Browse delivery nodes')).not.toBeInTheDocument();
+  expect(Feed.instances).toHaveLength(1);
 });
