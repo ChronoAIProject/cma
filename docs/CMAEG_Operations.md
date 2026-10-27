@@ -2817,10 +2817,9 @@ acceptance remains **unverified**; activation permits owner setup and testing.
 The exact pod template and ConfigMap were verified with the startup-source proof;
 the verifier did not read PID 1's environment directly.
 
-Five follow-up gates remain false: native Telegram/Discord received-message
+At the #1157 activation, five follow-up gates remained false: native Telegram/Discord received-message
 reactions, native Lark outbound media, native Lark message effects and native
-Lark received-message reactions. Their code in this branch is newer than the
-accepted production image. Rollback must retain a compatible reader for already
+Lark received-message reactions. Their later #1158 activation is recorded below. Rollback must retain a compatible reader for already
 issued authority; stopping issuance does not permit restoring an older reader.
 
 The automated full-inventory guard **did not pass**. Root separately accepted
@@ -2852,3 +2851,52 @@ be removed without enabling the gate. No runtime or infrastructure flag is
 activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
 for authority boundaries, persistent uncertain-write fences, unsupported private
 and forum creation, and exact API semantics.
+
+
+### Native received reactions and Lark media/effects activation (2026-10-28)
+
+PR #1158 candidate `73d24c2e8b949ab3f8186c0f651afdfeb94689e0` passed
+CI `40585431963`, attempt 1, and merged to develop as
+`8939e305d5bca2318a4831a1fedcfd173c562a1f`. Gateway generation 36 serves
+`sha256:4578a6f5abb70ea2bb3aa98859f3c452ebe68366d2a317d6196909606d6c0f32`;
+Web generation 162 serves
+`sha256:8835f2b64afc824f5b9f4128e9a3de3bc3b19b9d10cc85f083e037dfedc464d7`.
+The Web initializer retains the preceding `2a5fdf21a71f` release and all earlier
+retained asset images. Agent Manager generation 74 and the runtime default were
+not part of this release.
+
+After the compatible predecessor drained, the same Gateway image loaded exactly
+five additional flags: native Telegram/Discord received-message reactions and
+native Lark outbound media, message effects and received-message reactions.
+Their code defaults remain false. The five named container environment values,
+exact template/configuration, public health/schema and unchanged eight-tool
+owner discovery were verified. Native Lark controls/forms, media-edit issuance
+and Discord thread lifecycle remain separate disabled source increments.
+
+A new isolated Custom campaign completed two events once and rejected one invalid
+HMAC with 401. Activity arrived in 238 ms in the API observation; production Web
+inserted its receipt in 208 ms from send intent in one sample (DOM insertion, not
+first paint). The Activity dialog shared the existing stream and reconnect
+retained the exact completed turn. An authenticated attachment read returned the
+exact 29-byte file. The temporary channel, provider resources and key were retired
+once; a second cleanup observation waited for retirement without repeating DELETE.
+The browser used a bearer adapter and minimal owner-derived read-only bootstrap;
+normal cookie/OAuth bridge, configuration writes and connected platform behavior
+were not tested. Four settled configuration inspectors passed the shared desktop
+20% margins and section navigation checks.
+
+The release preserved 12 existing user Pod identities, 22 volumes, 39 Agent
+lineages and 2,329 sampled durable events. Exact known missing-workspace-identity
+crashloop drift and test-spare replacement were reviewed separately; do not report
+the original full runtime inventory as unchanged. Before activation, an unassigned
+warm spare changed while all actions were read-only. That capture was retained,
+its differences explicitly reviewed, and a new baseline captured before any flag
+patch. The final activation's exact runtime/PVC guard passed against that reviewed
+baseline. Connected native Telegram, WhatsApp, Lark/Feishu and Discord acceptance
+remains unverified and reserved for owner testing. Rollback must preserve a reader
+compatible with issued references.
+
+Publication SHA-256:
+`bed89e34f9c2b9c722b4804ebce9bdcb68732dcb3ddc5b6f96f4c4e5dce6e08c`.
+Accepted activation receipt SHA-256:
+`663b7eac1903988c1c284122e654a2357382ce1a9ac7ff49bad462e313d60516`.
