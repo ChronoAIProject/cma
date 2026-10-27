@@ -2930,3 +2930,33 @@ Accepted activation receipt SHA-256:
 ### Optional native WhatsApp Forms storage
 
 Native Forms require the separate persistent `eg_whatsapp_flow_records` collection; ordinary interaction records keep their seven-day maximum TTL. Compatible readers accept optional exact Forms grants without requiring them for Gateway startup. Review `--print-whatsapp-forms-runtime-role` / `--print-whatsapp-forms-migration-role`, then run `--migrate-whatsapp-forms` only after compatible readers are deployed. Restart readers to prove the optional marker, grants and non-TTL indexes before enabling the independently false-default `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED` and `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED` flags. Preserve all asset/send tombstones. The source implementation does not migrate production, and native acceptance remains user-reserved. [Migration and rollback details](CMAEG_Native_WhatsApp_Forms.md#optional-persistent-storage).
+
+## Native Discord conversation history gate
+
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` defaults to `false` and accepts
+`true`/`false`. It independently enables the `readEventHistory` MCP tool and execution
+of the exact original-conversation REST read. Owners must also opt into source
+`conversation_history` before the original human event is admitted. Turning it on
+after admission does not upgrade an old event. Saved consent can be retained or
+removed while the writer gate is disabled; normal native source gates still apply.
+
+Deploy readers that understand the additive source field before authoring it.
+When disabled, no history platform reads execute and the tool is omitted from
+discovery. This increment does not enable production history or establish connected
+Discord acceptance. Permission and Message Content behavior still require acceptance
+with the intended bot. The legacy 20-message thread context option retains its
+separate flag and consent.
+
+Each request is bounded by an entry-to-response eight-second deadline, eight
+in-flight slots, one 26-row list request, existing bot cooldowns and fixed response
+budgets. A source, owner, consumer, provider, credential, partition or original-anchor
+change can invalidate the result or continuation. Failures never return a partial
+page or mint new authority. An empty visible result is not a complete-history claim.
+See [conversation history design](CMAEG_Native_Discord_History_Pagination_Design.md)
+for the authenticated evidence, projection bounds and unsupported scope.
+
+Optional context discovery uses the channel already authorized by the context read,
+performs no enrichment I/O for other platforms or sources without consent, and
+allows at most 100 ms for retained history authority. Slow or busy discovery omits
+the capability hint. Explicit history reads still perform fresh authority checks
+under their independent eight-second total budget.

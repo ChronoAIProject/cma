@@ -1,6 +1,8 @@
 //! Stateless MCP streamable HTTP using JSON responses and the shared tools service.
 pub(crate) mod catalog;
 mod form_preparation;
+
+mod history;
 mod message_effects;
 pub mod results;
 mod threads;

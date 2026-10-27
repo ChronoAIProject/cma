@@ -21,6 +21,8 @@ pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_lifecycle_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_discord_conversation_history_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,
@@ -119,6 +121,9 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
                 && state.multi_consumer_writes_enabled,
         ),
         native_discord_thread_history_enabled: Some(state.native_discord_thread_history_enabled),
+        native_discord_conversation_history_enabled: Some(
+            state.native_discord_conversation_history_enabled,
+        ),
         native_discord_thread_lifecycle_enabled: Some(
             state.native_discord_thread_lifecycle_enabled,
         ),

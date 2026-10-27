@@ -11,6 +11,8 @@ pub mod creation;
 pub(crate) mod docs;
 pub mod events;
 pub mod form_preparation;
+
+pub mod history;
 pub(crate) mod html;
 pub mod management;
 mod management_responses;

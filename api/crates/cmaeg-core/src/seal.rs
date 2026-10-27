@@ -24,6 +24,8 @@ pub mod received_reaction;
 pub mod reply_target;
 pub mod thread_ref;
 pub use thread_ref::{ThreadRef, ThreadRefPayload};
+mod history_cursor;
+pub use history_cursor::{HistoryCursor, HistoryCursorPayload, HistoryOrigin};
 pub mod telegram_effect;
 pub mod whatsapp_reaction;
 
@@ -60,6 +62,7 @@ pub enum TokenKind {
     ConsumerInteraction,
     ReplyTarget,
     ThreadRef,
+    HistoryCursor,
     Connection,
     ConnectionSetup,
     MediaLink,
@@ -77,6 +80,7 @@ impl TokenKind {
             Self::ConsumerInteraction => "ic",
             Self::ReplyTarget => "rt",
             Self::ThreadRef => "tr",
+            Self::HistoryCursor => "hc",
             Self::Connection => "cn",
             Self::ConnectionSetup => "cs",
             Self::MediaLink => "md",
