@@ -111,7 +111,8 @@ def validate_bundle(directory, prefix):
     manifest = json.loads(manifest_path.read_text())
     require(isinstance(manifest, dict), "cache manifest must be an object")
     require(manifest.get("format") == FORMAT and manifest.get("prefix") == prefix, "incompatible cache bundle")
-    require(set(manifest.get("archives", {})) == set(MOUNTS), "missing cache mount")
+    archives = manifest.get("archives")
+    require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
     require(size <= MAX_ARCHIVE_BYTES, "compressed cache exceeds 1 GiB")
     content = count = 0
