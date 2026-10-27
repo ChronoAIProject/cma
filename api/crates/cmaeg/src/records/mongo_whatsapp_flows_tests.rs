@@ -54,6 +54,28 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
     migrate(&migrator.database(name)).await?;
     migrate(&migrator.database(name)).await?;
     records.whatsapp_flows_ready().await?;
+    // Both optional stores must coexist through either migration order and base reruns.
+    db.run_command(super::super::thread_fences_role(name, false))
+        .await?;
+    db.run_command(doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_thread_fences_runtime","db":name}]}).await?;
+    super::super::migrate_thread_fences(db).await?;
+    migrate(&migrator.database(name)).await?;
+    super::super::migrate(db).await?;
+    super::super::migrate_thread_fences(db).await?;
+    let runtime = connect("runtime").await?;
+    let records = MongoRecords::open(runtime.database(name)).await?;
+    records.whatsapp_flows_ready().await?;
+    records.thread_fences_ready().await?;
+    for (marker, version) in [("schema", 2), ("whatsapp_forms", 1), ("thread_fences", 1)] {
+        assert_eq!(
+            db.collection::<Document>(MIGRATIONS)
+                .find_one(doc! {"_id":marker})
+                .await?
+                .unwrap()
+                .get_i32("version")?,
+            version
+        );
+    }
     assert_eq!(
         db.collection::<Document>(MIGRATIONS)
             .find_one(doc! {"_id":"schema"})
@@ -69,8 +91,11 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
     let id = uuid::Uuid::new_v4().to_string();
     assert_eq!(flows.put(&id, "owner", b"persistent", None).await?, 1);
     assert_eq!(records.put(&id, "owner", b"channel", None).await?, 1);
+    let fences = records.for_kind(RecordKind::ThreadFence);
+    assert_eq!(fences.put(&id, "owner", b"thread", None).await?, 1);
     assert_eq!(flows.get(&id).await?.blob, b"persistent");
     assert_eq!(records.get(&id).await?.blob, b"channel");
+    assert_eq!(fences.get(&id).await?.blob, b"thread");
     assert!(records
         .for_kind(RecordKind::Interaction)
         .put(&id, "owner", b"invalid", None)
