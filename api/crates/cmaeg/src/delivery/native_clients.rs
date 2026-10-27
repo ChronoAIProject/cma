@@ -3,6 +3,11 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_lark_controls(mut self, controls: bool, forms: bool) -> Self {
+        self.native_lark_controls = controls;
+        self.native_lark_forms = controls && forms;
+        self
+    }
     pub fn with_native_lark_effects(mut self, enabled: bool) -> Self {
         self.native_lark_effects = enabled;
         self

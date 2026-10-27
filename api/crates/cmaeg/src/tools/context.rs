@@ -72,6 +72,8 @@ pub struct Capabilities {
     pub whatsapp_template_components: Option<Vec<String>>,
     pub edit: bool,
     pub typing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forms: Option<bool>,
     pub buttons: String,
     pub cards: String,
     pub attachments: String,
@@ -103,6 +105,7 @@ impl Capabilities {
         Self {
             edit: false,
             typing: false,
+            forms: None,
             buttons: "json".into(),
             cards: "json".into(),
             attachments: "reference".into(),
@@ -126,6 +129,7 @@ impl Capabilities {
         Self {
             edit: true,
             typing: false,
+            forms: None,
             buttons: "inline_keyboard".into(),
             cards: "text".into(),
             attachments: "link_text".into(),
@@ -145,6 +149,7 @@ impl Capabilities {
         Self {
             edit: false,
             typing: false,
+            forms: None,
             buttons: "numbered_text".into(),
             cards: "text".into(),
             attachments: "link_text".into(),
@@ -384,7 +389,9 @@ pub(super) fn project(
         activity_verified,
         &mut capabilities,
     );
-    let consumer_controls = event.consumer.is_none()
+    let consumer_controls = (activity_verified
+        && crate::interactions::native_lark::eligible(channel, event, &activity))
+        || event.consumer.is_none()
         || (state.consumer_interactions_enabled
             && activity_verified
             && crate::interactions::owner::eligible(channel, event, &activity));

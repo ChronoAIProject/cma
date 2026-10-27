@@ -290,6 +290,9 @@ pub struct Capabilities {
     pub native_media: Option<super::NativeMediaCapabilities>,
     /// Wire field `attachments`.
     pub attachments: String,
+    /// Whether native forms may be issued for this exact event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forms: Option<bool>,
     /// Wire field `buttons`.
     pub buttons: String,
     /// Wire field `cards`.
