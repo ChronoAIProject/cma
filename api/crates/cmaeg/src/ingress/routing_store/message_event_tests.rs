@@ -190,3 +190,58 @@ async fn message_events_ignore_new_targets_but_refuse_removed_or_rebound_origina
         }
     }
 }
+
+#[tokio::test]
+async fn confirmed_outbound_selector_narrows_to_one_retained_consumer() {
+    let server = Server::start().await;
+    let request = fixture::request(fixture::targets, fixture::message("original"));
+    let original = server
+        .store()
+        .admit(
+            &Candidate::prepare(
+                &request,
+                &fixture::routed(&request),
+                b"original",
+                &fixture::keys(),
+                fixture::NOW,
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let selected = &original.targets[1].launch;
+    let incoming = || fixture::request(|_| {}, notification(&request.activity));
+    let (bound, plan) = message_event::bind_outbound(
+        incoming(),
+        &original,
+        &fixture::keys(),
+        fixture::NOW,
+        &selected.consumer,
+    )
+    .unwrap();
+    assert_eq!(plan.targets.len(), 1);
+    let target = &plan.targets[0];
+    assert_eq!(target.consumer, selected.consumer);
+    assert_eq!(target.provider, selected.provider);
+    assert_eq!(target.event.partition_key, selected.event.partition_key);
+    assert_eq!(target.event.conversation_id, selected.event.conversation_id);
+    assert!(target.event.verifies_activity(&bound.activity));
+    assert_eq!(bound.activity.routing.as_ref().unwrap().targets.len(), 1);
+    let candidate = Candidate::prepare_message_event(
+        &bound,
+        &plan,
+        b"reaction",
+        &fixture::keys(),
+        fixture::NOW,
+    )
+    .unwrap();
+    server.store().admit(&candidate).await.unwrap();
+    assert!(message_event::bind_outbound(
+        incoming(),
+        &original,
+        &fixture::keys(),
+        fixture::NOW,
+        &cmaeg_core::ids::ConsumerId::parse("csm_ffffffffffff").unwrap(),
+    )
+    .is_err());
+}
