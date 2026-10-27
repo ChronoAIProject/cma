@@ -4,9 +4,7 @@ use crate::{
     channels::resolver::ResolvedChannel,
     delivery::intents::{DeliveryOutcome, IntentReceipt},
 };
-use cmaeg_core::{
-    activity::ActivityConversation, message::OutboundMessage, seal::MessageRefPayload,
-};
+use cmaeg_core::{message::OutboundMessage, seal::MessageRefPayload};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -17,11 +15,7 @@ pub struct Edit {
     successor: String,
     receipt: Option<IntentReceipt>,
 }
-pub(crate) struct Candidate {
-    pub card: Card,
-    pub conversation: ActivityConversation,
-    version: u64,
-}
+pub(crate) use super::discord_authority::Candidate;
 pub(crate) enum Admission {
     Ready(Box<Candidate>),
     Replay(IntentReceipt),
@@ -57,38 +51,9 @@ impl InteractionStore {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> Result<Admission, Error> {
-        let (card, version) = self
-            .load(
-                reference
-                    .interaction_record_id
-                    .as_deref()
-                    .ok_or(Error::Denied)?,
-            )
-            .await?;
-        let identity = card.discord.as_ref().ok_or(Error::Denied)?;
+        let candidate = self.discord_card_candidate(channel, reference).await?;
+        let card = &candidate.card;
         let destination = card.destination.as_ref().ok_or(Error::Denied)?;
-        if reference.validate().is_err()
-            || reference.discord_message.is_some()
-            || card.channel_id != channel.id
-            || card.owner != channel.definition.owner.subject
-            || card.route_id != reference.route_id
-            || card.event_id != reference.event_id
-            || card.consumer != reference.consumer
-            || card.reference.is_none()
-            || destination.platform_id != reference.platform_message_id
-            || destination.outbound_id != destination.platform_id
-            || discord::source_revision(&channel.definition)? != identity.source_revision
-            || channel
-                .consumer(Some(&identity.consumer))
-                .is_none_or(|consumer| {
-                    consumer.pending
-                        || consumer.credential.is_none()
-                        || consumer.provider != &identity.provider
-                })
-            || crate::discord::rest::token(channel, &identity.bot_id).is_none()
-        {
-            return Err(Error::Denied);
-        }
         if let Some(edit) = &card.discord_edit {
             if edit.request_hash != request_hash(message) {
                 return Err(Error::Denied);
@@ -117,16 +82,7 @@ impl InteractionStore {
         if card.superseded {
             return Err(Error::Denied);
         }
-        let conversation = ActivityConversation {
-            id: card.chat.clone(),
-            kind: identity.conversation_kind,
-            thread_id: card.thread.clone(),
-        };
-        Ok(Admission::Ready(Box::new(Candidate {
-            card,
-            version,
-            conversation,
-        })))
+        Ok(Admission::Ready(Box::new(candidate)))
     }
     pub(crate) async fn begin_discord_edit(
         &self,
@@ -143,6 +99,9 @@ impl InteractionStore {
         next.consumed = None;
         next.reference = None;
         next.discord_edit = None;
+        if let Some(state) = &mut next.discord_effect {
+            state.deletion = None;
+        }
         let markup = discord::render_replacement(message, &next.id, next.revision)?;
         card.superseded = true;
         card.discord_edit = Some(Edit {

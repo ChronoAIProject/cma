@@ -21,6 +21,7 @@ mod inbox_scan;
 pub(crate) mod lifecycle;
 #[cfg(test)]
 mod multiselect_tests;
+pub(crate) mod mutation;
 mod normalize;
 mod runtime_source;
 pub mod selection;
