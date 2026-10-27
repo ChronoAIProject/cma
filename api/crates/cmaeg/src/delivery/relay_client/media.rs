@@ -18,6 +18,15 @@ pub fn supported(platform: Platform) -> bool {
 }
 
 impl RelayClient {
+    /// Attest that every deployed NyxID replica honors bounded native media replies.
+    pub fn with_native_media(mut self, enabled: bool) -> Self {
+        self.native_media = enabled;
+        self
+    }
+    pub(crate) fn native_media_enabled(&self) -> bool {
+        self.native_media
+    }
+
     pub(in crate::delivery) fn prepare_native(
         address: &ReplyAddress,
         text: &str,

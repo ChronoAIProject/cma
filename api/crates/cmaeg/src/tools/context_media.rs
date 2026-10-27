@@ -1,4 +1,4 @@
-use super::NativeStickerCapabilities;
+use super::{NativeStickerCapabilities, NativeVideoCapabilities};
 use cmaeg_core::activity::SourceKind;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -24,12 +24,15 @@ pub struct NativeMediaCapabilities {
     /// Exact structural sticker limits; absent when sticker delivery is unsupported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sticker: Option<NativeStickerCapabilities>,
+    /// Exact structural video profile; absent when no bounded profile is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<NativeVideoCapabilities>,
 }
 
 impl NativeMediaCapabilities {
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
-            kinds: ["image", "file", "audio", "sticker"]
+            kinds: ["image", "file", "audio", "sticker", "video"]
                 .map(String::from)
                 .into(),
             sources: ["url", "base64"].map(String::from).into(),
@@ -44,6 +47,17 @@ impl NativeMediaCapabilities {
             max_image_bytes: Some(crate::whatsapp::outbound::MAX_IMAGE_BYTES as u64),
             max_caption_chars: Some(1024),
             sticker: Some(NativeStickerCapabilities::whatsapp()),
+            video: Some(NativeVideoCapabilities::whatsapp()),
+        })
+    }
+    pub(super) fn native_whatsapp_group(enabled: bool) -> Option<Self> {
+        Self::native_whatsapp(enabled).map(|mut capabilities| {
+            capabilities.kinds.retain(|kind| kind != "sticker");
+            if let Some(mimes) = &mut capabilities.mime_types {
+                mimes.retain(|mime| mime != "image/webp");
+            }
+            capabilities.sticker = None;
+            capabilities
         })
     }
     pub(super) fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
@@ -67,6 +81,7 @@ impl NativeMediaCapabilities {
             max_image_bytes: None,
             max_caption_chars: None,
             sticker: None,
+            video: None,
         })
     }
 }

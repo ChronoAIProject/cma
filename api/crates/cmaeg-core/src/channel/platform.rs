@@ -62,6 +62,10 @@ impl ChannelDefinition {
             Source::NyxidRelay { platform, .. } => Some(*platform),
             Source::Telegram { .. } => Some(Platform::Telegram),
             Source::Discord { .. } => Some(Platform::Discord),
+            Source::NativeLark(source) => Some(match source.identity.region {
+                super::LarkRegion::Lark => Platform::Lark,
+                super::LarkRegion::Feishu => Platform::Feishu,
+            }),
             Source::Whatsapp { .. } => Some(Platform::Whatsapp),
             Source::Custom { .. } => None,
         })

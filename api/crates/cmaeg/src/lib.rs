@@ -15,6 +15,7 @@ pub mod ingress;
 pub mod interactions;
 pub mod mcp;
 pub mod media;
+pub mod native_lark;
 pub mod net;
 pub mod openapi;
 pub mod outbound;

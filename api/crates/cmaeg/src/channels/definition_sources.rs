@@ -62,12 +62,15 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
             }
         }
         result.push(match source {
+            SourceRequest::NativeLark(source) => Source::NativeLark(source.clone()),
             SourceRequest::Whatsapp {
+                group_ids,
                 app_id,
                 waba_id,
                 phone_number_id,
                 admission,
             } => Source::Whatsapp {
+                group_ids: group_ids.clone(),
                 app_id: app_id.clone(),
                 waba_id: waba_id.clone(),
                 phone_number_id: phone_number_id.clone(),
@@ -142,6 +145,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
 
 pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
     ChannelSecrets {
+        native_lark: credentials.native_lark.clone(),
         whatsapp: credentials.whatsapp.clone(),
         agent_key_hash: hash_secret(credentials.agent_key.as_str()),
         channel_key: credentials.channel_key.clone(),

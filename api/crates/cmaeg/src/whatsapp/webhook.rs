@@ -1,7 +1,7 @@
 //! Facts extracted only after authenticating Meta's original request bytes.
 use cmaeg_core::{
     channel::{
-        whatsapp::{valid_message_id, valid_meta_id},
+        whatsapp::{valid_group_id, valid_message_id, valid_meta_id},
         Source,
     },
     ids::EventId,
@@ -34,6 +34,11 @@ pub enum Content {
         target: String,
         emoji: String,
     },
+    /// Only authenticated, bounded locators become candidates for card authority.
+    Control {
+        locator: String,
+        context: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +46,8 @@ pub enum Content {
 pub struct Message {
     pub id: String,
     pub sender: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
     pub timestamp: i64,
     pub content: Content,
 }
@@ -75,6 +82,7 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
     let Source::Whatsapp {
         waba_id,
         phone_number_id,
+        group_ids,
         ..
     } = source
     else {
@@ -108,7 +116,7 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
                 continue;
             };
             for raw in raw_messages.as_array().ok_or(Error::Envelope)? {
-                if let Some(message) = parse(raw)? {
+                if let Some(message) = parse(raw, group_ids)? {
                     if let Some(prior) = seen.get(&message.id) {
                         if prior != &message {
                             return Err(Error::Message);
@@ -127,17 +135,40 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
     Ok(messages)
 }
 
-fn parse(raw: &Value) -> Result<Option<Message>, Error> {
+fn parse(raw: &Value, groups: &[String]) -> Result<Option<Message>, Error> {
     let kind = raw["type"].as_str().ok_or(Error::Message)?;
     if !matches!(
         kind,
-        "text" | "reaction" | "image" | "document" | "audio" | "video" | "sticker"
+        "text" | "reaction" | "interactive" | "image" | "document" | "audio" | "video" | "sticker"
     ) {
         return Ok(None);
     }
-    if !private_shape(raw) {
-        return Err(Error::Message);
-    }
+    let group_id = match raw.get("group_id") {
+        Some(value) => {
+            let group = value
+                .as_str()
+                .filter(|id| valid_group_id(id) && groups.iter().any(|allowed| allowed == id))
+                .ok_or(Error::Message)?;
+            if raw.get("group").is_some()
+                || raw.get("participant").is_some()
+                || raw
+                    .get("recipient_type")
+                    .is_some_and(|kind| kind != "group")
+            {
+                return Err(Error::Message);
+            }
+            if matches!(kind, "reaction" | "sticker" | "interactive") {
+                return Ok(None);
+            }
+            Some(group.to_owned())
+        }
+        None => {
+            if !private_shape(raw) {
+                return Err(Error::Message);
+            }
+            None
+        }
+    };
     let id = raw["id"]
         .as_str()
         .filter(|id| valid_message_id(id))
@@ -159,6 +190,8 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
         Content::Text {
             text: text.to_owned(),
         }
+    } else if kind == "interactive" {
+        super::interactive::extract(raw)?
     } else if kind == "reaction" {
         let target = raw["reaction"]["message_id"]
             .as_str()
@@ -184,6 +217,7 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
     Ok(Some(Message {
         id: id.to_owned(),
         sender: sender.to_owned(),
+        group_id,
         timestamp,
         content,
     }))
@@ -215,4 +249,10 @@ pub fn event_id(source: &Source, message_id: &str) -> Result<EventId, Error> {
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+impl Message {
+    pub fn conversation(&self) -> &str {
+        self.group_id.as_deref().unwrap_or(&self.sender)
+    }
 }

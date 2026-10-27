@@ -15,6 +15,7 @@ import {
   consumerConfig,
   list,
   object,
+  platformName,
   routing,
   selectionKey,
   text,
@@ -46,9 +47,11 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
       ? { custom_event_url: channel.endpoints.custom_event_url }
       : source.type === 'telegram'
         ? { telegram_webhook_url: channel.endpoints.telegram_webhook_url }
-        : source.type === 'whatsapp'
-          ? { whatsapp_webhook_url: channel.endpoints.whatsapp_webhook_url }
-          : { nyxid_callback_url: channel.endpoints.nyxid_callback_url };
+        : source.type === 'native_lark'
+          ? { native_lark_webhook_url: channel.endpoints.native_lark_webhook_url }
+          : source.type === 'whatsapp'
+            ? { whatsapp_webhook_url: channel.endpoints.whatsapp_webhook_url }
+            : { nyxid_callback_url: channel.endpoints.nyxid_callback_url };
   const admission = object(source.admission);
   const facts: Fact[] = [
     [
@@ -60,6 +63,18 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
     facts.push(['Connection', 'Direct Discord bot']);
     if (channel.native_discord_activation)
       facts.push(['Activation', channel.native_discord_activation.detail]);
+  }
+  if (source.type === 'native_lark') {
+    const identity = object(source.identity);
+    facts.push(
+      ['Connection', `Direct ${platformName(identity.region)} app`],
+      ['Region', platformName(identity.region)],
+      ['App ID', text(identity.app_id)],
+      ['Tenant key', text(identity.tenant_key)],
+      ['Bot open ID', text(identity.bot_open_id)],
+      ['Setup', 'Separate app and webhook; keep existing NyxID app webhooks unchanged.'],
+      ['Replies', 'Text replies to admitted conversations'],
+    );
   }
   if (source.type === 'whatsapp')
     facts.push(

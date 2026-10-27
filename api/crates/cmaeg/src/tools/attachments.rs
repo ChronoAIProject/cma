@@ -23,7 +23,7 @@ use crate::{
     turns::render_media,
 };
 use cmaeg_core::{
-    activity::{Attachment, AttachmentKind, MAX_ATTACHMENTS},
+    activity::{Attachment, AttachmentKind, AttachmentSource, MAX_ATTACHMENTS},
     problem::{Problem, ProblemCode},
     seal::EventRef,
 };
@@ -192,13 +192,37 @@ impl ToolsState {
         };
         let channel = if matches!(
             attachment.source,
-            Some(cmaeg_core::activity::AttachmentSource::LarkResource { .. })
+            Some(AttachmentSource::LarkResource { .. } | AttachmentSource::NativeLark { .. })
         ) {
-            let current = self
-                .resolver
-                .resolve_current(channel.id.as_str())
+            let current = if matches!(attachment.source, Some(AttachmentSource::NativeLark { .. }))
+            {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    crate::turns::routed::current_received_message(
+                        self.resolver.record_client(),
+                        self.keys.clone(),
+                        &self.resolver,
+                        caller,
+                        &event,
+                        &activity,
+                    ),
+                )
                 .await
-                .map_err(|error| error.problem())?;
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(|| {
+                    Problem::new(
+                        ProblemCode::MediaUnavailable,
+                        503,
+                        "native_lark_attachment_authority_unavailable",
+                    )
+                })?
+            } else {
+                self.resolver
+                    .resolve_current(channel.id.as_str())
+                    .await
+                    .map_err(|error| error.problem())?
+            };
             super::state::owner(
                 caller,
                 &current,

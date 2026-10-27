@@ -17,6 +17,7 @@ use std::{
 
 struct Graph {
     valid: bool,
+    oba: bool,
     calls: AtomicUsize,
     methods: Mutex<Vec<Method>>,
 }
@@ -34,6 +35,12 @@ impl Transport for Graph {
         assert!(headers["authorization"].is_sensitive());
         let body = if url.path().ends_with("/debug_token") {
             json!({"data":{"is_valid":true,"app_id":if self.valid {"12345"} else {"99999"},"scopes":["whatsapp_business_management","whatsapp_business_messaging"]}})
+        } else if url.path().ends_with("/34567/groups") {
+            json!({"data":{"groups":[{"id":"group-fixture"}]}})
+        } else if url.path().ends_with("/34567") {
+            json!({"id":"34567","official_business_account":{"oba_status":if self.oba {"APPROVED"} else {"PENDING"}}})
+        } else if url.path().ends_with("/group-fixture") {
+            json!({"id":"group-fixture","messaging_product":"whatsapp","suspended":false,"total_participant_count":1,"participants":[{"wa_id":"447700900123"}]})
         } else {
             json!({"data":[{"id":"34567"}]})
         };
@@ -73,6 +80,7 @@ fn state(
     state.multi_consumer_writes_enabled = true;
     let graph = Arc::new(Graph {
         valid,
+        oba: true,
         calls: AtomicUsize::new(0),
         methods: Mutex::default(),
     });
@@ -260,3 +268,6 @@ async fn native_whatsapp_management_retains_exact_source_and_credentials_with_au
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[path = "native_whatsapp_groups.rs"]
+mod groups;

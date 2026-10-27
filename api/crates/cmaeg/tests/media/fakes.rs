@@ -52,6 +52,12 @@ const STREAM_CHUNK: usize = 64 * 1024;
 /// The identifying string of a locator.
 pub fn locator_key(locator: &AttachmentSource) -> String {
     match locator {
+        AttachmentSource::NativeLark {
+            message_id,
+            resource_key,
+            resource_kind,
+            source_revision,
+        } => format!("native_lark:{message_id}:{resource_key}:{resource_kind:?}:{source_revision}"),
         AttachmentSource::Whatsapp {
             message_id,
             media_id,
