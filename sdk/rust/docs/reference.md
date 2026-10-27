@@ -569,3 +569,19 @@ advertise optional `whatsapp_template_components: ["header", "body"]` alongside
 gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
+
+### Native Discord thread lifecycle
+
+Native Discord thread lifecycle requires the gateway gate and source
+`thread_lifecycle: Some(true)`. Check `Capabilities::thread_lifecycle` for the
+original event scope. `list_event_threads(event_ref, ThreadListView::Active)`
+returns a bounded `ThreadList`; `Archived` selects archived results.
+`create_event_thread(event_ref, key, &CreateThreadRequest { name, auto_archive_duration: 1440 })`
+creates a public thread from the exact original message.
+`manage_thread(key, &ManageThreadRequest { target, action })` accepts
+`ThreadTarget::Event` for the event's own thread or `ThreadTarget::Thread` for a
+scoped returned reference, and `ThreadAction::{Archive, Reopen, Join, Leave}`.
+Keep a stable key; unknown writes remain fenced and must not be resent with a
+new key. References retain the original consumer and expiry. Set the new source
+option to `None` to preserve legacy wire bytes. Private/forum creation and
+private sibling enumeration are unsupported.

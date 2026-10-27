@@ -26,6 +26,7 @@ pub mod relay_resource_connections;
 pub mod reply_targets;
 pub mod schema;
 pub mod telegram;
+pub mod threads;
 pub mod tools;
 pub mod whatsapp;
 

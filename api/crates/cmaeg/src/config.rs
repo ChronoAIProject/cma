@@ -14,6 +14,8 @@ use duration::positive_duration;
 mod ingress;
 mod media;
 mod native_discord;
+mod public_api;
+use public_api::validate_public_api_url;
 mod routing;
 mod secrets;
 mod service;
@@ -172,6 +174,7 @@ pub struct Config {
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_thread_lifecycle_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
@@ -279,6 +282,9 @@ impl Config {
             )?,
             native_discord_reactions_enabled: routing::write_flag(
                 "CMAEG_DISCORD_REACTIONS_ENABLED",
+            )?,
+            native_discord_thread_lifecycle_enabled: routing::write_flag(
+                "CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED",
             )?,
             native_discord_thread_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED",
@@ -414,39 +420,6 @@ fn parse_api_advertisement(value: Option<&str>) -> Result<bool, ConfigError> {
             detail: format!("{CMAEG_ADVERTISE_PUBLIC_API_URL} must be true or false"),
         }),
     }
-}
-
-/// A trusted base used for generated links and routing, never taken from Host.
-fn validate_public_api_url(value: &str) -> Result<String, ConfigError> {
-    let url = Url::parse(value).map_err(|_| ConfigError::InvalidManagement {
-        detail: format!("{CMAEG_PUBLIC_API_URL} must be a public API base URL"),
-    })?;
-    validate_origin(CMAEG_PUBLIC_URL, &url.origin().ascii_serialization())?;
-    let path = url.path();
-    if !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || value.ends_with('/')
-        || value.len() > 2048
-        || value != url.as_str().trim_end_matches('/')
-        || (path != "/"
-            && path
-                .strip_prefix('/')
-                .unwrap_or_default()
-                .split('/')
-                .any(|part| {
-                    part.is_empty()
-                        || !part
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                }))
-    {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{CMAEG_PUBLIC_API_URL} must be a canonical HTTPS base with clean path segments and no credentials, query, fragment or trailing slash"),
-        });
-    }
-    Ok(value.to_owned())
 }
 
 fn required_origin(name: &'static str) -> Result<String, ConfigError> {

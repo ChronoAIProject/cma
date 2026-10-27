@@ -844,3 +844,17 @@ advertise optional `whatsapp_template_components: ["header", "body"]` alongside
 gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
+
+### Native Discord thread lifecycle
+
+Native Discord thread lifecycle requires the gateway gate and source
+`thread_lifecycle: true`. Check `context.capabilities.thread_lifecycle` for the
+original event's scope. `client.listEventThreads(eventRef, 'active' | 'archived')`
+returns at most 25 scoped threads and an explicit `truncated` flag.
+`client.createEventThread(eventRef, key, { name: 'Review', auto_archive_duration: 1440 })`
+creates a public thread from the exact original message.
+`client.manageThread(key, { target: { type: 'thread', thread_ref }, action: 'archive' })`
+also accepts `reopen`, `join`, or `leave`; `target: { type: 'event', event_ref }`
+addresses only the thread containing that event. References preserve original
+consumer custody and expiry. Unknown outcomes must not be retried under a new
+key. Private/forum creation and private sibling enumeration are unsupported.

@@ -5,6 +5,7 @@ mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
 mod thread_history;
+pub(crate) mod threads;
 use crate::{
     channels::resolver::ResolvedChannel,
     media::{

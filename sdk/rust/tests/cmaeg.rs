@@ -417,3 +417,74 @@ async fn explicit_thread_history_keeps_the_original_event_destination() {
         sample("ContextResponse"),
     );
 }
+
+#[tokio::test]
+async fn thread_lifecycle_uses_exact_scoped_routes_and_never_retries_unknown_writes() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    let listing =
+        json!({"threads":[],"truncated":false,"scope":"public_children_of_original_parent"});
+    server.expect(wire::json(
+        "GET",
+        "/v1/events/opaque%2Fevent/threads?view=archived",
+        None,
+        200,
+        listing.clone(),
+        true,
+    ));
+    same(
+        client
+            .list_event_threads("opaque/event", ThreadListView::Archived)
+            .await
+            .unwrap(),
+        listing,
+    );
+    let create = CreateThreadRequest {
+        name: "Review".into(),
+        auto_archive_duration: 1440,
+    };
+    let unknown = json!({"outcome":{"status":"unknown","reason":"thread_write_unconfirmed"}});
+    let mut request = wire::json(
+        "POST",
+        "/v1/events/opaque%2Fevent/threads",
+        Some(serde_json::to_value(&create).unwrap()),
+        200,
+        unknown.clone(),
+        true,
+    );
+    request
+        .headers
+        .insert("idempotency-key".into(), "create-stable".into());
+    server.expect(request);
+    same(
+        client
+            .create_event_thread("opaque/event", "create-stable", &create)
+            .await
+            .unwrap(),
+        unknown,
+    );
+    let manage = ManageThreadRequest {
+        target: ThreadTarget::Thread {
+            thread_ref: "cmaeg1.tr.original".into(),
+        },
+        action: ThreadAction::Leave,
+    };
+    let confirmed = json!({"outcome":{"status":"confirmed"}});
+    let mut request = wire::json(
+        "POST",
+        "/v1/thread-operations",
+        Some(serde_json::to_value(&manage).unwrap()),
+        200,
+        confirmed.clone(),
+        true,
+    );
+    request
+        .headers
+        .insert("idempotency-key".into(), "leave-stable".into());
+    server.expect(request);
+    same(
+        client.manage_thread("leave-stable", &manage).await.unwrap(),
+        confirmed,
+    );
+    server.assert_drained();
+}

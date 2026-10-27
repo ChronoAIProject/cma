@@ -24,6 +24,7 @@ pub struct ToolsState {
     pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
+    pub discord_threads: Option<Arc<super::DiscordThreads>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
@@ -305,6 +306,7 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
+            response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
             Ok(response)
         }
         .await;
@@ -343,6 +345,7 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
+        response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(

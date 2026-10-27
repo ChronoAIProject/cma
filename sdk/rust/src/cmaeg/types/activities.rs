@@ -273,6 +273,9 @@ pub struct Capabilities {
     /// Explicit bounded prior-thread text reads are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<bool>,
+    /// Bounded lifecycle scope, independent of actual bot permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_lifecycle: Option<super::ThreadCapabilities>,
     /// Exact-message effect support, absent before compatible reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,

@@ -11,6 +11,7 @@ import {
 } from './connections.js';
 import { CmaegEvents, type EventOptions } from './events.js';
 import { CmaegTools } from './tools.js';
+import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from './types.js';
 import {
   CmaegActivity,
   type ChannelActivityOptions,
@@ -180,6 +181,23 @@ export class Cmaeg {
   }
   readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
     return this.#tools.readEventContext(ref, options);
+  }
+  /** List only the original native Discord thread scope. */
+  listEventThreads(ref: string, view?: ThreadListView, options?: OperationOptions) {
+    return this.#tools.listEventThreads(ref, view, options);
+  }
+  /** Create a public thread anchored to the original human message. */
+  createEventThread(
+    ref: string,
+    key: string,
+    request: CreateThreadRequest,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.createEventThread(ref, key, request, options);
+  }
+  /** Mutate one exact scoped thread; unknown outcomes must not be retried with another key. */
+  manageThread(key: string, request: ManageThreadRequest, options?: OperationOptions) {
+    return this.#tools.manageThread(key, request, options);
   }
 }
 
