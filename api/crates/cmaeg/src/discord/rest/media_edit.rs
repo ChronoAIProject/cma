@@ -2,7 +2,7 @@
 use super::{valid_id, DiscordRest, RestError};
 use crate::{
     media::outbound::PreparedFile,
-    native_media::model::{FileFact, Snapshot},
+    native_media::model::{FileFact, Observation, Snapshot},
 };
 use cmaeg_core::{
     activity::ActivityConversation,
@@ -66,9 +66,10 @@ impl DiscordRest {
         current: &Snapshot,
         file: Option<PreparedFile>,
     ) -> Result<PreparedEdit, RestError> {
+        let spoiler = super::media_presentation::spoiler(current.presentation.as_ref())?;
         if file
             .as_ref()
-            .is_some_and(|f| f.filename.starts_with("SPOILER_"))
+            .is_some_and(|f| f.filename.starts_with("SPOILER_") && !spoiler)
         {
             return Err(RestError::Rejected);
         }
@@ -143,26 +144,27 @@ pub(crate) fn payload(
         payload["allowed_mentions"] = json!({"parse":[],"replied_user":false});
     }
     let caption = patch.caption.as_deref().unwrap_or(&current.caption);
+    let spoiler = super::media_presentation::spoiler(current.presentation.as_ref())?;
     if let Some(file) = file {
-        payload["attachments"] = json!([{"id":0,"filename":file.filename,"description":caption}]);
+        payload["attachments"] =
+            json!([{"id":0,"filename":file.filename,"description":caption,"is_spoiler":spoiler}]);
     } else if patch.caption.is_some() {
         let file = current
             .files
             .first()
             .filter(|_| current.files.len() == 1)
             .ok_or(RestError::Rejected)?;
-        payload["attachments"] =
-            json!([{"id":file.id,"filename":file.filename,"description":caption}]);
+        payload["attachments"] = json!([{"id":file.id,"description":caption,"is_spoiler":spoiler}]);
     }
     Ok(payload)
 }
-pub(crate) fn snapshot(
+pub(crate) fn observe(
     value: &Value,
     bot: &str,
     channel: &str,
     message: &str,
     kind: NativeMediaKind,
-) -> Result<Snapshot, RestError> {
+) -> Result<Observation, RestError> {
     let bad = || RestError::Unknown;
     if value["id"].as_str() != Some(message)
         || !valid_id(message)
@@ -170,7 +172,6 @@ pub(crate) fn snapshot(
         || value["author"]["id"].as_str() != Some(bot)
         || value["author"]["bot"] != true
         || !matches!(value["type"].as_u64(), Some(0 | 19))
-        || value.get("flags").is_some_and(|v| v.as_u64() != Some(0))
     {
         return Err(bad());
     }
@@ -179,12 +180,16 @@ pub(crate) fn snapshot(
         "interaction",
         "interaction_metadata",
         "message_snapshots",
+        "poll",
+        "call",
+        "activity",
+        "application",
     ] {
         if value.get(key).is_some_and(|v| !v.is_null()) {
             return Err(bad());
         }
     }
-    for key in ["components", "embeds", "sticker_items"] {
+    for key in ["components", "sticker_items"] {
         if value
             .get(key)
             .is_some_and(|v| v.as_array().is_none_or(|a| !a.is_empty()))
@@ -207,15 +212,15 @@ pub(crate) fn snapshot(
         .filter(|s| {
             !s.is_empty()
                 && s.len() <= 255
-                && !s.starts_with("SPOILER_")
                 && !s.contains(['/', '\\'])
                 && !s.chars().any(char::is_control)
         })
         .ok_or_else(bad)?;
     if f.get("ephemeral").is_some_and(|v| v != false)
-        || f.get("flags").is_some_and(|v| v.as_u64() != Some(0))
         || f.get("waveform").is_some()
-        || f.get("duration_secs").is_some()
+        || ["clip_participants", "clip_created_at", "application"]
+            .iter()
+            .any(|key| f.get(*key).is_some())
     {
         return Err(bad());
     }
@@ -246,19 +251,25 @@ pub(crate) fn snapshot(
     if size > crate::media::outbound::MAX_OUTBOUND_BYTES {
         return Err(bad());
     }
-    Ok(Snapshot {
-        kind,
-        files: vec![FileFact {
-            id: id.into(),
-            locator: None,
-            filename: Some(filename.into()),
-            mime,
-            size: Some(size),
-            width: number("width")?,
-            height: number("height")?,
-        }],
-        caption: caption.into(),
-        content: content.into(),
+    let (presentation, eligible) = super::media_presentation::observe(value, f)?;
+    Ok(Observation {
+        snapshot: Snapshot {
+            kind,
+            files: vec![FileFact {
+                id: id.into(),
+                locator: None,
+                filename: Some(filename.into()),
+                mime,
+                size: Some(size),
+                width: number("width")?,
+                height: number("height")?,
+                metadata: super::media_presentation::asset_metadata(f)?,
+            }],
+            caption: caption.into(),
+            content: content.into(),
+            presentation: Some(presentation),
+        },
+        eligible,
     })
 }
 fn channel_fact(
@@ -295,4 +306,19 @@ fn channel_fact(
         }
     }
     Ok(json!({"id":channel,"type":kind,"guild_id":body["guild_id"],"parent_id":body["parent_id"]}))
+}
+
+pub(crate) fn snapshot(
+    value: &Value,
+    bot: &str,
+    channel: &str,
+    message: &str,
+    kind: NativeMediaKind,
+) -> Result<Snapshot, RestError> {
+    let observed = observe(value, bot, channel, message, kind)?;
+    if observed.eligible {
+        Ok(observed.snapshot)
+    } else {
+        Err(RestError::Unknown)
+    }
 }

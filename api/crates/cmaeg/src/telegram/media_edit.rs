@@ -2,9 +2,12 @@
 use super::{media::message_identity, Error, TelegramClient};
 use crate::{
     media::outbound::PreparedFile,
-    native_media::model::{FileFact, Snapshot},
+    native_media::model::{FileFact, Observation, Snapshot},
 };
-use cmaeg_core::{channel::Secret, message::NativeMediaKind};
+use cmaeg_core::{
+    channel::Secret,
+    message::{NativeMediaKind, NativeMediaUpdate},
+};
 use http_body_util::BodyExt;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONTENT_TYPE},
@@ -22,28 +25,43 @@ impl TelegramClient {
         &self,
         chat: &str,
         message: &str,
-        kind: NativeMediaKind,
-        caption: &str,
+        current: &Snapshot,
+        patch: &NativeMediaUpdate,
         file: Option<PreparedFile>,
     ) -> Result<PreparedEdit, Error> {
+        let kind = current.kind;
+        let caption = patch.caption.as_deref().unwrap_or(&current.caption);
+        let replace_caption = patch.caption.is_some();
         if caption.encode_utf16().count() > 1024 {
             return Err(Error::Rejected);
         }
         let Some(file) = file else {
+            let mut payload = json!({"chat_id":chat,"message_id":message,"caption":caption});
+            super::media_presentation::apply(
+                &mut payload,
+                current.presentation.as_ref(),
+                replace_caption,
+                false,
+                kind,
+            )?;
             return Ok(PreparedEdit {
                 method: "editMessageCaption",
                 headers: HeaderMap::from_iter([(
                     CONTENT_TYPE,
                     HeaderValue::from_static("application/json"),
                 )]),
-                body: serde_json::to_vec(
-                    &json!({"chat_id":chat,"message_id":message,"caption":caption}),
-                )
-                .map_err(|_| Error::Rejected)?,
+                body: serde_json::to_vec(&payload).map_err(|_| Error::Rejected)?,
             });
         };
         let field = family(kind).ok_or(Error::Rejected)?;
-        let media = json!({"type":field,"media":"attach://replacement","caption":caption});
+        let mut media = json!({"type":field,"media":"attach://replacement","caption":caption});
+        super::media_presentation::apply(
+            &mut media,
+            current.presentation.as_ref(),
+            replace_caption,
+            true,
+            kind,
+        )?;
         let part = Part::bytes(file.bytes)
             .file_name(file.filename)
             .mime_str(&file.mime)
@@ -122,14 +140,14 @@ pub(crate) fn family(kind: NativeMediaKind) -> Option<&'static str> {
         _ => None,
     }
 }
-pub(crate) fn snapshot(
+pub(crate) fn observe(
     value: &Value,
     bot: &str,
     chat: &str,
     thread: Option<&str>,
     message: &str,
     kind: NativeMediaKind,
-) -> Result<Snapshot, Error> {
+) -> Result<Observation, Error> {
     let bad = || Error::Unconfirmed;
     if message_identity(value, chat, thread)? != message
         || value["from"]["id"]
@@ -141,9 +159,6 @@ pub(crate) fn snapshot(
         || value.get("reply_markup").is_some()
         || value.get("business_connection_id").is_some()
         || value.get("sender_business_bot").is_some()
-        || value
-            .get("caption_entities")
-            .is_some_and(|v| v.as_array().is_none_or(|a| !a.is_empty()))
     {
         return Err(bad());
     }
@@ -200,14 +215,20 @@ pub(crate) fn snapshot(
             size,
             width,
             height,
+            metadata: super::media_presentation::asset_metadata(item)?,
         });
     }
     files.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(Snapshot {
-        kind,
-        files,
-        caption: caption.into(),
-        content: String::new(),
+    let (presentation, eligible) = super::media_presentation::observe(value, caption, kind)?;
+    Ok(Observation {
+        snapshot: Snapshot {
+            kind,
+            files,
+            caption: caption.into(),
+            content: String::new(),
+            presentation: Some(presentation),
+        },
+        eligible,
     })
 }
 fn opaque(v: &Value) -> Result<String, Error> {
@@ -235,4 +256,20 @@ fn number(v: &Value, key: &str) -> Result<Option<u64>, Error> {
     v.get(key)
         .map(|v| v.as_u64().filter(|n| *n > 0).ok_or(Error::Unconfirmed))
         .transpose()
+}
+
+pub(crate) fn snapshot(
+    value: &Value,
+    bot: &str,
+    chat: &str,
+    thread: Option<&str>,
+    message: &str,
+    kind: NativeMediaKind,
+) -> Result<Snapshot, Error> {
+    let observed = observe(value, bot, chat, thread, message, kind)?;
+    if observed.eligible {
+        Ok(observed.snapshot)
+    } else {
+        Err(Error::Unconfirmed)
+    }
 }
