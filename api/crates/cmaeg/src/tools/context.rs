@@ -63,6 +63,9 @@ pub struct Capabilities {
     /// Approved WhatsApp template replies only; no callbacks or initiated sends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,
+    /// Group templates accept header/body components only; absent for other transports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template_components: Option<Vec<String>>,
     pub edit: bool,
     pub typing: bool,
     pub buttons: String,
@@ -87,6 +90,9 @@ pub use sticker::NativeStickerCapabilities;
 #[path = "context_media.rs"]
 mod media;
 pub use media::NativeMediaCapabilities;
+#[path = "context_whatsapp.rs"]
+mod whatsapp;
+use whatsapp::native_whatsapp_templates;
 
 impl Capabilities {
     pub fn custom() -> Self {
@@ -100,6 +106,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -139,6 +146,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -156,6 +164,7 @@ impl Capabilities {
             inbound_media: None,
             native_media: None,
             whatsapp_templates: None,
+            whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
         }
@@ -321,14 +330,33 @@ pub(super) fn project(
                 }
             ))
             || native_whatsapp_templates(
-                state.native_whatsapp_templates_enabled,
+                state.native_whatsapp_templates_enabled
+                    && (!matches!(
+                        event.reply,
+                        cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+                    ) || state.native_whatsapp_groups_enabled),
                 channel,
                 event,
                 &activity,
                 activity_verified,
             ))
         .then_some(true),
-        native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+        native_media: if matches!(
+            event.reply,
+            cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+        ) {
+            NativeMediaCapabilities::native_whatsapp_group(
+                state.native_whatsapp_outbound_media_enabled
+                    && state.native_whatsapp_groups_enabled
+                    && native_whatsapp_templates(
+                        true,
+                        channel,
+                        event,
+                        &activity,
+                        activity_verified,
+                    ),
+            )
+        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
             NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
         } else {
             NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
@@ -417,6 +445,7 @@ pub(super) fn project(
         capabilities.buttons = "none".into();
         capabilities.cards = "none".into();
     }
+    whatsapp::group_capabilities(&mut capabilities, event);
     ContextResponse {
         received_message: None,
         thread_history: None,
@@ -467,31 +496,3 @@ pub(super) fn unavailable() -> Problem {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
-
-/// Discovery requires the same sealed native destination and current custody as sending.
-fn native_whatsapp_templates(
-    enabled: bool,
-    channel: &ResolvedChannel,
-    event: &EventRefPayload,
-    activity: &Activity,
-    verified: bool,
-) -> bool {
-    enabled
-        && verified
-        && activity.conversation.kind == cmaeg_core::activity::ConversationKind::Private
-        && activity.conversation.thread_id.is_none()
-        && crate::whatsapp::credentials(&channel.definition, &event.reply)
-            .is_some_and(|credentials| credentials.validate().is_ok())
-        && matches!(
-            (&event.reply, &activity.source),
-            (
-                cmaeg_core::seal::ReplyAddress::Whatsapp {
-                    app_id, waba_id, phone_number_id, recipient_id, ..
-                },
-                SourceKind::Whatsapp {
-                    app_id: app, waba_id: account, phone_number_id: phone
-                }
-            ) if app_id == app && waba_id == account && phone_number_id == phone
-                && recipient_id == &activity.conversation.id
-        )
-}

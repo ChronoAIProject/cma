@@ -50,6 +50,16 @@ impl NativeMediaCapabilities {
             video: Some(NativeVideoCapabilities::whatsapp()),
         })
     }
+    pub(super) fn native_whatsapp_group(enabled: bool) -> Option<Self> {
+        Self::native_whatsapp(enabled).map(|mut capabilities| {
+            capabilities.kinds.retain(|kind| kind != "sticker");
+            if let Some(mimes) = &mut capabilities.mime_types {
+                mimes.retain(|mime| mime != "image/webp");
+            }
+            capabilities.sticker = None;
+            capabilities
+        })
+    }
     pub(super) fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
         let supported = match source {
             SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,

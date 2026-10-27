@@ -69,6 +69,10 @@ pub enum SourceRequest {
     NativeLark(cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Explicit existing group IDs; empty keeps private-only behavior.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        group_ids: Vec<String>,
         app_id: String,
         waba_id: String,
         phone_number_id: String,

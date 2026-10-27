@@ -256,7 +256,11 @@ impl Client {
                 template.body,
             )
             .await?;
-        Self::message_identity(&result, &template.recipient)
+        if template.group {
+            Self::group_message_identity(&result, &template.recipient)
+        } else {
+            Self::message_identity(&result, &template.recipient)
+        }
     }
     pub(super) fn message_identity(result: &Value, recipient: &str) -> Result<String, Error> {
         if result["messaging_product"] != "whatsapp"

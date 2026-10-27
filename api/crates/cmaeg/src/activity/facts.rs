@@ -30,6 +30,9 @@ pub fn delivery(
                 &reply.chat_id,
                 reply.thread_id.clone(),
             )],
+            ReplyAddress::WhatsappGroup(reply) => {
+                vec![recipient("whatsapp", &reply.group_id, None)]
+            }
             ReplyAddress::Whatsapp { recipient_id, .. } => {
                 vec![recipient("whatsapp_chat", recipient_id, None)]
             }

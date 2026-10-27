@@ -133,9 +133,34 @@ impl WhatsappFileSource {
         else {
             return Err(FetchError::NotRetrievable);
         };
-        if !matches!(&request.event.reply, ReplyAddress::Whatsapp { app_id: a, waba_id: w, phone_number_id: p, recipient_id: r, message_id: m }
-            if a == app_id && w == waba_id && p == phone_number_id && m == message_id
-                && r == &request.activity.actor.id && r == &request.activity.conversation.id)
+        let exact = match &request.event.reply {
+            ReplyAddress::Whatsapp {
+                app_id: a,
+                waba_id: w,
+                phone_number_id: p,
+                recipient_id: r,
+                message_id: m,
+            } => {
+                a == app_id
+                    && w == waba_id
+                    && p == phone_number_id
+                    && m == message_id
+                    && r == &request.activity.actor.id
+                    && r == &request.activity.conversation.id
+            }
+            ReplyAddress::WhatsappGroup(reply) => {
+                &reply.app_id == app_id
+                    && &reply.waba_id == waba_id
+                    && &reply.phone_number_id == phone_number_id
+                    && &reply.message_id == message_id
+                    && reply.participant_id == request.activity.actor.id
+                    && reply.group_id == request.activity.conversation.id
+                    && request.activity.conversation.kind
+                        == cmaeg_core::activity::ConversationKind::Group
+            }
+            _ => false,
+        };
+        if !exact
             || request.event.channel_id != request.channel.id
             || request.event.record_id != request.channel.pointer.record_id
             || !request.event.verifies_activity(request.activity)

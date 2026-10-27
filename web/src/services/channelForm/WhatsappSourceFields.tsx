@@ -1,7 +1,7 @@
 import { nativeWhatsappUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { AdmissionFields } from './AdmissionFields';
-import { Section, TextField } from './Fields';
-import { object, type Fields } from './model';
+import { Section, StringList, TextField } from './Fields';
+import { object, strings, type Fields } from './model';
 
 export function WhatsappSourceFields({
   value,
@@ -10,7 +10,10 @@ export function WhatsappSourceFields({
   value: Fields;
   onChange: (value: Fields) => void;
 }) {
-  const unavailable = nativeWhatsappUnavailable(useRelayCapabilities(), false);
+  const discovery = useRelayCapabilities();
+  const unavailable = nativeWhatsappUnavailable(discovery, false);
+  const groups = strings(value.group_ids);
+  const groupsEnabled = discovery.authoring?.native_whatsapp_groups_writes_enabled === true;
   return (
     <>
       <Section
@@ -45,11 +48,42 @@ export function WhatsappSourceFields({
           <p className="channel-field-hint">{unavailable} Saved settings are retained.</p>
         ) : null}
       </Section>
+      {groupsEnabled || groups.length > 0 ? (
+        <Section
+          title="Existing WhatsApp groups"
+          description="Opt in only to existing groups for this Official Business Account phone. CMA checks the phone’s OBA status and current group membership before saving and replying."
+        >
+          <StringList
+            label="Allowed group IDs"
+            value={groups}
+            max={groupsEnabled ? 16 : groups.length}
+            onChange={(group_ids) => {
+              const next = { ...value };
+              if (group_ids.length) next.group_ids = group_ids;
+              else delete next.group_ids;
+              onChange(next);
+            }}
+          />
+          <p className="channel-field-hint">
+            Use the exact opaque group IDs supplied by Meta. At most 16 groups. Participant rules
+            use the original sender; chat rules use the group ID. Scoped admission must also allow
+            group messages. Group replies support text, image, PDF, audio, video and approved
+            header/body templates.
+          </p>
+          {!groupsEnabled ? (
+            <p className="channel-field-hint">
+              New group opt-ins are disabled. Saved groups are retained and can be removed.
+            </p>
+          ) : null}
+        </Section>
+      ) : null}
       <AdmissionFields
         value={value.admission}
         onChange={(admission) => onChange({ ...value, admission })}
         allowBotMessages={false}
-        privateChats
+        privateChats={groups.length === 0}
+        allowGroupMentions={false}
+        allowReplyToBot={false}
       />
     </>
   );
