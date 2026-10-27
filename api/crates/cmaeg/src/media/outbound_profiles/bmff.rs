@@ -1,21 +1,21 @@
 //! Borrowed, fixed-depth ISO BMFF traversal shared by native audio and video.
-#[path = "outbound_bmff/aac.rs"]
-pub(super) mod aac;
-#[path = "outbound_bmff/samples.rs"]
+#[path = "bmff/aac.rs"]
+pub(crate) mod aac;
+#[path = "bmff/samples.rs"]
 mod samples;
-pub(super) use samples::sample_ranges;
+pub(crate) use samples::sample_ranges;
 
-pub(super) struct Atom<'a> {
+pub(crate) struct Atom<'a> {
     pub kind: [u8; 4],
     pub body: &'a [u8],
     pub body_offset: usize,
 }
-pub(super) fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
+pub(crate) fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_be_bytes(
         bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
     ))
 }
-pub(super) fn atoms(bytes: &[u8], base: usize) -> Option<Vec<Atom<'_>>> {
+pub(crate) fn atoms(bytes: &[u8], base: usize) -> Option<Vec<Atom<'_>>> {
     let mut result = Vec::new();
     let mut offset = 0usize;
     while offset < bytes.len() {
@@ -49,7 +49,7 @@ pub(super) fn atoms(bytes: &[u8], base: usize) -> Option<Vec<Atom<'_>>> {
     }
     Some(result)
 }
-pub(super) fn one<'a, 'b>(atoms: &'b [Atom<'a>], kind: &[u8; 4]) -> Option<&'b Atom<'a>> {
+pub(crate) fn one<'a, 'b>(atoms: &'b [Atom<'a>], kind: &[u8; 4]) -> Option<&'b Atom<'a>> {
     let mut found = atoms.iter().filter(|atom| &atom.kind == kind);
     let value = found.next()?;
     if found.next().is_some() {
@@ -57,6 +57,6 @@ pub(super) fn one<'a, 'b>(atoms: &'b [Atom<'a>], kind: &[u8; 4]) -> Option<&'b A
     }
     Some(value)
 }
-pub(super) fn child<'a>(parent: &Atom<'a>) -> Option<Vec<Atom<'a>>> {
+pub(crate) fn child<'a>(parent: &Atom<'a>) -> Option<Vec<Atom<'a>>> {
     atoms(parent.body, parent.body_offset)
 }

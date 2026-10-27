@@ -1,12 +1,12 @@
 //! Structural MP4/3GPP eligibility, never full compressed-media decoding.
 use super::bmff::{aac, atoms, child, one, sample_ranges, u32_at, Atom};
-#[path = "outbound_video/bits.rs"]
+#[path = "video/bits.rs"]
 mod bits;
-#[path = "outbound_video/container.rs"]
+#[path = "video/container.rs"]
 mod container;
-#[path = "outbound_video/h264.rs"]
+#[path = "video/h264.rs"]
 mod h264;
-#[path = "outbound_video/parameters.rs"]
+#[path = "video/parameters.rs"]
 mod parameters;
 
 pub(crate) const MAX_WIDTH: u32 = 1920;
@@ -139,5 +139,5 @@ fn avc(entry: &Atom<'_>, width: u32, height: u32) -> Option<h264::Avc> {
 }
 
 #[cfg(test)]
-#[path = "outbound_video_tests.rs"]
+#[path = "video_tests.rs"]
 pub(crate) mod tests;
