@@ -231,7 +231,7 @@ pub(crate) async fn serve(
     )?
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
-    .with_telegram_effects(telegram_effects)
+    .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
     .with_native_lark_intake(config.native_lark_intake_enabled)
@@ -261,9 +261,10 @@ pub(crate) async fn serve(
                 &config.management.nyxid_base_url,
             )?,
         )),
-        telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
-            telegram,
-        ))),
+        telegram_effects: Some(std::sync::Arc::new(
+            tools::MessageEffectsClient::new(telegram)
+                .with_received_reactions(config.native_telegram_received_reactions_enabled),
+        )),
         whatsapp_templates_enabled: whatsapp_templates,
         discord_interactions_enabled: discord_interactions,
         whatsapp_interactions_enabled: whatsapp_interactions,
@@ -283,7 +284,8 @@ pub(crate) async fn serve(
             && (native_discord_edits || native_discord_media_effects),
         discord_effects: Some(std::sync::Arc::new(
             tools::DiscordEffectsClient::new(crate::discord::DiscordRest::new()?)
-                .with_card_effects(discord_card_effects),
+                .with_card_effects(discord_card_effects)
+                .with_received_reactions(config.native_discord_received_reactions_enabled),
         )),
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),

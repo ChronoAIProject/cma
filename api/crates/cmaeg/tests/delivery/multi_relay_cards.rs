@@ -164,6 +164,7 @@ async fn replace_unknown(sources: Value, route: &str) -> DeliveryOutcome {
     );
     let reference = MessageRefPayload {
         discord_message: None,
+        received_reaction: None,
         whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,

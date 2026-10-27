@@ -17,6 +17,9 @@ pub(crate) mod lark_authority;
 pub(crate) mod lark_ledger;
 pub mod lark_transport;
 pub(crate) mod mutation;
+mod received;
+mod received_authority;
+mod received_transport;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 use super::{reply_targets::receipts, state::owner, ToolsState};
@@ -40,13 +43,19 @@ use utoipa::ToSchema;
 pub struct MessageEffectsClient {
     telegram: Arc<TelegramClient>,
     capacity: Semaphore,
+    received_issuance_enabled: bool,
 }
 impl MessageEffectsClient {
     pub fn new(telegram: Arc<TelegramClient>) -> Self {
         Self {
             telegram,
             capacity: Semaphore::new(32),
+            received_issuance_enabled: false,
         }
+    }
+    pub fn with_received_reactions(mut self, enabled: bool) -> Self {
+        self.received_issuance_enabled = enabled;
+        self
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -89,6 +98,14 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.received_reaction.is_some() {
+            return received::capabilities(
+                &message,
+                &channel,
+                caller,
+                self.received_reaction_client(&message),
+            );
+        }
         if message.whatsapp_reaction.is_some() {
             return whatsapp::capabilities(
                 &message,
@@ -195,6 +212,11 @@ impl ToolsState {
             ));
         }
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.received_reaction.is_some() {
+            return self
+                .received_message_reaction(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
         if message.whatsapp_reaction.is_some() {
             return self
                 .whatsapp_message_reaction(caller, reference, request_id, effect, channel, message)
@@ -361,3 +383,12 @@ mod lark_custody_tests;
 
 #[cfg(test)]
 mod whatsapp_tests;
+
+#[cfg(test)]
+mod received_authority_tests;
+#[cfg(test)]
+mod received_fixture;
+#[cfg(test)]
+mod received_retry_tests;
+#[cfg(test)]
+mod received_tests;
