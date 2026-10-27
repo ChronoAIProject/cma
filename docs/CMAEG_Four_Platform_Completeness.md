@@ -68,8 +68,12 @@ adds buttons and single-choice lists with signed callbacks bound to the original
 recipient, message, consumer and retained card. Group callbacks cannot consume
 private cards. Local signed-webhook/provider/send tests pass and structured
 source/credential setup is available in the portal. Broader document/codec
-profiles, delivery-status reconciliation and connected Meta acceptance remain
+profiles and connected Meta acceptance remain
 outstanding, so this does not complete WhatsApp support.
+
+Native [status reconciliation](CMAEG_Native_WhatsApp_Status.md) annotates retained
+private/group sends with sent, delivered, read, played or failed observations.
+It preserves original recipients/consumers and does not resend or start a turn.
 
 The separate default-off [native Lark / Feishu source](CMAEG_Native_Lark.md)
 uses its own regional app, tenant, bot, encrypted credentials and webhook. It

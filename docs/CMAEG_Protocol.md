@@ -626,6 +626,16 @@ backend failures; 500 `internal`. Body extraction failures are reported as
 400. Authentication precedes mutation; no operation grants access based on a
 caller-supplied owner alone.
 
+Native WhatsApp status callbacks annotate existing Channel Activity delivery
+rows without admitting a turn. The additive `platform_status` step reports
+`sent`, `delivered`, `read` or `played`; `platform_failure` reports `failed`.
+The existing string fields and snapshot schema are unchanged. For these steps,
+`confirmed_at` is the authenticated provider timestamp and `observed_at` is the
+gateway observation time. API send confirmation alone is not a recipient read
+or delivery receipt. Original channel, source, recipient, message and consumer
+bindings remain mandatory; failure grants no resend authority. See
+[native WhatsApp status reconciliation](CMAEG_Native_WhatsApp_Status.md).
+
 ### Multi-consumer routing (read-only)
 
 A channel can be read with several consumers: agents that each receive the

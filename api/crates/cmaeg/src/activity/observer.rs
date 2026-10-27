@@ -81,6 +81,24 @@ impl ActivityObserver for ObservedActivity {
     fn admitted(&self, record: &RecordId, activity: &Activity) {
         self.console.admitted(record, activity);
     }
+    fn platform_receipt<'a>(
+        &'a self,
+        record: &'a RecordId,
+        event: &'a EventId,
+        change: Change,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async move {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                self.store.change(record.as_str(), event.as_str(), &change),
+            )
+            .await
+            {
+                Ok(Ok(())) => Ok(()),
+                _ => Err(()),
+            }
+        })
+    }
     fn routed(&self, record: &RecordId, activity: &Activity, trace: &Trace) {
         self.console.routed(record, activity, trace);
     }

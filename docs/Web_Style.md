@@ -3756,3 +3756,6 @@ opening the inspector adds no discovery request or polling, and catalog entries
 do not establish platform permissions or installation in connected agents.
 
 | 2026-10-27 | Render the authoritative advertised tool catalog in the existing inspector, distinguish unknown/empty/loading/error states, and preserve shared discovery, agent-installation caveats and reduced-motion arrival. |
+
+
+| 2026-10-28 | Distinguish WhatsApp API acceptance from authenticated sent, delivered, read, played and failed receipts in the existing animated Channel Activity rows. Preserve provider timestamps, original recipients and independent failure evidence; add no polling, new layout or notifications. |

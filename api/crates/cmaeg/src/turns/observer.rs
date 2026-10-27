@@ -122,6 +122,17 @@ pub trait ActivityObserver: Send + Sync {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async {})
     }
+    /// A platform callback can retry observation persistence, but must never
+    /// retry the original send or launch provider work. Missing persistence is
+    /// explicit so a callback is not acknowledged as durably recorded.
+    fn platform_receipt<'a>(
+        &'a self,
+        _record: &'a RecordId,
+        _event: &'a EventId,
+        _change: crate::activity::Change,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Err(()) })
+    }
     /// An authenticated event is about to launch.
     fn admitted(&self, _record: &RecordId, _activity: &Activity) {}
 
