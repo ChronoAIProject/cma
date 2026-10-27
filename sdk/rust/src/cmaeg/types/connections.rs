@@ -154,6 +154,10 @@ pub struct RelayAuthoringCapabilities {
     /// Native webhook intake gate, independent of authoring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lark_intake_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_controls_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_forms_enabled: Option<bool>,
     /// Native Telegram owners may enable durable edit and reaction notifications.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_telegram_message_events_enabled: Option<bool>,

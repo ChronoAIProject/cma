@@ -59,6 +59,7 @@ impl InteractionStore {
             };
             if card.channel_id != channel.id
                 || card.discord.is_some()
+                || card.native_lark.is_some()
                 || !owner::admitted(&card, channel, activity)
                 || !platform_matches
                 || card.route_id != route

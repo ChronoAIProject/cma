@@ -673,11 +673,31 @@ app's webhook would redirect its traffic. This source supports native text
 replies, retained recall notifications with unknown actors, and human reaction
 add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
 Targets retain the original conversation and consumer authority; these incoming
-notifications confer no outgoing delete/edit/reaction authority. Native media
-(including the WhatsApp video profile), cards/forms, thread history and incoming
-edit propagation are not advertised for this source. Live platform acceptance
-remains separate from local contract tests. See the repository's native Lark
-setup document and preserved incoming-event audit for provisioning and limits.
+notifications confer no outgoing delete/edit/reaction authority. Thread history
+and incoming edit propagation are not advertised for this source. Live platform
+acceptance remains separate from local contract tests. See the repository's
+native Lark setup document and preserved incoming-event audit for provisioning
+and limits.
+
+Native interactive replies have separate optional management discovery flags,
+`native_lark_controls_enabled` and `native_lark_forms_enabled`, both default off.
+The retained event context advertises `buttons` and `cards` as `native_card`,
+`max_text_chars: 4000`, and the optional `forms` boolean when native controls are
+available. Configure `card.action.trigger` in the separate app's **Callback
+configuration**, using the encrypted native webhook URL; this is separate from
+message event subscriptions. Do not subscribe to the legacy callback version.
+
+Use the existing outbound blocks and form fields. Controls retain the original
+human actor and exact private/group conversation, including an existing group
+thread when its original native authority is retained. Both default and named
+consumers retain their exact original owner. A confirmed single interactive
+message returns a stable `message_ref` for PATCH replacement, recall and one
+reaction. Replacements preserve the original 24-hour lifetime; changing app
+credentials, source, routing, consumer key or provider revokes stale authority.
+Unknown sends or updates never produce replacement authority and must not be
+blindly retried. Gate-off stops new issuance while current retained references
+and durable callback recovery remain readable. Media mixed with cards remains
+unsupported; inspect rendering, delivery and message capability results.
 
 ### Native WhatsApp image, PDF, audio, sticker and video replies
 

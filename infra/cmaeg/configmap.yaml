@@ -31,6 +31,8 @@ data:
   # Issue native resource locators only after all retained readers support them.
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "false"
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "false"
+  CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_LARK_FORMS_ENABLED: "false"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "false"
   CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.

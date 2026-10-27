@@ -46,10 +46,11 @@ fn selected(state: &ToolsState) -> Vec<SelectedTool> {
         .whatsapp_reactions
         .as_ref()
         .is_some_and(|client| client.issuance_enabled)
-        || state
-            .native_lark_effects
-            .as_ref()
-            .is_some_and(|c| c.confirmed_issuance_enabled || c.received_issuance_enabled)
+        || state.native_lark_effects.as_ref().is_some_and(|c| {
+            c.confirmed_issuance_enabled
+                || c.received_issuance_enabled
+                || c.controls_issuance_enabled
+        })
         || (state.lark_effects_issuance_enabled && state.lark_effects.is_some())
         || state.telegram_effects_issuance_enabled
         || state.discord_effects_issuance_enabled

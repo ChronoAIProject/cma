@@ -307,6 +307,7 @@ export const CapabilitiesSchema = object({
   whatsapp_templates: optional(nullable(boolean)),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
   attachments: text,
+  forms: optional(nullable(boolean)),
   buttons: text,
   cards: text,
   edit: boolean,
