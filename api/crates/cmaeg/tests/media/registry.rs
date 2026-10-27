@@ -71,6 +71,7 @@ pub fn stub() -> Arc<dyn MediaSource> {
 }
 
 struct Sources {
+    whatsapp: Arc<Stub>,
     nyxid: Arc<Stub>,
     telegram: Arc<Stub>,
     url: Arc<Stub>,
@@ -85,9 +86,12 @@ fn sources() -> Sources {
         named(b"url"),
         named(b"inline"),
     );
+    let whatsapp = named(b"whatsapp");
     let registry =
-        SourceRegistry::new(nyxid.clone(), telegram.clone(), url.clone(), inline.clone());
+        SourceRegistry::new(nyxid.clone(), telegram.clone(), url.clone(), inline.clone())
+            .with_whatsapp(whatsapp.clone());
     Sources {
+        whatsapp,
         nyxid,
         telegram,
         url,
@@ -96,7 +100,7 @@ fn sources() -> Sources {
     }
 }
 
-fn kinds() -> [(SourceKind, &'static str); 3] {
+fn kinds() -> [(SourceKind, &'static str); 4] {
     [
         (
             SourceKind::NyxidRelay {
@@ -113,10 +117,18 @@ fn kinds() -> [(SourceKind, &'static str); 3] {
             "telegram",
         ),
         (SourceKind::Custom, "custom"),
+        (
+            SourceKind::Whatsapp {
+                app_id: "12345".into(),
+                waba_id: "23456".into(),
+                phone_number_id: "34567".into(),
+            },
+            "whatsapp",
+        ),
     ]
 }
 
-fn locators() -> [(AttachmentSource, &'static str); 4] {
+fn locators() -> [(AttachmentSource, &'static str); 5] {
     [
         (AttachmentSource::NyxidRelay { index: 0 }, "relay"),
         (
@@ -138,6 +150,14 @@ fn locators() -> [(AttachmentSource, &'static str); 4] {
             },
             "custom",
         ),
+        (
+            AttachmentSource::Whatsapp {
+                message_id: "wamid.media".into(),
+                media_id: "45678".into(),
+                sha256: "ab".repeat(32),
+            },
+            "whatsapp",
+        ),
     ]
 }
 
@@ -158,10 +178,12 @@ async fn each_locator_reaches_only_its_source_and_only_with_its_activity_source(
                 &sources.telegram,
                 &sources.url,
                 &sources.inline,
+                &sources.whatsapp,
             ]
             .map(|source| source.calls.load(Ordering::SeqCst));
             if locator_kind == kind_name {
                 let expected: &[u8] = match locator {
+                    AttachmentSource::Whatsapp { .. } => b"whatsapp",
                     AttachmentSource::Discord { .. } => b"discord",
                     AttachmentSource::NyxidRelay { .. } | AttachmentSource::LarkResource { .. } => {
                         b"nyxid"
@@ -174,7 +196,7 @@ async fn each_locator_reaches_only_its_source_and_only_with_its_activity_source(
                 assert_eq!(calls.iter().sum::<usize>(), 1);
             } else {
                 assert_eq!(result.unwrap_err(), FetchError::NotRetrievable);
-                assert_eq!(calls, [0; 4], "{kind_name} with {locator:?}");
+                assert_eq!(calls, [0; 5], "{kind_name} with {locator:?}");
             }
         }
     }

@@ -23,8 +23,17 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Content {
-    Text { text: String },
-    Reaction { target: String, emoji: String },
+    Text {
+        text: String,
+    },
+    Media {
+        caption: String,
+        attachment: Box<cmaeg_core::activity::Attachment>,
+    },
+    Reaction {
+        target: String,
+        emoji: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +129,10 @@ pub fn extract(source: &Source, body: &[u8]) -> Result<Vec<Message>, Error> {
 
 fn parse(raw: &Value) -> Result<Option<Message>, Error> {
     let kind = raw["type"].as_str().ok_or(Error::Message)?;
-    if !matches!(kind, "text" | "reaction") {
+    if !matches!(
+        kind,
+        "text" | "reaction" | "image" | "document" | "audio" | "video" | "sticker"
+    ) {
         return Ok(None);
     }
     if !private_shape(raw) {
@@ -147,7 +159,7 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
         Content::Text {
             text: text.to_owned(),
         }
-    } else {
+    } else if kind == "reaction" {
         let target = raw["reaction"]["message_id"]
             .as_str()
             .filter(|id| valid_message_id(id))
@@ -162,6 +174,8 @@ fn parse(raw: &Value) -> Result<Option<Message>, Error> {
             target: target.to_owned(),
             emoji: emoji.to_owned(),
         }
+    } else {
+        super::media::extract(raw, kind, id)?
     };
     Ok(Some(Message {
         id: id.to_owned(),

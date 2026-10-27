@@ -415,7 +415,8 @@ pub fn compose(
         )
         .with_discord(Arc::new(super::source::discord::DiscordFileSource::new(
             crate::discord::DiscordRest::new()?,
-        ))),
+        )))
+        .with_whatsapp(Arc::new(super::source::whatsapp::WhatsappFileSource::new())),
     );
     let decode = Arc::new(Semaphore::new(1));
     // An empty CMAEG_STT_URL leaves speech-to-text off.

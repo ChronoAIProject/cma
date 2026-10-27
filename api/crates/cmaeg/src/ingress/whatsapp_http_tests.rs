@@ -178,3 +178,53 @@ async fn native_whatsapp_http_unknown_targets_and_wrong_phone_never_launch() {
     );
     assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn native_whatsapp_http_media_authenticates_original_bytes_before_retaining_each_type() {
+    let mut setup = Setup::new().await;
+    setup.state = setup
+        .state
+        .with_media_enabled(true)
+        .with_whatsapp_media(true);
+    let app = setup.http();
+    let messages = ["image", "document", "audio", "video", "sticker"]
+        .iter()
+        .map(|kind| {
+            current(crate::whatsapp::media_tests::message(
+                kind,
+                &format!("wamid.{kind}"),
+                b"fixture",
+            ))
+        })
+        .collect();
+    let body = envelope(messages);
+    let response = call(app.clone(), setup.callback(body.clone(), false)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+    let response = call(app.clone(), setup.callback(body.clone(), true)).await;
+    assert_eq!(
+        json_response(response).await,
+        json!({"accepted":5,"refused":0})
+    );
+    for kind in ["image", "document", "audio", "video", "sticker"] {
+        let plan = setup
+            .server
+            .store()
+            .load(&setup.identity(&format!("wamid.{kind}")))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.source_body, body);
+        let ActivityKind::Message { attachments, .. } = plan.activity.kind else {
+            panic!()
+        };
+        assert_eq!(attachments.len(), 1);
+    }
+    let writes = setup.server.memory.writes.load(Ordering::SeqCst);
+    let response = call(app, setup.callback(body, true)).await;
+    assert_eq!(
+        json_response(response).await,
+        json!({"accepted":5,"refused":0})
+    );
+    assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);
+}
