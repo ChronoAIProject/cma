@@ -42,17 +42,17 @@ fn native_upload_effects_follow_verified_compatible_reader_rollout() {
 }
 
 #[test]
-fn received_reactions_wait_for_compatible_reader_rollout() {
+fn received_reactions_follow_verified_compatible_reader_rollout() {
     for gate in [
         "CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED",
         "CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED",
     ] {
-        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"), "{gate}");
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("true"), "{gate}");
     }
 }
 
 #[test]
-fn native_lark_activated_intake_keeps_followup_media_and_effects_disabled() {
+fn native_lark_activated_intake_media_and_effects_follow_verified_rollout() {
     for gate in [
         "CMAEG_NATIVE_LARK_WRITES_ENABLED",
         "CMAEG_NATIVE_LARK_INTAKE_ENABLED",
@@ -65,6 +65,6 @@ fn native_lark_activated_intake_keeps_followup_media_and_effects_disabled() {
         "CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED",
         "CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED",
     ] {
-        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"));
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("true"));
     }
 }
