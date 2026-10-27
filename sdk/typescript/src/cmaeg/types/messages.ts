@@ -147,6 +147,10 @@ export const NativeMediaCapabilitiesSchema = object({
   sources: array(text),
   max_attachments: integer,
   max_inline_bytes: integer,
+  mime_types: optional(nullable(array(text))),
+  max_total_bytes: optional(nullable(integer)),
+  max_image_bytes: optional(nullable(integer)),
+  max_caption_chars: optional(nullable(integer)),
 });
 export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
 

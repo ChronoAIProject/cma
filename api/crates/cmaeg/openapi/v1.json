@@ -3712,9 +3712,46 @@
             "minimum": 0,
             "type": "integer"
           },
+          "max_caption_chars": {
+            "description": "Per-attachment caption character ceiling; shared metadata byte limits still apply.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_image_bytes": {
+            "description": "Per-image encoded byte ceiling.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "max_inline_bytes": {
             "minimum": 0,
             "type": "integer"
+          },
+          "max_total_bytes": {
+            "description": "Aggregate decoded/downloaded bytes in one reply.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mime_types": {
+            "description": "Exact accepted MIME types when the transport supports a bounded subset.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "sources": {
             "items": {

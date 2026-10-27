@@ -310,4 +310,16 @@ pub struct NativeMediaCapabilities {
     pub max_attachments: u64,
     /// Maximum aggregate decoded inline bytes per logical reply.
     pub max_inline_bytes: u64,
+    /// Exact MIME subset, when declared by the destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_types: Option<Vec<String>>,
+    /// Aggregate decoded/downloaded bytes in one reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_bytes: Option<u64>,
+    /// Per-image encoded byte ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_image_bytes: Option<u64>,
+    /// Caption characters; shared metadata byte limits still apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_caption_chars: Option<u32>,
 }
