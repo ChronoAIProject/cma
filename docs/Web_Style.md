@@ -3610,3 +3610,84 @@ metadata. Each newly reported event uses the shared Presence arrival transition
 and reduced-motion behavior; updates to the same event do not restart it.
 
 | 2026-10-27 | Start one Activity stream on explicit channel selection; share its authoritative latest receipt with the map and retained dialog, close inactive streams and preserve native recoverable reconnects without an arbitrary error cap. |
+
+### Event Gateway configuration clarity and toolsets (2026-10-27)
+
+Node configuration retains the shared centered 60vw × 60dvh Modal. Inside, a
+160px section navigation column uses layer 2, 16px vertical/12px horizontal
+padding, 32px minimum section buttons and the existing accent selected state.
+The independently scrolling content uses 24px padding. The navigation lists
+actual top-level settings (connection, admission, grouping, replies, routing,
+model, permissions and credentials), in document order; conditional fields
+update this list without polling. Selecting a section scrolls and focuses it.
+Scrolling updates the highlighted section. At 720px it becomes one horizontal
+scrolling row of 44px touch targets and the content padding becomes 16px.
+
+Forms use one vertical reading rhythm: 8px label/control gaps, 16px field gaps,
+24px section spacing and thin border-l2 section divisions. Short explanatory
+copy uses 13px/20px; hints use 12px/18px secondary ink. Two-column groups collapse
+below a 560px content container. Repeated field/remove rows align at their lower
+edge. Checkboxes align with the first text line and can carry a subordinate
+explanation. Ownership, model/behavior, services/instructions, skills and extra
+MCP servers have distinct section destinations. Unknown wire values remain
+visible and retained. UI labels may explain enum values without changing them.
+
+An Agent toolsets node describes the gateway's existing event tools and connects
+to consumers with a static dashed association. Its inspector separates core
+event tools, optional media/message effects, and the connected consumers. Tool
+rows show a plain-language action, exact tool name and its restrictions. It does
+not imply that a tool is installed in an existing Agent, that a platform supports
+every action, or that an optional server gate is enabled. No discovery requests,
+permission changes or installations are triggered by inspecting it. Opening
+Toolsets preserves the existing node editor and unsaved drafts. Section movement
+uses existing smooth motion and honors reduced motion.
+
+| Date | Change |
+| --- | --- |
+| 2026-10-27 | Organize node configuration by actual settings with aligned fields, contextual explanations and active section navigation; expose a truthful Agent toolsets catalog while preserving node drafts. |
+
+### Shared Gateway navigation and map controls (2026-10-27)
+
+Channels and Consumers now use the Agent Manager's same text view tabs and
+single-line TreeRow navigation, including quiet 32px rows (44px on narrow
+screens), selected fill, keyboard navigation, and metadata revealed on focus,
+hover or selection. Creation uses the shared top sidebar action, with the
+existing Channel branch or Consumer Agent glyph. Retained content and drafts
+survive section changes. The prior expandable group layout is superseded.
+
+The map's Activity and Add producer actions float at the top right beside a
+compact preview of the latest three authoritative Activity receipts. The preview
+shares the selected channel's existing feed and preserves per-consumer outcomes,
+connection, waiting and empty states. Its 12px insets, radius and secondary 12/18
+metadata reuse existing tokens. Fit and resize reserve space for this overlay.
+The bottom Browse delivery nodes disclosure is removed; canvas node buttons
+retain their names, pressed states and ordinary keyboard activation.
+Below 640px of canvas width, nodes stack in reading order with top-to-bottom
+arrows; the canvas grows to preserve readable node size below its controls.
+
+Configured event edges have arrowheads and a slow three-second directional dash
+progression. This indicates routing direction, not live traffic; Activity is the
+evidence of events. Reduced motion leaves static arrows and removes viewport
+transitions. The optional Agent toolsets node sits below the Channel; its dashed,
+static, labeled Tool access associations point to Consumers and do not imply
+that tools publish traffic. All controls reuse shared hover and focus treatment.
+
+| 2026-10-27 | Reuse Agent Manager resource tabs, single-line navigation and top creation actions in Event Gateway; float map actions beside three actual Activity receipts, remove the duplicate node browser, and show routing direction with reduced-motion-aware arrows and separate static tool-access associations. |
+
+The detail header uses 24px top and side padding so breadcrumbs never touch the
+viewport edge. The latest-activity preview scrolls within 320px or 40dvh, whichever
+is smaller, so a large recipient list cannot consume the map. Add producer remains
+visible but disabled at the channel's four-producer limit, with an explanation.
+Send message and Tests section destinations appear only when their controls are
+available; their retained components keep pending operations while hidden.
+
+| 2026-10-27 | Finish Gateway detail spacing, bound the activity preview, and keep configuration navigation limited to available controls without discarding pending sends. |
+
+Configuration add/remove and save actions keep intrinsic widths and align to the
+start of their section; they do not stretch across the form's grid columns.
+
+Delivery map edges use a 1.5px stroke in `--dsw-alias-label-tertiary` so the
+direction remains legible in both themes. Arrowheads use the same ink. The
+built-page style check verifies these values on the actual rendered paths.
+
+| 2026-10-27 | Record the delivery map's directional edge weight and paint, and align built-page verification with shared sidebar rows. |

@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import type { Bot } from '@chronoai/cma-sdk';
 import type { BotClient } from '../bots/model';
 import type { AppRoute } from '../routing/routes';
+import { TreeRow } from '../shell/TreeRow';
+import { keyboardNavigation } from '../shell/treePresentation';
+import { IconRefreshOutline16 } from '../ui/icons';
+import '../shell/Tree.css';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { GatewayRecordMeta } from './GatewayRecordMeta';
@@ -52,12 +56,16 @@ export function GatewayConsumers({
   return (
     <section className="gateway-sidebar" aria-label="Consumers">
       <div className="gateway-sidebar__heading">
-        <Button size="sm" onClick={() => onNavigate({ kind: 'bot_new' })}>
-          New consumer
-        </Button>
-        <Button size="sm" onClick={refresh} disabled={busy} aria-label="Refresh consumers">
-          Refresh
-        </Button>
+        <button
+          type="button"
+          className="navigation-filters__toggle"
+          disabled={busy}
+          onClick={refresh}
+          aria-label="Refresh consumers"
+          title="Refresh consumers"
+        >
+          <IconRefreshOutline16 />
+        </button>
       </div>
       {error ? (
         <Alert tone="error" actions={<Button onClick={refresh}>Try again</Button>}>
@@ -68,21 +76,27 @@ export function GatewayConsumers({
       {!busy && !error && items.length === 0 ? (
         <p className="gateway-sidebar__empty">No consumers yet.</p>
       ) : null}
-      <ul className="gateway-sidebar__list">
+      <div
+        className="agent-navigation"
+        role="tree"
+        aria-label="Consumers"
+        onKeyDown={keyboardNavigation}
+      >
         {items.map((item) => (
-          <li key={item.bot_id}>
-            <button
-              type="button"
-              className="gateway-sidebar__channel"
-              aria-current={selected === item.bot_id ? 'page' : undefined}
-              onClick={() => onNavigate({ kind: 'bot', botId: item.bot_id })}
-            >
-              <span>{item.name}</span>
-              <GatewayRecordMeta createdAt={item.created_at} owner={item.owner} />
-            </button>
-          </li>
+          <TreeRow
+            key={item.bot_id}
+            nodeId={`consumer:${item.bot_id}`}
+            level={1}
+            layout="line"
+            label={item.name}
+            icon={null}
+            selected={selected === item.bot_id}
+            onNavigate={onNavigate}
+            onActivate={() => onNavigate({ kind: 'bot', botId: item.bot_id })}
+            meta={<GatewayRecordMeta compact createdAt={item.created_at} owner={item.owner} />}
+          />
         ))}
-      </ul>
+      </div>
       {next ? (
         <Button
           disabled={busy}

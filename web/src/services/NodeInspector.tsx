@@ -1,4 +1,11 @@
-import { useEffect, useId, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import {
+  ConfigurationSections,
+  scrollToConfiguration,
+  useConfigurationSections,
+} from './ConfigurationSections';
+import './NodeInspector.css';
+import { ChannelToolsets } from './ChannelToolsets';
 import type { Channel } from './ChannelEditor';
 import { ChannelEndpoints } from './ChannelEndpoints';
 import { Modal } from '../ui/Modal';
@@ -116,6 +123,8 @@ export function NodeInspector({
   open = true,
   onClose = () => {},
   initialSection = 'overview',
+  sendAvailable = true,
+  testsAvailable = true,
   send,
   tests,
   activity,
@@ -128,20 +137,27 @@ export function NodeInspector({
   readonly open?: boolean;
   readonly onClose?: () => void;
   readonly initialSection?: 'overview' | 'activity';
+  readonly sendAvailable?: boolean;
+  readonly testsAvailable?: boolean;
   readonly send?: ReactNode;
   readonly tests?: ReactNode;
   readonly activity?: ReactNode;
   readonly danger?: ReactNode;
 }) {
   const heading = useId();
+  const panel = useRef<HTMLElement>(null);
+  const { sections: settings, register } = useConfigurationSections();
+  const [activeSection, setActiveSection] = useState(`${id}-overview`);
   const selectionId = selectionKey(selection);
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => jumpToSection(id, initialSection, false, false));
+    const frame = requestAnimationFrame(() =>
+      scrollToConfiguration(`${id}-${initialSection}`, false, false),
+    );
     return () => cancelAnimationFrame(frame);
   }, [id, open, initialSection, selectionId]);
-  const { producers, consumers } = channelNodes(channel);
-  const selected = [...producers, ...consumers].find(
+  const { producers, consumers, toolsets } = channelNodes(channel);
+  const selected = [...producers, ...consumers, toolsets].find(
     (node) => node.key === selectionKey(selection),
   );
   const newProducer =
@@ -149,50 +165,110 @@ export function NodeInspector({
   const title =
     selection.kind === 'channel'
       ? 'Channel settings'
-      : newProducer
-        ? 'New producer'
-        : (selected?.title ?? 'Node unavailable');
+      : selection.kind === 'toolsets'
+        ? 'Agent toolsets'
+        : newProducer
+          ? 'New producer'
+          : (selected?.title ?? 'Node unavailable');
   const sections = [
     ['overview', 'Overview', true],
     ['configuration', 'Configuration', children],
+    [
+      'catalog',
+      'Tool catalog',
+      selection.kind === 'toolsets' ? <ChannelToolsets channel={channel} /> : null,
+    ],
     ['send', 'Send message', send],
     ['tests', 'Tests', tests],
     ['activity', 'Activity', activity],
     ['delete', 'Delete', danger],
   ] as const;
+  const sectionVisible = (key: string) =>
+    (selection.kind !== 'toolsets' || ['overview', 'catalog'].includes(key)) &&
+    (key !== 'send' || sendAvailable) &&
+    (key !== 'tests' || testsAvailable);
+  const navigation = sections.flatMap(([key, label, content]) => {
+    if (!content || !sectionVisible(key)) return [];
+    if ((key === 'configuration' || key === 'catalog') && settings.length > 0)
+      return settings.map((section) => ({ id: section.id, label: section.title }));
+    return [{ id: `${id}-${key}`, label }];
+  });
+  const navigationIds = navigation.map((entry) => entry.id).join(',');
+  useEffect(() => {
+    const root = panel.current;
+    if (!open || !root) return;
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const top = root.getBoundingClientRect().top + 32;
+        const targets = navigationIds
+          .split(',')
+          .map((key) => document.getElementById(key))
+          .filter((el) => el !== null);
+        const current =
+          targets.filter((el) => el.getBoundingClientRect().top <= top).at(-1) ?? targets[0];
+        if (current) setActiveSection(current.id);
+      });
+    };
+    root.addEventListener('scroll', update, { passive: true });
+    update();
+    return () => {
+      root.removeEventListener('scroll', update);
+      cancelAnimationFrame(frame);
+    };
+  }, [open, navigationIds]);
   return (
     <Modal open={open} onClose={onClose} title={title} layout="sections" keepMounted>
       <div className="channel-config-layout">
         <nav className="channel-config-nav" aria-label="Configuration sections">
-          {sections
-            .filter(([, , content]) => Boolean(content))
-            .map(([key, label]) => (
-              <button type="button" key={key} onClick={() => jumpToSection(id, key, true)}>
-                {label}
-              </button>
-            ))}
+          <span className="channel-config-nav__label">
+            {selection.kind === 'toolsets' ? 'Tools' : 'Settings'}
+          </span>
+          {navigation.map((entry) => (
+            <button
+              type="button"
+              key={entry.id}
+              aria-current={activeSection === entry.id ? 'location' : undefined}
+              onClick={() => {
+                setActiveSection(entry.id);
+                scrollToConfiguration(entry.id);
+              }}
+            >
+              {entry.label}
+            </button>
+          ))}
         </nav>
-        <section className="channel-inspector" id={id} aria-labelledby={heading}>
+        <section className="channel-inspector" id={id} ref={panel} aria-labelledby={heading}>
           <section id={`${id}-overview`} tabIndex={-1} className="channel-inspector__section">
             <div className="channel-inspector__heading">
               <span>
                 {selection.kind === 'channel'
                   ? 'CHANNEL'
-                  : selection.kind === 'producer'
-                    ? 'PRODUCER'
-                    : 'CONSUMER'}
+                  : selection.kind === 'toolsets'
+                    ? 'TOOLSETS'
+                    : selection.kind === 'producer'
+                      ? 'PRODUCER'
+                      : 'CONSUMER'}
               </span>
               <h2 id={heading}>{title}</h2>
               <p>
                 {selection.kind === 'channel'
                   ? 'Shared routing, conversation and reply settings.'
-                  : selection.kind === 'producer'
-                    ? 'How this source sends events into the channel.'
-                    : 'The agent that receives and responds to events.'}
+                  : selection.kind === 'toolsets'
+                    ? 'What the channel’s agents can use to read events and respond.'
+                    : selection.kind === 'producer'
+                      ? 'How this source sends events into the channel.'
+                      : 'The agent that receives and responds to events.'}
               </p>
             </div>
             <div className="channel-inspector__summary" key={selectionKey(selection)}>
-              {newProducer ? (
+              {selection.kind === 'toolsets' ? (
+                <p className="channel-field-hint">
+                  Tools use the selected event’s destination and permissions. Availability can
+                  differ between producers and individual messages.
+                </p>
+              ) : newProducer ? (
                 <p className="channel-field-hint">
                   Configure and save this producer before checking its delivery settings.
                 </p>
@@ -227,9 +303,18 @@ export function NodeInspector({
                 className="channel-inspector__section"
                 aria-label={label}
                 data-section={key}
+                hidden={!sectionVisible(key)}
               >
                 <h3>{label}</h3>
-                {content}
+                <ConfigurationSections
+                  value={
+                    (key === 'configuration' && selection.kind !== 'toolsets') || key === 'catalog'
+                      ? register
+                      : undefined
+                  }
+                >
+                  {content}
+                </ConfigurationSections>
               </section>
             ) : null,
           )}
@@ -237,16 +322,4 @@ export function NodeInspector({
       </div>
     </Modal>
   );
-}
-
-function jumpToSection(id: string, key: string, animate: boolean, focus = true) {
-  const target = document.getElementById(`${id}-${key}`);
-  target?.scrollIntoView?.({
-    block: 'start',
-    behavior:
-      animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 'smooth'
-        : 'instant',
-  });
-  if (focus) target?.focus({ preventScroll: true });
 }
