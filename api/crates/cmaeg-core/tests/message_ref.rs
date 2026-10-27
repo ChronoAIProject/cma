@@ -213,3 +213,41 @@ fn discord_media_scope_round_trips_and_requires_bounded_effect_authority() {
         .open(&keys)
         .is_err());
 }
+
+#[test]
+fn telegram_media_scope_preserves_legacy_serialization_and_cannot_mix_card_authority() {
+    use cmaeg_core::seal::TelegramEffectAuthority;
+    use serde_json::json;
+    let keys = keys(1);
+    let channel: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
+    let legacy = json!({
+        "record_id":"record-1", "owner":channel["owner"], "provider":channel["provider"],
+        "agent_key_hash":vec![3_u8;32], "routing_sha256":"a".repeat(64),
+        "bot_id":"77", "chat_id":"-42", "thread_id":"7",
+        "admission":{"actor_id":"42","actor_kind":"human","conversation_kind":"group",
+            "mentioned":true,"replied_to_bot":false},
+        "issued_at":1,"expires_at":86401
+    });
+    let mut authority: TelegramEffectAuthority = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(!authority.effects_only);
+    assert_eq!(serde_json::to_value(&authority).unwrap(), legacy);
+    authority.effects_only = true;
+    let mut reference = payload(&keys);
+    reference.platform_message_id = "800".into();
+    reference.route_id = "telegram:77:-42".into();
+    reference.telegram_effect = Some(authority);
+    assert_eq!(
+        MessageRef::seal(&reference, &keys)
+            .unwrap()
+            .open(&keys)
+            .unwrap()
+            .payload,
+        reference
+    );
+    reference.interaction_record_id = Some("card".into());
+    assert!(MessageRef::seal(&reference, &keys)
+        .unwrap()
+        .open(&keys)
+        .is_err());
+}

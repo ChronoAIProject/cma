@@ -32,7 +32,7 @@ impl Candidate {
 }
 impl InteractionStore {
     pub(crate) fn mutation_store(&self) -> mutation::Store {
-        mutation::Store::new(self.records.clone(), self.keys.clone())
+        mutation::Store::discord(self.records.clone(), self.keys.clone())
     }
     /// Validate current custody before both replay and new admission. Superseded
     /// cards may still replay a receipt; only admission decides whether to write.

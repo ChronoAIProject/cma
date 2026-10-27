@@ -34,6 +34,7 @@ pub(crate) async fn serve(
     discord_card_effects: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -141,6 +142,7 @@ pub(crate) async fn serve(
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
+        .with_telegram_media_effects(telegram_media_effects)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),

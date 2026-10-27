@@ -16,6 +16,7 @@ mod lark;
 pub(crate) mod lark_authority;
 pub(crate) mod lark_ledger;
 pub mod lark_transport;
+pub(crate) mod mutation;
 use super::{reply_targets::receipts, state::owner, ToolsState};
 use crate::{
     auth::AgentCaller,
@@ -219,7 +220,39 @@ impl ToolsState {
             receipts::Admission::Replay(receipt) => return Ok(MessageEffectReceipt { delivery: receipt.delivery }),
             receipts::Admission::Claimed(claim) => claim,
         };
-        // Recheck live ownership, current source/actor policy and consumer after CAS.
+        // New media scopes also serialize different keys. Historical text scopes
+        // retain their existing receipt behavior and serialized authority.
+        let serial =
+            mutation::Store::telegram_media(self.resolver.record_client(), self.keys.clone());
+        let held = if authority.effects_only {
+            match serial
+                .acquire(
+                    mutation::destination(
+                        &authority.bot_id,
+                        &authority.chat_id,
+                        &message.platform_message_id,
+                    ),
+                    &channel.definition.owner.subject,
+                    authority.expires_at,
+                )
+                .await?
+            {
+                Some(held) => Some(held),
+                None => {
+                    let mut receipt = receipts::uncertain("effect_receipt_unconfirmed");
+                    receipt.delivery = DeliveryOutcome::Rejected {
+                        reason: "native_message_effect_busy".into(),
+                    };
+                    store.finish(claim, &receipt).await?;
+                    return Ok(MessageEffectReceipt {
+                        delivery: receipt.delivery,
+                    });
+                }
+            }
+        } else {
+            None
+        };
+        // Recheck live ownership, current source/actor policy and consumer after CAS/fence.
         let (channel, message) = self.current_message(caller, reference).await?;
         authority::check(&message, &channel, caller, now())?;
         let authority = message
@@ -278,6 +311,15 @@ impl ToolsState {
                     reason: "effect_receipt_unconfirmed".into(),
                 },
             });
+        }
+        if let Some(held) =
+            held.filter(|_| !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }))
+        {
+            if serial.release(held).await.is_err() {
+                tracing::warn!(
+                    "native message effect fence remains held after a completed receipt"
+                );
+            }
         }
         Ok(MessageEffectReceipt {
             delivery: receipt.delivery,
