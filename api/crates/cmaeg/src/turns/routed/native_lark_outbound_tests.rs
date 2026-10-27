@@ -65,6 +65,7 @@ fn message() -> OutboundMessage {
         reply_to: None,
         thread_reply: false,
         whatsapp_template: None,
+        native_media_update: None,
         native_attachments: vec![attachment("application/pdf")],
     }
 }

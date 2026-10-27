@@ -4,6 +4,7 @@ mod component_edit;
 mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
+pub(crate) mod media_edit;
 mod thread_history;
 pub(crate) mod threads;
 use crate::{
@@ -158,6 +159,22 @@ impl DiscordRest {
         files: &[PreparedFile],
         components: Option<&Value>,
     ) -> Result<String, RestError> {
+        let body = self
+            .send_components_result(token, bot, channel, reply_to, text, files, components)
+            .await?;
+        Ok(body["id"].as_str().ok_or(RestError::Unknown)?.to_owned())
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn send_components_result(
+        &self,
+        token: &Secret,
+        bot: &str,
+        channel: &str,
+        reply_to: Option<&str>,
+        text: &str,
+        files: &[PreparedFile],
+        components: Option<&Value>,
+    ) -> Result<Value, RestError> {
         if !valid_id(bot)
             || !valid_id(channel)
             || reply_to.is_some_and(|id| !valid_id(id))
@@ -222,11 +239,10 @@ impl DiscordRest {
         {
             return Err(RestError::Unknown);
         }
-        body["id"]
-            .as_str()
-            .filter(|id| valid_id(id))
-            .map(str::to_owned)
-            .ok_or(RestError::Unknown)
+        if !body["id"].as_str().is_some_and(valid_id) {
+            return Err(RestError::Unknown);
+        }
+        Ok(body)
     }
     /// Edit one confirmed bot message without retries or changing its destination.
     pub async fn edit_text(

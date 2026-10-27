@@ -194,6 +194,7 @@ async fn named_text_form_edits_keep_telegram_and_plain_relay_compatibility() {
         };
         let reference = MessageRefPayload {
             discord_message: None,
+            native_media_edit: None,
             received_reaction: None,
             native_lark_effect: None,
             whatsapp_reaction: None,

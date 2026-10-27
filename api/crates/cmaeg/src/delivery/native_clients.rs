@@ -3,6 +3,11 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_lark_controls(mut self, controls: bool, forms: bool) -> Self {
+        self.native_lark_controls = controls;
+        self.native_lark_forms = controls && forms;
+        self
+    }
     pub fn with_native_lark_effects(mut self, enabled: bool) -> Self {
         self.native_lark_effects = enabled;
         self
@@ -35,6 +40,20 @@ impl RelayClient {
     }
     pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
         self.telegram = client;
+        self
+    }
+}
+
+impl super::relay_client::RelayClient {
+    pub fn with_native_media_edits(
+        mut self,
+        telegram: bool,
+        discord: bool,
+        store: std::sync::Arc<crate::native_media::store::Store>,
+    ) -> Self {
+        self.telegram_media_edits = telegram;
+        self.discord_media_edits = discord;
+        self.native_media_receipts = Some(store);
         self
     }
 }

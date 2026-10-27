@@ -425,3 +425,21 @@ fn negative_error(problem: &Problem) -> ResolveError {
         ResolveError::InvalidDefinition
     }
 }
+
+impl ChannelResolver {
+    pub(crate) async fn native_lark_control_current(
+        &self,
+        channel: &ResolvedChannel,
+        activity: &cmaeg_core::activity::Activity,
+        event: &cmaeg_core::seal::EventRefPayload,
+    ) -> Result<(), crate::interactions::Error> {
+        crate::interactions::native_lark::current_dispatch(
+            &self.inner.records,
+            &self.inner.keys,
+            channel,
+            activity,
+            event,
+        )
+        .await
+    }
+}
