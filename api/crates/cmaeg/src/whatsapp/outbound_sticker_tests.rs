@@ -4,17 +4,17 @@ pub(crate) fn fixtures() -> [(&'static str, &'static [u8], bool); 3] {
     [
         (
             "static",
-            include_bytes!("../../tests/fixtures/media/whatsapp-static.webp"),
+            include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-static.webp"),
             false,
         ),
         (
             "static-lossy",
-            include_bytes!("../../tests/fixtures/media/whatsapp-static-lossy.webp"),
+            include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-static-lossy.webp"),
             false,
         ),
         (
             "animated",
-            include_bytes!("../../tests/fixtures/media/whatsapp-animated.webp"),
+            include_bytes!("../../tests/fixtures/whatsapp-outbound/whatsapp-animated.webp"),
             true,
         ),
     ]
