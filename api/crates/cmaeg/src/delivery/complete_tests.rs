@@ -7,7 +7,7 @@ use super::{
 };
 mod destinations;
 mod durable;
-mod native_whatsapp;
+mod native_whatsapp_tests;
 mod whatsapp;
 use crate::{
     channels::resolver::ResolvedChannel,
