@@ -28,8 +28,8 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 
-fn frames() -> Vec<Value> {
-    let lifecycle = |sequence, kind, status| json!({"type":kind,"sequence_number":sequence,"response":{"id":"resp_accepted","object":"response","status":status,"conversation":{"id":"agt_native"},"metadata":{},"output":[]}});
+fn frames(thread: bool) -> Vec<Value> {
+    let lifecycle = |sequence, kind, status| json!({"type":kind,"sequence_number":sequence,"response":{"id":"resp_accepted","object":"response","status":status,"conversation":{"id":"agt_native"},"metadata":{},"output":[],"thread_reply":thread}});
     vec![
         lifecycle(0, "response.created", "queued"),
         json!({"type":"response.output_text.delta","sequence_number":1,"item_id":"m","delta":"handled native component"}),
@@ -38,15 +38,41 @@ fn frames() -> Vec<Value> {
 }
 #[tokio::test]
 async fn native_component_runs_real_provider_once_and_replies_to_original_card() {
-    let mut fixture = FixtureState::new().await;
+    run(false, false).await;
+}
+#[tokio::test]
+async fn native_thread_buttons_and_selects_run_one_original_consumer_and_reply_in_same_thread() {
+    for select in [false, true] {
+        run(true, select).await;
+    }
+}
+async fn run(thread: bool, select: bool) {
+    let mut fixture = if thread {
+        FixtureState::named_thread(11).await
+    } else {
+        FixtureState::new().await
+    };
     fixture.settle_context_message().await;
-    let card = fixture.card(&message(false)).await;
-    let raw = fixture.callback(
+    let card = fixture.card(&message(select)).await;
+    let mut raw = fixture.callback(
         card.markup[0]["components"][0]["custom_id"]
             .as_str()
             .unwrap(),
     );
+    if thread {
+        fixture.queue_thread_metadata();
+    }
+    if select {
+        raw["data"]["component_type"] = 3.into();
+        raw["data"]["values"] = json!(["1"]);
+    }
     fixture.receive(raw.clone(), 2).await.unwrap();
+    {
+        let mut calls = fixture.rest.memory.calls.lock().unwrap();
+        assert_eq!(calls.len(), if thread { 3 } else { 1 });
+        assert!(calls.last().unwrap().path.ends_with("/callback"));
+        calls.clear();
+    }
     fixture.rest.respond(
         axum::http::StatusCode::OK,
         json!({"id":"801","channel_id":"99","author":{"id":"77"}}),
@@ -57,7 +83,7 @@ async fn native_component_runs_real_provider_once_and_replies_to_original_card()
     let f = &mut fixture.setup;
     {
         let mut memory = provider.memory.lock().unwrap();
-        memory.config.replay_frames = Some(frames());
+        memory.config.replay_frames = Some(frames(thread));
         memory.config.mirror_replay_metadata = true;
     }
     let keys = f.fixture.store.keys.clone();
@@ -144,7 +170,7 @@ async fn native_component_runs_real_provider_once_and_replies_to_original_card()
     let worker = tokio::spawn(async move { scheduler.run(stopped).await });
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if discord.memory.calls.lock().unwrap().len() == 2 {
+            if discord.memory.calls.lock().unwrap().len() == 1 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -158,9 +184,7 @@ async fn native_component_runs_real_provider_once_and_replies_to_original_card()
     assert!(engine.drain(Instant::now() + Duration::from_secs(5)).await);
     {
         let calls = discord.memory.calls.lock().unwrap();
-        assert_eq!(calls.len(), 2);
-        assert!(calls[0].path.ends_with("/callback"));
-        let calls = &calls[1..];
+        assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].method, "POST");
         assert_eq!(calls[0].path, "/api/v10/channels/99/messages");
         let body: Value = serde_json::from_slice(&calls[0].body).unwrap();

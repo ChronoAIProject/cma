@@ -22,13 +22,20 @@ pub(crate) struct FixtureState {
     pub provider: HttpServer,
     pub activity: Arc<crate::activity::ActivityStore>,
     original_inbox: String,
+    pub thread_kind: Option<u8>,
 }
 impl FixtureState {
     pub fn keys(&self) -> Arc<cmaeg_core::seal::MasterKeyRing> {
         self.setup.fixture.store.keys.clone()
     }
     pub async fn named() -> Self {
-        let mut f = Self::new().await;
+        Self::new().await.with_named().await
+    }
+    pub async fn named_thread(kind: u8) -> Self {
+        Self::thread(kind).await.with_named().await
+    }
+    async fn with_named(mut self) -> Self {
+        let f = &mut self;
         let mut definition = f.setup.channel.to_blob_json();
         let routed = crate::channels::routing_fixture::routed();
         definition["routing"]["consumers"] = json!([routed["routing"]["consumers"][0]]);
@@ -57,16 +64,47 @@ impl FixtureState {
             cmaeg_core::seal::EventRef::seal(&f.original, &f.setup.fixture.store.keys).unwrap();
         f.provider.memory.lock().unwrap().config.event_context =
             Some(serde_json::to_value(&f.context).unwrap());
-        f
+        self
     }
     pub async fn new() -> Self {
-        Self::configured(false).await
+        Self::configured(false, None).await
     }
     pub async fn group() -> Self {
-        Self::configured(true).await
+        Self::configured(true, None).await
     }
-    async fn configured(group: bool) -> Self {
+    pub async fn thread(kind: u8) -> Self {
+        Self::configured(true, Some(kind)).await
+    }
+    pub fn thread_metadata(&self) -> Value {
+        json!({"id":"99","type":self.thread_kind.unwrap(),"guild_id":"88","parent_id":"100"})
+    }
+    pub fn queue_thread_metadata(&self) {
+        self.rest
+            .memory
+            .responses
+            .lock()
+            .unwrap()
+            .push_back((axum::http::StatusCode::OK, self.thread_metadata()));
+    }
+    async fn configured(group: bool, thread_kind: Option<u8>) -> Self {
         let mut setup = Setup::discovered().await;
+        if let Some(kind) = thread_kind {
+            setup.channel.partition.key = cmaeg_core::channel::PartitionKey::Thread;
+            setup.fixture.replace(&setup.channel);
+            let native = Arc::get_mut(&mut setup.journal).unwrap();
+            native.api.thread_metadata = true;
+            native.authority.public_definition["partition"]["key"] = "thread".into();
+            setup
+                .fixture
+                .memory
+                .discord_channels
+                .lock()
+                .unwrap()
+                .insert(
+                    "99".into(),
+                    json!({"id":"99","type":kind,"guild_id":"88","parent_id":"100"}),
+                );
+        }
         let activity = setup.observe();
         let provider = HttpServer::start().await;
         let rest = Fixture::new().await;
@@ -146,6 +184,7 @@ impl FixtureState {
             provider,
             activity,
             original_inbox: id,
+            thread_kind,
         }
     }
     /// The synthetic message establishes sealed event context only. Settle it
@@ -182,9 +221,29 @@ impl FixtureState {
         }
     }
     pub async fn card(&self, message: &OutboundMessage) -> PreparedCard {
+        let thread = if self.thread_kind.is_some() {
+            self.queue_thread_metadata();
+            self.rest
+                .api
+                .verify_component_channel(
+                    super::rest::token(&self.channel, "77").unwrap(),
+                    "99",
+                    &self.context.activity.conversation,
+                )
+                .await
+                .unwrap()
+        } else {
+            None
+        };
         let mut card = self
             .store
-            .prepare_with_context(&self.channel, &self.original, message, self.context.clone())
+            .prepare_with_discord_thread(
+                &self.channel,
+                &self.original,
+                message,
+                self.context.clone(),
+                thread,
+            )
             .await
             .unwrap();
         self.store
@@ -200,7 +259,14 @@ impl FixtureState {
         card
     }
     pub fn callback(&self, custom: &str) -> Value {
-        json!({"id":self.setup.fixture.message_id(),"application_id":"77","type":3,"token":"private-interaction-token","channel_id":"99","channel":{"id":"99","type":1},"user":{"id":"42","bot":false},"message":{"id":"800","channel_id":"99","author":{"id":"77","bot":true}},"data":{"component_type":2,"custom_id":custom}})
+        let mut raw = json!({"id":self.setup.fixture.message_id(),"application_id":"77","type":3,"token":"private-interaction-token","channel_id":"99","channel":{"id":"99","type":1},"user":{"id":"42","bot":false},"message":{"id":"800","channel_id":"99","author":{"id":"77","bot":true}},"data":{"component_type":2,"custom_id":custom}});
+        if self.thread_kind.is_some() {
+            raw["guild_id"] = "88".into();
+            raw["member"] = json!({"user":raw["user"]});
+            raw.as_object_mut().unwrap().remove("user");
+            raw["channel"] = self.thread_metadata();
+        }
+        raw
     }
     pub async fn receive(&self, data: Value, sequence: u64) -> Result<(), super::GatewayError> {
         self.setup

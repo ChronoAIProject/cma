@@ -1,6 +1,6 @@
 //! Native Discord controls carry opaque card/revision/action locators only.
 use super::{Card, Error};
-use crate::channels::resolver::ResolvedChannel;
+use crate::{channels::resolver::ResolvedChannel, discord::component_thread::ThreadIdentity};
 use cmaeg_core::{
     activity::{Activity, ActivityRouting, ActorKind, SourceKind},
     channel::ProviderBinding,
@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadIdentity>,
     pub bot_id: String,
     pub source_revision: String,
     pub consumer: ConsumerId,
@@ -38,19 +40,23 @@ pub(crate) fn eligible(
     event.lineage.is_none()
         && activity.actor.kind == ActorKind::Human
         && activity.thread.is_none()
-        && activity.conversation.thread_id.is_none()
         && channel.definition.routing.is_some()
         && super::owner::eligible(channel, event, activity)
         && matches!((&event.reply, &activity.source),
-            (ReplyAddress::Discord { bot_id, channel_id, .. }, SourceKind::Discord { bot_id: source })
-            if bot_id == source && channel_id == &activity.conversation.id)
+            (ReplyAddress::Discord { bot_id, channel_id, thread_id, .. }, SourceKind::Discord { bot_id: source })
+            if bot_id == source && channel_id == &activity.conversation.id
+                && thread_id == &activity.conversation.thread_id
+                && thread_id.as_ref().is_none_or(|id| id == channel_id))
 }
 pub(super) fn identity(
     channel: &ResolvedChannel,
     event: &EventRefPayload,
     activity: &Activity,
+    thread: Option<ThreadIdentity>,
 ) -> Result<Identity, Error> {
-    if !eligible(channel, event, activity) {
+    if !eligible(channel, event, activity)
+        || !ThreadIdentity::optional_matches(thread.as_ref(), &activity.conversation)
+    {
         return Err(Error::Denied);
     }
     let SourceKind::Discord { bot_id } = &activity.source else {
@@ -74,6 +80,7 @@ pub(super) fn identity(
         return Err(Error::Denied);
     };
     Ok(Identity {
+        thread,
         bot_id: bot_id.clone(),
         source_revision: source_revision(&channel.definition)?,
         consumer: consumer.id.clone(),
@@ -95,7 +102,15 @@ pub(crate) fn valid(card: &Card) -> bool {
     };
     card.lark.is_none()
         && card.whatsapp.is_none()
-        && card.thread.is_none()
+        && ThreadIdentity::optional_matches(
+            identity.thread.as_ref(),
+            &cmaeg_core::activity::ActivityConversation {
+                id: card.chat.clone(),
+                kind: identity.conversation_kind,
+                thread_id: card.thread.clone(),
+            },
+        )
+        && (!card.message.thread_reply || card.thread.is_some())
         && card.revision > 0
         && card.consumer.as_ref() == (!identity.consumer.is_default()).then_some(&identity.consumer)
         && identity.routing.resolution == cmaeg_core::activity::RouteResolution::Interaction
@@ -126,7 +141,6 @@ fn locator(id: &str, revision: u64, action: usize) -> String {
 pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Result<Value, Error> {
     message.validate().map_err(|_| Error::Denied)?;
     if revision == 0
-        || message.thread_reply
         || message.reply_to.is_some()
         || message.whatsapp_template.is_some()
         || !message.native_attachments.is_empty()

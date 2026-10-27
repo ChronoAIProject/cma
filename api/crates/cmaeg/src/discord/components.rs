@@ -44,7 +44,10 @@ impl Snapshot {
             || !crate::ingress::native_interaction::shape(&self.activity)
             || self.identity.routing.targets[0].id != self.identity.consumer
             || self.activity.conversation.kind != self.identity.conversation_kind
-            || self.activity.conversation.thread_id.is_some()
+            || !super::component_thread::ThreadIdentity::optional_matches(
+                self.identity.thread.as_ref(),
+                &self.activity.conversation,
+            )
             || self.activity.thread.is_some()
             || !cmaeg_core::channel::valid_discord_id(&self.message_id)
             || self.activity.validate().is_err()
@@ -173,6 +176,21 @@ impl DurableJournal {
             return Ok(());
         };
         let message = snowflake(&event.data["message"]["id"])?;
+        let thread = match self
+            .api
+            .component_thread(
+                &current.channel,
+                store,
+                &mut activity,
+                &event.data,
+                deadline,
+            )
+            .await
+        {
+            Ok(thread) => thread,
+            Err(Error::Denied) => return Ok(()),
+            Err(Error::Unavailable) => return Err(GatewayError::Unavailable),
+        };
         let (interaction, card) = match store
             .consume_discord(
                 &current.channel,
@@ -183,6 +201,7 @@ impl DurableJournal {
                     component_type: data["component_type"].as_u64().unwrap_or(0),
                     values: &values,
                     message,
+                    thread: thread.as_ref(),
                 },
                 deadline,
             )
@@ -289,10 +308,6 @@ fn parse(raw: &Value, bot: &str, created: i64) -> Result<(Activity, Vec<String>)
         || raw
             .pointer("/channel/id")
             .is_some_and(|value| value.as_str() != Some(chat))
-        || matches!(
-            raw.pointer("/channel/type").and_then(Value::as_u64),
-            Some(10..=12)
-        )
         || actor == bot
         || super::facts::bool_fact(user, "bot").map_err(|_| GatewayError::Protocol)?
         || super::facts::bool_fact(user, "system").map_err(|_| GatewayError::Protocol)?

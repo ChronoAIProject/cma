@@ -2,6 +2,9 @@
 //! Source writes remain gated; application supervision and durable inbox scheduling
 //! must be composed explicitly before ordinary messaging is activated.
 pub mod activation;
+pub(crate) mod component_thread;
+#[cfg(test)]
+mod component_thread_tests;
 mod components;
 #[cfg(test)]
 mod components_execution_tests;

@@ -41,6 +41,7 @@ impl Sender {
             return (unsupported(), effects);
         };
         if !interactions::discord::eligible(ctx.channel, event, &context.activity)
+            || (message.thread_reply && context.activity.conversation.thread_id.is_none())
             || interactions::discord::render(message, "00000000000000000000000000000000", 1)
                 .is_err()
         {
@@ -75,16 +76,17 @@ impl Sender {
         if !ctx.gate.commit() {
             return (refused(rendering, expired()), effects);
         }
-        if let Err(error) = self
+        let thread = match self
             .relay
             .discord
-            .verify_component_channel(token, channel_id, context.activity.conversation.kind)
+            .verify_component_channel(token, channel_id, &context.activity.conversation)
             .await
         {
-            return (refused(rendering, super::discord::outcome(error)), effects);
-        }
+            Ok(thread) => thread,
+            Err(error) => return (refused(rendering, super::discord::outcome(error)), effects),
+        };
         let Ok(mut card) = store
-            .prepare_with_context(ctx.channel, event, message, context)
+            .prepare_with_discord_thread(ctx.channel, event, message, context, thread)
             .await
         else {
             return (rejected("interaction_state_unavailable"), effects);

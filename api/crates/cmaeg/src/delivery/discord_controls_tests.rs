@@ -94,6 +94,10 @@ async fn native_discord_controls_are_explicit_and_confirmed_messages_bind_one_ca
                 .unwrap()
                 .0;
             assert!(card.discord.is_some());
+            assert!(serde_json::to_value(&card.discord)
+                .unwrap()
+                .get("thread")
+                .is_none());
             assert!(card.reference.is_some());
             assert_eq!(card.destination.unwrap().platform_id, "800");
         } else {
@@ -258,4 +262,100 @@ async fn native_controls_accept_an_exact_ordinary_server_channel_without_retaine
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].method, "GET");
     assert_eq!(calls[1].method, "POST");
+}
+
+#[tokio::test]
+async fn native_thread_controls_require_retained_and_authenticated_existing_thread() {
+    for kind in [10, 11, 12] {
+        for select in [false, true] {
+            let f = FixtureState::thread(kind).await;
+            let mut outbound = message(select);
+            outbound.thread_reply = select;
+            assert!(f
+                .store
+                .prepare_with_context(&f.channel, &f.original, &outbound, f.context.clone())
+                .await
+                .is_err());
+            f.queue_thread_metadata();
+            f.rest.respond(
+                axum::http::StatusCode::OK,
+                json!({"id":"800","channel_id":"99","author":{"id":"77"}}),
+            );
+            let sender = sender(&f, true);
+            let gate = RecordingGate::new(true);
+            let trace = tracing::Span::none();
+            let ctx = SendContext {
+                trace: &trace,
+                channel: &f.channel,
+                first_send_done: false,
+                gate: &gate,
+            };
+            let (receipt, _) = sender.reply(&ctx, &f.original, &outbound).await;
+            assert!(matches!(
+                receipt.delivery,
+                DeliveryOutcome::Confirmed { .. }
+            ));
+            let reference = receipt
+                .message_ref
+                .unwrap()
+                .open(&f.keys())
+                .unwrap()
+                .payload;
+            let card = f
+                .store
+                .load(reference.interaction_record_id.as_deref().unwrap())
+                .await
+                .unwrap()
+                .0;
+            assert_eq!(serde_json::to_value(&card).unwrap()["thread"], "99");
+            let proof = serde_json::to_value(card.discord.unwrap()).unwrap();
+            assert_eq!(
+                proof["thread"],
+                json!({"channel_id":"99","channel_type":kind,"guild_id":"88","parent_id":"100"})
+            );
+            let calls = f.rest.memory.calls.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].path, "/api/v10/channels/99");
+            assert_eq!(calls[1].path, "/api/v10/channels/99/messages");
+            let body: Value = serde_json::from_slice(&calls[1].body).unwrap();
+            assert_eq!(
+                body["components"][0]["components"][0]["type"],
+                if select { 3 } else { 2 }
+            );
+            assert_eq!(body["message_reference"]["channel_id"], "99");
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_thread_controls_refuse_missing_or_mismatched_current_metadata_before_card_creation()
+{
+    for (field, value) in [
+        ("id", json!("100")),
+        ("type", json!(0)),
+        ("guild_id", Value::Null),
+        ("parent_id", Value::Null),
+        ("parent_id", json!("99")),
+        ("parent_id", json!("not-an-id")),
+    ] {
+        let f = FixtureState::thread(11).await;
+        let mut metadata = f.thread_metadata();
+        metadata[field] = value;
+        f.rest.respond(axum::http::StatusCode::OK, metadata);
+        let sender = sender(&f, true);
+        let before = f.setup.fixture.memory.rows.lock().unwrap().len();
+        let gate = RecordingGate::new(true);
+        let trace = tracing::Span::none();
+        let ctx = SendContext {
+            trace: &trace,
+            channel: &f.channel,
+            first_send_done: false,
+            gate: &gate,
+        };
+        let (receipt, _) = sender.reply(&ctx, &f.original, &message(false)).await;
+        assert!(matches!(receipt.delivery, DeliveryOutcome::Rejected { .. }));
+        assert!(receipt.message_ref.is_none());
+        assert_eq!(before, f.setup.fixture.memory.rows.lock().unwrap().len());
+        assert_eq!(f.rest.memory.calls.lock().unwrap().len(), 1);
+    }
 }
