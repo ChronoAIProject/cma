@@ -282,8 +282,8 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     socket.close(None).await.unwrap();
     let bridge = supervisor.bridge("agent-1").await.unwrap();
     let retained = bridge.retained_output.snapshot(0).await.unwrap();
-    assert_eq!(retained.frames.len(), 1);
-    assert_eq!(retained.frames[0].bytes.as_ref(), payload);
+    // Legacy delivery has no durable ACK and must not fill the retained window.
+    assert!(retained.frames.is_empty());
     let closed = supervisor
         .dispatch(close_agent_request(AgentCloseRequest::new(
             "agent:agent-1:close:v1",
@@ -519,40 +519,129 @@ async fn reliable_terminal_remains_reachable_after_native_exit_until_final_ack()
 }
 
 #[tokio::test]
-async fn reliable_overflow_sends_gap_and_closes_without_terminating_native_process() {
-    let (home, supervisor) = echo_supervisor("reliable-overflow").await;
-    let bridge = supervisor.bridge("agent-1").await.unwrap();
-    let frame = vec![b'x'; crate::bridge::MAX_FRAME_BYTES];
-    bridge.retained_output.retain(&frame).await;
-    bridge.retained_output.retain(&frame).await;
-    let (address, server) = serve(Arc::clone(&supervisor)).await;
-    let (mut socket, _) = reliable_socket(address).await;
-    let gap = next_conversation_message(&mut socket).await.into_data();
-    let (lane, payload) = lanes::unframe(&gap).unwrap();
-    assert_eq!(lane, lanes::CONVERSATION_GAP);
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(payload).unwrap()["frames"],
-        1
-    );
-    assert!(matches!(
-        next_conversation_message(&mut socket).await,
-        ClientMessage::Close(_)
-    ));
-    assert!(!bridge.is_ended());
-
-    let mut native = bridge.subscribe();
-    assert!(bridge.send(b"still running".to_vec()).await);
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(2), native.recv())
+async fn reliable_backpressure_delivers_both_frames_and_releases_only_after_ack() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let (home, supervisor) = echo_supervisor("reliable-backpressure").await;
+        let bridge = supervisor.bridge("agent-1").await.unwrap();
+        let first = vec![b'x'; crate::bridge::MAX_FRAME_BYTES];
+        let second = vec![b'y'; crate::bridge::MAX_FRAME_BYTES];
+        bridge.retained_output.retain(&first).await;
+        let retaining = bridge.retained_output.retain(&second);
+        tokio::pin!(retaining);
+        // Frame metadata makes two maximum-size payloads exceed the byte window.
+        // Keep this producer pending until the real socket consumer ACKs.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut retaining)
+                .await
+                .is_err()
+        );
+        let (address, server) = serve(Arc::clone(&supervisor)).await;
+        let (mut socket, stream) = reliable_socket(address).await;
+        assert!(
+            next_conversation_message(&mut socket).await
+                == ClientMessage::Binary(lanes::acknowledged_frame(stream, 1, &first)),
+            "the entire first frame must arrive with its original cursor"
+        );
+        // Sending the frame over the socket does not release durable ownership.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), &mut retaining)
+                .await
+                .is_err()
+        );
+        let mut acknowledgement = lanes::acknowledged_frame(stream, 1, b"");
+        acknowledgement[0] = lanes::OUTPUT_ACKNOWLEDGEMENT;
+        socket
+            .send(ClientMessage::Binary(acknowledgement))
             .await
-            .unwrap()
-            .unwrap(),
-        crate::bridge::Outbound::Frame(b"still running".to_vec())
-    );
-    bridge.terminate().await.unwrap();
-    server.abort();
-    let _ = server.await;
-    std::fs::remove_dir_all(home).unwrap();
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), &mut retaining)
+            .await
+            .expect("the first ACK must release the blocked producer");
+        assert!(
+            next_conversation_message(&mut socket).await
+                == ClientMessage::Binary(lanes::acknowledged_frame(stream, 2, &second)),
+            "the entire second frame must arrive next without a gap"
+        );
+        let mut changed = bridge.retained_output.subscribe();
+        let mut acknowledgement = lanes::acknowledged_frame(stream, 2, b"");
+        acknowledgement[0] = lanes::OUTPUT_ACKNOWLEDGEMENT;
+        socket
+            .send(ClientMessage::Binary(acknowledgement))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !bridge
+                .retained_output
+                .snapshot(0)
+                .await
+                .unwrap()
+                .frames
+                .is_empty()
+            {
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("both acknowledged frames must leave the retained window");
+        assert!(!bridge.is_ended());
+        socket
+            .send(ClientMessage::Binary(lanes::frame(
+                lanes::CONVERSATION,
+                b"still running",
+            )))
+            .await
+            .unwrap();
+        assert_eq!(
+            next_conversation_message(&mut socket).await,
+            ClientMessage::Binary(lanes::acknowledged_frame(stream, 3, b"still running"))
+        );
+        socket.close(None).await.unwrap();
+        bridge.terminate().await.unwrap();
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(home).unwrap();
+    })
+    .await
+    .expect("reliable backpressure test deadline");
+}
+
+#[tokio::test]
+async fn reliable_explicit_gap_closes_without_terminating_native_process() {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let (home, supervisor) = echo_supervisor("reliable-gap").await;
+        let bridge = supervisor.bridge("agent-1").await.unwrap();
+        bridge.retained_output.gap().await;
+        let (address, server) = serve(Arc::clone(&supervisor)).await;
+        let (mut socket, _) = reliable_socket(address).await;
+        let gap = next_conversation_message(&mut socket).await.into_data();
+        let (lane, payload) = lanes::unframe(&gap).unwrap();
+        assert_eq!(lane, lanes::CONVERSATION_GAP);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(payload).unwrap()["frames"],
+            1
+        );
+        assert!(matches!(
+            next_conversation_message(&mut socket).await,
+            ClientMessage::Close(_)
+        ));
+        assert!(!bridge.is_ended());
+
+        let mut native = bridge.subscribe();
+        assert!(bridge.send(b"still running".to_vec()).await);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), native.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            crate::bridge::Outbound::Frame(b"still running".to_vec())
+        );
+        bridge.terminate().await.unwrap();
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(home).unwrap();
+    })
+    .await
+    .expect("reliable explicit gap test deadline");
 }
 
 #[tokio::test]
