@@ -35,14 +35,14 @@ data:
   # Owner-selected reaction intents and durable confirmed outbound target receipts.
   CMAEG_DISCORD_REACTIONS_ENABLED: "false"
   CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "false"
-  CMAEG_DISCORD_FORMS_ENABLED: "false"
+  CMAEG_DISCORD_FORMS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
   CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
-  CMAEG_DISCORD_CARD_EFFECTS_ENABLED: "false"
+  CMAEG_DISCORD_CARD_EFFECTS_ENABLED: "true"
   # Enable new multi-select cards only after every serving and rollback reader is compatible.
   CMAEG_DISCORD_MULTISELECT_ENABLED: "true"
   # Deploy form authority/submission readers before issuing native Lark/Feishu forms.
-  CMAEG_LARK_FORMS_ENABLED: "false"
+  CMAEG_LARK_FORMS_ENABLED: "true"
   # Explicit canonical channel record IDs; selected records also require durable routed recovery.
   CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS: ""
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"

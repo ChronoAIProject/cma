@@ -2740,3 +2740,24 @@ manual binding. The check made no platform call and does not establish that an
 individual channel key can read its media; exact origin and bot evidence remain
 required. This is a public metadata projection limit, not a failed membership
 check or a newly granted permission.
+
+
+### Native forms and Discord card effects activation (2026-10-27)
+
+PR #1148 passed CI40505257949 and deployed Gateway image
+`sha256:1fd3345ce6f1bf7c7bbfb49af5f064848d28ab99e71f2da735b722431f68a2eb`.
+The predecessor drained before enabling `CMAEG_DISCORD_FORMS_ENABLED`,
+`CMAEG_DISCORD_CARD_EFFECTS_ENABLED` and `CMAEG_LARK_FORMS_ENABLED`.
+Code defaults remain false; the checked-in deployment policy now enables these
+features for user testing. No source, consumer, actor or destination permission
+is broadened. `CMAEG_NYXID_COMPLETE_REPLIES` remains false.
+
+A fresh isolated Custom channel rejected invalid HMAC, completed ordinary and
+structured Form/multiselect replies, and exposed Activity after 251 ms in one
+measured sample. Reconnect retained one provider turn. This verifies shared
+Custom delivery and Activity; it does not prove native platform rendering,
+callbacks, effects, or permissions. No external platform messages were sent.
+
+After issuance, rollback must retain this compatible image or a newer compatible
+reader. Disable issuance to stop new forms/effect enrollment; restoring an older
+image can make already-issued callbacks and message references unreadable.
