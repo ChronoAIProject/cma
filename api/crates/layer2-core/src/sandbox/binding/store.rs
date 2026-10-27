@@ -97,6 +97,23 @@ pub fn validate_binding_write(
             {
                 return Err(SandboxStoreError::Conflict);
             }
+            if current.generation != next.generation {
+                return Err(SandboxStoreError::Conflict);
+            }
+            if current.profile != next.profile {
+                let proposed = current
+                    .reconfigure(
+                        next.profile.clone(),
+                        next.key_sha256.clone(),
+                        next.updated_at.clone(),
+                    )
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+                return if &proposed == next {
+                    Ok(())
+                } else {
+                    Err(SandboxStoreError::Conflict)
+                };
+            }
             if current.generation == next.generation && current.key_sha256 != next.key_sha256 {
                 let proposed = current
                     .rotate_credential(next.key_sha256.clone(), next.updated_at.clone())
@@ -107,38 +124,11 @@ pub fn validate_binding_write(
                     Err(SandboxStoreError::Conflict)
                 };
             }
-            if current.generation == next.generation {
-                if current.profile != next.profile
-                    || current.key_sha256 != next.key_sha256
-                    || current.sandbox_id != next.sandbox_id
-                    || current.workspace_id != next.workspace_id
-                    || (current.previous != next.previous && next.previous.is_some())
-                {
-                    return Err(SandboxStoreError::Conflict);
-                }
-            } else {
-                let proposed = current
-                    .reconfigure(
-                        next.profile.clone(),
-                        next.key_sha256.clone(),
-                        next.updated_at.clone(),
-                    )
-                    .map_err(|_| SandboxStoreError::Conflict)?;
-                // Fresh ids are reserved by the winning CAS; all other change
-                // semantics must match the domain reconfiguration operation.
-                let mut proposed = proposed;
-                if proposed.sandbox_id != current.sandbox_id {
-                    if next.sandbox_id == current.sandbox_id
-                        || next.workspace_id == current.workspace_id
-                    {
-                        return Err(SandboxStoreError::Conflict);
-                    }
-                    proposed.sandbox_id = next.sandbox_id.clone();
-                    proposed.workspace_id = next.workspace_id.clone();
-                }
-                if &proposed != next {
-                    return Err(SandboxStoreError::Conflict);
-                }
+            if current.sandbox_id != next.sandbox_id
+                || current.workspace_id != next.workspace_id
+                || (current.previous != next.previous && next.previous.is_some())
+            {
+                return Err(SandboxStoreError::Conflict);
             }
             Ok(())
         }

@@ -190,8 +190,18 @@ impl ProviderBinding {
         }
     }
 
-    /// A reconfiguration waits for prior admission work to settle. Its retained
-    /// cleanup reference prevents losing old resources when new provisioning fails.
+    /// Binding-owned runtime configuration is pinned. A PUT cannot replace the
+    /// retained hierarchy or conversation to apply a changed configuration.
+    pub fn retains_runtime_configuration(&self, profile: &BindingProfilePlan) -> bool {
+        self.profile.environment == profile.environment
+            && self.profile.agent == profile.agent
+            && self.profile.session_affinity == profile.session_affinity
+            && self.profile.owner == profile.owner
+            && self.profile.organization_owned == profile.organization_owned
+    }
+
+    /// Metadata changes retain the original generation. Runtime configuration
+    /// updates require a separately proved continuity-preserving operation.
     pub fn reconfigure(
         &self,
         profile: BindingProfilePlan,
@@ -199,51 +209,19 @@ impl ProviderBinding {
         at: String,
     ) -> Result<Self, String> {
         if self.existing_agent.is_some()
-            || self.state == BindingState::Retired
+            || self.state != BindingState::Ready
             || self.work != BindingWork::Idle
             || self.previous.is_some()
-            || self.owner != profile.owner
-            || self.profile.organization_owned != profile.organization_owned
+            || !self.retains_runtime_configuration(&profile)
+            || self.key_sha256 != key_sha256
         {
-            return Err("binding is retired, busy, or has another owner".into());
+            return Err("binding update cannot preserve its retained runtime configuration".into());
         }
-        let compatible = self.profile.environment.is_some()
-            && self.profile.environment == profile.environment
-            && self.key_sha256 == key_sha256;
         let mut next = self.clone();
-        next.previous = Some(PreviousBindingEnvironment {
-            generation: self.generation,
-            sandbox_id: self.sandbox_id.clone(),
-            workspace_id: self.workspace_id.clone(),
-            retire_sandbox: !compatible,
-        });
-        if !compatible {
-            next.sandbox_id = SandboxId::generate();
-            next.workspace_id = WorkspaceId::generate();
-        }
-        next.generation = self
-            .generation
-            .checked_add(1)
-            .ok_or("binding generation exhausted")?;
         next.profile_digest = profile.profile_digest.clone();
         next.honoured = profile.honoured.clone();
         next.refused = profile.refused.clone();
         next.profile = profile;
-        next.key_sha256 = key_sha256;
-        next.state = if next.profile.environment.is_some() {
-            BindingState::Provisioning
-        } else {
-            BindingState::Failed {
-                reason: "environment is required".into(),
-            }
-        };
-        next.work = if compatible {
-            BindingWork::RetirePreviousConversations
-        } else if next.profile.environment.is_some() {
-            BindingWork::AwaitingCredential
-        } else {
-            BindingWork::RetirePreviousConversations
-        };
         next.advance_revision(at)?;
         Ok(next)
     }

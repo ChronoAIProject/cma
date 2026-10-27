@@ -57,6 +57,8 @@ pub enum BindingError {
     Conflict,
     #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
     ResourcesUnavailable,
+    #[error("This binding update cannot preserve the existing Agent conversation and home. Service scope, skills, prompt, model, environment and conversation affinity remain pinned; update the existing resources through their supported controls. The binding and its retained work have not been changed. Rotate a credential with the current profile before changing metadata.")]
+    ReconfigurationUnsupported,
     #[error("binding dependency unavailable: {0}")]
     Unavailable(String),
     #[error("binding data is not usable: {0}")]
@@ -222,6 +224,11 @@ impl BindingService {
                         .map_err(credential_error);
                 }
                 Some(value) => {
+                    if !value.retains_runtime_configuration(&plan)
+                        || value.key_sha256 != credential.sha256()
+                    {
+                        return Err(BindingError::ReconfigurationUnsupported);
+                    }
                     let next = value
                         .reconfigure(plan.clone(), credential.sha256(), now_rfc3339())
                         .map_err(|_| BindingError::Conflict)?;

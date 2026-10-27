@@ -19,8 +19,13 @@ use identifiers::{credential_of, key_name, validate_credential_id};
 mod bots;
 pub(crate) use bots::owner_matches;
 mod catalog;
+mod grant;
 mod identifiers;
 mod provided;
+mod scope_plan;
+use grant::minted_key_from_response;
+#[cfg(test)]
+pub(crate) use scope_plan::tests::scope_plan_fixture;
 
 const KEYS_PATH: &str = "/api/v1/api-keys";
 const SERVICES_PATH: &str = "/api/v1/services";
@@ -66,6 +71,8 @@ pub struct MintedKey {
     pub expires_at: SystemTime,
     pub state_version: i64,
     pub grant_fingerprint: String,
+    allowed_service_ids: Vec<String>,
+    allowed_node_ids: Vec<String>,
 }
 
 /// A key name recognized as belonging to this deployment.
@@ -195,17 +202,47 @@ impl KeyIssuer {
             })
     }
 
+    /// Prove current service and backing-node authority before owner admission.
+    pub(crate) async fn confirm_service_scope(
+        &self,
+        owner: &layer2_core::SubjectId,
+        token: &str,
+        services: &[ServiceId],
+    ) -> Result<(), KeyIssuerError> {
+        let allowed = self.resolve_exact(token, services).await?;
+        self.scope_plan(
+            token,
+            &allowed,
+            &layer2_core::resource_access::ResourceOwner::Person {
+                subject: owner.clone(),
+            },
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// Mint one exact, expiring credential for an opaque resource identifier.
     pub async fn mint(
         &self,
         credential_id: &str,
+        owner: &layer2_core::SubjectId,
         owner_token: &str,
         services: &[ServiceId],
     ) -> Result<MintedKey, KeyIssuerError> {
         validate_credential_id(credential_id)?;
         let allowed = self.resolve_exact(owner_token, services).await?;
+        let plan = self
+            .scope_plan(
+                owner_token,
+                &allowed,
+                &layer2_core::resource_access::ResourceOwner::Person {
+                    subject: owner.clone(),
+                },
+            )
+            .await?;
         let expires_at = key_expiry(SystemTime::now());
-        let body = mint_request_body(&self.deployment, credential_id, &allowed, expires_at)?;
+        let mut body = mint_request_body(&self.deployment, credential_id, &allowed, expires_at)?;
+        plan.apply(&mut body);
         let response = self
             .http
             .post(format!("{}{KEYS_PATH}", self.base_url))
@@ -221,7 +258,7 @@ impl KeyIssuer {
             .json::<MintedKeyResponse>()
             .await
             .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))?;
-        minted_key_from_response(response, &allowed, expires_at)
+        minted_key_from_response(response, &allowed, &plan.allowed_node_ids, expires_at)
             .ok_or(KeyIssuerError::UnexpectedAuthority)
     }
 
@@ -402,75 +439,8 @@ fn mint_request_body(
         "allowed_service_ids": allowed_service_ids,
         "allow_all_services": false,
         "allow_all_nodes": false,
+        "allow_auto_connected_services": false,
     }))
-}
-
-fn normalized_identifiers(values: &[String]) -> Option<Vec<&str>> {
-    let mut normalized = Vec::with_capacity(values.len());
-    for value in values {
-        let value = value.trim();
-        if value.is_empty()
-            || value
-                .bytes()
-                .filter(u8::is_ascii_hexdigit)
-                .all(|byte| byte == b'0')
-            || normalized.contains(&value)
-        {
-            return None;
-        }
-        normalized.push(value);
-    }
-    normalized.sort_unstable();
-    Some(normalized)
-}
-
-fn provider_grant_fingerprint(response: &MintedKeyResponse) -> Option<String> {
-    let services = normalized_identifiers(&response.allowed_service_ids)?;
-    let nodes = normalized_identifiers(&response.allowed_node_ids)?;
-    let mut digest = Sha256::new();
-    digest.update(b"cma-nyxid-resource-key-grant-v1\0");
-    let scopes = response.scopes.trim();
-    digest.update((scopes.len() as u64).to_be_bytes());
-    digest.update(scopes.as_bytes());
-    for collection in [services, nodes] {
-        digest.update((collection.len() as u64).to_be_bytes());
-        for value in collection {
-            digest.update((value.len() as u64).to_be_bytes());
-            digest.update(value.as_bytes());
-        }
-    }
-    digest.update([u8::from(response.allow_all_services)]);
-    digest.update([u8::from(response.allow_all_nodes)]);
-    Some(format!("{:x}", digest.finalize()))
-}
-
-fn minted_key_from_response(
-    response: MintedKeyResponse,
-    expected_service_ids: &[String],
-    expires_at: SystemTime,
-) -> Option<MintedKey> {
-    let expected = normalized_identifiers(expected_service_ids)?;
-    let returned = normalized_identifiers(&response.allowed_service_ids)?;
-    if !valid_provider_key_id(&response.id)
-        || response.full_key.trim().is_empty()
-        || response.scopes != KEY_SCOPES
-        || response.state_version <= 0
-        || returned != expected
-        || !response.allowed_node_ids.is_empty()
-        || response.allow_all_services
-        || response.allow_all_nodes
-        || response.allow_auto_connected_services
-    {
-        return None;
-    }
-    let grant_fingerprint = provider_grant_fingerprint(&response)?;
-    Some(MintedKey {
-        id: response.id,
-        value: SecretValue::new(response.full_key),
-        expires_at,
-        state_version: response.state_version,
-        grant_fingerprint,
-    })
 }
 
 #[cfg(test)]
