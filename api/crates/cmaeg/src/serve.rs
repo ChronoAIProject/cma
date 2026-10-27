@@ -141,6 +141,7 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
+        .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
@@ -262,6 +263,7 @@ pub(crate) async fn serve(
         whatsapp_templates_enabled: whatsapp_templates,
         discord_interactions_enabled: discord_interactions,
         whatsapp_interactions_enabled: whatsapp_interactions,
+        native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,

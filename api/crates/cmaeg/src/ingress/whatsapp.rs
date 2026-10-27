@@ -82,6 +82,13 @@ pub(crate) fn launch(
             reply_to: None,
             album_id: None,
         },
+        Content::Control { .. } => ActivityKind::Message {
+            text: "Interactive reply".into(),
+            attachments: Vec::new(),
+            mentions_bot: false,
+            reply_to: None,
+            album_id: None,
+        },
         Content::Reaction { target, emoji } => {
             let (original_event, author) = original.ok_or(())?;
             let reactions = if emoji.is_empty() {
@@ -137,7 +144,7 @@ pub(crate) fn launch(
         &partition_key,
     );
     let reply_target = match &message.content {
-        Content::Text { .. } | Content::Media { .. } => &message.id,
+        Content::Text { .. } | Content::Media { .. } | Content::Control { .. } => &message.id,
         Content::Reaction { target, .. } => target,
     };
     let payload = EventRefPayload {

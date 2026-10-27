@@ -49,6 +49,11 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
+        if self.relay.native_whatsapp_interactions_enabled()
+            && crate::interactions::whatsapp::requested(message)
+        {
+            return self.whatsapp_controls_reply(ctx, event, message).await;
+        }
         let media = !message.native_attachments.is_empty();
         if (media
             && (!self.relay.native_whatsapp_outbound_media_enabled()

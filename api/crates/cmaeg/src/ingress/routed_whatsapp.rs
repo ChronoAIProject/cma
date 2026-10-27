@@ -130,10 +130,19 @@ impl IngressState {
             .as_ref()
             .zip(author.as_ref())
             .map(|(plan, actor)| (plan.identity.event_id.as_str(), actor));
-        let request = match whatsapp::launch(&verified, original, &routing.keys, now) {
+        let mut request = match whatsapp::launch(&verified, original, &routing.keys, now) {
             Ok(request) => request,
             Err(_) => return refusal(400, "native_whatsapp_message_invalid"),
         };
+        let native_control = matches!(verified.message.content, Content::Control { .. });
+        if native_control {
+            if let Err(outcome) = self
+                .bind_whatsapp_control(&verified, &mut request, now)
+                .await
+            {
+                return outcome;
+            }
+        }
         let (request, plan) = if let Some(original) = &retained {
             let bound = match &outbound {
                 Some(consumer) => {
@@ -188,7 +197,7 @@ impl IngressState {
                     &request,
                     source,
                     self.activity.as_ref(),
-                    false,
+                    native_control,
                     plan.clone(),
                 )
                 .await
@@ -202,6 +211,8 @@ impl IngressState {
         refusal(409, "native_whatsapp_message_identity_conflict")
     }
 }
+#[path = "routed_whatsapp_control.rs"]
+mod control;
 fn refusal(status: u16, reason: &'static str) -> LaunchOutcome {
     LaunchOutcome::Refused(Problem::new(
         if status >= 500 {

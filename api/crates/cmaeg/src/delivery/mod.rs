@@ -45,6 +45,7 @@ mod telegram_media;
 mod telegram_media_tests;
 pub mod webhook_client;
 mod whatsapp;
+mod whatsapp_controls;
 mod worker;
 
 mod lark_effects;

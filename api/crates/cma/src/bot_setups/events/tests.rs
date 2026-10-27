@@ -210,6 +210,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         advertise_public_api_url: true,
         whatsapp_templates_enabled: false,
         whatsapp_interactions_enabled: false,
+        native_whatsapp_interactions_enabled: false,
         discord_interactions_enabled: false,
         consumer_interactions_enabled: false,
         native_media_enabled: false,
