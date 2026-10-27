@@ -144,6 +144,7 @@ export const SourceRequestSchema = tagged(
       type: enumeration('discord'),
     }),
     telegram: object({
+      message_events: optional(boolean),
       admission: AdmissionPolicySchema,
       bot_id: text,
       bot_username: optional(nullable(text)),
@@ -354,6 +355,7 @@ export const SourceSchema = tagged(
       type: enumeration('discord'),
     }),
     telegram: object({
+      message_events: optional(boolean),
       admission: AdmissionPolicySchema,
       bot_id: text,
       bot_username: optional(nullable(text)),

@@ -147,6 +147,34 @@ export function SourceFields({
             <RelaySetupGuidance platform={String(value.platform)} />
           </>
         ) : null}
+        {value.type === 'telegram' ? (
+          <>
+            <Toggle
+              label="Receive message edits and reactions"
+              value={value.message_events}
+              disabled={
+                discovery.authoring?.native_telegram_message_events_enabled !== true &&
+                value.message_events !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'message_events', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Private and group message edits and reactions from identifiable users reach the agents
+              that received the original message. Refresh the bot webhook after enabling this
+              setting. Reaction updates require bot administrator access. CMA does not yet support
+              channel-post edits or anonymous reaction counts. Telegram does not provide general
+              message deletion events.
+            </p>
+            {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
+              <p className="channel-field-hint">
+                This gateway has not enabled new message event settings. Saved settings are
+                retained.
+              </p>
+            ) : null}
+          </>
+        ) : null}
         <TextField
           label="Bot ID"
           value={value.bot_id}

@@ -4355,7 +4355,8 @@
       },
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
-      "type": "telegram"
+      "type": "telegram",
+      "message_events": false
     },
     {
       "type": "discord",
@@ -4476,7 +4477,8 @@
       },
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
-      "type": "telegram"
+      "type": "telegram",
+      "message_events": false
     },
     {
       "type": "discord",
@@ -4611,7 +4613,8 @@
         "native_discord_auto_activation_enabled": true,
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
-        "native_discord_thread_history_enabled": false
+        "native_discord_thread_history_enabled": false,
+        "native_telegram_message_events_enabled": false
       }
     },
     {
@@ -4647,7 +4650,8 @@
         "native_discord_auto_activation_enabled": true,
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
-        "native_discord_thread_history_enabled": false
+        "native_discord_thread_history_enabled": false,
+        "native_telegram_message_events_enabled": false
       }
     },
     {
@@ -4692,7 +4696,8 @@
         "native_discord_auto_activation_enabled": true,
         "native_discord_capacity": 64,
         "lark_resource_writes_enabled": false,
-        "native_discord_thread_history_enabled": false
+        "native_discord_thread_history_enabled": false,
+        "native_telegram_message_events_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5972,7 +5977,8 @@
       "native_discord_auto_activation_enabled": true,
       "native_discord_capacity": 64,
       "lark_resource_writes_enabled": false,
-      "native_discord_thread_history_enabled": false
+      "native_discord_thread_history_enabled": false,
+      "native_telegram_message_events_enabled": false
     }
   ],
   "PrepareOutboundMessage": [

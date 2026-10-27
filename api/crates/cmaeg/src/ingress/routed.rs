@@ -30,6 +30,8 @@ pub struct VerifiedIngress {
 
 #[path = "routed_message_event.rs"]
 mod message_event;
+#[path = "routed_telegram.rs"]
+pub(crate) mod telegram;
 
 pub struct RoutedIngress {
     plans: PlanStore,
@@ -362,7 +364,7 @@ impl IngressState {
     ) -> Option<VerifiedIngress> {
         self.routed
             .as_ref()
-            .filter(|routing| routing.selected(&request.channel.definition.record_id))
+            .filter(|routing| routing.selected_request(request))
             .filter(|_| ordinary(request))
             .map(|_| VerifiedIngress {
                 body: if body.len() <= MAX_SOURCE_BYTES {
@@ -384,9 +386,11 @@ impl IngressState {
         source: Option<VerifiedIngress>,
         hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
-        if let Some(routing) = self.routed.as_ref().filter(|routing| {
-            routing.selected(&request.channel.definition.record_id) && ordinary(&request)
-        }) {
+        if let Some(routing) = self
+            .routed
+            .as_ref()
+            .filter(|routing| routing.selected_request(&request) && ordinary(&request))
+        {
             let Some(source) = source else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
@@ -402,6 +406,13 @@ impl IngressState {
                 Ok(None) => {}
                 Err(error) => return LaunchOutcome::Refused(error),
             }
+        }
+        if ordinary(&request) && telegram::opted_in(&request) {
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "telegram_message_events_durable_admission_unavailable",
+            ));
         }
         self.launcher.launch_holding(request, hold).await
     }

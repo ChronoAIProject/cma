@@ -63,7 +63,7 @@ pub async fn create(
     let binding_id = BindingId::new(format!("bnd_{}", Uuid::new_v4().simple()))
         .map_err(ManagementError::Invalid)?;
     let agent_key = request.credentials.agent_key.clone();
-    let definition = build_definition(
+    let mut definition = build_definition(
         &request,
         &creator.subject,
         record_id.clone(),
@@ -72,6 +72,7 @@ pub async fn create(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::native_telegram::initialize(state, None, &mut definition)?;
     let pointer =
         channel_pointer(&state.cma_base_url, &record_id).map_err(ManagementError::Invalid)?;
     let channel_id = pointer
@@ -87,7 +88,6 @@ pub async fn create(
         )
         .await
         .map_err(ManagementError::Provider)?;
-    let mut definition = definition;
     definition.provider.level = binding.level;
     let saved = async {
         let blob = seal_definition(&state.master_keys, &definition)?;
@@ -271,6 +271,7 @@ pub async fn update(
     // The write gate runs inside the build, before the provider sees anything.
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
+    super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;

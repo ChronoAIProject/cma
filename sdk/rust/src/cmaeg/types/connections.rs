@@ -128,6 +128,9 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// Native Telegram owners may enable durable edit and reaction notifications.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_telegram_message_events_enabled: Option<bool>,
     /// Opt-in native Discord thread history is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,

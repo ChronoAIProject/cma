@@ -4298,6 +4298,7 @@
           "system_sender",
           "unknown_sender",
           "message_edit",
+          "message_context_unavailable",
           "interactive_action_unsupported",
           "interaction_expired_or_invalid",
           "system_event",
@@ -4447,6 +4448,12 @@
           },
           "native_media_writes_enabled": {
             "description": "The configured relay accepts new native attachments; platform limits still apply.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_telegram_message_events_enabled": {
             "type": [
               "boolean",
               "null"
@@ -5073,6 +5080,10 @@
                   "null"
                 ]
               },
+              "message_events": {
+                "description": "Retain original message routing for edits and attributable reactions.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "telegram"
@@ -5388,6 +5399,10 @@
                   "string",
                   "null"
                 ]
+              },
+              "message_events": {
+                "description": "Retain original message routing for edits and attributable reactions.",
+                "type": "boolean"
               },
               "type": {
                 "enum": [

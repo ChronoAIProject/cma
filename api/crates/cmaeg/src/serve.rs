@@ -72,6 +72,10 @@ pub(crate) async fn serve(
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_telegram_message_events_writes_enabled =
+        config.native_telegram_message_events_writes_enabled;
+    state.native_telegram_durable_admission_enabled =
+        config.routing.recovery_enabled && config.routing.admission_enabled;
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
