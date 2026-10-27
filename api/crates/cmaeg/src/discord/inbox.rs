@@ -93,6 +93,7 @@ impl DurableJournal {
         }
         let inbox = Inbox {
             kind: "discord_inbox_v1".into(),
+            change_id: None,
             channel_record: authority.record.clone(),
             bot_id: authority.bot_id.clone(),
             message_id: message.into(),
@@ -125,7 +126,7 @@ impl DurableJournal {
         authority: &Authority,
         message: &str,
     ) -> Result<Vec<u8>, GatewayError> {
-        if inbox.kind != "discord_inbox_v1"
+        if inbox.id().is_err()
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.message_id != message

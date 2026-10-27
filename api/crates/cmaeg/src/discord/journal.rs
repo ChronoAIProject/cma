@@ -228,6 +228,14 @@ impl DurableJournal {
         if event.name == "INTERACTION_CREATE" {
             self.persist_component(&current, event).await?;
         }
+        if self.api.message_events
+            && matches!(
+                event.name.as_str(),
+                "MESSAGE_UPDATE" | "MESSAGE_DELETE" | "MESSAGE_DELETE_BULK"
+            )
+        {
+            self.persist_message_event(&current, event).await?;
+        }
         // Persisting an inbox record cannot advance the stream or launch work.
         // The checkpoint follows confirmed durable storage, under the same fence.
         self.current_authority().await?;

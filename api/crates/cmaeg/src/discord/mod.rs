@@ -48,6 +48,8 @@ mod inbox;
 mod inbox_activity;
 mod journal;
 mod journal_model;
+mod message_event;
+mod message_event_inbox;
 mod protocol;
 mod record_store;
 
@@ -95,3 +97,9 @@ pub(crate) fn native_source_revision(
         .ok()
         .map(|authority| authority.revision)
 }
+
+#[cfg(test)]
+mod message_event_tests;
+
+#[cfg(test)]
+mod message_event_execution_tests;
