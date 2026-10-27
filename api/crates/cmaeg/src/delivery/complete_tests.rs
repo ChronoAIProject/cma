@@ -7,8 +7,12 @@ use super::{
 };
 mod destinations;
 mod durable;
+mod native_whatsapp_control_tests;
+mod native_whatsapp_group_tests;
 mod native_whatsapp_sticker_tests;
+mod native_whatsapp_template_tests;
 mod native_whatsapp_tests;
+mod native_whatsapp_video_tests;
 mod whatsapp;
 use crate::{
     channels::resolver::ResolvedChannel,

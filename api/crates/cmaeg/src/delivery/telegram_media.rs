@@ -193,6 +193,7 @@ impl Sender {
                 if let Ok(reference) = MessageRef::seal(
                     &MessageRefPayload {
                         discord_message: None,
+                        whatsapp_reaction: None,
                         lark_effect: None,
                         telegram_effect: None,
                         channel_id: event.channel_id.clone(),

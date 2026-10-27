@@ -73,7 +73,15 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.native_lark_intake_enabled = config.native_lark_intake_enabled;
+    state.native_lark_writes_enabled = config.native_lark_writes_enabled;
+    state.native_lark_admission_enabled =
+        config.routing.admission_enabled && config.routing.recovery_enabled;
+    state.native_lark = Some(std::sync::Arc::new(
+        crate::native_lark::Client::production()?
+    ));
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
+    state.native_whatsapp_groups_writes_enabled = config.native_whatsapp_groups_writes_enabled;
     state.native_whatsapp_admission_enabled =
         config.routing.admission_enabled && config.routing.recovery_enabled;
     state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
@@ -124,8 +132,18 @@ pub(crate) async fn serve(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_native_lark(
+            crate::native_lark::Client::production()?,
+            std::sync::Arc::new(crate::native_lark::receipts::Store::new(
+                (*state.records).clone(),
+                state.master_keys.clone(),
+            )),
+        )
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
+        .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
+        .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
+        .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
@@ -216,7 +234,10 @@ pub(crate) async fn serve(
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_native_lark_intake(config.native_lark_intake_enabled)
+    .with_native_lark_media(config.native_lark_media_enabled)
     .with_whatsapp_media(config.native_whatsapp_media_enabled)
+    .with_whatsapp_groups(config.native_whatsapp_groups_enabled)
     .with_routed(
         routed
             .as_ref()
@@ -246,9 +267,16 @@ pub(crate) async fn serve(
         whatsapp_templates_enabled: whatsapp_templates,
         discord_interactions_enabled: discord_interactions,
         whatsapp_interactions_enabled: whatsapp_interactions,
+        native_whatsapp_interactions_enabled: config.native_whatsapp_interactions_enabled,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
+        whatsapp_reactions: Some(std::sync::Arc::new(tools::WhatsappReactionsClient::new(
+            crate::whatsapp::Client::production()?,
+            config.native_whatsapp_reactions_enabled,
+        ))),
+        native_whatsapp_templates_enabled: config.native_whatsapp_templates_enabled,
+        native_whatsapp_groups_enabled: config.native_whatsapp_groups_enabled,
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects
@@ -302,6 +330,7 @@ pub(crate) async fn serve(
             resource_connections,
         ))
         .merge(http::connection_browser::router(connections))
+        .merge(http::native_lark::router(ingress.clone()))
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))

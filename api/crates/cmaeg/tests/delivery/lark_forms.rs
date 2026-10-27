@@ -194,6 +194,7 @@ async fn named_text_form_edits_keep_telegram_and_plain_relay_compatibility() {
         };
         let reference = MessageRefPayload {
             discord_message: None,
+            whatsapp_reaction: None,
             lark_effect: None,
             telegram_effect: None,
             channel_id: channel.id.clone(),

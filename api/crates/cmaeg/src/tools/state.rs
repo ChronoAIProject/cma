@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
@@ -33,11 +34,16 @@ pub struct ToolsState {
     pub whatsapp_templates_enabled: bool,
     pub discord_interactions_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
+    /// Native issuance only; retained callback consumption is independent.
+    pub native_whatsapp_interactions_enabled: bool,
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
     /// Bounded native WhatsApp image/PDF/audio/sticker uploads, independently default-off.
     pub native_whatsapp_outbound_media_enabled: bool,
+    /// Approved native template replies, independently default-off from relay templates/uploads.
+    pub native_whatsapp_templates_enabled: bool,
+    pub native_whatsapp_groups_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
     /// Advertise native Discord text/card editing after the selected reader rollout.
@@ -107,7 +113,8 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.lark_effect.is_some()
+        let channel = if message.whatsapp_reaction.is_some()
+            || message.lark_effect.is_some()
             || message.discord_message.is_some()
             || (message.interaction_record_id.is_some() && message.route_id.starts_with("discord:"))
         {
@@ -273,7 +280,24 @@ impl ToolsState {
             let (channel, event, matched) = self
                 .authorize_event(caller, reference, "readEventContext")
                 .await?;
-            super::context::read(self, &channel, &matched, &event).await
+            let consumer = super::context::consumer_view(&channel, &matched)?;
+            let (activity, verified) =
+                super::context::read_activity(self, &channel, &consumer, &event).await?;
+            let received_message = self
+                .received_message_context(caller, &event, &activity, verified)
+                .await;
+            let inbound_media = super::context::inbound_media(self, &consumer, &activity.source);
+            let mut response = super::context::project(
+                &channel,
+                &consumer,
+                &event,
+                activity,
+                verified,
+                inbound_media,
+                self,
+            );
+            response.received_message = received_message;
+            Ok(response)
         }
         .await;
         observation.finish(if result.is_ok() { "success" } else { "error" });
@@ -298,7 +322,10 @@ impl ToolsState {
         }
         let consumer = super::context::consumer_view(&channel, &matched)?;
         let inbound_media = super::context::inbound_media(self, &consumer, &activity.source);
-        Ok(super::context::project(
+        let received_message = self
+            .received_message_context(caller, &event, &activity, true)
+            .await;
+        let mut response = super::context::project(
             &channel,
             &consumer,
             &event,
@@ -306,7 +333,9 @@ impl ToolsState {
             true,
             inbound_media,
             self,
-        ))
+        );
+        response.received_message = received_message;
+        Ok(response)
     }
     pub(super) async fn deliver<T>(
         &self,

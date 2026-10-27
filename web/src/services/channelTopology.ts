@@ -56,6 +56,18 @@ export function channelNodes(channel: Channel) {
   const producers: ChannelNode[] = channel.definition.sources.map((value, index) => {
     const source = object(value);
     const relay = source.type === 'nyxid_relay';
+    if (source.type === 'native_lark') {
+      const identity = object(source.identity);
+      const platform = platformName(identity.region);
+      return {
+        key: `producer-${index}`,
+        selection: { kind: 'producer', index },
+        identity: text(identity.region, ''),
+        title: platform,
+        subtitle: `Direct ${platform} app`,
+        detail: text(identity.app_id, 'App not reported'),
+      };
+    }
     return {
       key: `producer-${index}`,
       selection: { kind: 'producer', index },

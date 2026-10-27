@@ -1,5 +1,7 @@
 //! Durable admission for explicitly selected channel records. Legacy traffic
 //! never performs a routing-store read or retains its raw body here.
+#[path = "routed_native_lark.rs"]
+mod native_lark;
 #[path = "routed_whatsapp.rs"]
 mod whatsapp;
 

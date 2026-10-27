@@ -114,6 +114,9 @@ pub struct RelayClient {
     complete_replies: bool,
     native_media: bool,
     native_whatsapp_outbound_media: bool,
+    native_whatsapp_templates: bool,
+    native_whatsapp_interactions: bool,
+    native_whatsapp_groups: bool,
     text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
@@ -130,6 +133,8 @@ pub struct RelayClient {
     consumer_interactions: bool,
     telegram_effects: bool,
     telegram_media_effects: bool,
+    pub native_lark: crate::native_lark::Client,
+    pub native_lark_receipts: Option<Arc<crate::native_lark::receipts::Store>>,
     pub whatsapp: crate::whatsapp::Client,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub telegram: crate::telegram::TelegramClient,
@@ -166,14 +171,6 @@ impl RelayClient {
     pub(super) fn telegram_media_effects_enabled(&self) -> bool {
         self.telegram_media_effects
     }
-    /// Gate new card issuance until every reader understands retained Lark cards.
-    pub fn with_lark_cards(mut self, enabled: bool) -> Self {
-        self.lark_cards = enabled;
-        self
-    }
-    pub(super) fn lark_cards_enabled(&self) -> bool {
-        self.lark_cards
-    }
     /// Issue enriched text references only after every gateway reader supports them.
     /// Retained references remain editable when issuance is disabled again.
     pub fn with_text_edits(mut self, enabled: bool) -> Self {
@@ -182,14 +179,6 @@ impl RelayClient {
     }
     pub(super) fn text_edits_enabled(&self) -> bool {
         self.text_edits
-    }
-    /// Attest that every deployed NyxID replica honors bounded native media replies.
-    pub fn with_native_media(mut self, enabled: bool) -> Self {
-        self.native_media = enabled;
-        self
-    }
-    pub(crate) fn native_media_enabled(&self) -> bool {
-        self.native_media
     }
     /// Select complete ordinary replies in the delivery engine. Enabling this
     /// attests that NyxID splits ordinary/thread replies without truncation and
@@ -229,6 +218,9 @@ impl RelayClient {
             complete_replies: false,
             native_media: false,
             native_whatsapp_outbound_media: false,
+            native_whatsapp_templates: false,
+            native_whatsapp_interactions: false,
+            native_whatsapp_groups: false,
             text_edits: false,
             native_discord_edits: false,
             native_discord_effects: false,
@@ -246,6 +238,8 @@ impl RelayClient {
             telegram_effects: false,
             telegram_media_effects: false,
             interactions: None,
+            native_lark: crate::native_lark::Client::production()?,
+            native_lark_receipts: None,
             whatsapp: crate::whatsapp::Client::production()?,
             whatsapp_receipts: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
