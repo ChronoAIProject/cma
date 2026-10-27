@@ -1,0 +1,80 @@
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { NodeInspector } from './NodeInspector';
+import { Section, TextField } from './channelForm/Fields';
+import type { Channel } from './ChannelEditor';
+import type { ChannelSelection } from './channelTopology';
+
+const channel: Channel = {
+  channel_id: 'navigation-fixture',
+  record_id: 'navigation-record',
+  version: 1,
+  provider: { slug: 'cma_codex', level: 'l2' },
+  definition: {
+    name: 'Team updates',
+    sources: [{ type: 'custom', auth: { type: 'hmac' } }],
+    provider: { slug: 'cma_codex', target: { type: 'existing_agent', agent_id: 'existing-agent' } },
+  },
+  endpoints: {
+    custom_event_url: 'https://example.test/events',
+    nyxid_callback_url: 'https://example.test/callback',
+  },
+};
+afterEach(() => vi.restoreAllMocks());
+function Editor() {
+  const [value, setValue] = useState('');
+  const [extra, setExtra] = useState(false);
+  return (
+    <>
+      <Section title="Connection" description="Choose the incoming connection.">
+        <TextField label="Draft name" value={value} onChange={setValue} />
+        <Section title="Nested field">
+          <p>Not a second navigation destination</p>
+        </Section>
+      </Section>
+      <button type="button" onClick={() => setExtra((current) => !current)}>
+        Toggle reply settings
+      </button>
+      {extra ? (
+        <Section title="Reply settings">
+          <p>Conditional reply settings</p>
+        </Section>
+      ) : null}
+    </>
+  );
+}
+it('navigates actual conditional settings, excludes nested fields and retains drafts through toolsets', async () => {
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  const tree = (selection: ChannelSelection) => (
+    <NodeInspector channel={channel} id="settings" selection={selection}>
+      <Editor />
+    </NodeInspector>
+  );
+  const { rerender } = render(tree({ kind: 'channel' }));
+  const nav = screen.getByRole('navigation', { name: 'Configuration sections' });
+  await screen.findByRole('button', { name: 'Connection', exact: true });
+  expect(within(nav).queryByRole('button', { name: 'Nested field' })).not.toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText('Draft name'), 'Unsaved edit');
+  await userEvent.click(screen.getByRole('button', { name: 'Toggle reply settings' }));
+  const destination = await within(nav).findByRole('button', { name: 'Reply settings' });
+  await userEvent.click(destination);
+  expect(scroll).toHaveBeenCalled();
+  expect(document.activeElement).toHaveTextContent('Conditional reply settings');
+  rerender(tree({ kind: 'toolsets' }));
+  await screen.findByRole('button', { name: 'Event tools' });
+  expect(
+    within(nav).queryByRole('button', { name: 'Connection', exact: true }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText('readEventContext')).toBeVisible();
+  expect(screen.getByText(/Existing agent. Its current tool setup is preserved/)).toBeVisible();
+  rerender(tree({ kind: 'channel' }));
+  expect(await screen.findByLabelText('Draft name')).toHaveValue('Unsaved edit');
+  expect(within(nav).queryByRole('button', { name: 'Event tools' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle reply settings' }));
+  await waitFor(() =>
+    expect(within(nav).queryByRole('button', { name: 'Reply settings' })).not.toBeInTheDocument(),
+  );
+});

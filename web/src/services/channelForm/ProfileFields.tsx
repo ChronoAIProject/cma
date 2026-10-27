@@ -14,7 +14,10 @@ export function ProviderFields({
   const target = object(value.target);
   if (immutable)
     return (
-      <Section title="Agent destination">
+      <Section
+        title="Agent destination"
+        description="Choose which provider and agent will receive this channel’s events."
+      >
         <p>Provider: {String(value.slug ?? 'Unavailable')}</p>
         <p>
           {target.type === 'existing_agent'
@@ -28,7 +31,10 @@ export function ProviderFields({
       </Section>
     );
   return (
-    <Section title="Agent destination">
+    <Section
+      title="Agent destination"
+      description="Choose which provider and agent will receive this channel’s events."
+    >
       <TextField
         label="Provider"
         value={value.slug}
@@ -77,7 +83,10 @@ export function ProfileFields({
     servers = records(context.mcp_servers);
   return (
     <>
-      <Section title="Agent settings">
+      <Section
+        title="Agent settings"
+        description="Name this agent configuration and describe the work it should do."
+      >
         <TextField
           label="Agent configuration name"
           value={metadata.name}
@@ -90,6 +99,11 @@ export function ProfileFields({
           onChange={(description) => set('metadata', { ...metadata, description })}
           multiline
         />
+      </Section>
+      <Section
+        title="Ownership"
+        description="The provider and owner identify this binding. Existing bindings retain their original identity."
+      >
         <fieldset className="channel-form-section" disabled={immutableIdentity}>
           <TextField
             label="Profile provider"
@@ -110,6 +124,11 @@ export function ProfileFields({
             onChange={(kind) => set('metadata', { ...metadata, owner: { ...owner, kind } })}
           />
         </fieldset>
+      </Section>
+      <Section
+        title="Model and behavior"
+        description="Select the model, reasoning effort and the permissions used to carry out incoming requests."
+      >
         <div className="channel-form-grid">
           <TextField
             label="Model"
@@ -145,9 +164,17 @@ export function ProfileFields({
         <Choice
           label="Permission mode"
           value={permission.action_mode}
-          options={['guarded', 'autonomous']}
+          options={[
+            { value: 'guarded', label: 'Ask before sensitive actions' },
+            { value: 'autonomous', label: 'Autonomous' },
+          ]}
           onChange={(action_mode) => set('permission', { ...permission, action_mode })}
         />
+      </Section>
+      <Section
+        title="Services and instructions"
+        description="Limit which services the agent can use and give it instructions for handling messages."
+      >
         <StringList
           label="Service scope"
           value={strings(permission.service_scope)}
@@ -160,7 +187,10 @@ export function ProfileFields({
           multiline
         />
       </Section>
-      <Section title="Skills">
+      <Section
+        title="Skills"
+        description="Attach Ornn skills by ID. Leave this empty if the agent does not need additional skills."
+      >
         {skills.map((skill, index) => (
           <Section key={index} title={`Skill ${index + 1}`}>
             <TextField
@@ -204,7 +234,10 @@ export function ProfileFields({
           Add skill
         </Button>
       </Section>
-      <Section title="MCP servers">
+      <Section
+        title="MCP servers"
+        description="Optional tool servers in addition to the gateway’s event tools. Each server has its own authentication settings."
+      >
         {servers.map((server, index) => {
           const auth = object(server.auth),
             update = (next: Fields) =>
@@ -258,7 +291,10 @@ export function ProfileFields({
           Add MCP server
         </Button>
       </Section>
-      <Section title="Environment">
+      <Section
+        title="Environment"
+        description="Optional provider environment overrides. Keep the defaults unless your agent needs a specific environment."
+      >
         {value.environment != null ? (
           <>
             <ValueBuilder
