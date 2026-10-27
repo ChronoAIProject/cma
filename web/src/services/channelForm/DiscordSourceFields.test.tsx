@@ -78,6 +78,7 @@ it('retains exact saved sources and blank credentials when authoring is disabled
     nodeCredentials(
       { discord_bot_token: 'new-token', agent_key: 'private-agent' },
       { kind: 'producer', index: 0 },
+      { sources: [native] },
     ),
   ).toEqual({ discord_bot_token: 'new-token' });
   expect(
