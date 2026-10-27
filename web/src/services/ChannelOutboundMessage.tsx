@@ -22,12 +22,13 @@ interface Props {
   readonly channel: Channel;
   readonly selection: ChannelSelection;
   readonly denied: Denied;
+  readonly onAvailability?: (available: boolean) => void;
 }
 /** Account/channel changes reset visible state without erasing uncertain operations. */
 export function ChannelOutboundMessage(props: Props) {
   return <Composer key={JSON.stringify([props.owner, props.channel.record_id])} {...props} />;
 }
-function Composer({ owner, channel, selection, denied }: Props) {
+function Composer({ owner, channel, selection, denied, onAvailability }: Props) {
   const capabilities = useRelayCapabilities();
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false } = journal.intent ?? {};
@@ -145,8 +146,11 @@ function Composer({ owner, channel, selection, denied }: Props) {
       if (!abort.signal.aborted) setPending(false);
     }
   }
-  if ((!enabled && !receipt && !draft) || (source.type !== 'nyxid_relay' && !receipt && !draft))
-    return null;
+  const available = Boolean(receipt || draft || (enabled && source.type === 'nyxid_relay'));
+  useEffect(() => {
+    onAvailability?.(available);
+  }, [available, onAvailability]);
+  if (!available) return null;
   const finished =
     receipt?.status === 'cancelled' ||
     ['confirmed', 'rejected'].includes(receipt?.delivery?.outcome ?? '');
