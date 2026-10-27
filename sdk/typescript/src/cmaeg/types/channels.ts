@@ -1,3 +1,6 @@
+import { EndpointResponseSchema, FieldRefusalSchema } from './channel-results.js';
+export * from './channel-results.js';
+import { NativeLarkIdentitySchema } from './primitives.js';
 import { CredentialsRequestSchema, CredentialPatchSchema } from './credentials.js';
 export * from './credentials.js';
 import { LarkResourceBindingSchema, LarkMessageEffectsBindingSchema } from './lark.js';
@@ -52,6 +55,13 @@ export const AdmissionPolicySchema = tagged(
   'type',
 );
 export type AdmissionPolicy = Output<typeof AdmissionPolicySchema>;
+
+export const NativeLarkSourceSchema = object({
+  separate_app: boolean,
+  identity: NativeLarkIdentitySchema,
+  admission: AdmissionPolicySchema,
+});
+export type NativeLarkSource = Output<typeof NativeLarkSourceSchema>;
 
 export const PartitionRuleSchema = object({
   key: PartitionKeySchema,
@@ -116,6 +126,12 @@ export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
 
 export const SourceRequestSchema = tagged(
   {
+    native_lark: object({
+      type: enumeration('native_lark'),
+      separate_app: boolean,
+      identity: NativeLarkIdentitySchema,
+      admission: AdmissionPolicySchema,
+    }),
     whatsapp: object({
       app_id: text,
       waba_id: text,
@@ -334,6 +350,12 @@ export const PublicSecretsSchema = object({ agent_key_hash: text });
 export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 export const SourceSchema = tagged(
   {
+    native_lark: object({
+      type: enumeration('native_lark'),
+      separate_app: boolean,
+      identity: NativeLarkIdentitySchema,
+      admission: AdmissionPolicySchema,
+    }),
     whatsapp: object({
       app_id: text,
       waba_id: text,
@@ -401,17 +423,6 @@ export const PublicChannelDefinitionSchema = object({
   version: integer,
 });
 export type PublicChannelDefinition = Output<typeof PublicChannelDefinitionSchema>;
-
-export const EndpointResponseSchema = object({
-  whatsapp_webhook_url: optional(nullable(text)),
-  custom_event_url: text,
-  nyxid_callback_url: text,
-  telegram_webhook_url: optional(nullable(text)),
-});
-export type EndpointResponse = Output<typeof EndpointResponseSchema>;
-
-export const FieldRefusalSchema = object({ field: text, reason: text });
-export type FieldRefusal = Output<typeof FieldRefusalSchema>;
 
 export const ProviderResponseSchema = object({
   binding_id: text,

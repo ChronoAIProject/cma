@@ -14,6 +14,10 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub native_lark_intake_enabled: bool,
+    pub native_lark_writes_enabled: bool,
+    pub native_lark_admission_enabled: bool,
+    pub native_lark: Option<Arc<crate::native_lark::Client>>,
     pub activity: Arc<crate::activity::ActivityStore>,
     pub resolver: super::resolver::ChannelResolver,
     pub readiness: crate::http::readiness::Readiness,
@@ -70,6 +74,7 @@ pub(crate) struct CachedResponse {
 impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
+            native_lark: self.native_lark_writes_enabled,
             native_bot_mentions: self.native_bot_mentions_writes_enabled,
             thread_contract: self.thread_contract_writes_enabled,
             multi_consumer: self.multi_consumer_writes_enabled,
@@ -150,6 +155,10 @@ impl ManagementState {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             lark_resource_writes_enabled: false,
+            native_lark_intake_enabled: false,
+            native_lark_writes_enabled: false,
+            native_lark_admission_enabled: false,
+            native_lark: None,
             native_whatsapp_writes_enabled: false,
             native_whatsapp_admission_enabled: false,
             whatsapp: None,

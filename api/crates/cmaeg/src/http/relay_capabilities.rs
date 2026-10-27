@@ -5,6 +5,11 @@ use utoipa::ToSchema;
 
 #[derive(Serialize, ToSchema)]
 pub struct RelayAuthoringCapabilities {
+    /// Separate native custom app only; never replaces a NyxID webhook.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_lark_writes_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_lark_intake_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_message_events_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +81,14 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
     })
     .collect();
     RelayAuthoringCapabilities {
+        native_lark_writes_enabled: Some(
+            state.native_lark_writes_enabled
+                && state.native_lark_admission_enabled
+                && state.multi_consumer_writes_enabled,
+        ),
+        native_lark_intake_enabled: Some(
+            state.native_lark_intake_enabled && state.native_lark_admission_enabled,
+        ),
         native_telegram_message_events_enabled: Some(
             state.native_telegram_message_events_writes_enabled
                 && state.native_telegram_durable_admission_enabled

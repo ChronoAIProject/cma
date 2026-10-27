@@ -135,6 +135,9 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if matches!(event.reply, ReplyAddress::NativeLark(_)) {
+            return self.native_lark_reply(ctx, event, message).await;
+        }
         if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
             return self.whatsapp_reply(ctx, event, message).await;
         }

@@ -45,3 +45,32 @@ fn native_whatsapp_capabilities_never_infer_support_from_legacy_gates() {
         assert_eq!(serde_json::to_value(parsed).unwrap(), value);
     }
 }
+
+#[test]
+fn separate_native_lark_source_and_credentials_round_trip_without_relay_authority() {
+    for region in ["lark", "feishu"] {
+        let identity = json!({"region":region,"app_id":"cli_separate_app","tenant_key":"native_tenant","bot_open_id":"ou_native_bot"});
+        let source = json!({"type":"native_lark","separate_app":true,"identity":identity,"admission":{"type":"all"}});
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<Source>(source.clone()).unwrap())
+                .unwrap(),
+            source
+        );
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<SourceRequest>(source.clone()).unwrap())
+                .unwrap(),
+            source
+        );
+        let mut activity = identity;
+        activity["type"] = "native_lark".into();
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<SourceKind>(activity.clone()).unwrap())
+                .unwrap(),
+            activity
+        );
+    }
+    let value = json!({"app_secret":"fixture-secret","encrypt_key":"fixture-encrypt","verification_token":"fixture-token"});
+    let credentials: cma_sdk::cmaeg::types::NativeLarkCredentials =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(credentials).unwrap(), value);
+}

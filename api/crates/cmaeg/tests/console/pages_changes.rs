@@ -115,6 +115,7 @@ impl SourceChanges for RecordingSources {
                     .map(|secret| secret.secret.as_str().to_owned()),
             );
             let source = match request.source {
+                SourceRequest::NativeLark(source) => Source::NativeLark(source),
                 SourceRequest::Whatsapp {
                     app_id,
                     waba_id,

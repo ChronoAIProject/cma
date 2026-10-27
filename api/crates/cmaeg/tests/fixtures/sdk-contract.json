@@ -821,6 +821,11 @@
           "app_secret": "fixture-app-secret",
           "access_token": "fixture-access-token",
           "verify_token": "fixture-verify-token"
+        },
+        "native_lark": {
+          "app_secret": "fixture-native-app-secret",
+          "encrypt_key": "fixture-native-encrypt-key",
+          "verification_token": "fixture-native-verify-token"
         }
       },
       "name": "fixture",
@@ -1333,7 +1338,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1634,7 +1640,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1942,7 +1949,8 @@
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
             "telegram_webhook_url": "fixture",
-            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+            "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2243,7 +2251,8 @@
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
             "telegram_webhook_url": "fixture",
-            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+            "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2552,7 +2561,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2856,7 +2866,8 @@
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
         "telegram_webhook_url": "fixture",
-        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+        "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2903,6 +2914,11 @@
           "app_secret": "fixture-app-secret",
           "access_token": "fixture-access-token",
           "verify_token": "fixture-verify-token"
+        },
+        "native_lark": {
+          "app_secret": "fixture-native-app-secret",
+          "encrypt_key": "fixture-native-encrypt-key",
+          "verification_token": "fixture-native-verify-token"
         }
       },
       "expected_version": 1,
@@ -3413,6 +3429,11 @@
         "app_secret": "fixture-app-secret",
         "access_token": "fixture-access-token",
         "verify_token": "fixture-verify-token"
+      },
+      "native_lark": {
+        "app_secret": "fixture-native-app-secret",
+        "encrypt_key": "fixture-native-encrypt-key",
+        "verification_token": "fixture-native-verify-token"
       }
     }
   ],
@@ -3433,6 +3454,11 @@
         "app_secret": "fixture-app-secret",
         "access_token": "fixture-access-token",
         "verify_token": "fixture-verify-token"
+      },
+      "native_lark": {
+        "app_secret": "fixture-native-app-secret",
+        "encrypt_key": "fixture-native-encrypt-key",
+        "verification_token": "fixture-native-verify-token"
       }
     }
   ],
@@ -3482,7 +3508,8 @@
       "custom_event_url": "fixture",
       "nyxid_callback_url": "fixture",
       "telegram_webhook_url": "fixture",
-      "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
+      "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture",
+      "native_lark_webhook_url": "https://gateway.example/v1/native-lark/fixture"
     }
   ],
   "EventAccepted": [
@@ -4573,6 +4600,19 @@
       "admission": {
         "type": "all"
       }
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "SourceKind": [
@@ -4603,6 +4643,13 @@
       "app_id": "12345",
       "waba_id": "23456",
       "phone_number_id": "34567"
+    },
+    {
+      "type": "native_lark",
+      "region": "feishu",
+      "app_id": "cli_separate_app",
+      "tenant_key": "native_tenant",
+      "bot_open_id": "ou_separate_bot"
     }
   ],
   "SourceRequest": [
@@ -4737,6 +4784,19 @@
       "admission": {
         "type": "all"
       }
+    },
+    {
+      "type": "native_lark",
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "TestChannelResponse": [
@@ -4867,7 +4927,9 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": false,
         "native_whatsapp_auto_activation_enabled": false,
-        "native_whatsapp_writes_enabled": false
+        "native_whatsapp_writes_enabled": false,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false
       },
       "agent_tools": [
         {
@@ -4918,7 +4980,9 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": true,
         "native_whatsapp_auto_activation_enabled": true,
-        "native_whatsapp_writes_enabled": true
+        "native_whatsapp_writes_enabled": true,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false
       },
       "agent_tools": [
         {
@@ -4978,7 +5042,9 @@
         "lark_message_effects_writes_enabled": false,
         "native_discord_reactions_enabled": true,
         "native_whatsapp_auto_activation_enabled": true,
-        "native_whatsapp_writes_enabled": true
+        "native_whatsapp_writes_enabled": true,
+        "native_lark_writes_enabled": false,
+        "native_lark_intake_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6330,7 +6396,9 @@
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": false,
       "native_whatsapp_auto_activation_enabled": false,
-      "native_whatsapp_writes_enabled": false
+      "native_whatsapp_writes_enabled": false,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6365,7 +6433,9 @@
       "native_whatsapp_auto_activation_enabled": false,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6400,7 +6470,9 @@
       "native_whatsapp_auto_activation_enabled": false,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6435,7 +6507,9 @@
       "native_whatsapp_auto_activation_enabled": true,
       "lark_message_effects_writes_enabled": false,
       "native_discord_reactions_enabled": true,
-      "native_telegram_message_events_enabled": true
+      "native_telegram_message_events_enabled": true,
+      "native_lark_writes_enabled": false,
+      "native_lark_intake_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -6717,6 +6791,39 @@
       "max_frames": 128,
       "max_duration_ms": 10000,
       "min_frame_duration_ms": 8
+    }
+  ],
+  "LarkRegion": [
+    "lark",
+    "feishu"
+  ],
+  "NativeLarkCredentials": [
+    {
+      "app_secret": "fixture-native-app-secret",
+      "encrypt_key": "fixture-native-encrypt-key",
+      "verification_token": "fixture-native-verify-token"
+    }
+  ],
+  "NativeLarkIdentity": [
+    {
+      "region": "feishu",
+      "app_id": "cli_separate_app",
+      "tenant_key": "native_tenant",
+      "bot_open_id": "ou_separate_bot"
+    }
+  ],
+  "NativeLarkSource": [
+    {
+      "separate_app": true,
+      "identity": {
+        "region": "feishu",
+        "app_id": "cli_separate_app",
+        "tenant_key": "native_tenant",
+        "bot_open_id": "ou_separate_bot"
+      },
+      "admission": {
+        "type": "all"
+      }
     }
   ]
 }
