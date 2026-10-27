@@ -26,10 +26,12 @@ pub(crate) mod discord_form_store;
 #[cfg(test)]
 mod discord_form_tests;
 pub(crate) mod discord_form_values;
+mod discord_receipts;
 #[cfg(test)]
 mod discord_tests;
 mod keyboard;
 pub(crate) mod lark;
+mod lark_effect;
 pub(crate) mod lark_form;
 mod lark_form_authority;
 pub(crate) mod owner;
@@ -46,6 +48,7 @@ const TTL: i64 = 24 * 60 * 60;
 pub type Admit = dyn Fn(Option<&ConsumerId>) -> bool + Send + Sync;
 #[derive(Clone)]
 pub struct InteractionStore {
+    channels: RecordClient,
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     providers: Arc<ProviderClient>,
@@ -57,6 +60,7 @@ impl InteractionStore {
         providers: Arc<ProviderClient>,
     ) -> Self {
         Self {
+            channels: records.clone(),
             records: records.interactions(),
             keys,
             providers,
@@ -159,6 +163,7 @@ impl InteractionStore {
         MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                lark_effect: None,
                 telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),

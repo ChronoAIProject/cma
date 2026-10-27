@@ -137,6 +137,7 @@ impl App {
         let message_ref = MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                lark_effect: None,
                 telegram_effect: None,
                 channel_id: fixture.id.clone(),
                 event_id: payload.event_id.clone(),
@@ -219,6 +220,8 @@ impl App {
             whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            lark_effects_issuance_enabled: false,
+            lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
             native_discord_edits_enabled: false,

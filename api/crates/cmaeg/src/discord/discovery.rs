@@ -26,6 +26,8 @@ pub struct DiscordApi {
     pub(super) components: Option<std::sync::Arc<super::components::Runtime>>,
     limits: DiscordRest,
     pub(super) thread_metadata: bool,
+    pub(super) message_events: bool,
+    pub(super) reactions: bool,
 }
 impl DiscordApi {
     pub fn new() -> Result<Self, GatewayError> {
@@ -42,7 +44,17 @@ impl DiscordApi {
                 .map_err(|_| GatewayError::InvalidConfiguration)?,
             limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
             thread_metadata: false,
+            message_events: false,
+            reactions: false,
         })
+    }
+    pub(super) fn with_reactions(mut self, enabled: bool) -> Self {
+        self.reactions = enabled;
+        self
+    }
+    pub(super) fn with_message_events(mut self, enabled: bool) -> Self {
+        self.message_events = enabled;
+        self
     }
     pub(super) fn with_thread_metadata(mut self, enabled: bool) -> Self {
         self.thread_metadata = enabled;

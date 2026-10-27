@@ -1,0 +1,49 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { expect, it, vi } from 'vitest';
+import { RelayCapabilitiesContext, type RelayDiscovery } from '../RelayCapabilities';
+import { SourceFields } from './SourceFields';
+import { validateRelayAuthoring } from './relayAuthoring';
+const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+const available: RelayDiscovery = {
+  status: 'ready',
+  authoring: {
+    native_telegram_message_events_enabled: true,
+    dynamic_sources_writes_enabled: false,
+    relay_raw_verification_writes_enabled: false,
+    multi_consumer_writes_enabled: true,
+    native_bot_mentions_writes_enabled: false,
+    thread_contract_writes_enabled: false,
+    platforms: [],
+  },
+};
+it('requires confirmed support, preserves saved opt-in, and allows opt-out', () => {
+  const onChange = vi.fn();
+  const view = render(<SourceFields value={source} onChange={onChange} />);
+  expect(screen.getByLabelText('Receive message edits and reactions')).toBeDisabled();
+  view.rerender(<SourceFields value={{ ...source, message_events: true }} onChange={onChange} />);
+  expect(screen.getByLabelText('Receive message edits and reactions')).toBeChecked();
+  fireEvent.click(screen.getByLabelText('Receive message edits and reactions'));
+  expect(onChange).toHaveBeenCalledWith(source);
+  expect(screen.getByText(/CMA does not yet support channel-post edits/)).toHaveTextContent(
+    'Telegram does not provide general message deletion events.',
+  );
+  const opted = { sources: [{ ...source, message_events: true }] };
+  expect(() => validateRelayAuthoring({ status: 'legacy' }, opted)).toThrow(/disabled/);
+  expect(() => validateRelayAuthoring({ status: 'legacy' }, opted, opted)).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring({ status: 'legacy' }, { sources: [source] }, opted),
+  ).not.toThrow();
+});
+it('authors the source opt-in when capability discovery confirms durable enrollment', () => {
+  const onChange = vi.fn();
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={source} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByLabelText('Receive message edits and reactions'));
+  expect(onChange).toHaveBeenCalledWith({ ...source, message_events: true });
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [{ ...source, message_events: true }] }),
+  ).not.toThrow();
+});

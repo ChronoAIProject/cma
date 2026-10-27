@@ -71,8 +71,17 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
+    state.native_whatsapp_admission_enabled =
+        config.routing.admission_enabled && config.routing.recovery_enabled;
+    state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_telegram_message_events_writes_enabled =
+        config.native_telegram_message_events_writes_enabled;
+    state.native_telegram_durable_admission_enabled =
+        config.routing.recovery_enabled && config.routing.admission_enabled;
     state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
+    state.native_discord_reactions_enabled = config.native_discord_reactions_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
@@ -84,6 +93,12 @@ pub(crate) async fn serve(
         .with_native_media(native_media)
         .with_whatsapp_templates(whatsapp_templates),
     );
+    let whatsapp = crate::whatsapp::Client::production()?;
+    state.whatsapp = Some(std::sync::Arc::new(whatsapp.clone()));
+    let whatsapp_receipts = std::sync::Arc::new(crate::whatsapp::receipts::Store::new(
+        (*state.records).clone(),
+        state.master_keys.clone(),
+    ));
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
@@ -107,9 +122,11 @@ pub(crate) async fn serve(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_discord_reactions(config.native_discord_reactions_enabled)
         .with_native_discord_edits(native_discord_edits)
         .with_native_discord_effects(native_discord_effects)
         .with_lark_cards(lark_cards)
@@ -189,6 +206,7 @@ pub(crate) async fn serve(
             observers.activity.clone(),
         )),
     )?
+    .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
@@ -210,6 +228,12 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
+        lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
+        lark_effects: Some(std::sync::Arc::new(
+            tools::message_effects::lark_transport::LarkEffectsClient::new(
+                &config.management.nyxid_base_url,
+            )?,
+        )),
         telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
             telegram,
         ))),
@@ -270,6 +294,7 @@ pub(crate) async fn serve(
             resource_connections,
         ))
         .merge(http::connection_browser::router(connections))
+        .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))
         .merge(http::tools::router(tools_state.clone()))

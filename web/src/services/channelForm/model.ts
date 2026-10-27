@@ -38,6 +38,8 @@ export function defaultProfile(owner = ''): Fields {
   };
 }
 export function defaultSource(type: string): Fields {
+  if (type === 'whatsapp')
+    return { type, app_id: '', waba_id: '', phone_number_id: '', admission: { type: 'all' } };
   if (type === 'discord')
     return {
       type,
@@ -94,8 +96,49 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
     sources: d.sources.map((source) => without(object(source), ['jwks_url'])),
   };
 }
+/** Private drafts stay local until the matching producer is saved. */
+export function producerCredentialKeys(type: unknown): readonly string[] {
+  switch (type) {
+    case 'whatsapp':
+      return ['whatsapp'];
+    case 'discord':
+      return ['discord_bot_token'];
+    case 'telegram':
+      return ['telegram_bot_token', 'telegram_webhook_secret'];
+    case 'nyxid_relay':
+      return ['channel_key'];
+    case 'custom':
+      return ['replace_hmac', 'hmac_secrets'];
+    default:
+      return [];
+  }
+}
+export function usesHmacCredentials(draft: Fields): boolean {
+  return (
+    (!draft.connection_ref && records(draft.sources).some((source) => source.type === 'custom')) ||
+    records(object(draft.reply).sinks).some((sink) => sink.type === 'result_webhook')
+  );
+}
+export function channelCredentials(values: Fields, draft: Fields, create: boolean): Fields {
+  const keys = new Set([
+    'agent_key',
+    ...(!create || !draft.connection_ref
+      ? records(draft.sources).flatMap((source) => producerCredentialKeys(source.type))
+      : []),
+    // The central channel editor retains explicit management of the shared HMAC list.
+    ...(!create || usesHmacCredentials(draft) ? ['replace_hmac', 'hmac_secrets'] : []),
+  ]);
+  return Object.fromEntries(Object.entries(values).filter(([key]) => keys.has(key)));
+}
 export function credentialsPatch(values: Fields, create: boolean): Fields | undefined {
   const patch: Fields = {};
+  const whatsapp = object(values.whatsapp);
+  const bundle = ['app_secret', 'access_token', 'verify_token'];
+  if (bundle.some((key) => text(whatsapp[key]) !== '')) {
+    if (bundle.some((key) => text(whatsapp[key]) === ''))
+      throw new Error('Enter all three WhatsApp credentials to replace the saved bundle.');
+    patch.whatsapp = Object.fromEntries(bundle.map((key) => [key, text(whatsapp[key])]));
+  }
   for (const key of [
     'agent_key',
     'channel_key',
@@ -122,19 +165,7 @@ export function channelRequest(
 ): Fields {
   if (!channel && draft.connection_ref !== undefined && !text(draft.connection_ref))
     throw new Error('Choose a ready CMA-managed Telegram connection.');
-  const patch = credentialsPatch(
-    !channel && draft.connection_ref
-      ? without(credentials, [
-          'channel_key',
-          'telegram_bot_token',
-          'telegram_webhook_secret',
-          'discord_bot_token',
-        ])
-      : records(draft.sources).some((source) => source.type === 'discord')
-        ? credentials
-        : without(credentials, ['discord_bot_token']),
-    !channel,
-  );
+  const patch = credentialsPatch(channelCredentials(credentials, draft, !channel), !channel);
   return {
     ...draft,
     ...(patch ? { credentials: patch } : {}),

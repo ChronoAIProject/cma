@@ -1,4 +1,5 @@
-//! Bounded native Telegram and Discord reaction input, shared by REST and MCP.
+//! Bounded message reaction input, shared by REST and MCP.
+//! Lark/Feishu use the emoji field for their platform emoji_type names.
 use crate::ValidationError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -16,7 +17,7 @@ pub struct MessageReactionRequest {
     /// Empty clears the bot's reaction; the gateway supports at most one.
     #[schema(max_items = 1)]
     pub reaction: Vec<TelegramReaction>,
-    /// Telegram-only presentation hint; Discord refuses true.
+    /// Telegram-only presentation hint; Discord and Lark/Feishu refuse true.
     #[serde(default)]
     pub is_big: bool,
 }

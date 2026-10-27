@@ -26,6 +26,7 @@ pub mod reply_targets;
 pub mod schema;
 pub mod telegram;
 pub mod tools;
+pub mod whatsapp;
 
 pub use crate::channels::management::ManagementState;
 pub use management::{management_router, ChannelResponse};

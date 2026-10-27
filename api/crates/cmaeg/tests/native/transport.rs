@@ -136,7 +136,12 @@ async fn manager_operations_use_native_platform_fields_and_keep_tokens_private()
     assert_eq!(webhook["drop_pending_updates"], false);
     assert_eq!(
         webhook["allowed_updates"],
-        json!(["message", "callback_query"])
+        json!([
+            "message",
+            "edited_message",
+            "callback_query",
+            "message_reaction"
+        ])
     );
 }
 #[tokio::test]

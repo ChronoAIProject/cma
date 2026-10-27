@@ -63,6 +63,7 @@ fn event() -> EventRefPayload {
 fn message() -> MessageRefPayload {
     MessageRefPayload {
         discord_message: None,
+        lark_effect: None,
         telegram_effect: None,
         channel_id: ChannelId::new("cmaeg1.ch.consumer-references").unwrap(),
         event_id: EventId::new("event-1").unwrap(),

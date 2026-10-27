@@ -117,6 +117,11 @@ pub enum ConversationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceKind {
+    Whatsapp {
+        app_id: String,
+        waba_id: String,
+        phone_number_id: String,
+    },
     Telegram {
         platform: Platform,
         bot_id: String,
@@ -143,6 +148,22 @@ pub struct InteractionResult {
 impl Activity {
     /// Validate the bounded neutral event representation.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let SourceKind::Whatsapp {
+            app_id,
+            waba_id,
+            phone_number_id,
+        } = &self.source
+        {
+            if [app_id, waba_id, phone_number_id]
+                .iter()
+                .any(|id| !crate::channel::whatsapp::valid_meta_id(id))
+            {
+                return Err(ValidationError::new(
+                    "/source",
+                    "native WhatsApp requires numeric Meta identities",
+                ));
+            }
+        }
         if let SourceKind::Telegram { platform, bot_id } = &self.source {
             if *platform != Platform::Telegram
                 || !bot_id

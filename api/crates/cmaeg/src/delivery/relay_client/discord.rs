@@ -2,6 +2,13 @@
 use super::RelayClient;
 
 impl RelayClient {
+    pub fn with_discord_reactions(mut self, enabled: bool) -> Self {
+        self.discord_reactions = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_reactions_enabled(&self) -> bool {
+        self.discord_reactions
+    }
     pub fn with_discord_forms(mut self, enabled: bool) -> Self {
         self.discord_forms = enabled;
         self

@@ -34,11 +34,13 @@ export function AdmissionFields({
   onChange,
   label = 'Admission',
   allowBotMessages = true,
+  privateChats = false,
 }: {
   value: unknown;
   onChange: (v: Fields) => void;
   label?: string;
   allowBotMessages?: boolean;
+  privateChats?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const admission = object(value);
@@ -50,7 +52,10 @@ export function AdmissionFields({
         options={[
           { value: 'all', label: 'All messages' },
           { value: 'allowlist', label: 'Allowed senders' },
-          { value: 'scoped', label: 'Sender, chat and group rules' },
+          {
+            value: 'scoped',
+            label: privateChats ? 'Sender and chat rules' : 'Sender, chat and group rules',
+          },
         ]}
         onChange={(type) =>
           onChange(
@@ -59,7 +64,7 @@ export function AdmissionFields({
                   type,
                   senders: { type: 'open' },
                   chats: { type: 'open' },
-                  groups: 'mention_or_reply_to_bot',
+                  groups: privateChats ? 'deny' : 'mention_or_reply_to_bot',
                 }
               : type === 'allowlist'
                 ? { type, sender_ids: [] }
@@ -86,12 +91,14 @@ export function AdmissionFields({
             value={admission.chats}
             onChange={(chats) => onChange({ ...admission, chats })}
           />
-          <Choice
-            label="Group messages"
-            value={admission.groups}
-            options={['deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot']}
-            onChange={(groups) => onChange({ ...admission, groups })}
-          />
+          {!privateChats ? (
+            <Choice
+              label="Group messages"
+              value={admission.groups}
+              options={['deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot']}
+              onChange={(groups) => onChange({ ...admission, groups })}
+            />
+          ) : null}
           {allowBotMessages ? (
             <Choice
               label="Messages from bots"

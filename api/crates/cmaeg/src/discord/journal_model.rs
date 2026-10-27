@@ -82,6 +82,8 @@ pub(super) struct Inbox {
     pub channel_record: String,
     pub bot_id: String,
     pub message_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_id: Option<String>,
     pub source_revision: String,
     pub payload_hash: String,
     pub parts: Vec<String>,
@@ -94,4 +96,27 @@ pub(super) struct Inbox {
 pub(super) struct Chunk {
     pub kind: String,
     pub bytes: String,
+}
+
+impl Inbox {
+    pub(super) fn id(&self) -> Result<String, GatewayError> {
+        let (domain, identity) = match (self.kind.as_str(), &self.change_id) {
+            ("discord_inbox_v1", None) => ("discord-native-message-v1", self.message_id.as_str()),
+            ("discord_reaction_pending_v1", Some(change))
+                if !change.is_empty() && change.len() <= 512 =>
+            {
+                ("discord-native-reaction-pending-v1", change.as_str())
+            }
+            ("discord_message_event_inbox_v1", Some(change))
+                if !change.is_empty() && change.len() <= 512 =>
+            {
+                ("discord-native-message-event-v1", change.as_str())
+            }
+            _ => return Err(GatewayError::Protocol),
+        };
+        Ok(crate::connections::store::index_id(
+            domain,
+            &[&self.channel_record, &self.bot_id, identity],
+        ))
+    }
 }

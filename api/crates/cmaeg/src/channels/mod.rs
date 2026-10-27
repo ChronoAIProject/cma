@@ -30,3 +30,7 @@ pub use definition::{
 };
 
 mod native_discord;
+mod native_telegram;
+
+#[cfg(test)]
+mod lark_effect_gate_tests;

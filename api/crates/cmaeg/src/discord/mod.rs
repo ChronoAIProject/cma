@@ -48,7 +48,13 @@ mod inbox;
 mod inbox_activity;
 mod journal;
 mod journal_model;
+mod message_event;
+mod message_event_inbox;
 mod protocol;
+mod reaction_inbox;
+mod reaction_pending;
+mod reactions;
+pub(crate) mod receipts;
 mod record_store;
 
 pub use discovery::DiscordApi;
@@ -56,7 +62,7 @@ pub use gateway::GatewayClient;
 pub use journal::DurableJournal;
 pub use protocol::{
     Checkpoint, Dispatch, EndReason, GatewayEnd, GatewayError, NativeDiscordJournal,
-    MESSAGE_INTENTS,
+    MESSAGE_INTENTS, REACTION_INTENTS,
 };
 
 #[cfg(test)]
@@ -95,3 +101,15 @@ pub(crate) fn native_source_revision(
         .ok()
         .map(|authority| authority.revision)
 }
+
+#[cfg(test)]
+mod message_event_tests;
+
+#[cfg(test)]
+mod message_event_execution_tests;
+
+#[cfg(test)]
+pub(crate) mod reaction_tests;
+
+#[cfg(test)]
+mod reaction_execution_tests;
