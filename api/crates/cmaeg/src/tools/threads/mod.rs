@@ -1,4 +1,5 @@
 //! Bounded original-event thread lifecycle, shared by REST and MCP.
+mod budget;
 mod execute;
 mod ledger;
 use super::ToolsState;
@@ -12,6 +13,7 @@ use crate::{
         DiscordRest, RestError,
     },
 };
+use budget::Budget;
 use cmaeg_core::{
     problem::{Problem, ProblemCode},
     seal::{EventRef, EventRefPayload, ThreadRef, ThreadRefPayload},
@@ -28,12 +30,14 @@ use tokio::sync::Semaphore;
 pub struct DiscordThreads {
     api: DiscordRest,
     slots: Semaphore,
+    budget: std::time::Duration,
 }
 impl DiscordThreads {
     pub fn new(api: DiscordRest) -> Self {
         Self {
             api,
             slots: Semaphore::new(8),
+            budget: budget::TOTAL,
         }
     }
 }
@@ -97,6 +101,20 @@ impl ToolsState {
         reference: &EventRef,
         view: ThreadListView,
     ) -> Result<ThreadList, Problem> {
+        let budget = Budget::new(self.thread_client()?.budget);
+        tokio::time::timeout_at(
+            budget.end,
+            self.list_event_threads_inner(caller, reference, view),
+        )
+        .await
+        .map_err(|_| unavailable())?
+    }
+    async fn list_event_threads_inner(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        view: ThreadListView,
+    ) -> Result<ThreadList, Problem> {
         let client = self.thread_client()?;
         let _permit = client.slots.try_acquire().map_err(|_| busy())?;
         let event = reference
@@ -105,16 +123,16 @@ impl ToolsState {
             .payload;
         let (channel, authority) = self.thread_authority(caller, &event).await?;
         let credential = token(&channel, &authority.bot).ok_or_else(denied)?;
-        let (threads, truncated) = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-            client.api.verify_bot(credential, &authority.bot).await?;
-            client
-                .api
-                .list_threads(credential, &authority.origin, view)
-                .await
-        })
-        .await
-        .map_err(|_| unavailable())?
-        .map_err(read_problem)?;
+        client
+            .api
+            .verify_bot(credential, &authority.bot)
+            .await
+            .map_err(read_problem)?;
+        let (threads, truncated) = client
+            .api
+            .list_threads(credential, &authority.origin, view)
+            .await
+            .map_err(read_problem)?;
         self.recheck_thread_authority(caller, &authority).await?;
         Ok(ThreadList {
             threads: threads
@@ -131,6 +149,22 @@ impl ToolsState {
         reference: &EventRef,
         request: CreateThreadRequest,
         key: &str,
+    ) -> Result<ThreadReceipt, Problem> {
+        let budget = Budget::new(self.thread_client()?.budget);
+        tokio::time::timeout_at(
+            budget.end,
+            self.create_event_thread_inner(caller, reference, request, key, &budget),
+        )
+        .await
+        .unwrap_or_else(|_| Ok(receipt(budget.expired())))
+    }
+    async fn create_event_thread_inner(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        request: CreateThreadRequest,
+        key: &str,
+        budget: &Budget,
     ) -> Result<ThreadReceipt, Problem> {
         super::validate_reply_key(Some(key))?;
         request
@@ -153,6 +187,7 @@ impl ToolsState {
             target,
             Operation::Create { request },
             key,
+            budget,
         )
         .await
     }
@@ -161,6 +196,21 @@ impl ToolsState {
         caller: AgentCaller,
         request: ManageThreadRequest,
         key: &str,
+    ) -> Result<ThreadReceipt, Problem> {
+        let budget = Budget::new(self.thread_client()?.budget);
+        tokio::time::timeout_at(
+            budget.end,
+            self.manage_thread_inner(caller, request, key, &budget),
+        )
+        .await
+        .unwrap_or_else(|_| Ok(receipt(budget.expired())))
+    }
+    async fn manage_thread_inner(
+        &self,
+        caller: AgentCaller,
+        request: ManageThreadRequest,
+        key: &str,
+        budget: &Budget,
     ) -> Result<ThreadReceipt, Problem> {
         super::validate_reply_key(Some(key))?;
         let (event, sealed) = match request.target {
@@ -198,6 +248,7 @@ impl ToolsState {
                 action: request.action,
             },
             key,
+            budget,
         )
         .await
     }
@@ -248,6 +299,7 @@ impl ToolsState {
         target: Identity,
         operation: Operation,
         key: &str,
+        budget: &Budget,
     ) -> Result<ThreadReceipt, Problem> {
         let client = self.thread_client()?;
         let _permit = client.slots.try_acquire().map_err(|_| busy())?;
@@ -255,6 +307,7 @@ impl ToolsState {
         let claim_scope = hash(&serde_json::json!({
             "event": authority.event, "custody": authority.custody, "target": target,
         }));
+        budget.start_ledger();
         let claim = match store
             .claim(
                 claim_scope,
@@ -283,7 +336,9 @@ impl ToolsState {
             return Ok(result);
         };
         let result = self
-            .perform_thread_mutation(caller, &channel, &authority, &target, &operation, client)
+            .perform_thread_mutation(
+                caller, &channel, &authority, &target, &operation, client, budget,
+            )
             .await;
         let result = match result {
             Ok(thread) => {
@@ -308,6 +363,11 @@ impl ToolsState {
             Err(outcome) => receipt(outcome),
         };
         if store.finish(claim, &result).await.is_err() {
+            if !budget.has_dispatched() {
+                // A proven no-write failure can safely release the destination even if its
+                // individual claim receipt could not be saved. A failed release stays fenced.
+                let _ = store.release(fence).await;
+            }
             return Ok(receipt(ThreadOutcome::Unknown {
                 reason: "thread_receipt_unconfirmed".into(),
             }));
@@ -316,6 +376,11 @@ impl ToolsState {
             && store.release(fence).await.is_err()
         {
             tracing::warn!("thread mutation fence remains held after a completed receipt");
+            if !budget.has_dispatched() {
+                return Ok(receipt(ThreadOutcome::Unknown {
+                    reason: "thread_cleanup_unconfirmed".into(),
+                }));
+            }
         }
         Ok(result)
     }

@@ -2,6 +2,7 @@
 use super::*;
 
 impl ToolsState {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn perform_thread_mutation(
         &self,
         caller: AgentCaller,
@@ -10,29 +11,34 @@ impl ToolsState {
         target: &Identity,
         operation: &Operation,
         client: &DiscordThreads,
+        budget: &Budget,
     ) -> Result<Option<Thread>, ThreadOutcome> {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(8),
+        tokio::time::timeout_at(
+            budget.preflight_end(),
             self.thread_preflight(channel, authority, target, operation, client),
         )
         .await
         .map_err(|_| outcome(RestError::Unavailable))??;
         // All bot verification and metadata reads precede this fresh owner/source/consumer check.
-        let current = self
-            .recheck_thread_authority(caller, authority)
-            .await
-            .map_err(|_| revoked())?;
+        let current = tokio::time::timeout_at(
+            budget.preflight_end(),
+            self.recheck_thread_authority(caller, authority),
+        )
+        .await
+        .map_err(|_| outcome(RestError::Unavailable))?
+        .map_err(|_| revoked())?;
         let credential = token(&current, &authority.bot).ok_or_else(revoked)?;
+        budget.dispatch()?;
         match operation {
-            Operation::Manage { action } => tokio::time::timeout(
-                std::time::Duration::from_secs(8),
+            Operation::Manage { action } => tokio::time::timeout_at(
+                budget.write_end(),
                 client.api.manage_thread(credential, target, *action),
             )
             .await
             .map_err(|_| outcome(RestError::Unknown))?
             .map_err(outcome),
-            Operation::Create { request } => match tokio::time::timeout(
-                std::time::Duration::from_secs(8),
+            Operation::Create { request } => match tokio::time::timeout_at(
+                budget.write_end(),
                 client
                     .api
                     .create_thread(credential, target, &authority.bot, request),
@@ -49,8 +55,8 @@ impl ToolsState {
                         .map_err(|_| outcome(RestError::Unknown))?;
                     let credential =
                         token(&fresh, &authority.bot).ok_or_else(|| outcome(RestError::Unknown))?;
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(4),
+                    tokio::time::timeout_at(
+                        budget.write_end(),
                         client.api.reconcile_created_thread(
                             credential,
                             target,
