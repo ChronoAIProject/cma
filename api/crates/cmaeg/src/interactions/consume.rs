@@ -89,6 +89,7 @@ impl InteractionStore {
                     event_id: activity.event_id.to_string(),
                     callback_id: callback_id.into(),
                     action: index,
+                    selection: None,
                     occurred_at: activity.occurred_at.clone(),
                 });
                 match self.save(&card, Some(version)).await {
