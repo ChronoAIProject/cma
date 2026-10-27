@@ -54,9 +54,6 @@ impl DurableJournal {
             "discord-modal-rejected-v1",
             &[&authority.record, &authority.bot_id, id],
         );
-        if self.store.load::<Value>(&rejected, true).await?.is_some() {
-            return Ok(());
-        }
         let Some(store) = &runtime.ingress.interactions else {
             return Ok(());
         };
@@ -65,6 +62,13 @@ impl DurableJournal {
             Err(Error::Denied) => return Ok(()),
             Err(_) => return Err(GatewayError::Unavailable),
         };
+        let recovery = submit && retained.consumed.is_some();
+        // Accepted custody wins over an old or concurrently written refusal.
+        // The store still requires the exact consumed identity and field set;
+        // a rejection only blocks changing a previously unaccepted operation.
+        if !recovery && self.store.load::<Value>(&rejected, true).await?.is_some() {
+            return Ok(());
+        }
         let created = (id.parse::<u64>().map_err(|_| GatewayError::Protocol)? >> 22) as i64
             + 1_420_070_400_000;
         let elapsed = (self.store.clock)().saturating_sub(created);
@@ -73,7 +77,6 @@ impl DurableJournal {
         }
         let deadline = tokio::time::Instant::now()
             + Duration::from_millis(2500_i64.saturating_sub(elapsed).max(0) as u64);
-        let recovery = submit && retained.consumed.is_some();
         if elapsed >= 2500 && !recovery {
             return Ok(());
         }

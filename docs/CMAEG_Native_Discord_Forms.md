@@ -74,7 +74,10 @@ A lost type-9 response or dispatch-claim result never resends the same response.
 A fresh launch remains possible. A genuine subsequent submission may settle a
 claimed type-9 whose response was uncertain. Exact consumed submissions recover
 lost inbox writes after the response deadline and attempt expiry without
-re-consuming, renewing authority or issuing a second ACK. Provider/source
+re-consuming, renewing authority or issuing a second ACK. Malformed replay bytes
+cannot create a validation rejection after consumption; even a retained rejection
+marker cannot override an already accepted result. Only its exact original
+identity and canonical fields may recover the inbox. Provider/source
 revocation still denies recovery. Edit and deletion share the original card CAS:
 if they win first, an unconsumed old modal cannot execute; if consumption won,
 that exact result remains recoverable. Edited successors reset the launch and

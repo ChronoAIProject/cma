@@ -166,6 +166,9 @@ impl InteractionStore {
             }
             let submitted = match super::discord_form_values::submitted(&card.message, components) {
                 Ok(values) => values,
+                // An accepted result owns this interaction permanently. A
+                // malformed replay cannot become a new validation rejection.
+                Err(_) if card.consumed.is_some() => return Err(Error::Denied),
                 Err(_) => return Ok(None),
             };
             let block = discord_form::schema(&card.message)?.0;
