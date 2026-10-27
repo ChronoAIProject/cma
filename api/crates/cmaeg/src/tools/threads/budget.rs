@@ -7,6 +7,8 @@ use std::{
 use tokio::time::Instant;
 
 pub(super) const TOTAL: Duration = Duration::from_secs(8);
+/// Context enrichment is optional and must not consume the explicit operation budget.
+pub(super) const DISCOVERY: Duration = Duration::from_millis(100);
 pub(super) struct Budget {
     pub end: Instant,
     reserve: Duration,
