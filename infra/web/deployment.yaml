@@ -81,7 +81,9 @@ spec:
               cpu: 50m
               memory: 32Mi
           volumeMounts:
-            - name: web-assets-retained-3784e2e7f290
+            - name: web-assets-compat
+              mountPath: /compat
+        - name: web-assets-retained-3784e2e7f290
           image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:3784e2e7f290a491f8c0a670687896e4d1660b774391565f393f7392eeb96df5
           command: ["/bin/sh", "-c"]
           args:
