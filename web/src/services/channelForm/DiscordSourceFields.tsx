@@ -103,6 +103,29 @@ export function DiscordSourceFields({
             </p>
           </>
         ) : null}
+        {discovery.authoring?.native_discord_conversation_history_enabled === true ||
+        value.conversation_history === true ? (
+          <>
+            <Toggle
+              label="Read earlier conversation messages"
+              value={value.conversation_history === true}
+              disabled={
+                discovery.authoring?.native_discord_conversation_history_enabled !== true &&
+                value.conversation_history !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'conversation_history', enabled ? true : undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Allow agents to page backward through earlier messages from other participants and
+              bots in the exact conversation that received a new human message. Includes text and
+              attachment details, without file downloads. Threads stay within that thread. Discord
+              permissions and content access can limit results; this does not provide a complete
+              archive. Applies only to new messages received after enabling this option.
+            </p>
+          </>
+        ) : null}
         {discovery.authoring?.native_discord_thread_history_enabled === true ||
         value.thread_history === true ? (
           <>

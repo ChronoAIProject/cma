@@ -279,6 +279,9 @@ pub struct Capabilities {
     /// Bounded lifecycle scope, independent of actual bot permissions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_lifecycle: Option<super::ThreadCapabilities>,
+    /// Independent exact-conversation history scope and limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_history: Option<super::ConversationHistoryCapabilities>,
     /// Exact-message effect support, absent before compatible reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,

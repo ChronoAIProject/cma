@@ -4,6 +4,8 @@ mod component_edit;
 mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
+mod history;
+pub(crate) mod history_projection;
 pub(crate) mod media_edit;
 mod media_presentation;
 #[cfg(test)]

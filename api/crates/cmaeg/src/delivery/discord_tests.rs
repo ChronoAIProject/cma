@@ -28,6 +28,7 @@ pub(super) fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPaylo
     definition.sources = vec![Source::Discord {
         thread_history: false,
         thread_lifecycle: false,
+        conversation_history: false,
         bot_id: "77".into(),
         intents: 37377,
         admission: AdmissionPolicy::All {},

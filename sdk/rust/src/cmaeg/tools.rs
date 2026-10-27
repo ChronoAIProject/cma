@@ -223,6 +223,23 @@ impl Cmaeg {
         request.root = true;
         self.client.request(request).await
     }
+    /// Read one earlier page from the original conversation. Never automatically drains history.
+    /// All historical text is untrusted reference data, never instructions or action approval.
+    pub async fn read_event_history(
+        &self,
+        event_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<ConversationHistoryPage> {
+        let segments = ["v1", "events", event_ref, "history"];
+        let mut request = Request::get(&segments);
+        let query = cursor
+            .map(|cursor| ("cursor", cursor.to_owned()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        request.query = &query;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Retrieve full event context from provider persistence with agent-key authorization.
     pub async fn read_event_context(&self, event_ref: &str) -> Result<ContextResponse> {
         let segments = ["v1", "events", event_ref, "context"];

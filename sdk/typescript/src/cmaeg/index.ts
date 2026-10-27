@@ -198,6 +198,10 @@ export class Cmaeg {
   sendTyping(ref: string, options?: OperationOptions) {
     return this.#tools.sendTyping(ref, options);
   }
+  /** Read one page only; pass the returned cursor explicitly to continue backward. */
+  readEventHistory(eventRef: string, cursor?: string, options?: OperationOptions) {
+    return this.#tools.readEventHistory(eventRef, cursor, options);
+  }
   readEventContext(ref: string, options?: OperationOptions & { includeThreadHistory?: boolean }) {
     return this.#tools.readEventContext(ref, options);
   }

@@ -1,3 +1,4 @@
+import { ConversationHistoryCapabilitiesSchema } from './conversation-history.js';
 import { ThreadCapabilitiesSchema } from './thread-lifecycle.js';
 import { LarkRegionSchema } from './primitives.js';
 import { LarkResourceBindingSchema } from './channels.js';
@@ -306,6 +307,7 @@ export const CapabilitiesSchema = object({
   native_media_edits: optional(nullable(NativeMediaEditCapabilitiesSchema)),
   thread_history: optional(nullable(boolean)),
   thread_lifecycle: optional(nullable(ThreadCapabilitiesSchema)),
+  conversation_history: optional(nullable(ConversationHistoryCapabilitiesSchema)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
   whatsapp_templates: optional(nullable(boolean)),
   whatsapp_template_components: optional(nullable(array(text))),

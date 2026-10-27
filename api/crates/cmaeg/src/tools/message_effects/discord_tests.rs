@@ -75,6 +75,7 @@ impl App {
         definition.sources = vec![Source::Discord {
             thread_history: false,
             thread_lifecycle: false,
+            conversation_history: false,
             bot_id: "77".into(),
             intents: 37377,
             admission: AdmissionPolicy::All {},
@@ -132,6 +133,7 @@ impl App {
         let state = ToolsState {
             discord_thread_history: None,
             discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: false,
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
