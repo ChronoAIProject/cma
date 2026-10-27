@@ -123,6 +123,7 @@ fn setup() -> (
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {
         whatsapp_template: None,
+        native_media_update: None,
         native_attachments: Vec::new(),
         thread_reply: false,
         text: Some(text),
