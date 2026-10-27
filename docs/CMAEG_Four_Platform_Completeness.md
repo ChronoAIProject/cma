@@ -245,8 +245,9 @@ and the [protocol](CMAEG_Protocol.md).
   selection grants no new access and makes no live regional acceptance claim. See the
   [binding contract](CMAEG_Protocol.md#opt-in-lark-and-feishu-embedded-resource-binding).
 - WhatsApp free-form replies remain subject to its 24-hour customer service
-  window. Approved templates require provider approval and the matching relay
-  contract; a CMA template flag does not grant either.
+  window. Approved templates require provider approval and the matching active
+  transport: the relay contract or the separately gated native adapter. A CMA
+  template flag does not grant platform approval or permission.
 
 ## Verification evidence and remaining acceptance
 
