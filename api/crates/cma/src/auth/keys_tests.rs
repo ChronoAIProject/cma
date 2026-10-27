@@ -46,6 +46,7 @@ fn mint_response_must_exactly_match_requested_authority() {
     let minted = minted_key_from_response(
         valid_response(),
         &["service-a".into(), "service-b".into()],
+        &[],
         expiry,
     )
     .unwrap();
@@ -57,7 +58,7 @@ fn mint_response_must_exactly_match_requested_authority() {
 
     let mut open = valid_response();
     open.allow_all_services = true;
-    assert!(minted_key_from_response(open, &["service-a".into()], expiry).is_none());
+    assert!(minted_key_from_response(open, &["service-a".into()], &[], expiry).is_none());
 }
 
 #[test]
@@ -65,6 +66,7 @@ fn secret_diagnostics_do_not_reveal_new_key_values() {
     let minted = minted_key_from_response(
         valid_response(),
         &["service-a".into(), "service-b".into()],
+        &[],
         SystemTime::UNIX_EPOCH,
     )
     .unwrap();
@@ -100,6 +102,7 @@ fn provider_key_ids_cannot_escape_the_revoke_path() {
     assert!(minted_key_from_response(
         response,
         &["service-a".into(), "service-b".into()],
+        &[],
         SystemTime::UNIX_EPOCH,
     )
     .is_none());
