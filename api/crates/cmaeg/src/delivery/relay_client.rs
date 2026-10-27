@@ -1,4 +1,7 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+#[path = "relay_wire.rs"]
+mod wire;
+use wire::{credential_secret, headers, retry_after, serialize_reply, valid_id};
 mod discord;
 mod initiated;
 mod media;
@@ -11,10 +14,7 @@ use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
 use cmaeg_core::{channel::Secret, seal::ReplyAddress};
 use futures_util::future::BoxFuture;
-use reqwest::{
-    header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE},
-    Client, StatusCode, Url,
-};
+use reqwest::{header::HeaderMap, Client, StatusCode, Url};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 
@@ -118,6 +118,8 @@ pub struct RelayClient {
     pub(super) telegram_media_edits: bool,
     pub(super) discord_media_edits: bool,
     pub native_media_receipts: Option<Arc<crate::native_media::store::Store>>,
+    pub(super) native_lark_controls: bool,
+    pub(super) native_lark_forms: bool,
     native_whatsapp_outbound_media: bool,
     native_whatsapp_templates: bool,
     native_whatsapp_interactions: bool,
@@ -227,6 +229,8 @@ impl RelayClient {
             telegram_media_edits: false,
             discord_media_edits: false,
             native_media_receipts: None,
+            native_lark_controls: false,
+            native_lark_forms: false,
             native_whatsapp_outbound_media: false,
             native_whatsapp_templates: false,
             native_whatsapp_interactions: false,
@@ -440,58 +444,6 @@ impl RelayClient {
             Some(receipt.message_id),
         )
     }
-}
-fn credential_secret(credential: Credential<'_>) -> Result<&Secret, DeliveryOutcome> {
-    let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
-    if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
-        return Err(DeliveryOutcome::Rejected {
-            reason: "no_credential".into(),
-        });
-    }
-    Ok(secret)
-}
-fn serialize_reply(
-    message_id: &str,
-    text: &str,
-    markup: Option<&serde_json::Value>,
-    thread_reply: bool,
-) -> Result<Vec<u8>, serde_json::Error> {
-    let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
-    if thread_reply {
-        body["thread_reply"] = true.into();
-    }
-    serde_json::to_vec(&body)
-}
-/// The bearer and JSON headers reqwest's `bearer_auth` and `json` set, with the
-/// credential marked sensitive. `None` when the credential is not a header value.
-fn headers(secret: &Secret) -> Option<HeaderMap> {
-    let mut authorization = HeaderValue::try_from(format!("Bearer {}", secret.as_str())).ok()?;
-    authorization.set_sensitive(true);
-    let mut headers = HeaderMap::new();
-    headers.insert(AUTHORIZATION, authorization);
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Some(headers)
-}
-fn valid_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
-}
-fn retry_after(headers: &HeaderMap) -> u64 {
-    let Some(raw) = headers
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return 1;
-    };
-    if let Ok(seconds) = raw.parse::<u64>() {
-        return seconds.clamp(1, 10);
-    }
-    time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc2822)
-        .ok()
-        .map(|at| {
-            (at.unix_timestamp() - time::OffsetDateTime::now_utc().unix_timestamp()).clamp(1, 10)
-                as u64
-        })
-        .unwrap_or(1)
 }
 pub(super) fn unknown(reason: &str) -> DeliveryOutcome {
     DeliveryOutcome::Unknown {

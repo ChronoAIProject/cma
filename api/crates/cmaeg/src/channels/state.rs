@@ -14,6 +14,8 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub native_lark_controls_enabled: bool,
+    pub native_lark_forms_enabled: bool,
     pub native_lark_intake_enabled: bool,
     pub native_lark_writes_enabled: bool,
     pub native_lark_admission_enabled: bool,
@@ -157,6 +159,8 @@ impl ManagementState {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             lark_resource_writes_enabled: false,
+            native_lark_controls_enabled: false,
+            native_lark_forms_enabled: false,
             native_lark_intake_enabled: false,
             native_lark_writes_enabled: false,
             native_lark_admission_enabled: false,
