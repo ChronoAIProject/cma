@@ -1,4 +1,5 @@
 use super::*;
+use crate::channels::definition::fixture as definition_fixture;
 #[path = "native_lark_test_support.rs"]
 mod support;
 use cmaeg_core::{
@@ -68,9 +69,10 @@ async fn changed_exact_source_custody_revokes_before_any_provider_call() {
                     .unwrap()
                     .verification_token = Secret::new("fixture-rotated-verification")
             }
-            "provider" => {
-                f.definition.provider.binding_id = "new-provider-binding".parse().unwrap()
-            }
+            "provider" => definition_fixture::replace_default_binding(
+                &mut f.definition,
+                "new-provider-binding".parse().unwrap(),
+            ),
             "agent" => f.definition.secrets.agent_key_hash = format!("sha256:{}", "0".repeat(64)),
             "owner" => f.definition.owner.subject = "other-owner".into(),
             _ => {
