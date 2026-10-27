@@ -133,7 +133,7 @@ async fn received_reaction_sealed_exact_event_target_actor_and_consumer_cannot_b
 #[tokio::test]
 async fn received_reaction_only_ordinary_exact_human_messages_with_original_proof() {
     for native in [Native::Telegram, Native::Discord] {
-        for defect in 0..7 {
+        for defect in 0..8 {
             let mut f = Fixture::new(native, false, true).await;
             match defect {
                 0 => f.app.activity.actor.kind = ActorKind::Unknown,
@@ -147,6 +147,12 @@ async fn received_reaction_only_ordinary_exact_human_messages_with_original_proo
                 4 => f.app.activity.source = SourceKind::Custom,
                 5 => f.app.activity.conversation.thread_id = Some("124".into()),
                 6 => f.app.activity.conversation.id = "100".into(),
+                7 => {
+                    f.app.activity.kind = ActivityKind::Command {
+                        name: "help".into(),
+                        args: String::new(),
+                    }
+                }
                 _ => unreachable!(),
             }
             f.app.event.activity_sha256 = Some(activity_digest(&f.app.activity));
