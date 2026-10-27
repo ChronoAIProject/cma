@@ -32,11 +32,11 @@ data:
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
-  CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
   # Issue native controls only after all serving and rollback card/admission readers support them.
   CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "false"
   # Independent native image/PDF/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
-  CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Issue received-message reaction references only after compatible reader rollout.
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"
   # Independent approved-template native replies; keep off pending connected Meta acceptance.
@@ -133,7 +133,7 @@ data:
   CMAEG_NATIVE_DISCORD_EDITS_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: "true"
   # Reader-first: effects-only media references require every retained reader.
-  CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: "true"
   # Persist verified native thread metadata only after compatible readers are deployed.
   # Explicit bounded history reads still require source consent and an exact original thread.
   CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED: "true"
@@ -169,4 +169,4 @@ data:
   # Issue new native Telegram effect references only after every reader is upgraded.
   CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: "true"
   # Reader-first effects-only authority for one confirmed native upload message.
-  CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED: "false"
+  CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED: "true"
