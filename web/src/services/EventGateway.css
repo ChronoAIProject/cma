@@ -166,7 +166,7 @@
   max-width: 100%;
 }
 .gateway-detail > header {
-  padding: 0 24px;
+  padding: 24px 24px 0;
 }
 
 .gateway-navigation .gateway-sidebar__heading {

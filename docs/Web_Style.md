@@ -3673,3 +3673,15 @@ static, labeled Tool access associations point to Consumers and do not imply
 that tools publish traffic. All controls reuse shared hover and focus treatment.
 
 | 2026-10-27 | Reuse Agent Manager resource tabs, single-line navigation and top creation actions in Event Gateway; float map actions beside three actual Activity receipts, remove the duplicate node browser, and show routing direction with reduced-motion-aware arrows and separate static tool-access associations. |
+
+The detail header uses 24px top and side padding so breadcrumbs never touch the
+viewport edge. The latest-activity preview scrolls within 320px or 40dvh, whichever
+is smaller, so a large recipient list cannot consume the map. Add producer remains
+visible but disabled at the channel's four-producer limit, with an explanation.
+Send message and Tests section destinations appear only when their controls are
+available; their retained components keep pending operations while hidden.
+
+| 2026-10-27 | Finish Gateway detail spacing, bound the activity preview, and keep configuration navigation limited to available controls without discarding pending sends. |
+
+Configuration add/remove and save actions keep intrinsic widths and align to the
+start of their section; they do not stretch across the form's grid columns.

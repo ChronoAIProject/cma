@@ -61,6 +61,8 @@
 .channel-activity-preview {
   margin: 0;
   width: min(400px, 100%);
+  max-height: min(320px, 40dvh);
+  overflow: auto;
   min-width: 0;
   background: var(--dsw-alias-bg-layer-1);
   box-shadow: var(--dsw-shadow-lv1);

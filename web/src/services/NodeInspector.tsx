@@ -123,6 +123,8 @@ export function NodeInspector({
   open = true,
   onClose = () => {},
   initialSection = 'overview',
+  sendAvailable = true,
+  testsAvailable = true,
   send,
   tests,
   activity,
@@ -135,6 +137,8 @@ export function NodeInspector({
   readonly open?: boolean;
   readonly onClose?: () => void;
   readonly initialSection?: 'overview' | 'activity';
+  readonly sendAvailable?: boolean;
+  readonly testsAvailable?: boolean;
   readonly send?: ReactNode;
   readonly tests?: ReactNode;
   readonly activity?: ReactNode;
@@ -179,9 +183,12 @@ export function NodeInspector({
     ['activity', 'Activity', activity],
     ['delete', 'Delete', danger],
   ] as const;
+  const sectionVisible = (key: string) =>
+    (selection.kind !== 'toolsets' || ['overview', 'catalog'].includes(key)) &&
+    (key !== 'send' || sendAvailable) &&
+    (key !== 'tests' || testsAvailable);
   const navigation = sections.flatMap(([key, label, content]) => {
-    if (!content || (selection.kind === 'toolsets' && !['overview', 'catalog'].includes(key)))
-      return [];
+    if (!content || !sectionVisible(key)) return [];
     if ((key === 'configuration' || key === 'catalog') && settings.length > 0)
       return settings.map((section) => ({ id: section.id, label: section.title }));
     return [{ id: `${id}-${key}`, label }];
@@ -296,7 +303,7 @@ export function NodeInspector({
                 className="channel-inspector__section"
                 aria-label={label}
                 data-section={key}
-                hidden={selection.kind === 'toolsets' && key !== 'catalog'}
+                hidden={!sectionVisible(key)}
               >
                 <h3>{label}</h3>
                 <ConfigurationSections

@@ -236,7 +236,7 @@ export function ProfileFields({
       </Section>
       <Section
         title="MCP servers"
-        description="Optional tool servers in addition to the gateway’s event tools. Each server has its own authentication settings."
+        description="Additional tool servers requested in this profile. Provider support is required; the CMA provider currently does not install these extra servers. Saved values are retained."
       >
         {servers.map((server, index) => {
           const auth = object(server.auth),

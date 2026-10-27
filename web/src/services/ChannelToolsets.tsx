@@ -101,7 +101,7 @@ export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
                     ? 'Connection pending. Tool availability is not confirmed.'
                     : existing
                       ? 'Existing agent. Its current tool setup is preserved; this view does not confirm installation.'
-                      : 'Gateway tool connection is supplied when this consumer’s agent is created.'}
+                      : 'A gateway tool connection is requested when this agent is created. Provider installation is not reported here.'}
                 </p>
                 {extra > 0 ? (
                   <p>

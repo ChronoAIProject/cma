@@ -55,7 +55,7 @@ it('navigates actual conditional settings, excludes nested fields and retains dr
   );
   const { rerender } = render(tree({ kind: 'channel' }));
   const nav = screen.getByRole('navigation', { name: 'Configuration sections' });
-  await screen.findByRole('button', { name: 'Connection', exact: true });
+  await screen.findByRole('button', { name: 'Connection' });
   expect(within(nav).queryByRole('button', { name: 'Nested field' })).not.toBeInTheDocument();
   await userEvent.type(screen.getByLabelText('Draft name'), 'Unsaved edit');
   await userEvent.click(screen.getByRole('button', { name: 'Toggle reply settings' }));
@@ -65,9 +65,7 @@ it('navigates actual conditional settings, excludes nested fields and retains dr
   expect(document.activeElement).toHaveTextContent('Conditional reply settings');
   rerender(tree({ kind: 'toolsets' }));
   await screen.findByRole('button', { name: 'Event tools' });
-  expect(
-    within(nav).queryByRole('button', { name: 'Connection', exact: true }),
-  ).not.toBeInTheDocument();
+  expect(within(nav).queryByRole('button', { name: 'Connection' })).not.toBeInTheDocument();
   expect(screen.getByText('readEventContext')).toBeVisible();
   expect(screen.getByText(/Existing agent. Its current tool setup is preserved/)).toBeVisible();
   rerender(tree({ kind: 'channel' }));
@@ -77,4 +75,27 @@ it('navigates actual conditional settings, excludes nested fields and retains dr
   await waitFor(() =>
     expect(within(nav).queryByRole('button', { name: 'Reply settings' })).not.toBeInTheDocument(),
   );
+});
+
+it('hides unavailable section links while retaining pending controls', () => {
+  const tree = (available: boolean) => (
+    <NodeInspector
+      channel={channel}
+      id="availability"
+      selection={{ kind: 'channel' }}
+      sendAvailable={available}
+      testsAvailable={available}
+      send={<input aria-label="Pending send" defaultValue="Keep original intent" />}
+      tests={<p>Run check</p>}
+    >
+      <Editor />
+    </NodeInspector>
+  );
+  const { rerender } = render(tree(false));
+  const nav = screen.getByRole('navigation', { name: 'Configuration sections' });
+  expect(within(nav).queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+  expect(within(nav).queryByRole('button', { name: 'Tests' })).not.toBeInTheDocument();
+  rerender(tree(true));
+  expect(screen.getByLabelText('Pending send')).toHaveValue('Keep original intent');
+  expect(within(nav).getByRole('button', { name: 'Send message' })).toBeVisible();
 });
