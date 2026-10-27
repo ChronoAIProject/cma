@@ -52,6 +52,11 @@ const STREAM_CHUNK: usize = 64 * 1024;
 /// The identifying string of a locator.
 pub fn locator_key(locator: &AttachmentSource) -> String {
     match locator {
+        AttachmentSource::Whatsapp {
+            message_id,
+            media_id,
+            sha256,
+        } => format!("whatsapp:{message_id}:{media_id}:{sha256}"),
         AttachmentSource::Discord {
             channel_id,
             message_id,

@@ -65,6 +65,16 @@ pub(crate) fn launch(
         .format(&Rfc3339)
         .map_err(|_| ())?;
     let kind = match &message.content {
+        Content::Media {
+            caption,
+            attachment,
+        } => ActivityKind::Message {
+            text: caption.clone(),
+            attachments: vec![attachment.as_ref().clone()],
+            mentions_bot: false,
+            reply_to: None,
+            album_id: None,
+        },
         Content::Text { text } => ActivityKind::Message {
             text: text.clone(),
             attachments: Vec::new(),
@@ -127,7 +137,7 @@ pub(crate) fn launch(
         &partition_key,
     );
     let reply_target = match &message.content {
-        Content::Text { .. } => &message.id,
+        Content::Text { .. } | Content::Media { .. } => &message.id,
         Content::Reaction { target, .. } => target,
     };
     let payload = EventRefPayload {
