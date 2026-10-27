@@ -67,6 +67,12 @@ export type LarkResourceKind = Output<typeof LarkResourceKindSchema>;
 // the event reference's authority.
 export const AttachmentSourceSchema = tagged(
   {
+    whatsapp: object({
+      type: enumeration('whatsapp'),
+      message_id: text,
+      media_id: text,
+      sha256: text,
+    }),
     discord: object({
       channel_id: text,
       message_id: text,
