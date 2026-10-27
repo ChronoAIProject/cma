@@ -168,6 +168,7 @@ async fn a_replacement_keeps_its_consumer_and_refuses_a_reference_for_another() 
     let foreign = MessageRefPayload {
         discord_message: None,
         received_reaction: None,
+        native_lark_effect: None,
         whatsapp_reaction: None,
         lark_effect: None,
         telegram_effect: None,

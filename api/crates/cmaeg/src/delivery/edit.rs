@@ -54,7 +54,10 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // A replacement answers no event, so it never marks a first send.
         let effects = SendEffects::default();
-        if reference.received_reaction.is_some() || reference.whatsapp_reaction.is_some() {
+        if reference.received_reaction.is_some()
+            || reference.native_lark_effect.is_some()
+            || reference.whatsapp_reaction.is_some()
+        {
             return (unsupported(), effects);
         }
         if reference.interaction_record_id.is_some() && reference.route_id.starts_with("discord:") {

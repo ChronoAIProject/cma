@@ -12,6 +12,9 @@ pub struct MessageRefPayload {
     /// Reaction-only authority for a retained incoming Telegram or Discord message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub received_reaction: Option<Box<super::received_reaction::ReceivedReactionAuthority>>,
+    /// Exact separate native app authority; never a NyxID relay destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_effect: Option<Box<super::native_lark_effect::NativeLarkEffectAuthority>>,
     /// Reaction-only authority for an original received native WhatsApp message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_reaction: Option<Box<super::whatsapp_reaction::WhatsappReactionAuthority>>,
@@ -41,6 +44,9 @@ pub struct MessageRefPayload {
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if let Some(authority) = &self.received_reaction {
+            authority.validate(self)?;
+        }
+        if let Some(authority) = &self.native_lark_effect {
             authority.validate(self)?;
         }
         if let Some(authority) = &self.whatsapp_reaction {

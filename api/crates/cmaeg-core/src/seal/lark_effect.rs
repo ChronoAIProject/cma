@@ -40,6 +40,8 @@ impl LarkEffectAuthority {
             || self.issued_at <= 0
             || self.expires_at <= self.issued_at
             || self.expires_at > self.issued_at.saturating_add(LARK_EFFECT_TTL)
+            || message.received_reaction.is_some()
+            || message.native_lark_effect.is_some()
             || message.discord_message.is_some()
             || message.telegram_effect.is_some()
             || message.relay_message.as_ref().is_some_and(|d| {
