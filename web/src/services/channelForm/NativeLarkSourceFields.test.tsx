@@ -204,7 +204,7 @@ it('isolates credentials by producer and excludes hidden drafts from creation an
     ).credentials,
   ).toEqual({ agent_key: 'provider-private' });
 });
-it('shows exact app identity and human admission without relay resources, forms or bot controls', () => {
+it('shows exact app identity and human admission without relay resources or bot controls', () => {
   const onChange = vi.fn();
   render(
     <RelayCapabilitiesContext value={available}>
@@ -240,6 +240,38 @@ it('shows exact app identity and human admission without relay resources, forms 
   );
   fireEvent.click(screen.getByRole('button', { name: 'Group messages' }));
   expect(screen.queryByRole('menuitemradio', { name: 'reply to bot' })).not.toBeInTheDocument();
+});
+it('discovers native controls and forms independently and explains the callback subscription', () => {
+  const view = (controls?: boolean, forms?: boolean) => (
+    <RelayCapabilitiesContext
+      value={{
+        ...available,
+        authoring: {
+          ...available.authoring!,
+          native_lark_controls_enabled: controls,
+          native_lark_forms_enabled: forms,
+        },
+      }}
+    >
+      <SourceFields value={source} onChange={vi.fn()} />
+    </RelayCapabilitiesContext>
+  );
+  const { rerender } = render(view());
+  expect(
+    screen.getByText(/Interactive card, button and choice replies are disabled/),
+  ).toBeVisible();
+  expect(screen.queryByText(/subscribe to card.action.trigger only/)).not.toBeInTheDocument();
+  rerender(view(true, false));
+  expect(screen.getByText(/subscribe to card.action.trigger only/)).toHaveTextContent(
+    'This subscription is separate from message events.',
+  );
+  expect(screen.getByText(/Form replies are disabled/)).toBeVisible();
+  rerender(view(true, true));
+  expect(screen.getByText(/Form submissions are enabled for the original person/)).toBeVisible();
+  rerender(view(false, false));
+  expect(
+    screen.getByText(/Interactive card, button and choice replies are disabled/),
+  ).toBeVisible();
 });
 it('gates producer selection and places all masked credentials beside the producer', () => {
   const view = (discovery: RelayDiscovery) => (

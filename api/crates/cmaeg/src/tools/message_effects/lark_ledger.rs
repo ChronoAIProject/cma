@@ -22,6 +22,8 @@ pub(crate) struct Lock {
     owner: String,
     destination: String,
     held: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_control: Option<String>,
     pub reaction: Option<Reaction>,
     expires_at: i64,
     #[serde(skip)]
@@ -40,6 +42,28 @@ impl Store {
         owner: &str,
         expires_at: i64,
     ) -> Result<Option<Lock>, Problem> {
+        self.acquire_inner(destination, owner, expires_at, None)
+            .await
+    }
+    /// Local-only card consumption has no platform side effect. A new worker may
+    /// supersede its CAS writer, but can never recover a held external mutation.
+    pub(crate) async fn acquire_control(
+        &self,
+        destination: String,
+        owner: &str,
+        expires_at: i64,
+        card: &str,
+    ) -> Result<Option<Lock>, Problem> {
+        self.acquire_inner(destination, owner, expires_at, Some(card.to_owned()))
+            .await
+    }
+    async fn acquire_inner(
+        &self,
+        destination: String,
+        owner: &str,
+        expires_at: i64,
+        local_control: Option<String>,
+    ) -> Result<Option<Lock>, Problem> {
         let digest = Sha256::digest(format!("cmaeg.lark-message-mutation.v1\0{destination}"));
         let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
         bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -50,6 +74,7 @@ impl Store {
             owner: owner.into(),
             destination,
             held: true,
+            local_control,
             reaction: None,
             expires_at,
             version: 0,
@@ -71,7 +96,10 @@ impl Store {
                 {
                     return Err(unavailable());
                 }
-                if previous.held {
+                if previous.held
+                    && (lock.local_control.is_none()
+                        || previous.local_control != lock.local_control)
+                {
                     return Ok(None);
                 }
                 lock.expires_at = lock.expires_at.max(previous.expires_at);
@@ -144,5 +172,12 @@ pub(crate) fn destination(message: &cmaeg_core::seal::MessageRefPayload) -> Stri
         .expect("checked Lark authority");
     super::receipts::hash(
         &serde_json::json!({"platform":a.platform,"app":a.binding.connection.app_id,"bot":a.bot_id,"chat":a.chat_id,"message":message.platform_message_id}),
+    )
+}
+
+pub(crate) fn native_destination(reply: &cmaeg_core::channel::NativeLarkReply) -> String {
+    super::receipts::hash(
+        &serde_json::json!({"domain":"native-lark", "identity":reply.identity,
+        "chat":reply.chat_id,"thread":reply.thread_id,"message":reply.message_id}),
     )
 }

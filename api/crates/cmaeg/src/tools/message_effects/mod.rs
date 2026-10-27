@@ -19,6 +19,7 @@ pub mod lark_transport;
 pub(crate) mod mutation;
 pub(crate) mod native_lark;
 pub(crate) mod native_lark_authority;
+mod native_lark_card;
 pub(crate) mod native_lark_context;
 mod native_lark_execute;
 pub(crate) mod whatsapp;
@@ -93,6 +94,9 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if crate::interactions::native_lark::is_reference(&message) {
+            return self.native_lark_card_capabilities(&channel, &message).await;
+        }
         if message.native_lark_effect.is_some() {
             native_lark_authority::retained(self, &message).await?;
             return native_lark::capabilities(
@@ -208,6 +212,11 @@ impl ToolsState {
             ));
         }
         let (channel, message) = self.current_message(caller, reference).await?;
+        if crate::interactions::native_lark::is_reference(&message) {
+            return self
+                .native_lark_card_effect(caller, reference, request_id, effect)
+                .await;
+        }
         if message.native_lark_effect.is_some() {
             return self
                 .native_lark_message_effect(caller, reference, request_id, effect, channel, message)
@@ -385,3 +394,6 @@ mod native_lark_race_tests;
 mod native_lark_tests;
 #[cfg(test)]
 mod whatsapp_tests;
+
+#[cfg(test)]
+mod native_lark_card_tests;
