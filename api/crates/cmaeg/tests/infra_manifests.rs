@@ -32,7 +32,10 @@ const MIB: u64 = 1024 * 1024;
 #[test]
 fn native_telegram_message_events_wait_for_compatible_reader_rollout() {
     assert_eq!(
-        configmap_value(CONFIGMAP, "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED"),
+        configmap_value(
+            CONFIGMAP,
+            "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED"
+        ),
         Some("false")
     );
 }
