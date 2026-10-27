@@ -42,6 +42,16 @@ fn native_upload_effects_follow_verified_compatible_reader_rollout() {
 }
 
 #[test]
+fn received_reactions_wait_for_compatible_reader_rollout() {
+    for gate in [
+        "CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED",
+        "CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED",
+    ] {
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"), "{gate}");
+    }
+}
+
+#[test]
 fn native_lark_requires_separate_explicit_authoring_and_intake_activation() {
     for gate in [
         "CMAEG_NATIVE_LARK_WRITES_ENABLED",

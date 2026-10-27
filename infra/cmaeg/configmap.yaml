@@ -39,6 +39,8 @@ data:
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Issue received-message reaction references only after compatible reader rollout.
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED: "false"
   # Independent approved-template native replies; keep off pending connected Meta acceptance.
   CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "false"
   # Existing-group opt-ins and new group intake/sends require their own rollout.

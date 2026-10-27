@@ -13,7 +13,7 @@ sets or replaces the bot's own reaction; an empty array removes it.
 and discovery gates. Each works independently of sent-message edit/effect gates.
 Telegram's received-message gate also retains the existing native admission proof
 on newly admitted messages. Neither gate modifies source configuration or enables
-incoming reaction notifications. The checked-in deployment manifests are unchanged.
+incoming reaction notifications. The checked-in ConfigMap explicitly keeps both new flags false.
 
 ## Authority and eligibility
 
@@ -88,7 +88,7 @@ The minimum compatible Gateway/core reader is the implementation containing
 and `telegram_received_mutation_v1` fence namespace. This is a new reader floor,
 independent of the earlier WhatsApp received-reaction reader floor. The public
 `received_message` context and reaction request types already exist, so no new
-SDK or OpenAPI field is required.
+SDK or OpenAPI field is required; the context field description names the supported native platforms.
 
 Deploy that reader everywhere, including retained rollback images, before enabling
 either issuance flag. Older sealed-message readers reject the new field and cannot
