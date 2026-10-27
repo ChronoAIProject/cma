@@ -1,7 +1,7 @@
 //! Per-event source lookups. A channel may hold several chat sources, so
 //! code acting on one activity or message finds that activity's own source
 //! instead of the first source of a kind.
-use super::{ChannelDefinition, Extensions, Source};
+use super::{ChannelDefinition, Extensions, NativeLarkSource, Source};
 use crate::activity::SourceKind;
 
 impl ChannelDefinition {
@@ -9,6 +9,9 @@ impl ChannelDefinition {
     /// bot_id; NyxidRelay{platform,..} → the relay with that platform; Custom → the custom source.
     pub fn source_of(&self, kind: &SourceKind) -> Option<&Source> {
         self.sources.iter().find(|source| match (kind, source) {
+            (SourceKind::NativeLark(identity), Source::NativeLark(source)) => {
+                identity == &source.identity
+            }
             (
                 SourceKind::Whatsapp {
                     app_id,
@@ -60,7 +63,10 @@ impl ChannelDefinition {
             Source::Telegram { bot_username, .. } | Source::NyxidRelay { bot_username, .. } => {
                 bot_username.as_deref()
             }
-            Source::Whatsapp { .. } | Source::Custom { .. } | Source::Discord { .. } => None,
+            Source::NativeLark(_)
+            | Source::Whatsapp { .. }
+            | Source::Custom { .. }
+            | Source::Discord { .. } => None,
         }
     }
 
@@ -68,5 +74,18 @@ impl ChannelDefinition {
     /// legacy, first-of-a-kind behaviour keeps it exactly while this is false.
     pub fn has_extended_sources(&self) -> bool {
         Extensions::of(self).sources
+    }
+}
+
+impl Source {
+    pub fn native_bot_mentions(&self) -> bool {
+        match self {
+            Self::NativeLark(NativeLarkSource { admission, .. })
+            | Self::Whatsapp { admission, .. }
+            | Self::Telegram { admission, .. }
+            | Self::Discord { admission, .. }
+            | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
+            Self::Custom { .. } => false,
+        }
     }
 }

@@ -189,3 +189,7 @@ Source inspection, local documentation checks and a diff secret scan validate
 this audit. No Cargo build, NyxID modification, deployment, credential change,
 subscription change or platform send is part of it. This remains a gap audit and
 implementation plan, not implemented incoming-event or all-messaging support.
+
+## Separate native-source implementation
+
+The CMA-only separate-app implementation is documented in [Native Lark / Feishu](CMAEG_Native_Lark.md). Its authoring and intake gates remain off. It adds durable text intake, native text replies, recall notifications with unknown actors, human reaction deltas, and exact confirmed outbound target receipts. It does not alter the pinned NyxID filter or establish incoming edit propagation. The audit and platform provisioning constraints above still apply.

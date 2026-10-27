@@ -1,3 +1,4 @@
+import { LarkRegionSchema } from './primitives.js';
 import { LarkResourceBindingSchema } from './channels.js';
 import { NativeMediaCapabilitiesSchema } from './messages.js';
 import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
@@ -166,6 +167,13 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    native_lark: object({
+      type: enumeration('native_lark'),
+      region: LarkRegionSchema,
+      app_id: text,
+      tenant_key: text,
+      bot_open_id: text,
+    }),
     whatsapp: object({
       app_id: text,
       waba_id: text,

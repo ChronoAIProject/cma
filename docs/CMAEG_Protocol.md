@@ -2697,6 +2697,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/messages/{message_ref}/reaction` | `setMessageReaction` |
 | `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
+| `POST /v1/native-lark/{channel_id}` | Authenticate an encrypted callback from the separately provisioned native Lark/Feishu app. |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/whatsapp/{channel_id}` | Verify the native WhatsApp webhook against the channel's exact configured Meta challenge token. |
 | `POST /v1/whatsapp/{channel_id}` | Receive a signed native WhatsApp webhook for the channel's exact app, business account and phone. |
@@ -3983,3 +3984,7 @@ or ineligible native forms, with no fallback after authority or write failures.
 Retained callbacks, edits and exact lost-inbox recovery remain supported when
 issuance is disabled. See [native Discord forms](CMAEG_Native_Discord_Forms.md)
 for limits, rollback rules, official reference pin and local/live evidence bounds.
+
+### Native separate-app Lark / Feishu ingress
+
+`POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.

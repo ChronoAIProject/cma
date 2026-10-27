@@ -3,6 +3,15 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_lark(
+        mut self,
+        client: crate::native_lark::Client,
+        receipts: Arc<crate::native_lark::receipts::Store>,
+    ) -> Self {
+        self.native_lark = client;
+        self.native_lark_receipts = Some(receipts);
+        self
+    }
     pub fn with_whatsapp(
         mut self,
         client: crate::whatsapp::Client,

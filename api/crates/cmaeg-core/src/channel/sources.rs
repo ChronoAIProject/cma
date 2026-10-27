@@ -33,6 +33,12 @@ pub(super) fn validate_legacy_sources(
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
         match source {
+            Source::NativeLark(_) => {
+                return Err(ValidationError::new(
+                    &pointer,
+                    "native_lark_writes_disabled",
+                ))
+            }
             Source::Whatsapp { .. } => {
                 return Err(ValidationError::new(
                     &pointer,
@@ -88,12 +94,14 @@ pub(super) fn validate_extended_sources(
         ));
     }
     let (mut telegram, mut discord, mut whatsapp, mut custom) = (false, false, false, false);
+    let mut native_lark = false;
     let mut platforms = BTreeSet::<Platform>::new();
     let mut routes = BTreeSet::<&str>::new();
     let mut identity: Option<(&str, &str, &str)> = None;
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
         let duplicated = match source {
+            Source::NativeLark(_) => std::mem::replace(&mut native_lark, true),
             Source::Telegram { .. } => std::mem::replace(&mut telegram, true),
             Source::Discord { .. } => std::mem::replace(&mut discord, true),
             Source::Whatsapp { .. } => std::mem::replace(&mut whatsapp, true),
@@ -182,6 +190,7 @@ fn validate_source(
         }
     }
     match source {
+        Source::NativeLark(source) => source.validate(secrets.native_lark.as_ref()),
         Source::Whatsapp {
             app_id,
             waba_id,
