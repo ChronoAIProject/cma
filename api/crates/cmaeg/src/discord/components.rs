@@ -317,10 +317,11 @@ fn parse(raw: &Value, bot: &str, created: i64) -> Result<(Activity, Vec<String>)
     }
     snowflake(&message["id"])?;
     let values = match raw["data"].get("values") {
-        None => vec![],
+        None if raw["data"]["component_type"] == 2 => vec![],
+        None => return Err(GatewayError::Protocol),
         Some(value) => value
             .as_array()
-            .filter(|v| v.len() <= 1)
+            .filter(|v| v.len() <= 20)
             .ok_or(GatewayError::Protocol)?
             .iter()
             .map(|v| {

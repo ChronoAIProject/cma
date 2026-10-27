@@ -43,6 +43,76 @@ fn ordinary_channel(f: &FixtureState) {
         .push_back((axum::http::StatusCode::OK, json!({"id":"99","type":1})));
 }
 #[tokio::test]
+async fn native_discord_multiselect_gate_blocks_new_cards_but_preserves_consumption() {
+    use crate::discord::components_fixture::multiselect_message;
+    for enabled in [false, true] {
+        let f = FixtureState::new().await;
+        f.rest.respond(
+            axum::http::StatusCode::OK,
+            json!({"id":"800","channel_id":"99","author":{"id":"77"}}),
+        );
+        let mut sender = sender(&f, true);
+        assert!(!sender.relay.discord_multiselect_enabled());
+        if enabled {
+            sender.relay = sender.relay.with_discord_multiselect(true);
+            ordinary_channel(&f);
+        }
+        let before = f.setup.fixture.memory.rows.lock().unwrap().len();
+        let gate = RecordingGate::new(true);
+        let trace = tracing::Span::none();
+        let ctx = SendContext {
+            trace: &trace,
+            channel: &f.channel,
+            first_send_done: false,
+            gate: &gate,
+        };
+        let (receipt, _) = sender
+            .reply(&ctx, &f.original, &multiselect_message())
+            .await;
+        if !enabled {
+            assert!(matches!(receipt.delivery, DeliveryOutcome::Unsupported));
+            assert_eq!(before, f.setup.fixture.memory.rows.lock().unwrap().len());
+            assert!(f.rest.memory.calls.lock().unwrap().is_empty());
+            assert!(f.provider.memory.lock().unwrap().seen.is_empty());
+            continue;
+        }
+        assert!(matches!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed { .. }
+        ));
+        let calls = f.rest.memory.calls.lock().unwrap().clone();
+        let body: Value = serde_json::from_slice(&calls.last().unwrap().body).unwrap();
+        assert_eq!(body["components"][0]["components"][0]["min_values"], 0);
+        assert_eq!(body["components"][0]["components"][0]["max_values"], 2);
+        let reference = receipt
+            .message_ref
+            .unwrap()
+            .open(&f.keys())
+            .unwrap()
+            .payload;
+        let card_id = reference.interaction_record_id.unwrap();
+        sender.relay = sender.relay.with_discord_multiselect(false);
+        assert!(!sender.relay.discord_multiselect_enabled());
+        let (stopped, _) = sender
+            .reply(&ctx, &f.original, &multiselect_message())
+            .await;
+        assert!(matches!(stopped.delivery, DeliveryOutcome::Unsupported));
+        let mut raw = f.callback(
+            body["components"][0]["components"][0]["custom_id"]
+                .as_str()
+                .unwrap(),
+        );
+        raw["data"]["component_type"] = 3.into();
+        raw["data"]["values"] = json!(["1", "0"]);
+        f.rest
+            .respond(axum::http::StatusCode::NO_CONTENT, Value::Null);
+        f.receive(raw, 2).await.unwrap();
+        let saved = serde_json::to_value(f.store.load(&card_id).await.unwrap().0).unwrap();
+        assert_eq!(saved["consumed"]["selection"], json!([0, 1]));
+        assert_eq!(f.rest.memory.calls.lock().unwrap().len(), calls.len() + 1);
+    }
+}
+#[tokio::test]
 async fn native_discord_controls_are_explicit_and_confirmed_messages_bind_one_card() {
     for enabled in [false, true] {
         let f = FixtureState::new().await;

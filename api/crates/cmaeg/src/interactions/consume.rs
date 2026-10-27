@@ -89,6 +89,7 @@ impl InteractionStore {
                     event_id: activity.event_id.to_string(),
                     callback_id: callback_id.into(),
                     action: index,
+                    selection: None,
                     occurred_at: activity.occurred_at.clone(),
                 });
                 match self.save(&card, Some(version)).await {
@@ -111,12 +112,14 @@ impl InteractionStore {
             ));
         }
         // Repeated CAS contention has not established refusal. Let the relay
-        // retry a WhatsApp click instead of acknowledging and dropping it.
-        Err(if data.starts_with("cw1b:") || data.starts_with("cw1l:") {
-            Error::Unavailable
-        } else {
-            Error::Denied
-        })
+        // retry a Lark or WhatsApp click instead of acknowledging and dropping it.
+        Err(
+            if data.starts_with("cl1:") || data.starts_with("cw1b:") || data.starts_with("cw1l:") {
+                Error::Unavailable
+            } else {
+                Error::Denied
+            },
+        )
     }
     /// Retained caller API; production also retrieves the sealed owner binding.
     #[allow(clippy::too_many_arguments)]
