@@ -727,7 +727,10 @@ document for the complete accepted syntax. Legacy discovery omits the optional `
 
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
-before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+before sending. Native private event replies and NyxID relay replies have separate
+operator gates; native templates require current native source custody and use
+the original sealed recipient/context. Template media IDs and HTTPS links are
+independent of native upload capability. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
 `WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
 name/language and bounded positional parameters. Header parameters can be text
 or typed image/video/document references; body parameters can be text, currency

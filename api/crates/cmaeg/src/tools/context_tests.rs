@@ -208,3 +208,68 @@ fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
     assert_eq!(capability.max_attachments, 4);
     assert_eq!(capability.max_inline_bytes, 65536);
 }
+
+#[test]
+fn native_whatsapp_template_discovery_requires_verified_private_destination_and_current_custody() {
+    use crate::{
+        ingress::routing_plan::fixture,
+        whatsapp::tests::{credentials, source},
+    };
+    use cmaeg_core::{activity::ConversationKind, channel::Secret, seal::ReplyAddress};
+    for defect in 0..11 {
+        let mut request = fixture::request(|_| {}, fixture::message("invoice please"));
+        let channel = std::sync::Arc::make_mut(&mut request.channel);
+        channel.definition.sources = vec![source()];
+        channel.definition.secrets.whatsapp = Some(credentials());
+        request.activity.source = SourceKind::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+        };
+        request.activity.conversation.id = "447700900123".into();
+        let mut event = request
+            .event_ref
+            .open(&fixture::keys(), fixture::NOW)
+            .unwrap()
+            .payload;
+        event.reply = ReplyAddress::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+            recipient_id: "447700900123".into(),
+            message_id: "wamid.original".into(),
+        };
+        match defect {
+            0..=2 => {}
+            3 => channel.definition.sources.clear(),
+            4 => channel.definition.secrets.whatsapp = None,
+            5 => {
+                channel
+                    .definition
+                    .secrets
+                    .whatsapp
+                    .as_mut()
+                    .unwrap()
+                    .access_token = Secret::new("invalid")
+            }
+            6 => request.activity.source = SourceKind::Custom,
+            7 => {
+                if let SourceKind::Whatsapp {
+                    phone_number_id, ..
+                } = &mut request.activity.source
+                {
+                    *phone_number_id = "99999".into();
+                }
+            }
+            8 => request.activity.conversation.id = "99999".into(),
+            9 => request.activity.conversation.kind = ConversationKind::Group,
+            10 => request.activity.conversation.thread_id = Some("thread".into()),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            native_whatsapp_templates(defect != 1, channel, &event, &request.activity, defect != 2),
+            defect == 0,
+            "{defect}"
+        );
+    }
+}

@@ -6,6 +6,8 @@ use reqwest::header::HeaderMap;
 #[tokio::test]
 async fn template_discovery_requires_rollout_and_the_sealed_whatsapp_destination() {
     let mut app = App::new().await;
+    // Native rollout cannot enable the relay capability.
+    app.state.native_whatsapp_templates_enabled = true;
     let mut headers = HeaderMap::new();
     headers.insert(
         "authorization",

@@ -3,6 +3,15 @@ use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_M
 use cmaeg_core::{channel::Platform, message::WhatsappTemplate};
 
 impl RelayClient {
+    /// Native template replies require their independent reader rollout.
+    pub fn with_native_whatsapp_templates(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_templates = enabled;
+        self
+    }
+    pub(in crate::delivery) fn native_whatsapp_templates_enabled(&self) -> bool {
+        self.native_whatsapp_templates
+    }
+
     pub fn with_native_whatsapp_outbound_media(mut self, enabled: bool) -> Self {
         self.native_whatsapp_outbound_media = enabled;
         self
@@ -101,7 +110,7 @@ impl RelayClient {
         template
             .validate()
             .map_err(|_| rejected("whatsapp_template_invalid"))?;
-        validate_template_links(template)
+        crate::whatsapp::templates::validate_links(template)
             .map_err(|_| rejected("whatsapp_template_media_link_rejected"))?;
         // No caller-controlled recipient, route, credential or arbitrary metadata.
         let body = serde_json::to_vec(&serde_json::json!({
@@ -120,28 +129,4 @@ impl RelayClient {
             complete_text: false,
         })
     }
-}
-
-/// Templates carry references directly to Meta; apply the same conservative
-/// public-link policy before either a reply or an owner-initiated send commits.
-pub(super) fn validate_template_links(template: &WhatsappTemplate) -> Result<(), ()> {
-    for link in template.media_links() {
-        let url = crate::net::policy::target(link).ok_or(())?;
-        if url.host_str().is_some_and(|host| {
-            let host = host.trim_end_matches('.');
-            host == "localhost"
-                || [
-                    ".localhost",
-                    ".local",
-                    ".internal",
-                    ".svc",
-                    ".cluster.local",
-                ]
-                .iter()
-                .any(|suffix| host.ends_with(suffix))
-        }) {
-            return Err(());
-        }
-    }
-    Ok(())
 }

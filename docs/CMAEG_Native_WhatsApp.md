@@ -8,9 +8,11 @@ currently discards reactions before CMA receives them; see
 
 This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
 on retained incoming messages and confirmed CMA replies, and actual native
-text and separately gated [JPEG/PNG/PDF/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md) through Graph API `v25.0`. It does not establish complete WhatsApp
-support. Native video delivery, further audio/document profiles, approved templates, interactive controls,
-outbound reactions/edits and connected Meta client
+text, separately gated [JPEG/PNG/PDF/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
+and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
+A separate gate enables [own reactions to authenticated received messages](CMAEG_Native_WhatsApp_Reactions.md).
+This does not establish complete WhatsApp support. Further video/audio/document profiles, interactive controls,
+outbound editing and connected Meta client
 acceptance remain required follow-ups. No production rollout, Meta app setting
 change, or external send is part of this implementation.
 
@@ -164,8 +166,36 @@ recipient and one usable native `wamid` receipt, then durable receipt storage.
 Each rendered text part records its own target receipt. Uncertain acceptance,
 receipt-storage loss, and partial delivery remain `unknown`; CMA does not resend
 automatically after an uncertain native effect. Free-form replies remain subject
-to Meta's customer service window; native templates are not implemented here.
+to Meta's customer service window; approved templates have a separate gate.
 
 Validation uses original Meta-shaped envelopes, injected Graph transports and
 local CMA/provider HTTP fixtures. These prove local contracts and do not prove
 acceptance under a live app's current permissions or a real WhatsApp client.
+
+## Approved-template replies
+
+`CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED` defaults to false in code and the source
+ConfigMap. It is independent of the existing NyxID template flag and native media
+upload flag. Enabling it advertises the existing `capabilities.whatsapp_templates`
+only for verified private native contexts whose sealed source and recipient still
+match current source credentials. The existing `OutboundMessage.whatsapp_template`
+shape supplies approved name/language, text/image/video/document header, body
+text/currency/date-time substitutions and URL buttons at indices 0–2. See the
+[full typed contract](CMAEG_Protocol.md#approved-whatsapp-template-replies).
+
+Media headers use numeric Meta IDs or public HTTPS references. The shared template
+URL policy refuses private/special addresses and local/internal hosts before any
+send commitment; Meta checks ownership, approval, language and placeholder
+compatibility. Template media is not uploaded or decoded by CMA. Text templates
+keep the eight-second native transport budget; media templates use at most
+60 seconds while existing routed execution deadlines remain authoritative.
+
+One native request retains the original phone, recipient and context message.
+Current source/credential revision and default or named consumer authority are
+checked at the routed send fence. Exact provider confirmation and durable receipt
+storage are both required for a confirmed result; the receipt retains incoming
+reaction correlation. Uncertain acceptance or receipt loss stays unknown and
+replays without resending. No edit reference, owner-initiated native send or
+interactive callback authority is added. Local fake-transport and composed routed
+tests cover the contract, revocation and receipt replay; connected Meta acceptance
+remains outstanding before rollout.
