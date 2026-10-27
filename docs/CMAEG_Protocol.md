@@ -3754,3 +3754,34 @@ Historical buttons and single-selects retain their existing serialized bytes
 and result shapes. Deploy compatible serving and rollback readers before enabling
 issuance; disabling it preserves retained callbacks. See the
 [native Discord control contract](CMAEG_Native_Discord_Interactions.md).
+
+### Native Discord interactive-card edits
+
+The existing `updateMessage` request accepts native interaction-card references
+when `CMAEG_DISCORD_CARD_EDITS_ENABLED` is enabled. Historical native card records
+and plain native text-edit references keep their existing shapes. The default is
+off. See [native card edits](CMAEG_Native_Discord_Card_Edits.md) for exact bounds.
+
+The reference selects one original bot message. Replacement controls retain the
+actor, source/provider/consumer authority, conversation, partition, verified
+thread, revision chain and original expiry. Text/link-only replacements send an
+empty components array and retain a successor reference for later edits. No
+attachment, new destination, thread lifecycle or message-effect authority is
+created. Current channel authority and authenticated native metadata are checked
+before claiming a new edit.
+
+A durable compare-and-swap fences the previous revision and records a canonical
+request hash and successor identity before one component PATCH. The returned
+Message must match the original bot/channel/message and requested content and
+components before the successor is bound. The final receipt is persisted. Exact
+retries return the same receipt and reference; another body on the old reference
+is refused, and an unfinished or ambiguous write is never resent. A previously
+consumed exact callback can still finish inbox recovery after replacement; new
+old-revision clicks are fenced.
+
+Turning the card-edit gate off stops new chains on original cards while retained
+successor edits and saved-operation reads/replays remain supported. Compatible
+readers and keys are required through original card expiry. The optional stored
+edit state is absent from old records; text-only successors require the new
+reader. Public SDK and OpenAPI request/response schemas are unchanged. Local
+contract coverage does not claim live Discord acceptance.

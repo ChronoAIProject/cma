@@ -54,6 +54,12 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // A replacement answers no event, so it never marks a first send.
         let effects = SendEffects::default();
+        if reference.interaction_record_id.is_some() && reference.route_id.starts_with("discord:") {
+            return (
+                self.discord_card_update(ctx, reference, message).await,
+                effects,
+            );
+        }
         if reference.discord_message.is_some() {
             return (self.discord_update(ctx, reference, message).await, effects);
         }

@@ -51,10 +51,11 @@ There are at most five action rows, with at most five buttons per row or one
 string-select menu per row. Neutral message validation currently bounds a select
 to twenty options, below Discord's twenty-five-option limit. Single-select menus
 require one value. Multi-select menus allow zero through all authored options,
-and reflect authored `selected` defaults. Modals, user/role/channel selectors,
-native attachments combined with controls,
-and interactive message edits are not supported. A control message must fit one
-ordinary Discord text part. Non-control blocks retain their existing text
+and reflect authored `selected` defaults. Modals, user/role/channel selectors and
+native attachments combined with controls remain unsupported. Interactive
+message edits have a separate default-off gate; see
+[native card edits](CMAEG_Native_Discord_Card_Edits.md). A control message must fit
+one ordinary Discord text part. Non-control blocks retain their existing text
 rendering and degradation report. Mentions remain suppressed.
 
 Discord `custom_id` fields contain only a versioned card UUID, revision and
@@ -156,3 +157,8 @@ and live platform proof are separate from those local tests.
 Discord API references: [channel types and channel reads](https://discord.com/developers/docs/resources/channel#get-channel),
 [message components](https://discord.com/developers/docs/components/reference),
 and [interaction receipt and acknowledgement](https://discord.com/developers/docs/interactions/receiving-and-responding).
+
+Native card replacement uses the existing `updateMessage` operation and a
+separate `CMAEG_DISCORD_CARD_EDITS_ENABLED` gate. Existing native card references
+remain unchanged. See [native card edits](CMAEG_Native_Discord_Card_Edits.md) for
+exact control removal, retained ownership and durable replay semantics.

@@ -170,6 +170,7 @@ impl InteractionStore {
             None
         };
         let card = Card {
+            discord_edit: None,
             discord: if matches!(event.reply, ReplyAddress::Discord { .. }) {
                 Some(discord::identity(
                     channel,

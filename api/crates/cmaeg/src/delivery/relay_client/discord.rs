@@ -2,6 +2,13 @@
 use super::RelayClient;
 
 impl RelayClient {
+    pub fn with_discord_card_edits(mut self, enabled: bool) -> Self {
+        self.discord_card_edits = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_card_edits_enabled(&self) -> bool {
+        self.discord_card_edits
+    }
     pub fn with_native_discord_effects(mut self, enabled: bool) -> Self {
         self.native_discord_effects = enabled;
         self
