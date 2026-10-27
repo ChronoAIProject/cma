@@ -569,3 +569,25 @@ advertise optional `whatsapp_template_components: ["header", "body"]` alongside
 gates and format limits still apply. No group management, message edit/delete,
 reaction or controls authority is added. Connected Meta v25/OBA acceptance is
 still outstanding; source capability presence does not prove delivery.
+
+
+### Confirmed Telegram and Discord media edits
+
+Use `update_message_with_idempotency(ref, key, &message)` with an explicit
+`native_media_update`. Read context `native_media_edits` for new-upload eligibility
+and `read_message_capabilities` for the exact reference's `media_edit` authority.
+Historical effects-only references remain ineligible. This increment supports one
+attachment in one confirmed platform message, with same-kind replacement only.
+
+Omitting `replacement`, `caption`, or `text` preserves its current value. Empty
+caption/text clears it; explicit null refuses. At least one patch member is
+required, and ordinary message fields cannot accompany the patch. Telegram
+`caption` is visible; Discord `caption` is the attachment description/alt text and
+`text` is visible message content. Telegram does not accept `text` here.
+
+Persist the confirmed receipt's next `message_ref`: it carries the next revision
+and the original expiry. Retry only the identical body and original reference
+with the same key; an unknown outcome retains its mutation fence and never
+causes an automatic provider retry. Neither provider offers conditional revision
+writes, so external applications sharing bot credentials remain outside CMA's
+fence. Issuance remains disabled pending connected acceptance.

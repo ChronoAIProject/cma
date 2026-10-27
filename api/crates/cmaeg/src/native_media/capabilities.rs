@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = NativeMediaEditCapabilities)]
 pub struct Capabilities {
     pub caption: bool,
     pub content: bool,

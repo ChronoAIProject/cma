@@ -10,7 +10,7 @@ import {
   text,
   type Output,
 } from '../../schema.js';
-import { DeliveryOutcomeSchema } from './messages.js';
+import { DeliveryOutcomeSchema, NativeMediaEditCapabilitiesSchema } from './messages.js';
 
 /** Retained wire shape; Lark/Feishu use emoji_type names such as THUMBSUP in emoji. */
 export const TelegramReactionSchema = tagged(
@@ -27,6 +27,7 @@ export const MessageReactionRequestSchema = object({
 });
 export type MessageReactionRequest = Output<typeof MessageReactionRequestSchema>;
 export const MessageEffectsCapabilitiesSchema = object({
+  media_edit: optional(nullable(NativeMediaEditCapabilitiesSchema)),
   delete: boolean,
   reaction: boolean,
   scope: text,

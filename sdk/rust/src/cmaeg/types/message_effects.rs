@@ -37,6 +37,9 @@ pub struct MessageEffectReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageEffectsCapabilities {
+    /// Explicit revisioned native media authority, absent for historical effects-only references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_edit: Option<super::NativeMediaEditCapabilities>,
     /// Whether the message reference grants native deletion authority.
     pub delete: bool,
     /// Whether the message reference grants native bot-reaction authority.

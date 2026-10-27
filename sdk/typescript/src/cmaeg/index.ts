@@ -158,7 +158,11 @@ export class Cmaeg {
   ) {
     return this.#tools.replyToTarget(ref, idempotencyKey, message, options);
   }
-  updateMessage(ref: string, message: OutboundMessage, options?: OperationOptions) {
+  updateMessage(
+    ref: string,
+    message: OutboundMessage,
+    options?: OperationOptions & { idempotencyKey?: string },
+  ) {
     return this.#tools.updateMessage(ref, message, options);
   }
   readMessageCapabilities(ref: string, options?: OperationOptions) {
