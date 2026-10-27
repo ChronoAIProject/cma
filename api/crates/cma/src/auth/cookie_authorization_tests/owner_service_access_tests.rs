@@ -173,7 +173,7 @@ async fn mongo_owner_api_scope_admission_and_credential_custody_survive_restart(
     let isolated = Arc::new(MemoryAuthStore::default());
     let auth = AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
     let (client, database, store, original) =
-        crate::store::agent_access_requests::tests::approved_fixture().await;
+        crate::store::agent_access_requests::tests::approved_scoped_fixture().await;
     store
         .fail_access_request(original.lease.as_ref().unwrap(), "fixture_complete")
         .await

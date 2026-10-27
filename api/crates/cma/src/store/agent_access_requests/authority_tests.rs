@@ -12,7 +12,7 @@ fn authority(digit: char) -> AgentAuthorizationRevision {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_expired_scope_consent_recovers_pending_rotation_without_rewriting_audit() {
-    let (client, name, store, fixture) = super::super::tests::approved_fixture().await;
+    let (client, name, store, fixture) = super::super::tests::approved_scoped_fixture().await;
     store
         .fail_access_request(fixture.lease.as_ref().unwrap(), "fixture_complete")
         .await
