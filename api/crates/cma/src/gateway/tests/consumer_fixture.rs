@@ -73,7 +73,9 @@ impl ConsumerGateway {
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
             native_telegram_message_events_writes_enabled: false,
-            native_whatsapp_writes_enabled: false,
+            native_lark_writes_enabled: false,
+        native_lark_intake_enabled: false,
+        native_whatsapp_writes_enabled: false,
             native_whatsapp_media_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             native_discord_writes_enabled: false,

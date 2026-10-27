@@ -20,6 +20,7 @@ mod extensions;
 pub mod lark_resources;
 mod lookup;
 pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkResourceKind};
+pub mod native_lark;
 mod partition;
 mod platform;
 mod routing;
@@ -37,6 +38,9 @@ pub use custom_attachments::{
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
 };
 pub use extensions::Extensions;
+pub use native_lark::{
+    LarkRegion, NativeLarkCredentials, NativeLarkIdentity, NativeLarkReply, NativeLarkSource,
+};
 pub use routing::{
     default_receives_all, ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern,
     ReplyLabel, RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
@@ -118,6 +122,7 @@ impl ProviderTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
+    NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
         app_id: String,
@@ -226,17 +231,6 @@ impl AdmissionPolicy {
                 ..
             }
         )
-    }
-}
-impl Source {
-    pub fn native_bot_mentions(&self) -> bool {
-        match self {
-            Self::Whatsapp { admission, .. }
-            | Self::Telegram { admission, .. }
-            | Self::Discord { admission, .. }
-            | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
-            Self::Custom { .. } => false,
-        }
     }
 }
 
@@ -459,6 +453,9 @@ impl ChannelDefinition {
         });
         // Emitted only when present, so a legacy blob keeps its exact bytes and
         // an older image, which refuses the unknown key, can still read it.
+        if let Some(credentials) = &self.secrets.native_lark {
+            secrets["native_lark"] = credentials.private_json();
+        }
         if let Some(credentials) = &self.secrets.whatsapp {
             secrets["whatsapp"] = credentials.private_json();
         }

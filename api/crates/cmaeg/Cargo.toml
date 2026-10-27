@@ -5,6 +5,8 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+aes = "0.8"
+cbc = "0.1"
 cma-service-auth = { path = "../cma-service-auth" }
 base64 = { workspace = true }
 bytes = { workspace = true }

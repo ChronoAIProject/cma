@@ -25,3 +25,13 @@ fn native_upload_effects_wait_for_compatible_reader_rollout() {
         assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"), "{gate}");
     }
 }
+
+#[test]
+fn native_lark_requires_separate_explicit_authoring_and_intake_activation() {
+    for gate in [
+        "CMAEG_NATIVE_LARK_WRITES_ENABLED",
+        "CMAEG_NATIVE_LARK_INTAKE_ENABLED",
+    ] {
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"));
+    }
+}

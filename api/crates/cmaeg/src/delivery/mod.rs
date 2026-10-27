@@ -31,6 +31,7 @@ pub mod intents;
 mod interactive;
 pub mod local_stream;
 mod native_clients;
+mod native_lark;
 mod pacing;
 pub mod relay_client;
 pub mod render;

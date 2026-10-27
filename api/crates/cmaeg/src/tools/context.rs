@@ -104,6 +104,12 @@ impl Capabilities {
             ..Self::plain_text()
         }
     }
+    pub fn native_lark() -> Self {
+        Self {
+            max_text_chars: 6000,
+            ..Self::plain_text()
+        }
+    }
     pub fn native_whatsapp() -> Self {
         Self {
             max_text_chars: 4096,
@@ -314,6 +320,7 @@ pub(super) fn project(
         },
         inbound_media,
         ..match activity.source {
+            SourceKind::NativeLark(_) => Capabilities::native_lark(),
             SourceKind::Whatsapp { .. } => Capabilities::native_whatsapp(),
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),

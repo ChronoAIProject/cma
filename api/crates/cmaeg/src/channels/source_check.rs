@@ -69,6 +69,11 @@ pub async fn check(
             ));
             platform.as_str().to_owned()
         }
+        Source::NativeLark(_) => {
+            checks.push(item("credential", "Separate native app credentials", secrets.native_lark.is_some(), "Requires a separately configured single-tenant app, Encrypt Key and Verification Token. Never replace an existing NyxID app webhook. App and bot custody are checked when authored; this diagnostic does not contact Lark/Feishu."));
+            checks.push(item("callback", "Native app callback", false, "Subscribe the separate app to receive, recalled and reaction created/deleted events using the native callback URL. Supports text, recall and human reaction deltas for retained messages; incoming edits are unverified."));
+            "native_lark".into()
+        }
         Source::Whatsapp { .. } => {
             checks.push(item("credential", "Native Meta credentials", secrets.whatsapp.is_some(), "Encrypted app, access and verification credentials are required. Meta app and WABA phone custody are checked when these are authored; this diagnostic does not contact Meta."));
             checks.push(item("callback", "Dedicated app callback", false, "Configure the returned native WhatsApp webhook URL on a dedicated Meta app. Existing external callbacks are never changed automatically. Text and reaction ingress with native text replies are supported; media and templates are not enabled."));
