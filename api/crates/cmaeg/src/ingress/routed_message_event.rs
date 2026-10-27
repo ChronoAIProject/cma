@@ -30,12 +30,22 @@ impl IngressState {
                 ))
             }
         };
-        let (request, plan) = match crate::ingress::message_event::bind(
-            verified.request,
-            &original,
-            &routing.keys,
-            (routing.clock)(),
-        ) {
+        let bound = match verified.outbound_consumer.as_ref() {
+            Some(consumer) => crate::ingress::message_event::bind_outbound(
+                verified.request,
+                &original,
+                &routing.keys,
+                (routing.clock)(),
+                consumer,
+            ),
+            None => crate::ingress::message_event::bind(
+                verified.request,
+                &original,
+                &routing.keys,
+                (routing.clock)(),
+            ),
+        };
+        let (request, plan) = match bound {
             Ok(bound) => bound,
             Err(_) => {
                 return LaunchOutcome::Refused(Problem::new(
