@@ -4485,6 +4485,18 @@
               "null"
             ]
           },
+          "native_whatsapp_auto_activation_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_whatsapp_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "outbound_messages_writes_enabled": {
             "type": [
               "boolean",

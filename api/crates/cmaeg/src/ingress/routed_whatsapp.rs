@@ -93,7 +93,8 @@ impl IngressState {
                     };
                     let plan = match routing.plans.load(&receipt.original).await {
                         Ok(Some(plan)) => plan,
-                        _ => return refusal(422, "native_whatsapp_original_unavailable"),
+                        Ok(None) => return refusal(422, "native_whatsapp_original_unavailable"),
+                        Err(_) => return refusal(503, "native_whatsapp_original_unavailable"),
                     };
                     if !plan.targets.iter().any(|target| {
                         target.launch.consumer == receipt.consumer
