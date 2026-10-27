@@ -350,50 +350,16 @@ async fn binding_service_pins_profiles_without_catalogue_writes_and_replays_conv
         .await
         .unwrap();
     let agent = f.store.get_agent(&a.agent_id).await.unwrap().unwrap();
-    assert_eq!(agent.requested_stop_reason, Some(AgentStopReason::Owner));
+    assert_eq!(
+        agent.requested_stop_reason,
+        Some(AgentStopReason::BindingRetired)
+    );
     assert!(matches!(
         f.service
             .ensure_conversation(&f.caller, "binding-one", "conversation_one")
             .await,
         Err(BindingError::Conflict)
     ));
-}
-
-#[tokio::test]
-async fn binding_reconfiguration_keeps_compatible_workspace_and_pinned_profiles() {
-    let f = fixture();
-    let original = f.ready().await;
-    let next = f.put("binding-one", "Revised instruction").await;
-    assert_eq!(next.sandbox_id, original.sandbox_id);
-    assert_eq!(next.workspace_id, original.workspace_id);
-    assert_eq!(next.generation, 2);
-    for _ in 0..5 {
-        let value = f.binding().await;
-        f.service.reconcile_binding(&value).await.unwrap();
-    }
-    let ready = f.binding().await;
-    assert_eq!(ready.state, BindingState::Ready);
-    assert!(ready.previous.is_none());
-    let (conversation, _) = f
-        .service
-        .ensure_conversation(&f.caller, "binding-one", "conversation_new")
-        .await
-        .unwrap();
-    f.service
-        .reconcile_conversation(&ready, &conversation)
-        .await
-        .unwrap();
-    assert_eq!(
-        f.store
-            .get_agent(&conversation.agent_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .profile
-            .content
-            .system_prompt,
-        "Revised instruction"
-    );
 }
 
 #[tokio::test]
@@ -486,3 +452,5 @@ mod command_tests;
 
 mod event_tests;
 mod existing;
+
+mod continuity;
