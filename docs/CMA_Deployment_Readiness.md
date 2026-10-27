@@ -1671,3 +1671,65 @@ and its exact restart differences were explicitly recorded, not hidden by a new
 baseline. The isolated test Channel was deleted through its versioned public
 lifecycle API, its provider sandbox retired and home released, and its exact
 temporary key revoked. No user runtime or external platform was modified.
+
+## Readiness recovery and live Activity verification from PR #1135 — 2026-10-27
+
+Production API, Event Gateway and Web were updated from successful GitHub CI run
+`40445812082`, attempt 1. All 15 CI jobs passed. Candidate
+`b761d1dea26384d8fe494a44f9fe64f62367a6a2`, CI build source
+`32ac7cf32a2edadd1fb632c7b44e0867492520c7` and merged source
+`e5f94372deb4374e3a8491c7140e7a2cb242e1b6` share verified tree
+`a28acd8a66ee111d602e5be031902a71b5bd6c59`.
+
+| Service | Imported and serving image digest |
+| --- | --- |
+| Agent Manager | `sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683` |
+| Event Gateway | `sha256:391de8b3f0d8bc04415e2effb00d6584dc65a4b4a31085001fe0739c95481403` |
+| Web | `sha256:252a7fe72ba700e0656cd0649f80443cdceb28b2fbcd45e6392823bd1bd3586d` |
+
+The fixed readiness path recognizes only a complete, bounded pre-admission
+`429 conversation_not_ready` response without conflicting response identity as
+not accepted. Durable retry keeps the exact frozen request and idempotency key.
+Generic rate limits and uncertain outcomes retain their uncertainty contract.
+
+An isolated fresh Custom Channel completed its first cold event and the next
+attached-file event. Text receipt reached Activity SSE in **233 ms** and the
+production page DOM in **246 ms**, before completion SSE arrived at **12,783 ms**.
+Selecting the Channel after the message displayed its latest Activity in
+**180 ms**; a fresh full-page navigation took **1,719 ms**. The attachment marker
+was provided only inside a text file and read correctly by the Agent; completion
+SSE arrived in **4,227 ms**, and its Activity receipt arrived in **226 ms**. Both
+initial stream and in-flight GET observations were nonterminal with no completion
+timestamp.
+
+Each exact replay returned 202 without a duplicate Activity or provider turn.
+Activity reconnect retained the exact native Agent, response and conversation
+identities. The map and Activity dialog shared one stream, and browser checks
+reported no application errors. These are individual production samples, not
+percentiles. Browser checks used production assets and real public API/SSE with
+a saved-token transport adapter; ordinary OAuth cookie login was not exercised.
+
+After all predecessor Pods drained, the Gateway enabled opted-in Lark resources
+and explicit native Discord thread history. Authenticated capability discovery
+confirmed both flags and native Discord auto-activation. The temporary Custom
+selection was cleared, admission/recovery remained enabled, and the final exact
+Gateway configuration and serving fleet were verified. Complete replies remain
+disabled; this rollout does not certify external platform delivery or the newer
+runtime tool-proxy timeout. No external platform messages were sent.
+
+All 15 post-rollout continuity checks passed: 9 mapped user Pod identities,
+20 user PVC identities/backing volumes, Agent lineage, Channel configuration,
+service settings and public operations were retained. The bounded history sample
+retained 26 owner Agents and 1,775 durable events; all 7 prior entry-page assets
+retained their hashes. The known preexisting exit-2 runtime remained on its exact
+UID/image/PVC and restarted from 423 to 424 during rollout; that difference was
+explicitly reviewed against the original baseline. This is not a zero-restart
+claim or a repair of that preexisting failure.
+
+The fixture Channel was deleted once using its versioned lifecycle API. Provider
+retirement finished asynchronously; the cleanup retry only observed completion
+and revoked its exact temporary key. The provider Sandbox and home were retired,
+and the fixture key was confirmed revoked. The source deployment manifests now
+pin the verified images while preserving all prior Web asset initializers.
+Publication SHA-256:
+`196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7`.
