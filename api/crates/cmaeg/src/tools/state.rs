@@ -40,6 +40,7 @@ pub struct ToolsState {
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
     /// Bounded native WhatsApp image/PDF/audio/sticker uploads, independently default-off.
+    pub native_lark_outbound_media_enabled: bool,
     pub native_whatsapp_outbound_media_enabled: bool,
     /// Approved native template replies, independently default-off from relay templates/uploads.
     pub native_whatsapp_templates_enabled: bool,
