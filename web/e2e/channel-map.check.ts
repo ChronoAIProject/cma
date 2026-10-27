@@ -221,7 +221,83 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
       .getByRole('navigation', { name: 'Configuration sections' })
       .getByRole('button', { name: 'Optional tools' }),
   ).toBeVisible();
+  const toolNavigation = page.getByRole('navigation', { name: 'Configuration sections' });
+  const toolPanel = page.locator('.modal:not([hidden]) .channel-inspector');
+  const connectedAgents = page.getByRole('group', { name: 'Connected agents', exact: true });
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    await page.emulateMedia({ reducedMotion });
+    await expect(page.locator('.modal:not([hidden])')).toHaveCSS('opacity', '1');
+    await toolNavigation.getByRole('button', { name: 'Connected agents' }).click();
+    // Exercise the real browser's clamped last destination: its heading cannot
+    // align with the scroll-spy's top threshold even after scrolling finishes.
+    await expect
+      .poll(() =>
+        connectedAgents.evaluate((section) => {
+          const panel = section.closest('.channel-inspector')!;
+          return (
+            panel.scrollHeight > panel.clientHeight + 1 &&
+            panel.scrollTop >= panel.scrollHeight - panel.clientHeight - 1 &&
+            section.getBoundingClientRect().top > panel.getBoundingClientRect().top + 32
+          );
+        }),
+      )
+      .toBe(true);
+    await expect(toolNavigation.getByRole('button', { name: 'Connected agents' })).toHaveAttribute(
+      'aria-current',
+      'location',
+    );
+    await expect(connectedAgents).toBeFocused();
+    if (reducedMotion === 'no-preference')
+      await page.screenshot({
+        path: info.outputPath('channel-toolsets-clamped-last.png'),
+        animations: 'disabled',
+      });
+    // Native wheel input must release the navigation intent and resume the
+    // actual scroll position's highlight in either motion preference.
+    await toolPanel.hover();
+    await page.mouse.wheel(0, -10000);
+    await expect.poll(() => toolPanel.evaluate((panel) => panel.scrollTop)).toBe(0);
+    await expect(toolNavigation.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'location',
+    );
+    await page.mouse.wheel(0, 10000);
+    await expect(toolNavigation.getByRole('button', { name: 'Connected agents' })).toHaveAttribute(
+      'aria-current',
+      'location',
+    );
+    await connectedAgents.press('Home');
+    await expect.poll(() => toolPanel.evaluate((panel) => panel.scrollTop)).toBe(0);
+    await expect(toolNavigation.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'location',
+    );
+  }
   await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.setViewportSize({ width: 1600, height: 5000 });
+  await map.getByRole('button', { name: /^Toolsets: Agent toolsets/ }).click();
+  await expect(page.locator('.modal:not([hidden])')).toHaveCSS('opacity', '1');
+  await expect
+    .poll(() => toolPanel.evaluate((panel) => panel.scrollHeight <= panel.clientHeight + 1))
+    .toBe(true);
+  // A fitting panel is also at its bottom, but must open on Overview and retain
+  // an explicit selection even though no scroll event is needed to reveal it.
+  await expect(toolNavigation.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+  await toolNavigation.getByRole('button', { name: 'Event tools', exact: true }).click();
+  await expect(
+    toolNavigation.getByRole('button', { name: 'Event tools', exact: true }),
+  ).toHaveAttribute('aria-current', 'location');
+  await toolNavigation.getByRole('button', { name: 'Overview' }).click();
+  await expect(toolNavigation.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'location',
+  );
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
   await expect(page.getByLabel('Bot username', { exact: true })).toHaveValue('retained_bot');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
