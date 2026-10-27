@@ -196,9 +196,14 @@ campaign were verified before enabling Telegram message-event enrollment,
 Discord message-change intake and reaction enrollment, native WhatsApp source
 setup, and exact-source Lark message-effect enrollment. Source consent and
 platform credentials remain required. These activation values support owner
-setup/testing; they do not establish native-platform delivery acceptance. The
-new WhatsApp inbound/outbound media and Telegram/Discord upload-effect gates
-remain off pending their separate compatible-reader release.
+setup/testing; they do not establish native-platform delivery acceptance.
+PR #1156 subsequently deployed the compatible media reader, passed a fresh
+isolated Custom campaign, and enabled WhatsApp inbound/outbound media and
+Telegram/Discord upload-effect gates for owner testing. The immutable serving
+Gateway image is pinned in `infra/cmaeg/deployment.yaml`. That activation kept
+Agent Manager, Web and user runtimes unchanged; broader native source, template,
+reaction, private-control and group additions in this candidate retain their
+independent false gates until their own reader rollout and verification.
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
