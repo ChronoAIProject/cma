@@ -3,6 +3,8 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly native_lark_writes_enabled?: boolean | null;
+  readonly native_lark_intake_enabled?: boolean | null;
   readonly native_whatsapp_writes_enabled?: boolean | null;
   readonly native_whatsapp_auto_activation_enabled?: boolean | null;
   readonly native_telegram_message_events_enabled?: boolean | null;
@@ -162,5 +164,18 @@ export function nativeWhatsappUnavailable(
       : 'This gateway has not enabled direct WhatsApp setup.';
   if (automatic && discovery.authoring.native_whatsapp_auto_activation_enabled !== true)
     return 'This gateway has not enabled message delivery for new direct WhatsApp producers.';
+  return undefined;
+}
+
+export function nativeLarkUnavailable(
+  discovery: RelayDiscovery,
+  intake = true,
+): string | undefined {
+  if (discovery.authoring?.native_lark_writes_enabled !== true)
+    return discovery.status === 'loading'
+      ? 'Checking direct Lark / Feishu support…'
+      : 'This gateway has not enabled direct Lark / Feishu setup.';
+  if (intake && discovery.authoring.native_lark_intake_enabled !== true)
+    return 'This gateway has not enabled message delivery for new direct Lark / Feishu producers.';
   return undefined;
 }
