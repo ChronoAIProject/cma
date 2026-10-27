@@ -123,17 +123,26 @@ const ATTACHMENT_TOOL: ToolSpec = ToolSpec {
     idempotent: true,
     open_world: true,
 };
-/// The tools, with `readEventAttachment` appended while media is enabled.
-pub fn list(media_enabled: bool) -> Value {
-    let base = definitions(Schemas::openapi());
-    let mut tools: Vec<_> = TOOLS.iter().map(|tool| describe(tool, &base)).collect();
+/// The original tools, with `readEventAttachment` appended while media is enabled.
+pub(super) fn selected(media_enabled: bool) -> Vec<super::catalog::SelectedTool> {
+    let mut selected: Vec<_> = TOOLS
+        .iter()
+        .map(|spec| super::catalog::SelectedTool {
+            spec,
+            definitions: || definitions(Schemas::openapi()),
+        })
+        .collect();
     if media_enabled {
-        tools.push(describe(
-            &ATTACHMENT_TOOL,
-            &definitions(AttachmentSchemas::openapi()),
-        ));
+        selected.push(super::catalog::SelectedTool {
+            spec: &ATTACHMENT_TOOL,
+            definitions: || definitions(AttachmentSchemas::openapi()),
+        });
     }
-    json!({"tools":tools})
+    selected
+}
+/// Original tool list retained for callers that select only inbound media.
+pub fn list(media_enabled: bool) -> Value {
+    json!({"tools": selected(media_enabled).iter().map(super::catalog::SelectedTool::describe).collect::<Vec<_>>()})
 }
 pub(super) fn definitions(document: utoipa::openapi::OpenApi) -> Value {
     let mut document = serde_json::to_value(document).unwrap();
