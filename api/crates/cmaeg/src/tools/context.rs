@@ -75,34 +75,13 @@ pub struct Capabilities {
     pub native_media: Option<NativeMediaCapabilities>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct NativeMediaCapabilities {
-    pub kinds: Vec<String>,
-    pub sources: Vec<String>,
-    pub max_attachments: usize,
-    pub max_inline_bytes: usize,
-}
+#[path = "context_sticker.rs"]
+mod sticker;
+pub use sticker::NativeStickerCapabilities;
+#[path = "context_media.rs"]
+mod media;
+pub use media::NativeMediaCapabilities;
 
-impl NativeMediaCapabilities {
-    fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
-        let supported = match source {
-            SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,
-            SourceKind::NyxidRelay { platform, .. } => {
-                enabled && crate::delivery::relay_client::native_media_supported(*platform)
-            }
-            _ => false,
-        };
-        if !supported {
-            return None;
-        }
-        Some(Self {
-            kinds: ["image", "file", "audio", "video"].map(String::from).into(),
-            sources: ["url", "base64"].map(String::from).into(),
-            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
-            max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
-        })
-    }
-}
 impl Capabilities {
     pub fn custom() -> Self {
         Self {
@@ -328,10 +307,11 @@ pub(super) fn project(
                 }
             ))
         .then_some(true),
-        native_media: NativeMediaCapabilities::for_source(
-            &activity.source,
-            state.native_media_enabled,
-        ),
+        native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+            NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
+        } else {
+            NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
+        },
         inbound_media,
         ..match activity.source {
             SourceKind::Whatsapp { .. } => Capabilities::native_whatsapp(),

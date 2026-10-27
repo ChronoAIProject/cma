@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
+  NativeMediaCapabilitiesSchema,
   ActivityRoutingSchema,
   ActivitySchema,
   AttachmentSchema,
@@ -387,4 +388,42 @@ it('retains native sources without adding thread history access', () => {
   expect(SourceSchema(value)).toEqual(value);
   expect(SourceRequestSchema(value)).toEqual(value);
   expect(JSON.stringify(SourceSchema(value))).not.toContain('thread_history');
+});
+
+it('preserves legacy native media capability omissions and exact native WhatsApp limits', () => {
+  const legacy = {
+    kinds: ['image', 'file', 'audio', 'video'],
+    sources: ['url', 'base64'],
+    max_attachments: 4,
+    max_inline_bytes: 65536,
+  };
+  expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
+  const native = {
+    ...legacy,
+    kinds: ['image', 'file', 'audio', 'sticker'],
+    mime_types: [
+      'image/jpeg',
+      'image/png',
+      'application/pdf',
+      'audio/aac',
+      'audio/amr',
+      'audio/mpeg',
+      'audio/mp4',
+      'audio/ogg',
+      'image/webp',
+    ],
+    max_total_bytes: 8388608,
+    max_image_bytes: 5000000,
+    max_caption_chars: 1024,
+    sticker: {
+      width: 512,
+      height: 512,
+      max_static_bytes: 100000,
+      max_animated_bytes: 500000,
+      max_frames: 128,
+      max_duration_ms: 10000,
+      min_frame_duration_ms: 8,
+    },
+  };
+  expect(NativeMediaCapabilitiesSchema(native)).toEqual(native);
 });

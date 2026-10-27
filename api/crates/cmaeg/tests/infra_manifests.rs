@@ -32,13 +32,13 @@ const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
 #[test]
-fn native_telegram_message_events_wait_for_compatible_reader_rollout() {
+fn native_telegram_message_events_allow_owner_opt_in_after_reader_rollout() {
     assert_eq!(
         configmap_value(
             CONFIGMAP,
             "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED"
         ),
-        Some("false")
+        Some("true")
     );
 }
 
@@ -51,10 +51,10 @@ fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
 }
 
 #[test]
-fn lark_message_effects_enrollment_remains_explicitly_disabled() {
+fn lark_message_effects_allow_exact_source_enrollment_after_reader_rollout() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED"),
-        Some("false")
+        Some("true")
     );
 }
 
@@ -476,8 +476,12 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
 #[test]
 fn shipped_controls_and_history_match_verified_activation_policy() {
     assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_DISCORD_REACTIONS_ENABLED"),
+        Some("true")
+    );
+    assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED"),
-        Some("false")
+        Some("true")
     );
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_FORMS_ENABLED"),

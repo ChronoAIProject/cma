@@ -159,3 +159,43 @@ fn a_removed_consumer_is_answered_as_an_expired_reference() {
         (ProblemCode::EventRefExpired, 410, Some("consumer_removed"))
     );
 }
+
+#[test]
+fn native_whatsapp_media_discovery_is_independent_and_reports_exact_subset() {
+    assert!(NativeMediaCapabilities::native_whatsapp(false).is_none());
+    let capability = NativeMediaCapabilities::native_whatsapp(true).unwrap();
+    assert_eq!(capability.kinds, ["image", "file", "audio", "sticker"]);
+    assert_eq!(
+        capability.mime_types.unwrap(),
+        [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "audio/aac",
+            "audio/amr",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/ogg",
+            "image/webp"
+        ]
+    );
+    assert_eq!(capability.max_image_bytes, Some(5_000_000));
+    assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));
+    assert_eq!(capability.max_caption_chars, Some(1024));
+    let sticker = capability.sticker.unwrap();
+    assert_eq!((sticker.width, sticker.height), (512, 512));
+    assert_eq!(
+        (sticker.max_static_bytes, sticker.max_animated_bytes),
+        (100_000, 500_000)
+    );
+    assert_eq!(
+        (
+            sticker.max_frames,
+            sticker.max_duration_ms,
+            sticker.min_frame_duration_ms
+        ),
+        (128, 10_000, 8)
+    );
+    assert_eq!(capability.max_attachments, 4);
+    assert_eq!(capability.max_inline_bytes, 65536);
+}

@@ -3712,15 +3712,63 @@
             "minimum": 0,
             "type": "integer"
           },
+          "max_caption_chars": {
+            "description": "Per-attachment caption character ceiling; shared metadata byte limits still apply.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_image_bytes": {
+            "description": "Per-image encoded byte ceiling.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "max_inline_bytes": {
             "minimum": 0,
             "type": "integer"
+          },
+          "max_total_bytes": {
+            "description": "Aggregate decoded/downloaded bytes in one reply.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mime_types": {
+            "description": "Exact accepted MIME types when the transport supports a bounded subset.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "sources": {
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "sticker": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeStickerCapabilities",
+                "description": "Exact structural sticker limits; absent when sticker delivery is unsupported."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3736,7 +3784,8 @@
           "image",
           "file",
           "audio",
-          "video"
+          "video",
+          "sticker"
         ],
         "type": "string"
       },
@@ -3781,6 +3830,52 @@
             "type": "object"
           }
         ]
+      },
+      "NativeStickerCapabilities": {
+        "properties": {
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_animated_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_frames": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_static_bytes": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "min_frame_duration_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "height",
+          "max_static_bytes",
+          "max_animated_bytes",
+          "max_frames",
+          "max_duration_ms",
+          "min_frame_duration_ms"
+        ],
+        "type": "object"
       },
       "NyxIdIdentity": {
         "additionalProperties": false,

@@ -21,6 +21,7 @@ pub(crate) async fn serve(
     relay_text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
+    native_discord_media_effects: bool,
     native_discord_threads: bool,
     lark_cards: bool,
     lark_forms: bool,
@@ -33,6 +34,7 @@ pub(crate) async fn serve(
     discord_card_effects: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
@@ -123,12 +125,14 @@ pub(crate) async fn serve(
             config.delivery.reply_timeout,
         )?
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
+        .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
         .with_native_discord_edits(native_discord_edits)
         .with_native_discord_effects(native_discord_effects)
+        .with_native_discord_media_effects(native_discord_media_effects)
         .with_lark_cards(lark_cards)
         .with_lark_forms(lark_forms)
         .with_whatsapp_templates(whatsapp_templates)
@@ -139,6 +143,7 @@ pub(crate) async fn serve(
         .with_discord_card_edits(discord_card_edits)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
+        .with_telegram_media_effects(telegram_media_effects)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
@@ -243,9 +248,11 @@ pub(crate) async fn serve(
         whatsapp_interactions_enabled: whatsapp_interactions,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
+        native_whatsapp_outbound_media_enabled: config.native_whatsapp_outbound_media_enabled,
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
-        discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
+        discord_effects_issuance_enabled: native_discord_effects
+            && (native_discord_edits || native_discord_media_effects),
         discord_effects: Some(std::sync::Arc::new(
             tools::DiscordEffectsClient::new(crate::discord::DiscordRest::new()?)
                 .with_card_effects(discord_card_effects),

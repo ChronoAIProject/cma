@@ -21,23 +21,25 @@ data:
   # Source opt-ins remain explicit; activate after serving and rollback readers are compatible.
   CMAEG_LARK_RESOURCE_WRITES_ENABLED: "true"
   # Separate exact-message write authority, after compatible reader rollout.
-  CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED: "false"
+  CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED: "true"
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
   # Upgrade retained message-context readers before accepting owner opt-ins.
-  CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED: "false"
-  # Keep native Meta source authoring off until compatible readers and setup acceptance.
-  CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED: "true"
+  # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
+  CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "false"
+  # Independent native JPEG/PNG/PDF/audio/sticker reply uploads, pending connected Meta acceptance.
+  CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "false"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_ENABLED: "true"
   # Discover explicit native Discord sources without editing record canary lists.
   CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED: "true"
   CMAEG_DISCORD_INTERACTIONS_ENABLED: "true"
-  # Retained message-event readers must be deployed before enabling issuance.
+  # Retained message-event readers deployed; native platform acceptance remains owner-led.
   # Owner-selected reaction intents and durable confirmed outbound target receipts.
-  CMAEG_DISCORD_REACTIONS_ENABLED: "false"
-  CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "false"
+  CMAEG_DISCORD_REACTIONS_ENABLED: "true"
+  CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "true"
   CMAEG_DISCORD_FORMS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
   CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
@@ -116,6 +118,8 @@ data:
   # Issue native Discord edit references only after every gateway reader is upgraded.
   CMAEG_NATIVE_DISCORD_EDITS_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: "true"
+  # Reader-first: effects-only media references require every retained reader.
+  CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: "false"
   # Persist verified native thread metadata only after compatible readers are deployed.
   # Explicit bounded history reads still require source consent and an exact original thread.
   CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED: "true"
@@ -150,3 +154,5 @@ data:
 
   # Issue new native Telegram effect references only after every reader is upgraded.
   CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: "true"
+  # Reader-first effects-only authority for one confirmed native upload message.
+  CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED: "false"

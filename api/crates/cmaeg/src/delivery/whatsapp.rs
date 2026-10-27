@@ -1,4 +1,4 @@
-//! Native text replies use the same bound Meta phone and persist exact send targets.
+//! Native text and bounded media replies use the same bound Meta phone and persist exact send targets.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     render::{RelayText, Renderer},
@@ -8,6 +8,7 @@ use crate::{
     ingress::routing_store::EventIdentity,
     tools::Capabilities,
     whatsapp::{
+        outbound::{MediaUpload, UploadedMedia},
         receipts::{Receipt, RETENTION},
         Error,
     },
@@ -17,6 +18,15 @@ use cmaeg_core::{
     message::OutboundMessage,
     seal::{EventRefPayload, ReplyAddress},
 };
+
+use std::{collections::VecDeque, time::Duration};
+use tokio::time::{timeout_at, Instant};
+
+enum NativePart {
+    Text(String),
+    Upload(MediaUpload),
+    Media(UploadedMedia),
+}
 
 impl Sender {
     pub(super) async fn whatsapp_reply(
@@ -37,14 +47,19 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
-        if !message.native_attachments.is_empty()
+        let media = !message.native_attachments.is_empty();
+        if (media
+            && (!self.relay.native_whatsapp_outbound_media_enabled()
+                || crate::interactions::has_controls(message)))
             || message.whatsapp_template.is_some()
+            || message.reply_to.is_some()
             || message.thread_reply
             || message.validate().is_err()
         {
             return (unsupported(), effects);
         }
         let Some(credentials) = crate::whatsapp::credentials(&ctx.channel.definition, &event.reply)
+            .filter(|credentials| credentials.validate().is_ok())
         else {
             return (rejected("native_whatsapp_destination_revoked"), effects);
         };
@@ -62,27 +77,59 @@ impl Sender {
             rendering,
             ..rejected("empty_message")
         };
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let prepared = async {
+            let files = crate::media::outbound::prepare(&message.native_attachments)
+                .await
+                .ok()?;
+            let mut operations: VecDeque<_> = parts
+                .into_iter()
+                .map(|part| NativePart::Text(part.text))
+                .collect();
+            for (item, file) in message.native_attachments.iter().zip(files) {
+                operations.push_back(NativePart::Upload(
+                    crate::whatsapp::Client::prepare_media(item, file)
+                        .await
+                        .ok()?,
+                ));
+            }
+            Some(operations)
+        };
+        let Ok(Some(mut operations)) = timeout_at(deadline, prepared).await else {
+            result.delivery = DeliveryOutcome::Rejected {
+                reason: "native_whatsapp_media_invalid".into(),
+            };
+            return (result, effects);
+        };
         let route = format!("whatsapp:{app_id}:{waba_id}:{phone_number_id}:{recipient_id}");
-        let _ticket = match ctx.gate.enter_route(&route).await {
-            Ok(ticket) => ticket,
-            Err(refusal) => {
+        let _ticket = match timeout_at(deadline, ctx.gate.enter_route(&route)).await {
+            Ok(Ok(ticket)) => ticket,
+            Ok(Err(refusal)) => {
                 result.delivery = refusal.outcome();
+                return (result, effects);
+            }
+            Err(_) => {
+                result.delivery = super::gate::expired();
                 return (result, effects);
             }
         };
         let mut confirmed = 0;
         let mut first = None;
-        for part in parts {
-            let Some(_pace) = self.pacing.acquire(&route).await else {
+        while let Some(operation) = operations.pop_front() {
+            let Ok(Some(_pace)) = timeout_at(deadline, self.pacing.acquire(&route)).await else {
                 result.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
                 break;
             };
-            let permit = match ctx.gate.attempt().await {
-                Ok(permit) => permit,
-                Err(refusal) => {
+            let permit = match timeout_at(deadline, ctx.gate.attempt()).await {
+                Ok(Ok(permit)) => permit,
+                Ok(Err(refusal)) => {
                     result.delivery = refusal.outcome();
+                    break;
+                }
+                Err(_) => {
+                    result.delivery = super::gate::expired();
                     break;
                 }
             };
@@ -90,21 +137,53 @@ impl Sender {
                 result.delivery = super::gate::expired();
                 break;
             }
-            let sent = self
-                .relay
-                .whatsapp
-                .send_text(
-                    credentials,
-                    phone_number_id,
-                    recipient_id,
-                    message_id,
-                    &part.text,
-                )
-                .await;
+            // The routed gate rechecks source/credential revision before each HTTP
+            // write, including the gap between upload and recipient send.
+            let send = async {
+                match operation {
+                    NativePart::Text(text) => self
+                        .relay
+                        .whatsapp
+                        .send_text(
+                            credentials,
+                            phone_number_id,
+                            recipient_id,
+                            message_id,
+                            &text,
+                        )
+                        .await
+                        .map(Some),
+                    NativePart::Upload(upload) => {
+                        let uploaded = self
+                            .relay
+                            .whatsapp
+                            .upload_media(credentials, phone_number_id, upload)
+                            .await?;
+                        operations.push_front(NativePart::Media(uploaded));
+                        Ok(None)
+                    }
+                    NativePart::Media(uploaded) => self
+                        .relay
+                        .whatsapp
+                        .send_media(
+                            credentials,
+                            phone_number_id,
+                            recipient_id,
+                            message_id,
+                            uploaded,
+                        )
+                        .await
+                        .map(Some),
+                }
+            };
+            let sent = timeout_at(deadline, send)
+                .await
+                .unwrap_or(Err(Error::Unconfirmed));
             drop(permit);
             ctx.gate.progress();
             match sent {
-                Ok(platform_id) => {
+                Ok(None) => continue,
+                Ok(Some(platform_id)) => {
                     let now = time::OffsetDateTime::now_utc().unix_timestamp();
                     let receipt = Receipt {
                         kind: "native_whatsapp_receipt_v1".into(),

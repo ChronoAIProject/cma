@@ -113,9 +113,11 @@ pub struct RelayClient {
     timeout: Duration,
     complete_replies: bool,
     native_media: bool,
+    native_whatsapp_outbound_media: bool,
     text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
+    native_discord_media_effects: bool,
     lark_cards: bool,
     lark_forms: bool,
     whatsapp_templates: bool,
@@ -127,6 +129,7 @@ pub struct RelayClient {
     discord_card_edits: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    telegram_media_effects: bool,
     pub whatsapp: crate::whatsapp::Client,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub telegram: crate::telegram::TelegramClient,
@@ -148,15 +151,6 @@ impl RelayClient {
         self.consumer_interactions
     }
 
-    /// Gate new WhatsApp controls until all readers support durable callbacks.
-    pub fn with_whatsapp_interactions(mut self, enabled: bool) -> Self {
-        self.whatsapp_interactions = enabled;
-        self
-    }
-    pub(super) fn whatsapp_interactions_enabled(&self) -> bool {
-        self.whatsapp_interactions
-    }
-
     pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
         self.telegram_effects = enabled;
         self
@@ -164,15 +158,14 @@ impl RelayClient {
     pub(super) fn telegram_effects_enabled(&self) -> bool {
         self.telegram_effects
     }
-    /// Enable only after the deployed relay preserves approved template metadata.
-    pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
-        self.whatsapp_templates = enabled;
+    /// New media scopes require compatible readers; retained effects stay usable.
+    pub fn with_telegram_media_effects(mut self, enabled: bool) -> Self {
+        self.telegram_media_effects = enabled;
         self
     }
-    pub(super) fn whatsapp_templates_enabled(&self) -> bool {
-        self.whatsapp_templates
+    pub(super) fn telegram_media_effects_enabled(&self) -> bool {
+        self.telegram_media_effects
     }
-
     /// Gate new card issuance until every reader understands retained Lark cards.
     pub fn with_lark_cards(mut self, enabled: bool) -> Self {
         self.lark_cards = enabled;
@@ -235,9 +228,11 @@ impl RelayClient {
             timeout,
             complete_replies: false,
             native_media: false,
+            native_whatsapp_outbound_media: false,
             text_edits: false,
             native_discord_edits: false,
             native_discord_effects: false,
+            native_discord_media_effects: false,
             lark_cards: false,
             lark_forms: false,
             whatsapp_templates: false,
@@ -249,6 +244,7 @@ impl RelayClient {
             discord_card_edits: false,
             consumer_interactions: false,
             telegram_effects: false,
+            telegram_media_effects: false,
             interactions: None,
             whatsapp: crate::whatsapp::Client::production()?,
             whatsapp_receipts: None,

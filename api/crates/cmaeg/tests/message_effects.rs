@@ -31,6 +31,8 @@ use std::{
     time::Duration,
 };
 use support::{receipt, App};
+#[path = "message_effects/media.rs"]
+mod media;
 
 #[derive(Default)]
 struct Platform {
