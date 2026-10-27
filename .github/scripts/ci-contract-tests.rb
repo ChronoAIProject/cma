@@ -42,6 +42,7 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Image normalization budgets"],
   ["ci", "backend", "Tests"],
+  ["ci", "backend", "Gateway socket latency budget"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
   ["ci", "backend", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],

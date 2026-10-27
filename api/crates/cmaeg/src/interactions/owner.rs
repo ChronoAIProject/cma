@@ -22,6 +22,26 @@ pub struct CallbackOwner {
     pub source: SourceKind,
 }
 
+/// Dispatch identity also represents a form issued to the default consumer.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DispatchOwner {
+    pub consumer: Option<ConsumerId>,
+    pub conversation_id: ConversationId,
+    pub partition_key: String,
+    pub routing: Option<ActivityRouting>,
+}
+impl From<CallbackOwner> for DispatchOwner {
+    fn from(owner: CallbackOwner) -> Self {
+        Self {
+            consumer: Some(owner.consumer),
+            conversation_id: owner.conversation_id,
+            partition_key: owner.partition_key,
+            routing: Some(owner.routing),
+        }
+    }
+}
+
 pub(crate) fn eligible(
     channel: &ResolvedChannel,
     event: &EventRefPayload,

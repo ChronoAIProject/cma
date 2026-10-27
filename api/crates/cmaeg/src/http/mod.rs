@@ -21,6 +21,7 @@ pub mod problems;
 pub(crate) mod public_urls;
 pub mod readiness;
 pub mod relay_capabilities;
+pub mod relay_resource_connections;
 pub mod reply_targets;
 pub mod schema;
 pub mod telegram;

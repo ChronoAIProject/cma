@@ -201,7 +201,7 @@ impl Sender {
         };
         let native_controls = (self.relay.lark_cards_enabled()
             && crate::interactions::lark::supported(*platform)
-            && crate::interactions::lark::requested(message))
+            && (crate::interactions::lark::requested(message) || self.native_lark_form(message)))
             || (*platform == Platform::Whatsapp
                 && self.relay.whatsapp_interactions_enabled()
                 && crate::interactions::whatsapp::requested(message));

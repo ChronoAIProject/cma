@@ -35,7 +35,7 @@ pub struct ToolsState {
     pub native_media_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
-    /// Advertise newly issued native Discord edit references after reader rollout.
+    /// Advertise native Discord text/card editing after the selected reader rollout.
     pub native_discord_edits_enabled: bool,
     pub discord_effects_issuance_enabled: bool,
     pub discord_effects: Option<Arc<super::DiscordEffectsClient>>,
@@ -102,7 +102,9 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.discord_message.is_some() {
+        let channel = if message.discord_message.is_some()
+            || (message.interaction_record_id.is_some() && message.route_id.starts_with("discord:"))
+        {
             self.resolver
                 .resolve_current(message.channel_id.as_str())
                 .await

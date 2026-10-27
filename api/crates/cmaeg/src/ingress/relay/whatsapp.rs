@@ -102,7 +102,7 @@ pub(super) fn observe(
     let callback = callback(raw, payload, message_id, parent)?;
     Ok(Observation::Message(RelayFacts {
         thread: None,
-        callback,
+        callback: callback.map(Box::new),
         event: None,
         conversation: ConversationKind::Private,
         thread_id: None,
@@ -156,6 +156,7 @@ fn callback(
         id: message_id.into(),
         data: data.into(),
         message_id: parent.into(),
+        form: None,
     }))
 }
 
