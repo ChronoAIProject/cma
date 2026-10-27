@@ -350,6 +350,13 @@ lasts at most 30 minutes after the event.
 
 ## Agent tools and native MCP
 
+Owners can read optional `agent_tools` from authenticated
+`GET /v1/channel-capabilities` to display the deployment's advertised tools.
+Each entry contains the exact MCP name, description and the `read_only`,
+`destructive`, `idempotent`, and `open_world` hints. Missing/null is unknown
+availability; `[]` is an empty advertised catalog. This discovery needs no
+channel agent credential and grants no tool execution or per-source permission.
+
 Configure the native MCP URL above with the channel's agent-key bearer. Use
 JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 `initialize`, `notifications/initialized` and `tools/list`. `tools/call` accepts:

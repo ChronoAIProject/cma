@@ -60,7 +60,19 @@ export const RelayAuthoringCapabilitiesSchema = object({
 });
 export type RelayAuthoringCapabilities = Output<typeof RelayAuthoringCapabilitiesSchema>;
 
+/** Server tool metadata; does not grant channel, source or event permission. */
+export const AgentToolCapabilitySchema = object({
+  name: text,
+  description: text,
+  read_only: boolean,
+  destructive: boolean,
+  idempotent: boolean,
+  open_world: boolean,
+});
+export type AgentToolCapability = Output<typeof AgentToolCapabilitySchema>;
+
 export const CapabilityViewSchema = object({
+  agent_tools: optional(nullable(array(AgentToolCapabilitySchema))),
   platforms: array(PlatformCapabilitySchema),
   source_features: optional(array(text)),
   relay_authoring: optional(nullable(RelayAuthoringCapabilitiesSchema)),

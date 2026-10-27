@@ -6,6 +6,34 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
 describe('gateway connection client', () => {
+  it('preserves optional server tool discovery without source or agent grants', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const client = new Cmaeg({
+      baseUrl: 'https://gateway.example',
+      credential: () => 'creator',
+      fetch,
+    });
+    const tool = {
+      name: 'futureTool',
+      description: 'A server-advertised tool.',
+      read_only: false,
+      destructive: true,
+      idempotent: true,
+      open_world: true,
+    };
+    for (const extra of [{}, { agent_tools: null }, { agent_tools: [] }, { agent_tools: [tool] }]) {
+      const response = { platforms: [], ...extra };
+      fetch.mockResolvedValueOnce(json(response));
+      expect(await client.getChannelCapabilities()).toEqual(response);
+      const call = fetch.mock.calls.at(-1);
+      expect(call?.[0]).toBe('https://gateway.example/v1/channel-capabilities');
+      const headers = new Headers(call?.[1]?.headers);
+      expect(headers.get('authorization')).toBe('Bearer creator');
+      expect(headers.has('x-cmaeg-agent-authorization')).toBe(false);
+      expect(call?.[1]?.body).toBeUndefined();
+    }
+  });
+
   it('discovers existing current-subject regional resource connections without owner or key grants', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const client = new Cmaeg({
