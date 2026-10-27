@@ -33,6 +33,11 @@ impl Sender {
         if !enabled
             || !whole
             || message.native_attachments.len() != 1
+            || self.relay.native_media_receipts.is_none()
+            || message
+                .native_attachments
+                .iter()
+                .any(|a| a.kind == NativeMediaKind::Sticker)
             || event.lineage.is_some()
             || message.native_attachments.iter().any(|a| {
                 a.filename
@@ -48,14 +53,14 @@ impl Sender {
         {
             return Ok(None);
         }
-        let context = self
-            .relay
-            .interactions
-            .as_ref()
-            .ok_or(())?
-            .event_context(ctx.channel, event)
-            .await
-            .map_err(|_| ())?;
+        let Some(interactions) = &self.relay.interactions else {
+            return Ok(None);
+        };
+        let context = match interactions.event_context(ctx.channel, event).await {
+            Ok(context) => context,
+            Err(crate::interactions::Error::Denied) => return Err(()),
+            Err(crate::interactions::Error::Unavailable) => return Ok(None),
+        };
         let Some(custody) = authority::custody(ctx.channel, event, &context.activity) else {
             return Ok(None);
         };
@@ -63,30 +68,36 @@ impl Sender {
         let token = authority::token(ctx.channel, &destination).ok_or(())?;
         let discord_channel = match &event.reply {
             ReplyAddress::Telegram { bot_id, .. } => {
-                if self.relay.telegram.get_me(token).await.map_err(|_| ())?.id != *bot_id {
-                    return Err(());
+                match self.relay.telegram.get_me(token).await {
+                    Ok(identity) if identity.id == *bot_id => {}
+                    Ok(_) | Err(crate::telegram::Error::Rejected) => return Err(()),
+                    Err(_) => return Ok(None),
                 }
                 None
             }
             ReplyAddress::Discord {
                 bot_id, channel_id, ..
             } => {
-                self.relay
+                match self.relay.discord.verify_media_bot(token, bot_id).await {
+                    Ok(()) => {}
+                    Err(crate::discord::RestError::Rejected) => return Err(()),
+                    Err(_) => return Ok(None),
+                }
+                match self
+                    .relay
                     .discord
-                    .verify_media_bot(token, bot_id)
+                    .media_channel(token, channel_id, &context.activity.conversation)
                     .await
-                    .map_err(|_| ())?;
-                Some(
-                    self.relay
-                        .discord
-                        .media_channel(token, channel_id, &context.activity.conversation)
-                        .await
-                        .map_err(|_| ())?,
-                )
+                {
+                    Ok(channel) => Some(channel),
+                    Err(
+                        crate::discord::RestError::Rejected | crate::discord::RestError::NotFound,
+                    ) => return Err(()),
+                    Err(_) => return Ok(None),
+                }
             }
             _ => return Err(()),
         };
-        self.relay.native_media_receipts.as_ref().ok_or(())?;
         Ok(Some(MediaSeed {
             activity: context.activity,
             custody,

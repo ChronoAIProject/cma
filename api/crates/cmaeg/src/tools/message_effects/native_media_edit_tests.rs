@@ -7,6 +7,8 @@ use crate::native_media::{
 };
 use cmaeg_core::message::NativeMediaKind;
 use std::sync::atomic::Ordering;
+#[path = "native_media_send_tests.rs"]
+mod send_tests;
 
 async fn media_app() -> (App, MessageRef) {
     let mut app = App::new().await;
