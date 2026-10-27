@@ -30,10 +30,10 @@ const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
 #[test]
-fn lark_resource_writes_ship_disabled_until_reader_and_binding_acceptance() {
+fn lark_resource_writes_allow_source_opt_in_after_compatible_reader_rollout() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),
-        Some("false")
+        Some("true")
     );
 }
 
@@ -453,9 +453,13 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
 }
 
 #[test]
-fn native_thread_history_is_default_off_until_compatible_reader_rollout() {
+fn native_thread_history_allows_source_opt_in_while_complete_replies_stay_off() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED"),
+        Some("true")
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NYXID_COMPLETE_REPLIES"),
         Some("false")
     );
 }
