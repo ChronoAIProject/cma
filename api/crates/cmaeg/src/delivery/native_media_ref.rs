@@ -39,11 +39,6 @@ impl Sender {
                 .iter()
                 .any(|a| a.kind == NativeMediaKind::Sticker)
             || event.lineage.is_some()
-            || message.native_attachments.iter().any(|a| {
-                a.filename
-                    .as_deref()
-                    .is_some_and(|name| name.starts_with("SPOILER_"))
-            })
             || message.whatsapp_template.is_some()
             || message.reply_to.is_some()
             || !message
@@ -142,6 +137,7 @@ impl Sender {
             revision: 0,
             snapshot: original.snapshot.clone(),
             last_operation: None,
+            status: None,
             expires_at: original.expires_at,
             version: 0,
         };

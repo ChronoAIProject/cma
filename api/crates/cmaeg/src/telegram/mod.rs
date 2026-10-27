@@ -4,6 +4,7 @@ mod files;
 mod management;
 mod media;
 pub(crate) mod media_edit;
+mod media_presentation;
 pub(crate) use media::{media_token_matches, MediaUpload};
 #[cfg(test)]
 mod media_edit_tests;

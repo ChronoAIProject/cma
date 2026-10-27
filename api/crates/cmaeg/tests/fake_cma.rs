@@ -30,6 +30,7 @@ struct Stored {
 struct StateData {
     records: Arc<Mutex<BTreeMap<String, Stored>>>,
     pub fail_put: Arc<AtomicBool>,
+    put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
     put_conflicts: Arc<AtomicU64>,
@@ -39,6 +40,8 @@ struct StateData {
 pub struct FakeCma {
     pub base_url: String,
     pub fail_put: Arc<AtomicBool>,
+    /// Fail only the next N writes, allowing terminal receipt persistence to recover.
+    pub put_failures: Arc<AtomicU64>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
     /// Upcoming writes to an existing record that lose a race: each first
@@ -57,6 +60,7 @@ impl FakeCma {
         let state = StateData {
             records: Arc::new(Mutex::new(BTreeMap::new())),
             fail_put: Arc::new(AtomicBool::new(fail_put)),
+            put_failures: Arc::default(),
             get_delay_ms: Arc::default(),
             gets: Arc::default(),
             put_conflicts: Arc::default(),
@@ -97,6 +101,7 @@ impl FakeCma {
         Self {
             base_url: format!("http://{address}"),
             fail_put: state.fail_put.clone(),
+            put_failures: state.put_failures.clone(),
             get_delay_ms: state.get_delay_ms.clone(),
             gets: state.gets.clone(),
             put_conflicts: state.put_conflicts.clone(),
@@ -185,7 +190,14 @@ async fn put_record(
     Path(record_id): Path<String>,
     body: Result<Json<PutRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    if state.fail_put.load(Ordering::SeqCst) {
+    if state.fail_put.load(Ordering::SeqCst)
+        || state
+            .put_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let Json(body) = body.unwrap();
