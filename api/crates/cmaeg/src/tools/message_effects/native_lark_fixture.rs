@@ -148,6 +148,10 @@ impl Fixture {
         app.definition.secrets.native_lark = Some(native::credentials());
         if named {
             app.named_consumer();
+            app.definition.routing.as_mut().unwrap().default_targets = vec![
+                cmaeg_core::ids::ConsumerId::default_consumer(),
+                app.event.consumer.clone().unwrap(),
+            ];
         } else {
             app.definition.routing = Some(serde_json::from_value(json!({"version":1,"default_consumer":{"name":"default"},"consumers":[],"default_targets":["default"]})).unwrap());
         }
