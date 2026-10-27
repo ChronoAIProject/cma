@@ -1,4 +1,4 @@
-//! Native text and bounded media replies use the same bound Meta phone and persist exact send targets.
+//! Native text, media and approved templates retain the bound phone and exact send targets.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     render::{RelayText, Renderer},
@@ -10,6 +10,7 @@ use crate::{
     whatsapp::{
         outbound::{MediaUpload, UploadedMedia},
         receipts::{Receipt, RETENTION},
+        templates::PreparedTemplate,
         Error,
     },
 };
@@ -26,6 +27,7 @@ enum NativePart {
     Text(String),
     Upload(MediaUpload),
     Media(UploadedMedia),
+    Template(PreparedTemplate),
 }
 
 impl Sender {
@@ -51,13 +53,23 @@ impl Sender {
         if (media
             && (!self.relay.native_whatsapp_outbound_media_enabled()
                 || crate::interactions::has_controls(message)))
-            || message.whatsapp_template.is_some()
+            || (message.whatsapp_template.is_some()
+                && !self.relay.native_whatsapp_templates_enabled())
             || message.reply_to.is_some()
             || message.thread_reply
             || message.validate().is_err()
         {
             return (unsupported(), effects);
         }
+        let template = match message.whatsapp_template.as_ref() {
+            Some(template) => {
+                match PreparedTemplate::new(phone_number_id, recipient_id, message_id, template) {
+                    Ok(template) => Some(template),
+                    Err(_) => return (rejected("native_whatsapp_template_invalid"), effects),
+                }
+            }
+            None => None,
+        };
         let Some(credentials) = crate::whatsapp::credentials(&ctx.channel.definition, &event.reply)
             .filter(|credentials| credentials.validate().is_ok())
         else {
@@ -79,6 +91,9 @@ impl Sender {
         };
         let deadline = Instant::now() + Duration::from_secs(60);
         let prepared = async {
+            if let Some(template) = template {
+                return Some(VecDeque::from([NativePart::Template(template)]));
+            }
             let files = crate::media::outbound::prepare(&message.native_attachments)
                 .await
                 .ok()?;
@@ -141,6 +156,12 @@ impl Sender {
             // write, including the gap between upload and recipient send.
             let send = async {
                 match operation {
+                    NativePart::Template(template) => self
+                        .relay
+                        .whatsapp
+                        .send_template(credentials, template)
+                        .await
+                        .map(Some),
                     NativePart::Text(text) => self
                         .relay
                         .whatsapp

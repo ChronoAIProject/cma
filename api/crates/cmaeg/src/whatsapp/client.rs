@@ -233,6 +233,31 @@ impl Client {
         }))).await?;
         Self::message_identity(&result, recipient)
     }
+    /// One bounded approved-template send, with no retry after uncertain acceptance.
+    pub(crate) async fn send_template(
+        &self,
+        credentials: &WhatsappCredentials,
+        template: super::templates::PreparedTemplate,
+    ) -> Result<String, Error> {
+        let mut client = self.clone();
+        if template.media {
+            // Meta resolves template media references; ordinary text templates
+            // keep the native eight-second transport budget.
+            client.timeout = Duration::from_secs(60);
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let result = client
+            .call_bytes(
+                Method::POST,
+                Self::endpoint(&format!("{}/messages", template.phone))?,
+                credentials.access_token.as_str(),
+                headers,
+                template.body,
+            )
+            .await?;
+        Self::message_identity(&result, &template.recipient)
+    }
     pub(super) fn message_identity(result: &Value, recipient: &str) -> Result<String, Error> {
         if result["messaging_product"] != "whatsapp"
             || !result["contacts"].as_array().is_some_and(|contacts| {
