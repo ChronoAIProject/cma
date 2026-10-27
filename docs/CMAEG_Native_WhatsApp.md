@@ -7,19 +7,22 @@ currently discards reactions before CMA receives them; see
 [the upstream audit](CMAEG_WhatsApp_Incoming_Reactions.md).
 
 This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
-on retained incoming messages and confirmed CMA text replies, and actual native
-text replies through Graph API `v25.0`. It does not establish complete WhatsApp
-support. Native media delivery, approved templates, interactive controls,
-outbound reactions/edits, structured source setup UI and connected Meta client
+on retained incoming messages and confirmed CMA replies, and actual native
+text and separately gated [JPEG/PNG/PDF/audio/sticker replies](CMAEG_Native_WhatsApp_Outbound_Media.md) through Graph API `v25.0`. It does not establish complete WhatsApp
+support. Native video delivery, further audio/document profiles, approved templates, interactive controls,
+outbound reactions/edits and connected Meta client
 acceptance remain required follow-ups. No production rollout, Meta app setting
 change, or external send is part of this implementation.
 
 ## Reader deployment and authoring
 
-`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false`; the deployment
-ConfigMap explicitly retains that value pending connected Meta setup acceptance. Deploy compatible
-readers everywhere before enabling authoring: old readers cannot decode the new
-source, credentials or sealed reply address. Native authoring also requires
+`CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` defaults to `false` in code. The deployment
+ConfigMap enables owner setup and testing after compatible Gateway/Web readers
+and isolated Custom-channel acceptance were verified. This activation does not
+claim connected Meta acceptance; the owner must still configure and test the
+dedicated app. Keep compatible readers everywhere after enabling authoring:
+older readers cannot decode the new source, credentials or sealed reply address.
+Native authoring also requires
 `CMAEG_MULTI_CONSUMER_WRITES_ENABLED`, `CMAEG_ROUTED_ADMISSION_ENABLED` and
 `CMAEG_ROUTED_RECOVERY_ENABLED`. Every active consumer must use a provider with
 durable response recovery. Retained work uses the existing global recovery scan;
@@ -112,9 +115,13 @@ Meta reactions become `ActivityKind::Event` with CloudEvent type
 `cma.message.reaction.updated.v1`. `subject` and `data.message_id` contain the
 native target ID. Data includes `original_event_id`, `original_author`,
 `new_reactions` and `provider_timestamp`. A nonempty emoji is the sender's current
-replacement state; an empty string is removal. `old_reactions` is absent because
-Meta does not supply it. The reacting account remains `unknown`; the original
-author is a bot only when an exact confirmed CMA send receipt proves that fact.
+replacement state. Meta's [reaction webhook reference](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/reaction)
+documents removal by omitting the `emoji` field. CMA maps that omission and an
+explicit empty string to `new_reactions: []`; a present null, non-string,
+control-containing or oversized value remains invalid. `old_reactions` is absent
+because Meta does not supply it. The reacting account remains `unknown`; the
+original author is a bot only when an exact confirmed CMA send receipt proves
+that fact. This inbound contract does not establish outbound reaction removal.
 
 Incoming targets must exist in a retained, admitted ordinary-message plan for
 the exact source and private sender. Outgoing targets require an encrypted
