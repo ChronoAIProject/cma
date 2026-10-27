@@ -74,9 +74,12 @@ pub async fn check(
             checks.push(item("callback", "Native app callback", false, "Subscribe the separate app to receive, recalled and reaction created/deleted events using the native callback URL. Supports text, recall and human reaction deltas for retained messages; incoming edits are unverified."));
             "native_lark".into()
         }
-        Source::Whatsapp { .. } => {
+        Source::Whatsapp { group_ids, .. } => {
             checks.push(item("credential", "Native Meta credentials", secrets.whatsapp.is_some(), "Encrypted app, access and verification credentials are required. Meta app and WABA phone custody are checked when these are authored; this diagnostic does not contact Meta."));
-            checks.push(item("callback", "Dedicated app callback", false, "Configure the returned native WhatsApp webhook URL on a dedicated Meta app. Existing external callbacks are never changed automatically. Text and reaction ingress with native text replies are supported; media and templates are not enabled."));
+            checks.push(item("callback", "Dedicated app callback", false, "Configure the returned native WhatsApp webhook URL on a dedicated Meta app. Existing external callbacks are never changed automatically. Private text and reactions are supported; opted-in existing groups, media and templates require their separate gateway capabilities."));
+            if !group_ids.is_empty() {
+                checks.push(item("groups", "Existing groups", true, "Explicit group IDs are configured. Phone OBA and group membership are proved at authoring and before group effects; this diagnostic does not contact Meta."));
+            }
             "whatsapp".into()
         }
         Source::Discord { .. } => {

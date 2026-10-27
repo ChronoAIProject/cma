@@ -81,6 +81,7 @@ pub(crate) async fn serve(
         crate::native_lark::Client::production()?
     ));
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
+    state.native_whatsapp_groups_writes_enabled = config.native_whatsapp_groups_writes_enabled;
     state.native_whatsapp_admission_enabled =
         config.routing.admission_enabled && config.routing.recovery_enabled;
     state.lark_message_effects_writes_enabled = config.lark_message_effects_writes_enabled;
@@ -142,6 +143,7 @@ pub(crate) async fn serve(
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
         .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
+        .with_native_whatsapp_groups(config.native_whatsapp_groups_enabled)
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
@@ -235,6 +237,7 @@ pub(crate) async fn serve(
     .with_native_lark_intake(config.native_lark_intake_enabled)
     .with_native_lark_media(config.native_lark_media_enabled)
     .with_whatsapp_media(config.native_whatsapp_media_enabled)
+    .with_whatsapp_groups(config.native_whatsapp_groups_enabled)
     .with_routed(
         routed
             .as_ref()
@@ -273,6 +276,7 @@ pub(crate) async fn serve(
             config.native_whatsapp_reactions_enabled,
         ))),
         native_whatsapp_templates_enabled: config.native_whatsapp_templates_enabled,
+        native_whatsapp_groups_enabled: config.native_whatsapp_groups_enabled,
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects

@@ -43,6 +43,7 @@ pub struct ToolsState {
     pub native_whatsapp_outbound_media_enabled: bool,
     /// Approved native template replies, independently default-off from relay templates/uploads.
     pub native_whatsapp_templates_enabled: bool,
+    pub native_whatsapp_groups_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
     /// Advertise native Discord text/card editing after the selected reader rollout.

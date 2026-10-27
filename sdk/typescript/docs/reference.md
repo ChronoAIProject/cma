@@ -826,3 +826,21 @@ clear the bot reaction or one emoji/custom-emoji entry. Legacy references and
 relay transports report unsupported. An unknown receipt remains unknown and is
 never retried automatically. Capability support remains subject to Telegram's
 message-age, administrator-rights and reaction rules.
+
+### Native WhatsApp existing-group messaging
+
+Native WhatsApp source and request types accept optional `group_ids` (up to 16
+unique opaque Meta group IDs). Absent or empty values retain private behavior.
+New opt-ins require explicit `native_whatsapp_groups_writes_enabled` discovery;
+retained groups can be removed when authoring is disabled. The separate groups
+issuance flag controls new group intake and sends. Eligibility is the exact
+phone's OBA approval and current existing-group membership, verified read-only.
+
+Group event actors retain the original participant while conversation IDs retain
+the group. Replies and delayed targets use sealed original consumer custody.
+Group native media capabilities omit stickers and WebP. Group approved templates
+advertise optional `whatsapp_template_components: ["header", "body"]` alongside
+`whatsapp_templates: true`, and reject button components. Existing media/template
+gates and format limits still apply. No group management, message edit/delete,
+reaction or controls authority is added. Connected Meta v25/OBA acceptance is
+still outstanding; source capability presence does not prove delivery.

@@ -23,6 +23,8 @@ pub struct Store {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Receipt {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<cmaeg_core::channel::whatsapp::WhatsappGroupReply>,
     pub original: EventIdentity,
     pub source: SourceKind,
     pub recipient: String,
@@ -49,10 +51,20 @@ impl Store {
             keys,
         }
     }
-    fn id(channel: &ChannelId, source: &SourceKind, recipient: &str, message: &str) -> String {
+    fn id(
+        channel: &ChannelId,
+        source: &SourceKind,
+        recipient: &str,
+        message: &str,
+        group: bool,
+    ) -> String {
         let hash = Sha256::digest(
             serde_json::to_vec(&(
-                "native_whatsapp_receipt_v1",
+                if group {
+                    "native_whatsapp_group_receipt_v1"
+                } else {
+                    "native_whatsapp_receipt_v1"
+                },
                 channel,
                 source,
                 recipient,
@@ -73,6 +85,7 @@ impl Store {
             &receipt.source,
             &receipt.recipient,
             &receipt.message_id,
+            receipt.group.is_some(),
         );
         let bytes = serde_json::to_vec(receipt).map_err(|_| Error::Invalid)?;
         let blob = seal_interaction(&self.keys, &id, &bytes).map_err(|_| Error::Invalid)?;
@@ -91,12 +104,13 @@ impl Store {
             Ok(_) => Ok(()),
             Err(RecordError::Conflict { .. } | RecordError::Unavailable(_)) => {
                 match self
-                    .load(
+                    .load_inner(
                         &receipt.original.channel_id,
                         &receipt.source,
                         &receipt.recipient,
                         &receipt.message_id,
                         receipt.confirmed_at,
+                        receipt.group.is_some(),
                     )
                     .await?
                 {
@@ -116,7 +130,31 @@ impl Store {
         message: &str,
         now: i64,
     ) -> Result<Option<Receipt>, Error> {
-        let id = Self::id(channel, source, recipient, message);
+        self.load_inner(channel, source, recipient, message, now, false)
+            .await
+    }
+    #[cfg(test)]
+    pub(crate) async fn load_group(
+        &self,
+        channel: &ChannelId,
+        source: &SourceKind,
+        recipient: &str,
+        message: &str,
+        now: i64,
+    ) -> Result<Option<Receipt>, Error> {
+        self.load_inner(channel, source, recipient, message, now, true)
+            .await
+    }
+    async fn load_inner(
+        &self,
+        channel: &ChannelId,
+        source: &SourceKind,
+        recipient: &str,
+        message: &str,
+        now: i64,
+        group: bool,
+    ) -> Result<Option<Receipt>, Error> {
+        let id = Self::id(channel, source, recipient, message, group);
         let url = self.records.record_url(&id).map_err(|_| Error::Invalid)?;
         let value = match self.records.get(url.as_str()).await {
             Ok(value) => value,
@@ -134,6 +172,7 @@ impl Store {
             || receipt.source != *source
             || receipt.recipient != recipient
             || receipt.message_id != message
+            || receipt.group.is_some() != group
         {
             return Err(Error::Invalid);
         }
@@ -142,10 +181,18 @@ impl Store {
 }
 impl Receipt {
     fn validate(&self, now: i64) -> Result<(), Error> {
-        if self.kind != "native_whatsapp_receipt_v1"
+        let destination_valid = if let Some(group) = &self.group {
+            self.kind == "native_whatsapp_group_receipt_v1"
+                && group.validate().is_ok()
+                && self.recipient == group.group_id
+                && matches!(&self.source,SourceKind::Whatsapp {app_id,waba_id,phone_number_id} if app_id==&group.app_id && waba_id==&group.waba_id && phone_number_id==&group.phone_number_id)
+        } else {
+            self.kind == "native_whatsapp_receipt_v1"
+                && cmaeg_core::channel::whatsapp::valid_meta_id(&self.recipient)
+        };
+        if !destination_valid
             || !matches!(self.source, SourceKind::Whatsapp { .. })
             || !cmaeg_core::channel::whatsapp::valid_message_id(&self.message_id)
-            || !cmaeg_core::channel::whatsapp::valid_meta_id(&self.recipient)
             || self.original.owner.is_empty()
             || self.confirmed_at <= 0
             || self.retained_until <= self.confirmed_at

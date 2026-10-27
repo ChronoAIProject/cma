@@ -49,6 +49,7 @@ impl IngressState {
                         .is_ok_and(|messages| {
                             messages.iter().any(|message| {
                                 message.id == *target
+                                    && message.group_id.is_none()
                                     && message.sender == verified.message.sender
                                     && matches!(
                                         message.content,
@@ -168,6 +169,9 @@ impl IngressState {
             };
             let body = match routing.plans.load(&identity).await {
                 Ok(None) => {
+                    if verified.message.group_id.is_some() && !self.native_whatsapp_groups_enabled {
+                        return refusal(422, "native_whatsapp_groups_disabled");
+                    }
                     if matches!(verified.message.content, Content::Media { .. })
                         && !(self.media_enabled && self.native_whatsapp_media_enabled)
                     {

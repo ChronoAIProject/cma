@@ -1717,6 +1717,16 @@
           "typing": {
             "type": "boolean"
           },
+          "whatsapp_template_components": {
+            "description": "Group templates accept header/body components only; absent for other transports.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "whatsapp_templates": {
             "description": "Approved WhatsApp template replies only; no callbacks or initiated sends.",
             "type": [
@@ -4938,6 +4948,13 @@
               "null"
             ]
           },
+          "native_whatsapp_groups_writes_enabled": {
+            "description": "Owner opt-in to existing OBA groups; independent of group issuance.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_whatsapp_writes_enabled": {
             "type": [
               "boolean",
@@ -5581,6 +5598,14 @@
               "app_id": {
                 "type": "string"
               },
+              "group_ids": {
+                "description": "Explicit existing group IDs; empty keeps private-only behavior.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
               "phone_number_id": {
                 "type": "string"
               },
@@ -6012,6 +6037,14 @@
               },
               "app_id": {
                 "type": "string"
+              },
+              "group_ids": {
+                "description": "Explicit existing group IDs; empty keeps private-only behavior.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
               },
               "phone_number_id": {
                 "type": "string"

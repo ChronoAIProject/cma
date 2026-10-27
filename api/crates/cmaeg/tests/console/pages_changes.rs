@@ -120,11 +120,13 @@ impl SourceChanges for RecordingSources {
                     app_id,
                     waba_id,
                     phone_number_id,
+                    group_ids,
                     admission,
                 } => Source::Whatsapp {
                     app_id,
                     waba_id,
                     phone_number_id,
+                    group_ids,
                     admission,
                 },
                 SourceRequest::Telegram { bot_id, .. } if bot_id == "refuse" => {

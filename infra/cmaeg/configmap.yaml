@@ -41,6 +41,9 @@ data:
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"
   # Independent approved-template native replies; keep off pending connected Meta acceptance.
   CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "false"
+  # Existing-group opt-ins and new group intake/sends require their own rollout.
+  CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED: "false"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_ENABLED: "true"

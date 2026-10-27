@@ -144,6 +144,7 @@ impl Sender {
         };
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let receipt = Receipt {
+            group: None,
             kind: "native_whatsapp_receipt_v1".into(),
             original: EventIdentity {
                 owner: ctx.channel.definition.owner.subject.clone(),

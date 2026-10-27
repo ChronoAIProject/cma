@@ -39,17 +39,44 @@ impl Sender {
     ) -> (IntentReceipt, SendEffects) {
         // Native sends do not consume or change a relay acknowledgement token.
         let effects = SendEffects::default();
-        let ReplyAddress::Whatsapp {
-            app_id,
-            waba_id,
-            phone_number_id,
-            recipient_id,
-            message_id,
-        } = &event.reply
-        else {
-            return (unsupported(), effects);
+        let (app_id, waba_id, phone_number_id, recipient_id, message_id, group) = match &event.reply
+        {
+            ReplyAddress::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+                recipient_id,
+                message_id,
+            } => (
+                app_id,
+                waba_id,
+                phone_number_id,
+                recipient_id,
+                message_id,
+                None,
+            ),
+            ReplyAddress::WhatsappGroup(reply) => (
+                &reply.app_id,
+                &reply.waba_id,
+                &reply.phone_number_id,
+                &reply.group_id,
+                &reply.message_id,
+                Some(reply),
+            ),
+            _ => return (unsupported(), effects),
         };
-        if self.relay.native_whatsapp_interactions_enabled()
+        if group.is_some()
+            && (!self.relay.native_whatsapp_groups_enabled()
+                || crate::interactions::has_controls(message)
+                || message
+                    .native_attachments
+                    .iter()
+                    .any(|item| item.kind == cmaeg_core::message::NativeMediaKind::Sticker))
+        {
+            return (unsupported(), effects);
+        }
+        if group.is_none()
+            && self.relay.native_whatsapp_interactions_enabled()
             && crate::interactions::whatsapp::requested(message)
         {
             return self.whatsapp_controls_reply(ctx, event, message).await;
@@ -68,7 +95,10 @@ impl Sender {
         }
         let template = match message.whatsapp_template.as_ref() {
             Some(template) => {
-                match PreparedTemplate::new(phone_number_id, recipient_id, message_id, template) {
+                match group.map_or_else(
+                    || PreparedTemplate::new(phone_number_id, recipient_id, message_id, template),
+                    |reply| PreparedTemplate::for_group(reply, template),
+                ) {
                     Ok(template) => Some(template),
                     Err(_) => return (rejected("native_whatsapp_template_invalid"), effects),
                 }
@@ -142,6 +172,26 @@ impl Sender {
                 };
                 break;
             };
+            if let Some(reply) = group {
+                if !matches!(
+                    timeout_at(
+                        deadline,
+                        self.relay.whatsapp.verify_groups(
+                            credentials,
+                            phone_number_id,
+                            std::slice::from_ref(&reply.group_id),
+                            Some(&reply.participant_id)
+                        )
+                    )
+                    .await,
+                    Ok(Ok(()))
+                ) {
+                    result.delivery = DeliveryOutcome::Rejected {
+                        reason: "native_whatsapp_group_custody_unavailable".into(),
+                    };
+                    break;
+                }
+            }
             let permit = match timeout_at(deadline, ctx.gate.attempt()).await {
                 Ok(Ok(permit)) => permit,
                 Ok(Err(refusal)) => {
@@ -167,6 +217,12 @@ impl Sender {
                         .send_template(credentials, template)
                         .await
                         .map(Some),
+                    NativePart::Text(text) if group.is_some() => self
+                        .relay
+                        .whatsapp
+                        .send_group_text(credentials, group.unwrap(), &text)
+                        .await
+                        .map(Some),
                     NativePart::Text(text) => self
                         .relay
                         .whatsapp
@@ -188,6 +244,12 @@ impl Sender {
                         operations.push_front(NativePart::Media(uploaded));
                         Ok(None)
                     }
+                    NativePart::Media(uploaded) if group.is_some() => self
+                        .relay
+                        .whatsapp
+                        .send_group_media(credentials, group.unwrap(), uploaded)
+                        .await
+                        .map(Some),
                     NativePart::Media(uploaded) => self
                         .relay
                         .whatsapp
@@ -212,7 +274,13 @@ impl Sender {
                 Ok(Some(platform_id)) => {
                     let now = time::OffsetDateTime::now_utc().unix_timestamp();
                     let receipt = Receipt {
-                        kind: "native_whatsapp_receipt_v1".into(),
+                        group: group.cloned(),
+                        kind: if group.is_some() {
+                            "native_whatsapp_group_receipt_v1"
+                        } else {
+                            "native_whatsapp_receipt_v1"
+                        }
+                        .into(),
                         original: EventIdentity {
                             owner: ctx.channel.definition.owner.subject.clone(),
                             channel_id: event.channel_id.clone(),

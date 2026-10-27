@@ -32,8 +32,8 @@ implemented. Explicit history reads have a default-off, source-opt-in path throu
 its exact existing thread, with no pagination or write authority. Existing-thread replies do not imply those
 operations. Separately gated Discord and Telegram uploads can issue effects-only
 authority for one exact confirmed native message. Multiple-message and uncertain
-sends issue no aggregate authority; uploads grant no editing authority. WhatsApp editing and groups
-are limitations of this CMA integration, not universal claims about the platform;
+sends issue no aggregate authority; uploads grant no editing authority. WhatsApp message editing remains unsupported. Native existing-group messaging
+has a separate explicit owner opt-in and default-off gates;
 WhatsApp account identity also does not prove a human sender.
 
 Incoming WhatsApp reactions are filtered out by the pinned NyxID adapter before
@@ -48,7 +48,11 @@ that relay. A separate default-off gate adds native JPEG/PNG, PDF and bounded
 AAC/AMR/MP3/M4A/mono Opus, static/animated WebP sticker and Baseline H.264
 MP4/3GPP video replies. A separate default-off gate adds native approved-template
 replies using the full existing typed header/body/URL-button contract, with
-durable receipt replay. The independent native reaction gate adds own reactions
+durable receipt replay. Separate default-off [existing-group gates](CMAEG_Native_WhatsApp_Groups.md)
+add exact OBA phone/group membership verification, distinct group/participant
+ingress and replies, bounded image/PDF/audio/video and header/body-only templates.
+Groups do not gain stickers, controls, reactions, edit/delete or management
+operations; connected v25/OBA acceptance remains unverified. The independent native reaction gate adds own reactions
 to exact authenticated received messages through `received_message` context.
 Its local signed-webhook/provider/send tests pass and structured source/credential
 setup is available in the portal; further video/document/audio profiles, native

@@ -29,7 +29,10 @@ pub enum Source {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
-        /// Admission policy for raw private senders and conversations.
+        /// Explicit existing-group opt-in for an Official Business Account phone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group_ids: Option<Vec<String>>,
+        /// Admission policy for original participants and private/group conversations.
         admission: AdmissionPolicy,
     },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
@@ -126,7 +129,10 @@ pub enum SourceRequest {
         waba_id: String,
         /// Native receiving and sending phone number identity.
         phone_number_id: String,
-        /// Admission policy for raw private senders and conversations.
+        /// Explicit existing-group opt-in for an Official Business Account phone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group_ids: Option<Vec<String>>,
+        /// Admission policy for original participants and private/group conversations.
         admission: AdmissionPolicy,
     },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.

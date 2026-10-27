@@ -279,6 +279,9 @@ pub struct Capabilities {
     /// Approved template replies, absent until verified for this WhatsApp relay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,
+    /// Group template component subset; header/body only when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template_components: Option<Vec<String>>,
     /// Absent until native relay media has been verified for this deployment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media: Option<super::NativeMediaCapabilities>,

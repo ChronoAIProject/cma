@@ -3,6 +3,14 @@ use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_M
 use cmaeg_core::{channel::Platform, message::WhatsappTemplate};
 
 impl RelayClient {
+    pub fn with_native_whatsapp_groups(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_groups = enabled;
+        self
+    }
+    pub(in crate::delivery) fn native_whatsapp_groups_enabled(&self) -> bool {
+        self.native_whatsapp_groups
+    }
+
     /// Native template replies require their independent reader rollout.
     pub fn with_native_whatsapp_templates(mut self, enabled: bool) -> Self {
         self.native_whatsapp_templates = enabled;

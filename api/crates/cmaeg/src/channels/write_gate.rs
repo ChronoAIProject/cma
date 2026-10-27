@@ -43,8 +43,10 @@ pub struct WriteFlags {
     /// Exact proxy bindings are admitted only after compatible readers deploy.
     pub lark_resources: bool,
     pub lark_message_effects: bool,
-    /// Admits native Discord sources and credential revisions after reader rollout.
+    /// Admits new existing-group opt-ins after compatible group readers deploy.
+    pub native_whatsapp_groups: bool,
     pub native_whatsapp: bool,
+    /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
@@ -203,6 +205,36 @@ pub(crate) fn check(
             "native_lark_writes_disabled",
         ));
     }
+    if !flags.native_whatsapp_groups {
+        for source in &next.sources {
+            if let Source::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+                group_ids,
+                ..
+            } = source
+            {
+                let retained = |id: &String| {
+                    current.is_some_and(|old| {
+                        old.sources.iter().any(|source| {
+                            matches!(source, Source::Whatsapp {
+                                app_id: a, waba_id: w, phone_number_id: p,
+                                group_ids: old_ids, ..
+                            } if a == app_id && w == waba_id
+                                && p == phone_number_id && old_ids.contains(id))
+                        })
+                    })
+                };
+                if group_ids.iter().any(|id| !retained(id)) {
+                    return Err(ValidationError::new(
+                        "/sources/whatsapp/group_ids",
+                        "native_whatsapp_groups_writes_disabled",
+                    ));
+                }
+            }
+        }
+    }
     let whatsapp = |d: &ChannelDefinition| {
         (
             d.sources
@@ -216,7 +248,14 @@ pub(crate) fn check(
     let next_whatsapp = whatsapp(next);
     if (!next_whatsapp.0.is_empty() || next_whatsapp.1.is_some())
         && !flags.native_whatsapp
-        && !current.is_some_and(|old| whatsapp(old) == next_whatsapp)
+        && !current.is_some_and(|old| {
+            old.secrets.whatsapp == next.secrets.whatsapp
+                && next_whatsapp.0.iter().all(|source| {
+                    old.sources.iter().any(|previous| {
+                        crate::whatsapp::groups::retained_or_reduced(previous, source)
+                    })
+                })
+        })
     {
         return Err(ValidationError::new(
             "/sources",

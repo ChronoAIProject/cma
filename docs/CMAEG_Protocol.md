@@ -2985,7 +2985,7 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
-Native WhatsApp advertises a separate bounded subset only when
+Native WhatsApp private replies advertise a separate bounded subset only when
 `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
 "audio/mpeg", "audio/mp4", "audio/ogg", "image/webp", "video/mp4", "video/3gpp"]`,
@@ -3145,11 +3145,39 @@ establish that condition. The flag is independent of the native-media and
 complete-reply gates, and neither of those gates enables text edit issuance.
 
 
+## Native WhatsApp existing-group opt-in
+
+Native `whatsapp` source and source-request objects accept optional `group_ids`,
+at most 16 unique opaque Meta IDs. Absent/empty values preserve private behavior.
+New opt-ins require `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` and advertised
+`relay_authoring.native_whatsapp_groups_writes_enabled: true`. New group intake
+and sends independently require `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED`. Current
+phone OBA status and existing group membership are verified read-only at authoring
+and before each effect. Exact retention/removal remains possible with writes off.
+
+Signed `messages[].group_id` becomes the group conversation; `messages[].from`
+remains the actor. Source allowlist and sender/chat/group admission rules all apply.
+The separate sealed `whatsapp_group` address retains app/WABA/phone, group, original
+participant and original message. It grants no private participant destination,
+new group management operations or arbitrary-message authority. Durable group
+receipts retain original default/named consumer custody in a separate namespace.
+Ambiguous acceptance, receipt failure and partial delivery remain unknown without
+automatic resend. See [native groups](CMAEG_Native_WhatsApp_Groups.md) for current
+Meta eligibility, bounded membership proof and connected v25 acceptance limits.
+
+Group media requires the existing independent media gates. Discovery omits sticker
+and `image/webp`; the existing image/PDF/audio/video profiles and limits apply.
+Eligible group template discovery includes `whatsapp_templates: true` and optional
+`whatsapp_template_components: ["header", "body"]`; all button components refuse
+before provider calls. Unsupported group controls/reactions/edit/delete remain
+unavailable.
+
 ## Approved WhatsApp template replies
 
 `OutboundMessage.whatsapp_template` is an optional typed object. It is accepted
 for a NyxID WhatsApp relay event when `CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`,
-or for a verified private native WhatsApp event under the independent
+or for a verified private native WhatsApp event (or an opted-in group under its
+additional groups gate) under the independent
 `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED=true` gate. Both flags default to false
 in code; the source deployment manifest keeps the native gate false.
 `readEventContext` then includes `capabilities.whatsapp_templates: true`; native
