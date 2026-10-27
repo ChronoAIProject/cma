@@ -15,6 +15,19 @@ use cmaeg_core::{
 };
 
 impl Sender {
+    /// Unsupported native form shapes keep their legacy text rendering, including
+    /// forms alongside independent native buttons. This grants no form authority.
+    pub(super) fn native_lark_form(&self, message: &OutboundMessage) -> bool {
+        self.relay.lark_forms_enabled()
+            && crate::interactions::lark_form::requested(message)
+            && crate::interactions::lark::render_form(
+                message,
+                "00000000000000000000000000000000",
+                1,
+            )
+            .is_ok()
+    }
+
     /// Native controls are an optional rendering of legacy structured replies.
     /// Check eligibility before the send commit point; a valid but ineligible
     /// context keeps its prior text rendering and exact reply destination.
@@ -99,9 +112,7 @@ impl Sender {
                 ..
             }
         );
-        let native_form = lark
-            && self.relay.lark_forms_enabled()
-            && crate::interactions::lark_form::requested(message);
+        let native_form = lark && self.native_lark_form(message);
         let capabilities = if lark {
             crate::interactions::lark::capabilities()
         } else {
