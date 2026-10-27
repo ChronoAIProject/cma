@@ -4206,6 +4206,23 @@ There is no automatic uncertain-write retry or fence-expiry recovery. Operators
 must investigate a held fence before a future explicit reconciliation workflow;
 this increment does not expose a fence-reset tool.
 
+One eight-second deadline covers each lifecycle request, beginning before current
+authority and retained-record reads and including claim/receipt persistence.
+Preflight reserves two seconds before a write; the write and any creation
+reconciliation reserve the final second for receipt storage. A fresh remaining-time
+check precedes dispatch, and the final custody read shares the preflight deadline.
+A proven pre-dispatch timeout saves a refusal and releases the fence within the
+reserved cleanup time, allowing a new explicit attempt with a new key. If durable
+admission or cleanup cannot be confirmed, the response is `unknown` and a held
+fence requires investigation; it is never reported as a retryable refusal.
+The gateway starts no detached write task; cancelling the
+request future stops subsequent local dispatch. An already-dispatched request may
+still complete at Discord. After possible dispatch a deadline reports `unknown`
+and retains the durable fence. Replaying the
+original key observes its retained outcome; a missing confirmation stays unknown.
+This budget fits retained ten-second runtime proxies without changing runtime
+configuration.
+
 Discord creates a message-anchored thread with the same ID as its source message,
 so the creation fence is known before POST. After an ambiguous create response,
 the gateway may perform a read-only reconciliation of that exact ID, requiring

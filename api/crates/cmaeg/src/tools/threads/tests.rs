@@ -242,14 +242,15 @@ async fn uncertain_patch_and_lost_confirmation_keep_shared_fence_across_new_keys
         let app = App::new(Some(11), false).await;
         if lost_receipt {
             let backend = app.backend.clone();
-            let mut memory = app.memory.lock().unwrap();
-            memory.hook_path = "/api/v10/channels/99".into();
-            memory.hook_method = "PATCH".into();
-            let flag = backend.fail_put.clone();
-            memory.hook = Some(Box::new(move || {
-                flag.store(true, Ordering::SeqCst);
-            }));
-            drop(memory);
+            {
+                let mut memory = app.memory.lock().unwrap();
+                memory.hook_path = "/api/v10/channels/99".into();
+                memory.hook_method = "PATCH".into();
+                let flag = backend.fail_put.clone();
+                memory.hook = Some(Box::new(move || {
+                    flag.store(true, Ordering::SeqCst);
+                }));
+            }
             let value = body(app.manage(app.target(), "archive", "first").await).await;
             backend.fail_put.store(false, Ordering::SeqCst);
             assert_eq!(value["outcome"]["status"], "unknown");
@@ -587,4 +588,165 @@ async fn a_read_can_confirm_unknown_creation_only_with_exact_owner_name_duration
         assert_eq!(calls[0].method, "GET");
         assert_eq!(calls[0].path, "/api/v10/channels/700");
     }
+}
+
+async fn short_budget(app: &mut App) {
+    assert_eq!(budget::TOTAL, std::time::Duration::from_secs(8));
+    let mut client = DiscordThreads::new(app.state.discord_threads.as_ref().unwrap().api.clone());
+    client.budget = std::time::Duration::from_millis(500);
+    app.state.discord_threads = Some(Arc::new(client));
+    app.mount().await;
+}
+
+#[tokio::test]
+async fn one_deadline_covers_storage_and_cancels_slow_preflight_before_dispatch() {
+    let mut app = App::new(Some(11), false).await;
+    short_budget(&mut app).await;
+    app.backend.get_delay_ms.store(1000, Ordering::SeqCst);
+    let start = std::time::Instant::now();
+    let (list, mutation) = tokio::join!(
+        app.list("active"),
+        app.manage(app.target(), "archive", "slow-storage")
+    );
+    assert_eq!(list.status(), 503);
+    assert_eq!(body(mutation).await["outcome"]["status"], "rejected");
+    assert!(start.elapsed() < std::time::Duration::from_millis(900));
+    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+    assert!(app.memory.lock().unwrap().calls.is_empty());
+
+    app.backend.get_delay_ms.store(0, Ordering::SeqCst);
+    app.memory.lock().unwrap().delay = Some((
+        "GET".into(),
+        "/api/v10/channels/99".into(),
+        std::time::Duration::from_millis(700),
+    ));
+    let result = body(app.manage(app.target(), "archive", "slow-preflight").await).await;
+    assert_eq!(result["outcome"]["status"], "rejected");
+    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+    assert!(app.writes().is_empty());
+    app.memory.lock().unwrap().delay = None;
+    assert_eq!(
+        body(
+            app.manage(app.target(), "archive", "fresh-after-preflight")
+                .await
+        )
+        .await["outcome"]["status"],
+        "confirmed"
+    );
+}
+
+#[tokio::test]
+async fn slow_write_uses_remaining_budget_and_replay_never_resends_after_timeout() {
+    let mut app = App::new(Some(11), false).await;
+    short_budget(&mut app).await;
+    app.memory.lock().unwrap().delay = Some((
+        "PATCH".into(),
+        "/api/v10/channels/99".into(),
+        std::time::Duration::from_millis(1000),
+    ));
+    let start = std::time::Instant::now();
+    let result = body(app.manage(app.target(), "archive", "slow-write").await).await;
+    assert_eq!(result["outcome"]["status"], "unknown");
+    assert!(start.elapsed() < std::time::Duration::from_millis(900));
+    app.memory.lock().unwrap().delay = None;
+    assert_eq!(
+        body(app.manage(app.target(), "archive", "slow-write").await).await,
+        result
+    );
+    assert_eq!(
+        body(app.manage(app.target(), "reopen", "new-key").await).await["outcome"]["status"],
+        "unknown"
+    );
+    assert_eq!(app.writes().len(), 1);
+}
+
+#[tokio::test]
+async fn deadline_during_post_write_confirmation_retains_claim_and_fence() {
+    let mut app = App::new(Some(11), true).await;
+    short_budget(&mut app).await;
+    {
+        let delay = app.backend.get_delay_ms.clone();
+        let mut memory = app.memory.lock().unwrap();
+        memory.hook_path = "/api/v10/channels/99".into();
+        memory.hook_method = "PATCH".into();
+        memory.hook = Some(Box::new(move || delay.store(1000, Ordering::SeqCst)));
+    }
+    let result = body(
+        app.manage(app.target(), "archive", "lost-confirmation")
+            .await,
+    )
+    .await;
+    assert_eq!(result["outcome"]["status"], "unknown");
+    assert_eq!(
+        result["outcome"]["reason"],
+        "thread_deadline_after_dispatch"
+    );
+    app.backend.get_delay_ms.store(0, Ordering::SeqCst);
+    for key in ["lost-confirmation", "new-key"] {
+        assert_eq!(
+            body(app.manage(app.target(), "archive", key).await).await["outcome"]["status"],
+            "unknown"
+        );
+    }
+    assert_eq!(app.writes().len(), 1);
+}
+
+#[tokio::test]
+async fn late_pre_write_authority_read_reserves_cleanup_and_reports_storage_ambiguity() {
+    for failed_cleanup in [false, true] {
+        let mut app = App::new(Some(11), false).await;
+        short_budget(&mut app).await;
+        {
+            let delay = app.backend.get_delay_ms.clone();
+            let fail = app.backend.fail_put.clone();
+            let mut memory = app.memory.lock().unwrap();
+            memory.hook_path = "/api/v10/channels/99".into();
+            memory.hook_method = "GET".into();
+            memory.hook = Some(Box::new(move || {
+                delay.store(1000, Ordering::SeqCst);
+                fail.store(failed_cleanup, Ordering::SeqCst);
+            }));
+        }
+        let result = body(app.manage(app.target(), "archive", "late-read").await).await;
+        assert_eq!(
+            result["outcome"]["status"],
+            if failed_cleanup {
+                "unknown"
+            } else {
+                "rejected"
+            }
+        );
+        assert!(app.writes().is_empty());
+        app.backend.get_delay_ms.store(0, Ordering::SeqCst);
+        app.backend.fail_put.store(false, Ordering::SeqCst);
+        let replay = body(app.manage(app.target(), "archive", "late-read").await).await;
+        assert_eq!(replay["outcome"]["status"], result["outcome"]["status"]);
+        let fresh = body(app.manage(app.target(), "archive", "after-cleanup").await).await;
+        assert_eq!(
+            fresh["outcome"]["status"],
+            if failed_cleanup {
+                "unknown"
+            } else {
+                "confirmed"
+            }
+        );
+        assert_eq!(app.writes().len(), usize::from(!failed_cleanup));
+    }
+}
+
+#[tokio::test]
+async fn deadline_during_durable_admission_is_explicitly_unknown_without_platform_dispatch() {
+    let mut app = App::new(Some(11), false).await;
+    short_budget(&mut app).await;
+    app.backend.get_delay_ms.store(140, Ordering::SeqCst);
+    let result = body(app.manage(app.target(), "archive", "slow-admission").await).await;
+    assert_eq!(result["outcome"]["status"], "unknown");
+    assert_eq!(
+        result["outcome"]["reason"],
+        "thread_admission_or_cleanup_unconfirmed"
+    );
+    assert!(app.writes().is_empty());
+    app.backend.get_delay_ms.store(0, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(app.writes().is_empty());
 }
