@@ -46,6 +46,9 @@ pub struct Card {
     /// Native source and exact default/named dispatch custody; absent on relay cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_whatsapp: Option<super::whatsapp_authority::Authority>,
+    /// Separate direct-app identity, receipt and recoverable click; absent on relay cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark: Option<super::native_lark::Authority>,
     /// Native Discord identity is absent from every historical card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<super::discord::Identity>,
@@ -136,7 +139,10 @@ pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error>
     }
     let mut parts = value.split(':');
     let kind = parts.next();
-    if !matches!(kind, Some("ce1" | "cl1" | "clf1" | "cw1b" | "cw1l" | "cd1")) {
+    if !matches!(
+        kind,
+        Some("ce1" | "cl1" | "clf1" | "cnl1" | "cnlf1" | "cw1b" | "cw1l" | "cd1")
+    ) {
         return Err(Error::Denied);
     }
     let id =

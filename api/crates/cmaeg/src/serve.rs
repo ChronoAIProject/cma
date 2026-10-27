@@ -74,6 +74,8 @@ pub(crate) async fn serve(
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
     state.native_lark_intake_enabled = config.native_lark_intake_enabled;
+    state.native_lark_controls_enabled = config.native_lark_controls_enabled;
+    state.native_lark_forms_enabled = config.native_lark_forms_enabled;
     state.native_lark_writes_enabled = config.native_lark_writes_enabled;
     state.native_lark_admission_enabled =
         config.routing.admission_enabled && config.routing.recovery_enabled;
@@ -124,6 +126,9 @@ pub(crate) async fn serve(
         state.master_keys.clone(),
         providers.clone(),
     ));
+    let native_lark_controls = config.native_lark_controls_enabled
+        && config.native_lark_intake_enabled
+        && state.native_lark_admission_enabled;
     let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
         outcomes,
         state.master_keys.clone(),
@@ -141,6 +146,7 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
         .with_native_lark_effects(config.native_lark_message_effects_enabled)
+        .with_native_lark_controls(native_lark_controls, config.native_lark_forms_enabled)
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
         .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
@@ -254,11 +260,14 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
-        native_lark_effects: Some(std::sync::Arc::new(tools::NativeLarkEffectsClient::new(
-            crate::native_lark::Client::production()?,
-            config.native_lark_message_effects_enabled,
-            config.native_lark_received_reactions_enabled,
-        ))),
+        native_lark_effects: Some(std::sync::Arc::new(
+            tools::NativeLarkEffectsClient::new(
+                crate::native_lark::Client::production()?,
+                config.native_lark_message_effects_enabled,
+                config.native_lark_received_reactions_enabled,
+            )
+            .with_controls(native_lark_controls, config.native_lark_forms_enabled),
+        )),
         lark_effects_issuance_enabled: config.lark_message_effects_writes_enabled,
         lark_effects: Some(std::sync::Arc::new(
             tools::message_effects::lark_transport::LarkEffectsClient::new(
@@ -311,6 +320,11 @@ pub(crate) async fn serve(
     let mut routed_worker = routed.map(|composition| {
         crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
     });
+    // Readers and recovery remain active when controls/forms issuance is disabled.
+    let mut native_lark_controls = crate::native_lark::control_recovery::Worker::start(
+        ingress.clone(),
+        state.readiness.clone(),
+    );
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
         state.native_discord.clone(),
@@ -357,13 +371,14 @@ pub(crate) async fn serve(
         wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
+        native_lark_controls.stop();
         if let Some(worker) = &native_discord {
             worker.stop();
         }
         if let Some(worker) = &routed_worker {
             worker.stop_scheduling();
         }
-        let (turns_drained, routed_drained, native_drained) = tokio::join!(
+        let (turns_drained, routed_drained, native_drained, lark_controls_drained) = tokio::join!(
             tracker.drain(deadline),
             async {
                 match &mut routed_worker {
@@ -376,8 +391,12 @@ pub(crate) async fn serve(
                     Some(worker) => worker.drain(deadline).await,
                     None => true,
                 }
-            }
+            },
+            native_lark_controls.drain(deadline)
         );
+        if !lark_controls_drained {
+            tracing::warn!("native Lark callback drain incomplete; consumed cards retain recovery");
+        }
         if !native_drained {
             tracing::warn!(
                 "native Discord drain incomplete; durable inbox and lease fences retained"

@@ -34,6 +34,7 @@ pub(crate) mod lark;
 mod lark_effect;
 pub(crate) mod lark_form;
 mod lark_form_authority;
+pub(crate) mod native_lark;
 pub(crate) mod owner;
 mod prepare;
 mod replacement;
@@ -56,6 +57,10 @@ pub struct InteractionStore {
     providers: Arc<ProviderClient>,
 }
 impl InteractionStore {
+    pub(crate) fn channel_records(&self) -> RecordClient {
+        self.channels.clone()
+    }
+
     pub fn new(
         records: RecordClient,
         keys: Arc<MasterKeyRing>,
@@ -125,6 +130,7 @@ impl InteractionStore {
         }
         if card.id != id
             || card.expires_at <= now()
+            || !native_lark::valid(&card, &self.keys)
             || !owner::valid(&card)
             || !whatsapp::valid_record(&card)
             || !discord::valid(&card)
@@ -161,7 +167,13 @@ impl InteractionStore {
         if let Some(reference) = &card.reference {
             return Ok(reference.clone());
         }
-        let destination = card.destination.as_ref().ok_or(Error::Denied)?;
+        let platform_id = card
+            .native_lark
+            .as_ref()
+            .and_then(|a| a.destination.as_ref())
+            .map(|d| &d.message_id)
+            .or_else(|| card.destination.as_ref().map(|d| &d.platform_id))
+            .ok_or(Error::Denied)?;
         MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
@@ -171,7 +183,7 @@ impl InteractionStore {
                 telegram_effect: None,
                 channel_id: card.channel_id.clone(),
                 event_id: card.event_id.clone(),
-                platform_message_id: destination.platform_id.clone(),
+                platform_message_id: platform_id.clone(),
                 route_id: card.route_id.clone(),
                 interaction_record_id: Some(card.id.clone()),
                 relay_message: None,
@@ -200,7 +212,9 @@ impl InteractionStore {
 }
 
 fn markup(card: &Card) -> Result<serde_json::Value, Error> {
-    if card.discord.is_some() {
+    if let Some(native) = &card.native_lark {
+        native_lark::render(&card.message, &card.id, card.revision, native.form).map(|(v, _)| v)
+    } else if card.discord.is_some() {
         if card
             .discord
             .as_ref()
