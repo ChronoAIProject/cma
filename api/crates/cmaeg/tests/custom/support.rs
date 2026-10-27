@@ -125,6 +125,7 @@ impl App {
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             whatsapp_interactions_enabled: false,
+            native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
             lark_effects_issuance_enabled: false,

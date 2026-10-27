@@ -7,11 +7,11 @@ currently discards reactions before CMA receives them; see
 [the upstream audit](CMAEG_WhatsApp_Incoming_Reactions.md).
 
 This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
-on retained incoming messages and confirmed CMA replies, and actual native
+on retained incoming messages and confirmed CMA replies, gated [reply buttons and single-choice lists](CMAEG_Native_WhatsApp_Controls.md), and actual native
 text, separately gated [JPEG/PNG/PDF/audio/sticker/video replies](CMAEG_Native_WhatsApp_Outbound_Media.md)
 and [approved-template replies](#approved-template-replies) through Graph API `v25.0`.
 A separate gate enables [own reactions to authenticated received messages](CMAEG_Native_WhatsApp_Reactions.md).
-This does not establish complete WhatsApp support. Further video/audio/document profiles, interactive controls,
+This does not establish complete WhatsApp support. Further video/audio/document profiles,
 outbound editing and connected Meta client
 acceptance remain required follow-ups. No production rollout, Meta app setting
 change, or external send is part of this implementation.
