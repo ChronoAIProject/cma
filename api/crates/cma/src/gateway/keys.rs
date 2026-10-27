@@ -84,12 +84,22 @@ impl Key {
             || self.allow_all_services
             || self.allow_all_nodes
             || self.allow_auto_connected_services
-            || !self.allowed_node_ids.is_empty()
+            || self
+                .allowed_node_ids
+                .iter()
+                .any(|id| identifier(id).is_err())
+            || self
+                .allowed_node_ids
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != self.allowed_node_ids.len()
             || self.purpose != "general"
             || self.scheduled_write_enabled
             || self.bindings_count != 0
             || (role == BotKeyRole::Route
                 && (!self.allowed_service_ids.is_empty()
+                    || !self.allowed_node_ids.is_empty()
                     || self.platform.as_deref() != Some("generic")))
         {
             return Err(BotError::Forbidden);

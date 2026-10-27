@@ -109,6 +109,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
             .issuer
             .mint(
                 sandbox.id.as_str(),
+                &sandbox.owner,
                 token.expose(),
                 &sandbox.credential.effective_reaches(),
             )
