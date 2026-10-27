@@ -18,7 +18,7 @@ use cmaeg_core::{
 
 #[path = "write_gate_extensions.rs"]
 mod extensions;
-use extensions::{carries_through, Extension};
+use extensions::{carries_through, Extension, SourceExtension};
 
 /// The refusal of a legacy-valid write that still introduces a source extension.
 pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";

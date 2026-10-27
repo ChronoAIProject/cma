@@ -67,7 +67,7 @@ pub(crate) async fn serve(
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
-    source_settings::configure(&config, &mut state).await?;
+    let whatsapp_forms_ready = source_settings::configure(&config, &mut state).await?;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
