@@ -185,7 +185,7 @@ impl ReplayProjection {
             custom_effect.map_or(ReplayEffect::NoEffect, ReplayEffect::Custom)
         } else {
             text.map_or(ReplayEffect::NoEffect, |text| {
-                ReplayEffect::Reply(OutboundMessage {
+                ReplayEffect::Reply(Box::new(OutboundMessage {
                     text: Some(text),
                     blocks: vec![],
                     reply_to: None,
@@ -193,7 +193,7 @@ impl ReplayProjection {
                     native_attachments: vec![],
                     whatsapp_template: None,
                     thread_reply: self.thread_reply,
-                })
+                }))
             })
         };
         self.last = Some(ProjectedFrame {
