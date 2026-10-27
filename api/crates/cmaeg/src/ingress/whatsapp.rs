@@ -50,6 +50,9 @@ pub(crate) fn launch(
     now: i64,
 ) -> Result<LaunchRequest, ()> {
     let message = &verified.message;
+    if matches!(message.content, Content::Flow { .. }) {
+        return Err(());
+    }
     if message.group_id.is_some()
         && matches!(
             message.content,
@@ -73,6 +76,7 @@ pub(crate) fn launch(
         .format(&Rfc3339)
         .map_err(|_| ())?;
     let kind = match &message.content {
+        Content::Flow { .. } => return Err(()),
         Content::Media {
             caption,
             attachment,
@@ -156,6 +160,7 @@ pub(crate) fn launch(
         &partition_key,
     );
     let reply_target = match &message.content {
+        Content::Flow { .. } => return Err(()),
         Content::Text { .. } | Content::Media { .. } | Content::Control { .. } => &message.id,
         Content::Reaction { target, .. } => target,
     };

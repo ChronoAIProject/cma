@@ -899,3 +899,15 @@ also accepts `reopen`, `join`, or `leave`; `target: { type: 'event', event_ref }
 addresses only the thread containing that event. References preserve original
 consumer custody and expiry. Unknown outcomes must not be retried under a new
 key. Private/forum creation and private sibling enumeration are unsupported.
+
+Native WhatsApp Forms use `prepareFormReply(eventRef, message, stablePreparationKey)`,
+then `readFormPreparation(eventRef)`. Poll Pending after `retry_after_ms`. Ready has
+not sent a customer message. Commit the exact message with
+`replyToEvent(eventRef, message, { idempotencyKey: stableCommitKey, formPreparationRef })`.
+The returned `FormPreparationReceipt` explicitly distinguishes asset uncertainty
+(`customer_message:not_sent`) from Delivery (`attempted`, with the existing receipt).
+Keep keys/content on retry; never resend Unknown under another key. Both preparation
+and status have a two-second total gateway deadline; explicit commit remains eight
+seconds. Source `forms_enabled` is separate owner consent; operator discovery uses
+`native_whatsapp_forms_enabled` and `native_whatsapp_flow_writes_enabled`.
+See `docs/CMAEG_Native_WhatsApp_Forms.md` for the supported subset and retained gaps.

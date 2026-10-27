@@ -1,0 +1,143 @@
+//! Optional persistent custody; ordinary Gateway schema/startup never requires it.
+use super::{failure, MongoRecords, RecordError, MIGRATIONS, WHATSAPP_FLOWS};
+use futures_util::TryStreamExt;
+use mongodb::{
+    bson::{doc, Document},
+    Database, IndexModel,
+};
+pub fn role(database: &str, migration: bool) -> Document {
+    let mut privileges = vec![
+        doc! {"resource":{"db":database,"collection":WHATSAPP_FLOWS},"actions":if migration {
+            vec!["find","insert","update","createCollection","collMod","createIndex","listIndexes"]
+        } else {vec!["find","insert","update","listIndexes"]}},
+    ];
+    if migration {
+        privileges.push(doc! {"resource":{"db":database,"collection":MIGRATIONS},"actions":["find","insert","update","collMod"]});
+    }
+    doc! {"createRole":if migration {"cma_eg_whatsapp_forms_migrator"} else {"cma_eg_whatsapp_forms_runtime"},"privileges":privileges,"roles":[]}
+}
+pub(super) fn indexes_valid(indexes: &[IndexModel]) -> bool {
+    indexes.len() == 2
+        && indexes.iter().all(|i| {
+            i.options.as_ref().is_none_or(|o| {
+                o.expire_after.is_none()
+                    && o.partial_filter_expression.is_none()
+                    && o.sparse != Some(true)
+            })
+        })
+        && indexes.iter().any(|i| i.keys == doc! {"_id":1})
+        && indexes.iter().any(|i| {
+            i.keys == doc! {"owner":1,"_id":1}
+                && i.options.as_ref().is_none_or(|o| o.unique != Some(true))
+        })
+}
+impl MongoRecords {
+    pub(crate) async fn whatsapp_flows_ready(&self) -> Result<(), RecordError> {
+        let invalid =
+            || RecordError::Unavailable("persistent WhatsApp Forms storage is not ready".into());
+        let status = self
+            .db
+            .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
+            .await
+            .map_err(failure)?;
+        cma_service_auth::mongodb_authority::verify_shared_schema(
+            &status,
+            self.db.name(),
+            &role(self.db.name(), false),
+        )
+        .map_err(|_| invalid())?;
+        if self
+            .db
+            .collection::<Document>(MIGRATIONS)
+            .find_one(doc! {"_id":"whatsapp_forms","version":1})
+            .await
+            .map_err(failure)?
+            .is_none()
+        {
+            return Err(invalid());
+        }
+        let indexes: Vec<IndexModel> = self
+            .db
+            .collection::<Document>(WHATSAPP_FLOWS)
+            .list_indexes()
+            .await
+            .map_err(failure)?
+            .try_collect()
+            .await
+            .map_err(failure)?;
+        if !indexes_valid(&indexes) {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    // A separate optional marker preserves the base schema version and existing startup.
+    let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
+    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]}}}};
+    match db.run_command(doc!{"create":WHATSAPP_FLOWS,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
+        Ok(_)=>{}, Err(e) if matches!(e.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code == 48)=>{
+            db.run_command(doc!{"collMod":WHATSAPP_FLOWS,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
+        },Err(e)=>return Err(failure(e)),
+    }
+    db.collection::<Document>(WHATSAPP_FLOWS)
+        .create_index(IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build())
+        .await
+        .map_err(failure)?;
+    let indexes: Vec<IndexModel> = db
+        .collection::<Document>(WHATSAPP_FLOWS)
+        .list_indexes()
+        .await
+        .map_err(failure)?
+        .try_collect()
+        .await
+        .map_err(failure)?;
+    if !indexes_valid(&indexes) {
+        return Err(RecordError::Rejected(
+            "WhatsApp Forms storage must have exact owner and ID indexes and no TTL".into(),
+        ));
+    }
+    db.run_command(doc!{"collMod":MIGRATIONS,"validator":super::schema::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
+    db.collection::<Document>(MIGRATIONS)
+        .update_one(doc! {"_id":"whatsapp_forms"}, doc! {"$set":{"version":1}})
+        .upsert(true)
+        .await
+        .map_err(failure)?;
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn persistent_storage_requires_exact_indexes_without_expiry_or_partial_visibility() {
+        let valid = vec![
+            IndexModel::builder().keys(doc! {"_id":1}).build(),
+            IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build(),
+        ];
+        assert!(indexes_valid(&valid));
+        assert!(!indexes_valid(&valid[..1]));
+        for options in [
+            mongodb::options::IndexOptions::builder()
+                .expire_after(std::time::Duration::ZERO)
+                .build(),
+            mongodb::options::IndexOptions::builder()
+                .partial_filter_expression(doc! {"owner":"x"})
+                .build(),
+            mongodb::options::IndexOptions::builder()
+                .sparse(true)
+                .build(),
+        ] {
+            let mut bad = valid.clone();
+            bad[1].options = Some(options);
+            assert!(!indexes_valid(&bad));
+        }
+        let role = role("gateway", false);
+        let grants = role.get_array("privileges").unwrap();
+        assert_eq!(grants.len(), 1);
+        assert!(!role.to_string().contains("remove"));
+    }
+}
+
+#[cfg(test)]
+#[path = "mongo_whatsapp_flows_tests.rs"]
+mod contract_tests;

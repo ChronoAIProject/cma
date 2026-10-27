@@ -3,6 +3,10 @@ mod attachment_compose;
 mod attachment_view;
 mod attachments;
 mod context;
+mod form_preparation;
+pub use crate::whatsapp::forms::service::{
+    FormCustomerMessage, FormPreparationReceipt, FormPreparationState,
+};
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../tests/fake_cma.rs"]

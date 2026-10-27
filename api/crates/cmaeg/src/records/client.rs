@@ -484,3 +484,6 @@ mod tests {
 
 #[path = "client_thread_fences.rs"]
 mod thread_fences;
+
+#[path = "client_whatsapp_flows.rs"]
+mod whatsapp_flows;

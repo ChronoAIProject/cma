@@ -15,6 +15,7 @@ pub const RECORDS: &str = "eg_channel_records";
 pub const CONNECTIONS: &str = "eg_connection_records";
 pub const INTERACTIONS: &str = "eg_interaction_records";
 pub const THREAD_FENCES: &str = "eg_thread_fence_records";
+pub const WHATSAPP_FLOWS: &str = "eg_whatsapp_flow_records";
 pub const MIGRATIONS: &str = "eg_schema_migrations";
 pub const SESSIONS: &str = "eg_auth_sessions";
 pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
@@ -109,7 +110,7 @@ impl MongoRecords {
             {
                 Some(DateTime::from_millis(seconds.checked_mul(1000).ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?))
             }
-            (RecordKind::Channel | RecordKind::Connection | RecordKind::ThreadFence, None) => None,
+            (RecordKind::Channel | RecordKind::Connection | RecordKind::ThreadFence | RecordKind::WhatsappFlow, None) => None,
             _ => return Err(RecordError::Rejected("interaction expiry must be in the next seven days and only interactions may expire".into())),
         };
         let binary = Binary {
@@ -264,3 +265,6 @@ pub use schema::{migrate, role, verify, verify_with_authority};
 #[path = "mongo_thread_fences.rs"]
 mod thread_fences;
 pub use thread_fences::{migrate as migrate_thread_fences, role as thread_fences_role};
+#[path = "mongo_whatsapp_flows.rs"]
+mod whatsapp_flows;
+pub use whatsapp_flows::{migrate as migrate_whatsapp_flows, role as whatsapp_flows_role};

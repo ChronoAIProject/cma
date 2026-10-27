@@ -47,6 +47,8 @@ pub struct ManagementState {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_groups_writes_enabled: bool,
+    pub native_whatsapp_forms_enabled: bool,
+    pub native_whatsapp_flow_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
     pub native_whatsapp_admission_enabled: bool,
     pub whatsapp: Option<Arc<crate::whatsapp::Client>>,
@@ -79,6 +81,9 @@ impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             native_lark: self.native_lark_writes_enabled,
+            native_whatsapp_forms: self.native_whatsapp_forms_enabled
+                && self.native_whatsapp_flow_writes_enabled
+                && self.native_whatsapp_admission_enabled,
             native_bot_mentions: self.native_bot_mentions_writes_enabled,
             thread_contract: self.thread_contract_writes_enabled,
             multi_consumer: self.multi_consumer_writes_enabled,
@@ -167,6 +172,8 @@ impl ManagementState {
             native_lark_writes_enabled: false,
             native_lark_admission_enabled: false,
             native_lark: None,
+            native_whatsapp_forms_enabled: false,
+            native_whatsapp_flow_writes_enabled: false,
             native_whatsapp_writes_enabled: false,
             native_whatsapp_groups_writes_enabled: false,
             native_whatsapp_admission_enabled: false,

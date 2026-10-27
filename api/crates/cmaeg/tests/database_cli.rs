@@ -6,6 +6,7 @@ const URI: &str = "CMAEG_MONGODB_URI";
 const LOCAL_URI: &str = "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=1";
 const COMMANDS: &[&[&str]] = &[
     &["--migrate"],
+    &["--migrate-whatsapp-forms"],
     &["--import-legacy-records", "SYNTHETIC_PRIVATE_EXPORT_PATH"],
 ];
 
@@ -154,4 +155,25 @@ fn empty_export_preserves_successful_count_output_without_a_database() {
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
     assert_eq!(output.stdout, b"Imported and verified 0 sealed records\n");
+}
+
+#[test]
+fn optional_forms_roles_are_additive_and_never_grant_runtime_delete() {
+    for (command, migration) in [
+        ("--print-whatsapp-forms-runtime-role", false),
+        ("--print-whatsapp-forms-migration-role", true),
+    ] {
+        let output = run(&[command], &[(DATABASE, OsStr::new("fixture"))]);
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let role: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            role,
+            serde_json::to_value(cmaeg::records::mongo::whatsapp_flows_role(
+                "fixture", migration
+            ))
+            .unwrap()
+        );
+        assert!(!role.to_string().contains("remove"));
+    }
 }

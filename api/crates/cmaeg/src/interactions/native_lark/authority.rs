@@ -157,7 +157,8 @@ impl Authority {
             .consumer
             .clone()
             .unwrap_or_else(cmaeg_core::ids::ConsumerId::default_consumer);
-        card.lark.is_none()
+        card.native_whatsapp_flow.is_none()
+            && card.lark.is_none()
             && card.whatsapp.is_none()
             && card.native_whatsapp.is_none()
             && card.discord.is_none()

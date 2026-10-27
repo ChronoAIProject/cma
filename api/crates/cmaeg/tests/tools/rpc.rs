@@ -202,6 +202,23 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         assert_eq!(key["maxLength"], 128);
         assert_eq!(key["pattern"], "^[!-~]+$");
         assert_native_media_update_extension(tool, previous, &key);
+        let selector = tool["inputSchema"]["$defs"]["ReplyArguments"]["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("form_preparation_ref")
+            .unwrap();
+        assert!(selector.to_string().contains("string"));
+        if tool["name"] == "replyToEvent" {
+            assert_eq!(
+                tool["inputSchema"]["properties"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("form_preparation_ref")
+                    .unwrap(),
+                selector
+            );
+        }
+
         if tool["name"] == "replyToEvent" {
             let direct = tool["inputSchema"]["properties"]
                 .as_object_mut()

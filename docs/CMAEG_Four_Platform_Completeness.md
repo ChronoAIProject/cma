@@ -416,3 +416,7 @@ turn. The exact temporary channel, sandbox and key were retired afterwards.
 No Telegram, WhatsApp, Lark/Feishu or Discord messages were sent by this test.
 Native platform rendering, callbacks and platform permissions remain separate
 acceptance work; no claim of four-platform completion follows from this result.
+
+## Native WhatsApp static Forms
+
+The optional native WhatsApp Form increment compiles one neutral Form to managed static Flow JSON 7.3. It has an explicit prepare/status/commit protocol, separate owner consent and operator flags, and a dedicated persistent custody collection. One form per event/consumer, 64 generations/source, bounded field types and no media/group/template mixtures remain explicit gaps. Compatible readers and fresh Custom checks precede optional migration and activation. Native platform acceptance remains false pending user tests. See [native WhatsApp Forms](CMAEG_Native_WhatsApp_Forms.md).

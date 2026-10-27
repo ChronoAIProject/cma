@@ -126,6 +126,53 @@ impl Cmaeg {
         request.root = true;
         self.client.request(request).await
     }
+    /// Admit a static native WhatsApp Form without sending a customer message.
+    pub async fn prepare_form_reply(
+        &self,
+        event_ref: &str,
+        message: &OutboundMessage,
+        idempotency_key: &str,
+    ) -> Result<FormPreparationReceipt> {
+        let segments = ["v1", "events", event_ref, "form-preparation"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Read local preparation or delivery status; Ready is not customer delivery.
+    pub async fn read_form_preparation(&self, event_ref: &str) -> Result<FormPreparationReceipt> {
+        let segments = ["v1", "events", event_ref, "form-preparation"];
+        let mut request = Request::get(&segments);
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Commit the exact Ready Form or send an ordinary reply with a stable key.
+    pub async fn reply_to_event_with_options(
+        &self,
+        event_ref: &str,
+        message: &OutboundMessage,
+        options: ReplyOptions<'_>,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "events", event_ref, "replies"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(options.idempotency_key)?;
+        if let Some(reference) = options.form_preparation_ref {
+            if options.idempotency_key.is_none() {
+                return Err(crate::Error::validation(
+                    "Form commit requires idempotency_key",
+                ));
+            }
+            request.headers.insert(
+                "form-preparation-ref",
+                header::HeaderValue::from_str(reference)
+                    .map_err(|_| crate::Error::validation("invalid Form preparation reference"))?,
+            );
+        }
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Request an update; the receipt explicitly reports unsupported transports.
     pub async fn update_message(
         &self,

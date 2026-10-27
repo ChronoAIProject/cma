@@ -197,6 +197,7 @@ fn validate_source(
             waba_id,
             phone_number_id,
             admission,
+            ..
         } => super::whatsapp::validate(
             group_ids,
             app_id,

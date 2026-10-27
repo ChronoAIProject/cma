@@ -50,6 +50,9 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
     let mut inventory = Vec::new();
     macro_rules! check { ($($ty:ident),+ $(,)?) => {$({ inventory.push(stringify!($ty)); roundtrip::<$ty>(stringify!($ty), &examples); })+}; }
     check!(
+        FormCustomerMessage,
+        FormPreparationReceipt,
+        FormPreparationState,
         AcceptedStatus,
         ActionMode,
         Activity,
@@ -287,16 +290,33 @@ fn properties(schema: &Value, schemas: &Value) -> Value {
         return properties(&schemas[reference.rsplit('/').next().unwrap()], schemas);
     }
     if let Some(parts) = schema["allOf"].as_array() {
-        let mut combined = json!({"type":"object","properties":{}});
+        let mut variants = vec![json!({"type":"object","properties":{}})];
         for part in parts {
-            combined["properties"].as_object_mut().unwrap().extend(
-                properties(part, schemas)["properties"]
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            );
+            let expanded = properties(part, schemas);
+            let options = expanded["oneOf"]
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| vec![expanded]);
+            let mut next = Vec::new();
+            for variant in &variants {
+                for option in &options {
+                    let mut merged = variant.clone();
+                    merged["properties"].as_object_mut().unwrap().extend(
+                        properties(option, schemas)["properties"]
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    );
+                    next.push(merged);
+                }
+            }
+            variants = next;
         }
-        return combined;
+        return if variants.len() == 1 {
+            variants.pop().unwrap()
+        } else {
+            json!({"oneOf":variants})
+        };
     }
     schema.clone()
 }

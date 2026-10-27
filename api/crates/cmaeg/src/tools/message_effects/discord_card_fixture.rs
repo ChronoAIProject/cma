@@ -23,6 +23,7 @@ pub(crate) fn state(f: &FixtureState, enabled: bool) -> ToolsState {
         complete_replies_enabled: false,
         telegram_effects_issuance_enabled: false,
         native_media_edits: None,
+        native_whatsapp_forms: None,
         native_lark_effects: None,
         lark_effects_issuance_enabled: false,
         lark_effects: None,

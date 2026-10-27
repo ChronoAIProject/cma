@@ -51,6 +51,8 @@ use utoipa::OpenApi;
         http::whatsapp::callback,
         http::events::receive_event,
         http::tools::reply_to_event,
+        http::form_preparation::prepare_form_reply,
+        http::form_preparation::read_form_preparation,
         http::tools::update_message,
         http::threads::list_event_threads,
         http::threads::create_event_thread,
