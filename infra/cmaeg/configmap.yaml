@@ -25,30 +25,32 @@ data:
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
   # Upgrade retained message-context readers before accepting owner opt-ins.
   CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED: "true"
-  # Separate native Lark app reader rollout and connected acceptance are still required.
-  CMAEG_NATIVE_LARK_WRITES_ENABLED: "false"
-  CMAEG_NATIVE_LARK_INTAKE_ENABLED: "false"
-  # Issue native resource locators only after all retained readers support them.
-  CMAEG_NATIVE_LARK_MEDIA_ENABLED: "false"
+  # Compatible native app readers deployed for owner testing; connected acceptance remains unverified.
+  CMAEG_NATIVE_LARK_WRITES_ENABLED: "true"
+  CMAEG_NATIVE_LARK_INTAKE_ENABLED: "true"
+  # Compatible retained readers support native resource locators; owner app setup remains explicit.
+  CMAEG_NATIVE_LARK_MEDIA_ENABLED: "true"
+  # Follow-up native Lark outbound media and effects remain disabled.
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "false"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "false"
   CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED: "false"
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
-  # Issue native controls only after all serving and rollback card/admission readers support them.
-  CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "false"
+  # Compatible serving and rollback readers permit private native controls for owner testing.
+  CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "true"
   # Independent native image/document/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
-  # Issue received-message reaction references only after compatible reader rollout.
-  CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"
+  # Native WhatsApp received reactions enabled after compatible reader rollout.
+  CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "true"
+  # Follow-up Telegram and Discord received-reaction scopes remain disabled.
   CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED: "false"
-  # Independent approved-template native replies; keep off pending connected Meta acceptance.
-  CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "false"
-  # Existing-group opt-ins and new group intake/sends require their own rollout.
-  CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "false"
-  CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED: "false"
+  # Approved-template native replies enabled for owner testing; connected Meta acceptance remains unverified.
+  CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED: "true"
+  # Existing-group owner opt-ins and intake/sends enabled after separate compatible-reader rollout.
+  CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "true"
+  CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED: "true"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_ENABLED: "true"

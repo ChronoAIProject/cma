@@ -155,12 +155,12 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue separate-app confirmed native Lark/Feishu text-edit, recall and own-reaction references only after durable exact-message receipt storage. Retained references remain usable when issuance is disabled. See [native message effects](CMAEG_Native_Lark_Message_Effects.md). |
 | `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` | `true` or `false` | `false` | Independently issue reaction-only references for the exact original human message after retained routed consumer/provider admission is verified. No received-message edit or recall authority. |
 | `CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Meta WhatsApp source and atomic credential writes after all serving and rollback readers support them. The deployment manifest enables owner setup/testing after the compatible-reader rollout and isolated Custom verification; connected Meta acceptance remains unverified. Requires durable routed recovery/admission, routing writes and replay-capable providers; the source needs a dedicated Meta app callback. Retained native sources remain readable with authoring off. See [native WhatsApp](CMAEG_Native_WhatsApp.md). |
-| `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` | `true` or `false` | `false` | Permits explicit source `group_ids` opt-ins for existing groups. Requires native authoring and routed durable prerequisites; exact phone OBA and active group membership are proved with bounded read-only Graph requests. Existing groups can be retained/removed with authoring disabled. Source manifest stays false. See [native groups](CMAEG_Native_WhatsApp_Groups.md). |
-| `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED` | `true` or `false` | `false` | Admits new opted-in group messages and permits group sends; retained admission replay remains readable when disabled. Requires fresh OBA/group/original-participant proof before every effect and current original-consumer authority. Independent media/template gates still apply; no group stickers, controls, reactions or message edits/deletes. Source manifest stays false. Connected v25/OBA acceptance remains unverified. |
+| `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` | `true` or `false` | `false` | Permits explicit source `group_ids` opt-ins for existing groups. Requires native authoring and routed durable prerequisites; exact phone OBA and active group membership are proved with bounded read-only Graph requests. Existing groups can be retained/removed with authoring disabled. The deployment manifest enables owner testing after the accepted compatible-reader rollout. See [native groups](CMAEG_Native_WhatsApp_Groups.md). |
+| `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED` | `true` or `false` | `false` | Admits new opted-in group messages and permits group sends; retained admission replay remains readable when disabled. Requires fresh OBA/group/original-participant proof before every effect and current original-consumer authority. Independent media/template gates still apply; no group stickers, controls, reactions or message edits/deletes. The deployment manifest enables owner testing after the accepted compatible-reader rollout. Connected v25/OBA acceptance remains unverified. |
 | `CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED` | `true` or `false` | `false` | Admits new native image, document, audio/voice, video and sticker messages after compatible attachment and retained-plan readers are deployed. Also requires `CMAEG_MEDIA_ENABLED`. Turning this gate off preserves already-admitted media replay; keep the shared media service enabled for retained retrieval. See [native WhatsApp media](CMAEG_Native_WhatsApp_Media.md). |
 | `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED` | `true` or `false` | `false` | Independent native JPEG/PNG image, TXT/PDF/Word/Excel/PowerPoint documents and AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP sticker and Baseline H.264 MP4/3GPP video reply uploads; bounded format profiles, no audio/sticker captions or voice flag. Requires current native source custody and routed authority. Advertises exact MIME/size limits through `native_media`; unrelated inbound/relay flags do not enable it. Compatible readers and authorized connected Meta acceptance are still required. See [native outbound media](CMAEG_Native_WhatsApp_Outbound_Media.md). |
 | `CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED` | `true` or `false` | `false` | Issue reaction-only references for authenticated received native WhatsApp messages in `received_message` context. Existing references continue to work when issuance is disabled. This requires compatible sealed-reference readers; it grants no deletion, editing or arbitrary-message authority. See [native reactions](CMAEG_Native_WhatsApp_Reactions.md). |
-| `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED` | `true` or `false` | `false` | Independent native approved-template event replies using the existing typed `whatsapp_template` field. Requires verified private native context, or separately enabled opted-in group context, current source credentials and routed consumer authority. Groups admit header/body components only. Private replies preserve text/image/video/document headers, text/currency/date-time body substitutions and URL buttons. Media IDs/public HTTPS links use the existing template policy; the native upload gate is separate. Source manifest keeps this off pending compatible deployment and connected Meta acceptance. Does not enable owner-initiated sends or interactive callbacks. See [native templates](CMAEG_Native_WhatsApp.md#approved-template-replies). |
+| `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED` | `true` or `false` | `false` | Independent native approved-template event replies using the existing typed `whatsapp_template` field. Requires verified private native context, or separately enabled opted-in group context, current source credentials and routed consumer authority. Groups admit header/body components only. Private replies preserve text/image/video/document headers, text/currency/date-time body substitutions and URL buttons. Media IDs/public HTTPS links use the existing template policy; the native upload gate is separate. The deployment manifest enables owner testing after compatible-reader rollout; connected Meta acceptance remains unverified. Does not enable owner-initiated sends or interactive callbacks. See [native templates](CMAEG_Native_WhatsApp.md#approved-template-replies). |
 | `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` | `true` or `false` | `false` | Issue native Discord single-part text/link edit references after all readers and rollback images understand the optional exact destination. Disabling issuance preserves retained references. |
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
@@ -252,7 +252,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED` | `true` or `false` | `false` | Independently issues reaction-only references for exact retained native Telegram human messages and retains native admission proof for new messages. Requires compatible serving and rollback readers for sealed `received_reaction` authority; old references remain executable with issuance off until original expiry/current custody revocation. Albums are excluded. No edit/delete authority. See [received-message reactions](CMAEG_Received_Message_Reactions.md). |
 | `CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED` | `true` or `false` | `false` | Independently issues reaction-only references for exact retained native Discord human messages, including exact existing threads. Requires compatible serving and rollback readers for sealed `received_reaction` authority. Writes verify original current message/author and replace/remove only this bot's own ordinary reactions. Off preserves retained execution and durable uncertainty fences. See [received-message reactions](CMAEG_Received_Message_Reactions.md). |
 | `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED` | boolean | `false` | Issues native Telegram admission evidence and effect authority on newly confirmed bot-message references; advertises delete/reaction tools after all readers are upgraded. Exactly `true`/`false`. Disabling stops new issuance and discovery; previously issued references remain usable until their 24-hour expiry or authority revocation. Relay transports are unsupported. |
-| `CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` | boolean | `false` | Issues effects-only references for one individually confirmed native Telegram upload, including its caption. Requires the existing Telegram effects gate and native admission proof. Separate text plus uploads, multiple uploads, albums and uncertain sends get no media reference. Text/caption/media edits remain unsupported. Deploy compatible readers for the new sealed scope before enabling; checked-in ConfigMap stays off. See [Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md). |
+| `CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` | boolean | `false` | Issues effects-only references for one individually confirmed native Telegram upload, including its caption. Requires the existing Telegram effects gate and native admission proof. Separate text plus uploads, multiple uploads, albums and uncertain sends get no media reference. Text/caption/media edits remain unsupported. Compatible readers are deployed and the checked-in ConfigMap enables owner testing; connected platform acceptance remains unverified. See [Telegram media effects](CMAEG_Native_Telegram_Media_Effects.md). |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
@@ -2787,3 +2787,52 @@ callbacks, effects, or permissions. No external platform messages were sent.
 After issuance, rollback must retain this compatible image or a newer compatible
 reader. Disable issuance to stop new forms/effect enrollment; restoring an older
 image can make already-issued callbacks and message references unreadable.
+
+
+### Native Lark and WhatsApp owner testing activation (2026-10-28)
+
+The accepted PR #1157 release is candidate `8eb52da8213869b717ad2691fa8066e846831833`,
+published from CI run `40568297150`, attempt 1, image source
+`6352eced6d92e505c7f4f8ffba6d1944ad901d98`, tree
+`43851ca76cf21769c98da0b00680487bd336417c`.
+Gateway generation 34 serves
+`sha256:929099a8f16942c11b173976c533c3b9c48bbd12cd88fea976bceb33cbbf4a39`;
+Web generation 161 serves
+`sha256:2a5fdf21a71f7d95020850cb81b1a1f5ac1d004eee8ab9a9d55e37887233baee`.
+Agent Manager generation 74 is unchanged. The Web initializer retains the prior
+`3784e2e7f290` release assets along with all earlier retained asset images.
+
+The accepted deployment activates exactly eight previously false flags:
+`CMAEG_NATIVE_LARK_WRITES_ENABLED`, `CMAEG_NATIVE_LARK_INTAKE_ENABLED`,
+`CMAEG_NATIVE_LARK_MEDIA_ENABLED`, `CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED`,
+`CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED`, `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED`,
+`CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED` and `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED`.
+Code defaults remain false. Existing explicit source, account, actor, destination,
+consumer and provider checks continue to apply. Connected native platform
+acceptance remains **unverified**; activation permits owner setup and testing.
+The exact pod template and ConfigMap were verified with the startup-source proof;
+the verifier did not read PID 1's environment directly.
+
+Five follow-up gates remain false: native Telegram/Discord received-message
+reactions, native Lark outbound media, native Lark message effects and native
+Lark received-message reactions. Their code in this branch is newer than the
+accepted production image. Rollback must retain a compatible reader for already
+issued authority; stopping issuance does not permit restoring an older reader.
+
+The automated full-inventory guard **did not pass**. Root separately accepted
+the exact known runtime exit-2 restart drift from 609 to 611 and replacement of
+one previously unassigned spare. That review preserved the identities of all
+12 existing user Pods and 22 user volumes, 37 Agent lineages and 2,266 sampled
+durable events. No runtime mutation was performed by the verification.
+This explicit review must not be reported as a successful strict inventory guard.
+The capability-verifier correction passed 27 offline checks and permits exactly
+three expected owner capability changes: native Lark authoring, native Lark intake
+and native WhatsApp group authoring, each from false to true. Retained history
+and Web asset checks passed; these are separate from connected platform acceptance.
+
+Evidence is pinned by SHA-256: the accepted root activation receipt is
+`cf749fdc0aafa754184a3dba55db66884d4b11c14d8168c9e3ea0ded709871cb`,
+and the selected CI publication receipt is
+`704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c`.
+The independent verifier recorded
+`bfde5ecef96ca12694ec1c4f0ac666c5e218d771d4883179dd36a23c6cf3ed40`.
