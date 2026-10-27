@@ -459,6 +459,10 @@ fn native_thread_history_allows_source_opt_in_while_complete_replies_stay_off() 
         Some("false")
     );
     assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_DISCORD_CARD_EFFECTS_ENABLED"),
+        Some("false")
+    );
+    assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_LARK_FORMS_ENABLED"),
         Some("false")
     );
