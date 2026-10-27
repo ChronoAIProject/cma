@@ -113,6 +113,45 @@ fn a_command_may_carry_the_bot_suffix_or_follow_a_bot_address() {
 }
 
 #[test]
+fn native_discord_bot_mentions_precede_consumer_commands_and_mentions() {
+    let def = channel(|value| {
+        value["sources"] = json!([{
+            "type": "discord", "bot_id": "77", "intents": 37377,
+            "admission": {"type": "all"}
+        }]);
+        value["secrets"]["discord_bot_token"] = "discord-routing-fixture".into();
+    });
+    let source = json!({"type": "discord", "bot_id": "77"});
+    for text in [
+        "<@77> /to reviewer 你好",
+        "<@!77> /to reviewer 你好",
+        "\u{3000}<@77>\t<@!77> /to reviewer 你好",
+    ] {
+        to(&def, source.clone(), text, &[REVIEWER], "你好");
+    }
+    mention(
+        &def,
+        source.clone(),
+        "<@77> @reviewer please",
+        &[REVIEWER],
+        "please",
+    );
+    for text in [
+        "<@78> /to reviewer please",
+        "<@770> /to reviewer please",
+        "<@&77> /to reviewer please",
+        "<#77> /to reviewer please",
+        "<@77 /to reviewer please",
+        "hi <@77> /to reviewer please",
+        "`<@77>` /to reviewer please",
+    ] {
+        plain(&def, source.clone(), text);
+    }
+    // Native addresses do not acquire meaning for another transport.
+    plain(&routed(), telegram(), "<@77> /to reviewer please");
+}
+
+#[test]
 fn malformed_commands_are_ordinary_text() {
     let def = routed();
     for text in [
