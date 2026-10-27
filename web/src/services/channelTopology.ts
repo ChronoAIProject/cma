@@ -67,18 +67,22 @@ export function channelNodes(channel: Channel) {
             ? 'Discord'
             : source.type === 'telegram'
               ? 'Telegram'
-              : relay
-                ? platformName(source.platform)
-                : `Producer ${index + 1}`,
+              : source.type === 'whatsapp'
+                ? 'WhatsApp'
+                : relay
+                  ? platformName(source.platform)
+                  : `Producer ${index + 1}`,
       subtitle: relay
         ? 'NyxID relay'
         : source.type === 'discord'
           ? 'Direct Discord bot'
           : source.type === 'telegram'
             ? 'Direct webhook'
-            : source.type === 'custom'
-              ? 'HTTP events'
-              : 'Recorded source',
+            : source.type === 'whatsapp'
+              ? 'Direct WhatsApp webhook'
+              : source.type === 'custom'
+                ? 'HTTP events'
+                : 'Recorded source',
       detail: relay
         ? list(source.route_ids).length === 0
           ? 'No routes'
@@ -87,7 +91,9 @@ export function channelNodes(channel: Channel) {
           ? `@${text(source.bot_username).replace(/^@/, '')}`
           : source.type === 'custom'
             ? 'Authenticated ingress'
-            : text(source.bot_id, 'Source configured'),
+            : source.type === 'whatsapp'
+              ? text(source.phone_number_id, 'Phone number not reported')
+              : text(source.bot_id, 'Source configured'),
     };
   });
   const defaults = object(routing(channel).default_consumer);

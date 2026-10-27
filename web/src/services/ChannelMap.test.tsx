@@ -111,6 +111,35 @@ it('keeps keyboard navigation as normal buttons and leaves unknown identities ex
   expect(screen.getByRole('region', { name: 'custom' })).toHaveTextContent('internal-worker');
   expect(screen.getByRole('region', { name: 'custom' })).toHaveTextContent('Binding pending');
 });
+it('distinguishes a direct WhatsApp producer from its relay without loading credentials', async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal('fetch', fetcher);
+  render(
+    <ChannelMap
+      channel={{
+        ...channel,
+        definition: {
+          ...definition,
+          sources: [
+            { type: 'whatsapp', phone_number_id: '1200123456', credential: 'hidden-value' },
+            { type: 'nyxid_relay', platform: 'whatsapp', route_ids: ['team-route'] },
+          ],
+        },
+      }}
+      selection={{ kind: 'channel' }}
+      onSelect={vi.fn()}
+      inspectorId="whatsapp-inspector"
+    />,
+  );
+  const direct = await screen.findByRole('button', {
+    name: 'Producer: WhatsApp (Direct WhatsApp webhook)',
+  });
+  expect(within(direct).getByText('1200123456')).toBeVisible();
+  expect(direct.querySelector('[data-identity="whatsapp"] svg')).not.toBeNull();
+  expect(screen.getByRole('button', { name: 'Producer: WhatsApp (NyxID relay)' })).toBeVisible();
+  expect(screen.queryByText('hidden-value')).not.toBeInTheDocument();
+  expect(fetcher).not.toHaveBeenCalled();
+});
 it('checks only the selected producer and explains the absence of a platform delivery test', async () => {
   const fetcher = vi.fn().mockResolvedValue(
     new Response(
