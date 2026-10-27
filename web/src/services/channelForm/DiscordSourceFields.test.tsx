@@ -333,3 +333,46 @@ it('offers independent thread lifecycle consent only when advertised and permits
     validateRelayAuthoring(available, { sources: [native] }, { sources: [retained] }),
   ).not.toThrow();
 });
+
+it('offers independent conversation history consent only when advertised and permits removing retained consent', () => {
+  const onChange = vi.fn();
+  const enabled = {
+    ...available,
+    authoring: { ...available.authoring!, native_discord_conversation_history_enabled: true },
+  };
+  const { rerender } = render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(
+    screen.queryByRole('checkbox', { name: 'Read earlier conversation messages' }),
+  ).not.toBeInTheDocument();
+  rerender(
+    <RelayCapabilitiesContext value={enabled}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Read earlier conversation messages' }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...native, conversation_history: true });
+  expect(
+    screen.queryByRole('checkbox', { name: 'Read earlier thread messages' }),
+  ).not.toBeInTheDocument();
+  const retained = { ...native, conversation_history: true };
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [retained] }, { sources: [native] }),
+  ).toThrow('conversation history access');
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [retained] }, { sources: [retained] }),
+  ).not.toThrow();
+  rerender(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={retained} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Read earlier conversation messages' }));
+  expect(onChange).toHaveBeenLastCalledWith(native);
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [native] }, { sources: [retained] }),
+  ).not.toThrow();
+});

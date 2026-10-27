@@ -96,6 +96,7 @@ impl ConsumerGateway {
             native_discord_writes_enabled: false,
             native_discord_thread_history_enabled: false,
         native_discord_thread_lifecycle_enabled: false,
+        native_discord_conversation_history_enabled: false,
             native_discord_reactions_enabled: false,
             native_discord: Default::default(),
             native_bot_mentions_writes_enabled: false,
@@ -136,6 +137,7 @@ impl ConsumerGateway {
         let tools = cmaeg::tools::ToolsState {
             discord_thread_history: None,
             discord_threads: None,
+            discord_conversation_history: None,
             complete_replies_enabled: false,
             routed_replies: None,
             telegram_effects_issuance_enabled: false,

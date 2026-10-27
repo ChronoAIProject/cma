@@ -51,6 +51,7 @@ pub struct WriteFlags {
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
     pub discord_thread_lifecycle: bool,
+    pub discord_conversation_history: bool,
     pub discord_reactions: bool,
 }
 
@@ -146,6 +147,21 @@ pub(crate) fn check(
         return Err(ValidationError::new(
             format!("/sources/{index}/thread_lifecycle"),
             "discord_thread_lifecycle_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Discord {
+                conversation_history: true,
+                ..
+            }
+        ) && !flags.discord_conversation_history
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/conversation_history"),
+            "discord_conversation_history_disabled",
         ));
     }
     if let Some(index) = next.sources.iter().position(|source| {

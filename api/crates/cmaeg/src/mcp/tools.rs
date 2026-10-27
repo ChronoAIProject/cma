@@ -202,6 +202,9 @@ pub async fn call(
     if name == ATTACHMENT_TOOL.name {
         return read_attachment(state, caller, arguments).await;
     }
+    if super::history::handles(name) {
+        return super::history::call(state, caller, arguments).await;
+    }
     if super::threads::handles(name) {
         return super::threads::call(state, caller, name, arguments).await;
     }
