@@ -9,6 +9,9 @@
 pub mod discord;
 pub mod inline;
 pub(crate) mod lark;
+pub mod native_lark;
+pub(crate) mod native_lark_authority;
+mod native_lark_transport;
 pub mod nyxid;
 pub mod telegram;
 pub mod url;
@@ -56,6 +59,9 @@ pub fn configured(
     locator: Option<&AttachmentSource>,
 ) -> bool {
     match locator {
+        Some(locator @ AttachmentSource::NativeLark { .. }) => {
+            native_lark_authority::configured(channel, &activity.source, locator)
+        }
         Some(AttachmentSource::Discord { .. }) => discord::configured(channel, &activity.source),
         Some(AttachmentSource::Whatsapp { .. }) => whatsapp::configured(channel, &activity.source),
         Some(locator @ AttachmentSource::LarkResource { .. }) => {
@@ -108,6 +114,7 @@ pub trait MediaSource: Send + Sync {
 /// implementation without touching anything that fetches.
 #[derive(Clone)]
 pub struct SourceRegistry {
+    native_lark: Option<Arc<dyn MediaSource>>,
     discord: Option<Arc<dyn MediaSource>>,
     whatsapp: Option<Arc<dyn MediaSource>>,
     nyxid: Arc<dyn MediaSource>,
@@ -124,6 +131,7 @@ impl SourceRegistry {
         inline: Arc<dyn MediaSource>,
     ) -> Self {
         Self {
+            native_lark: None,
             discord: None,
             whatsapp: None,
             nyxid,
@@ -140,6 +148,11 @@ impl SourceRegistry {
 
     pub fn with_whatsapp(mut self, source: Arc<dyn MediaSource>) -> Self {
         self.whatsapp = Some(source);
+        self
+    }
+
+    pub fn with_native_lark(mut self, source: Arc<dyn MediaSource>) -> Self {
+        self.native_lark = Some(source);
         self
     }
 
@@ -191,6 +204,17 @@ impl SourceRegistry {
             return Err(FetchError::NotRetrievable);
         };
         let (label, source, matches) = match locator {
+            AttachmentSource::NativeLark { .. } => (
+                "native_lark",
+                self.native_lark
+                    .as_ref()
+                    .ok_or(FetchError::NotRetrievable)?,
+                native_lark_authority::configured(
+                    request.channel,
+                    &request.activity.source,
+                    locator,
+                ),
+            ),
             AttachmentSource::Whatsapp { .. } => (
                 "whatsapp",
                 self.whatsapp.as_ref().ok_or(FetchError::NotRetrievable)?,

@@ -430,6 +430,32 @@
       },
       "variant": "photo",
       "width": 1
+    },
+    {
+      "duration_seconds": 1,
+      "emoji": "fixture",
+      "filename": "fixture",
+      "height": 1,
+      "kind": "video",
+      "mime_type": "fixture",
+      "reference": "native-lark:om_native_media:file_native_video",
+      "size_bytes": 1,
+      "source": {
+        "type": "native_lark",
+        "message_id": "om_native_media",
+        "resource_key": "file_native_video",
+        "resource_kind": "file",
+        "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "thumbnail": {
+        "type": "native_lark",
+        "message_id": "om_native_media",
+        "resource_key": "img_native_cover",
+        "resource_kind": "image",
+        "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "variant": "photo",
+      "width": 1
     }
   ],
   "AttachmentKind": [
@@ -481,6 +507,13 @@
       "message_id": "wamid.media-fixture",
       "media_id": "45678",
       "sha256": "0101010101010101010101010101010101010101010101010101010101010101"
+    },
+    {
+      "type": "native_lark",
+      "message_id": "om_native_media",
+      "resource_key": "file_native_video",
+      "resource_kind": "file",
+      "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ],
   "AttachmentImage": [
@@ -6737,7 +6770,7 @@
       "is_big": false,
       "reaction": [
         {
-          "emoji": "\ud83d\udc4d",
+          "emoji": "👍",
           "type": "emoji"
         }
       ]
@@ -6749,7 +6782,7 @@
   ],
   "TelegramReaction": [
     {
-      "emoji": "\ud83d\udc4d",
+      "emoji": "👍",
       "type": "emoji"
     },
     {
