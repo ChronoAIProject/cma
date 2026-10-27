@@ -54,6 +54,44 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
         let harness = Harness::with_generation(Arc::new(EmptyAgentSkillResolver), 4).await;
         let admitted = harness.admit("public-missing-runtime", Vec::new()).await;
         let ready = harness.drive_ready(&admitted.id).await;
+        let unrelated_id = SandboxId::generate();
+        let unrelated = sandbox(&unrelated_id, ready.owner.clone(), &rfc3339_at(harness.now));
+        let unrelated_runtime = harness
+            .adapter
+            .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
+                1,
+                sandbox_spec(&unrelated),
+            ))
+            .await
+            .unwrap();
+        harness
+            .adapter
+            .run_install(
+                &unrelated_runtime,
+                &InstallRequest::new("unrelated-install", Vec::new()),
+            )
+            .await
+            .unwrap();
+        harness
+            .adapter
+            .deliver_credential(
+                &unrelated_runtime,
+                CredentialFrame {
+                    operation_id: "unrelated-credential".into(),
+                    value: RuntimeCredential::new("unrelated-fixture-authority"),
+                    custody_generation: Some(1),
+                },
+            )
+            .await
+            .unwrap();
+        let unrelated_before = harness
+            .adapter
+            .runtime_inventory()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|value| value.sandbox_id == unrelated_id.as_str())
+            .unwrap();
         let app = router(&harness);
         assert_eq!(
             call(&app, &ready, Method::DELETE, "").await,
@@ -71,6 +109,19 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
             harness.run(&ready.id, SystemTime::now()).await;
         }
         let stopped = harness.stored(&ready.id).await;
+        // Even the unavailable-inventory case must leave the unrelated runtime
+        // intact; restore only the fixture probe to inspect the same identity.
+        harness.backend.set_inventory_unavailable(false);
+        assert_eq!(
+            harness
+                .adapter
+                .runtime_inventory()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|value| value.sandbox_id == unrelated_id.as_str()),
+            Some(unrelated_before.clone())
+        );
         if state != "absent" {
             assert_eq!(stopped.status, AgentStatus::Paused);
             assert_eq!(stopped.work.step, AgentWorkStep::CloseProcess);
@@ -119,6 +170,16 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
             harness.backend.requests().await,
             effects,
             "cleanup cannot restart work or invent runtime receipts"
+        );
+        assert_eq!(
+            harness
+                .adapter
+                .runtime_inventory()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|value| value.sandbox_id == unrelated_id.as_str()),
+            Some(unrelated_before)
         );
     }
 }
