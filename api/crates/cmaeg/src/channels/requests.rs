@@ -92,6 +92,8 @@ pub enum SourceRequest {
         /// Opt into verified Discord/WhatsApp facts without changing retained sources.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         verify_raw_event: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
         admission: AdmissionPolicy,
     },
     Custom {

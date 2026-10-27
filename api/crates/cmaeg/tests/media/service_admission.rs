@@ -236,6 +236,7 @@ fn config(media: MediaConfig) -> Config {
         multi_consumer_writes_enabled: false,
         dynamic_sources_writes_enabled: false,
         relay_raw_verification_writes_enabled: false,
+        lark_resource_writes_enabled: false,
         native_discord_writes_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
@@ -270,6 +271,14 @@ fn config(media: MediaConfig) -> Config {
 
 fn compose_deps() -> ComposeDeps {
     ComposeDeps {
+        resolver: cmaeg::channels::resolver::ChannelResolver::new(
+            Arc::new(
+                cmaeg::records::RecordClient::new("https://cma.example", "fixture-service")
+                    .unwrap(),
+            ),
+            Arc::new(ring()),
+            ChannelCacheConfig::default(),
+        ),
         keys: Arc::new(ring()),
         tool_providers: Arc::new(MediaToolProviders::default()),
         telegram: Arc::new(

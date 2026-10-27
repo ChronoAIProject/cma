@@ -61,6 +61,7 @@ pub(crate) async fn serve(
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
+    state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
@@ -130,6 +131,7 @@ pub(crate) async fn serve(
     let media = media::service::compose(
         &config,
         media::service::ComposeDeps {
+            resolver: state.resolver.clone(),
             keys: state.master_keys.clone(),
             tool_providers: tool_providers.clone(),
             telegram: telegram.clone(),
