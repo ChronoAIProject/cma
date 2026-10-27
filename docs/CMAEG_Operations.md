@@ -2840,3 +2840,7 @@ and the selected CI publication receipt is
 `704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c`.
 The independent verifier recorded
 `bfde5ecef96ca12694ec1c4f0ac666c5e218d771d4883179dd36a23c6cf3ed40`.
+
+### Optional native WhatsApp Forms storage
+
+Native Forms require the separate persistent `eg_whatsapp_flow_records` collection; ordinary interaction records keep their seven-day maximum TTL. Compatible readers accept optional exact Forms grants without requiring them for Gateway startup. Review `--print-whatsapp-forms-runtime-role` / `--print-whatsapp-forms-migration-role`, then run the separately authorized `--migrate-whatsapp-forms` only after compatible readers. Restart readers to prove the optional marker, grants and non-TTL indexes before enabling the independently false-default `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED` and `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED` flags. Preserve all asset/send tombstones. The source implementation does not migrate production, and native acceptance remains user-reserved. [Migration and rollback details](CMAEG_Native_WhatsApp_Forms.md#optional-persistent-storage).

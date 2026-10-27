@@ -2,6 +2,7 @@ import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { input, read, segment } from '../resources.js';
 import {
+  FormPreparationReceiptSchema,
   OutboundMessageSchema,
   IntentReceiptSchema,
   TypingReceiptSchema,
@@ -90,9 +91,46 @@ export class CmaegTools {
     );
   }
 
-  replyToEvent(eventRef: string, message: OutboundMessage, options: OperationOptions = {}) {
+  /** Admit preparation only. Reuse the exact message and key after any timeout. */
+  prepareFormReply(
+    eventRef: string,
+    message: OutboundMessage,
+    idempotencyKey: string,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `/v1/events/${segment(eventRef)}/form-preparation`,
+      FormPreparationReceiptSchema,
+      {
+        ...options,
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: input(OutboundMessageSchema, message),
+      },
+    );
+  }
+  /** Read only; Ready does not mean that a customer message was sent. */
+  readFormPreparation(eventRef: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/v1/events/${segment(eventRef)}/form-preparation`,
+      FormPreparationReceiptSchema,
+      options,
+    );
+  }
+  replyToEvent(
+    eventRef: string,
+    message: OutboundMessage,
+    options: OperationOptions & { idempotencyKey?: string; formPreparationRef?: string } = {},
+  ) {
+    const { idempotencyKey, formPreparationRef, ...operationOptions } = options;
     return read(this.config, `/v1/events/${segment(eventRef)}/replies`, IntentReceiptSchema, {
-      ...options,
+      ...operationOptions,
+      headers: {
+        ...(idempotencyKey === undefined ? {} : { 'Idempotency-Key': idempotencyKey }),
+        ...(formPreparationRef === undefined ? {} : { 'Form-Preparation-Ref': formPreparationRef }),
+      },
       method: 'POST',
       body: input(OutboundMessageSchema, message),
     });

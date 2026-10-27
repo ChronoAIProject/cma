@@ -69,6 +69,9 @@ pub enum SourceRequest {
     NativeLark(cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Owner consent to create and publish managed static native Flow assets.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forms_enabled: bool,
         /// Explicit existing group IDs; empty keeps private-only behavior.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schema(max_items = 16)]
