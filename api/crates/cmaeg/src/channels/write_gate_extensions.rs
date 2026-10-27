@@ -63,7 +63,7 @@ impl<'a> RoutingExtension<'a> {
 /// changes none of it introduces nothing an older image could not read
 /// before.
 #[derive(PartialEq)]
-struct SourceExtension<'a> {
+pub(super) struct SourceExtension<'a> {
     sources: &'a [Source],
     partition: &'a PartitionRule,
     channel_key: Option<&'a Secret>,
@@ -74,7 +74,7 @@ struct SourceExtension<'a> {
 }
 
 impl<'a> SourceExtension<'a> {
-    fn of(definition: &'a ChannelDefinition) -> Self {
+    pub(super) fn of(definition: &'a ChannelDefinition) -> Self {
         let secrets = &definition.secrets;
         Self {
             sources: &definition.sources,

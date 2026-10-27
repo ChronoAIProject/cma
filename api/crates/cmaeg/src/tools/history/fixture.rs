@@ -274,6 +274,7 @@ impl App {
         let registry = ProviderRegistry::parse("[]").unwrap();
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
+            native_whatsapp_forms: None,
             native_media_edits: None,
             discord_threads: None,
             discord_conversation_history: Some(Arc::new(DiscordConversationHistory::new(
