@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub native_lark_effects: Option<Arc<super::NativeLarkEffectsClient>>,
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
@@ -116,6 +117,7 @@ impl ToolsState {
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
         let channel = if message.received_reaction.is_some()
+            || message.native_lark_effect.is_some()
             || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()
             || message.discord_message.is_some()
@@ -222,6 +224,9 @@ impl ToolsState {
             let (channel, message_ref, _) = self
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;
+            if message_ref.native_lark_effect.is_some() {
+                return self.native_lark_update(caller, reference, &message).await;
+            }
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Update {

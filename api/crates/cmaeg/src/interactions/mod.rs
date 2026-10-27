@@ -166,6 +166,7 @@ impl InteractionStore {
             &MessageRefPayload {
                 discord_message: None,
                 received_reaction: None,
+                native_lark_effect: None,
                 whatsapp_reaction: None,
                 lark_effect: None,
                 telegram_effect: None,

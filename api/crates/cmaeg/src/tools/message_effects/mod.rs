@@ -20,6 +20,10 @@ pub(crate) mod mutation;
 mod received;
 mod received_authority;
 mod received_transport;
+pub(crate) mod native_lark;
+pub(crate) mod native_lark_authority;
+pub(crate) mod native_lark_context;
+mod native_lark_execute;
 pub(crate) mod whatsapp;
 pub(crate) mod whatsapp_authority;
 use super::{reply_targets::receipts, state::owner, ToolsState};
@@ -104,6 +108,15 @@ impl ToolsState {
                 &channel,
                 caller,
                 self.received_reaction_client(&message),
+            );
+        }
+        if message.native_lark_effect.is_some() {
+            native_lark_authority::retained(self, &message).await?;
+            return native_lark::capabilities(
+                &message,
+                &channel,
+                caller,
+                self.native_lark_effects.is_some(),
             );
         }
         if message.whatsapp_reaction.is_some() {
@@ -215,6 +228,11 @@ impl ToolsState {
         if message.received_reaction.is_some() {
             return self
                 .received_message_reaction(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
+        if message.native_lark_effect.is_some() {
+            return self
+                .native_lark_message_effect(caller, reference, request_id, effect, channel, message)
                 .await;
         }
         if message.whatsapp_reaction.is_some() {
@@ -381,6 +399,12 @@ mod lark_card_tests;
 #[cfg(test)]
 mod lark_custody_tests;
 
+#[cfg(test)]
+mod native_lark_fixture;
+#[cfg(test)]
+mod native_lark_race_tests;
+#[cfg(test)]
+mod native_lark_tests;
 #[cfg(test)]
 mod whatsapp_tests;
 

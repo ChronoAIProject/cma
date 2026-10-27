@@ -83,6 +83,7 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
                 authority_sha256: [3; 32],
             })),
             received_reaction: None,
+            native_lark_effect: None,
             whatsapp_reaction: None,
             lark_effect: None,
             telegram_effect: None,
@@ -129,6 +130,7 @@ async fn native_card_edit_authorization_rechecks_current_record_after_cached_key
         &MessageRefPayload {
             discord_message: None,
             received_reaction: None,
+            native_lark_effect: None,
             whatsapp_reaction: None,
             lark_effect: None,
             telegram_effect: None,
