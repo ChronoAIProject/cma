@@ -81,9 +81,37 @@ pub struct NativeMediaCapabilities {
     pub sources: Vec<String>,
     pub max_attachments: usize,
     pub max_inline_bytes: usize,
+    /// Exact accepted MIME types when the transport supports a bounded subset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_types: Option<Vec<String>>,
+    /// Aggregate decoded/downloaded bytes in one reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_bytes: Option<u64>,
+    /// Per-image encoded byte ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_image_bytes: Option<u64>,
+    /// Per-attachment caption character ceiling; shared metadata byte limits still apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_caption_chars: Option<u32>,
 }
 
 impl NativeMediaCapabilities {
+    fn native_whatsapp(enabled: bool) -> Option<Self> {
+        enabled.then(|| Self {
+            kinds: ["image", "file"].map(String::from).into(),
+            sources: ["url", "base64"].map(String::from).into(),
+            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
+            max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
+            mime_types: Some(
+                crate::whatsapp::outbound::MIME_TYPES
+                    .map(String::from)
+                    .into(),
+            ),
+            max_total_bytes: Some(crate::media::outbound::MAX_OUTBOUND_BYTES),
+            max_image_bytes: Some(crate::whatsapp::outbound::MAX_IMAGE_BYTES as u64),
+            max_caption_chars: Some(1024),
+        })
+    }
     fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
         let supported = match source {
             SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,
@@ -100,6 +128,10 @@ impl NativeMediaCapabilities {
             sources: ["url", "base64"].map(String::from).into(),
             max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
             max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
+            mime_types: None,
+            max_total_bytes: None,
+            max_image_bytes: None,
+            max_caption_chars: None,
         })
     }
 }
@@ -328,10 +360,11 @@ pub(super) fn project(
                 }
             ))
         .then_some(true),
-        native_media: NativeMediaCapabilities::for_source(
-            &activity.source,
-            state.native_media_enabled,
-        ),
+        native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+            NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
+        } else {
+            NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
+        },
         inbound_media,
         ..match activity.source {
             SourceKind::Whatsapp { .. } => Capabilities::native_whatsapp(),

@@ -505,3 +505,10 @@ fn native_bot_extensions_preserve_legacy_omitted_defaults() {
     let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
 }
+
+#[test]
+fn legacy_native_media_capabilities_omit_unknown_transport_limits() {
+    let legacy = json!({"kinds":["image","file","audio","video"],"sources":["url","base64"],"max_attachments":4,"max_inline_bytes":65536});
+    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}

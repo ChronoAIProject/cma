@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
+  NativeMediaCapabilitiesSchema,
   ActivityRoutingSchema,
   ActivitySchema,
   AttachmentSchema,
@@ -387,4 +388,23 @@ it('retains native sources without adding thread history access', () => {
   expect(SourceSchema(value)).toEqual(value);
   expect(SourceRequestSchema(value)).toEqual(value);
   expect(JSON.stringify(SourceSchema(value))).not.toContain('thread_history');
+});
+
+it('preserves legacy native media capability omissions and exact native WhatsApp limits', () => {
+  const legacy = {
+    kinds: ['image', 'file', 'audio', 'video'],
+    sources: ['url', 'base64'],
+    max_attachments: 4,
+    max_inline_bytes: 65536,
+  };
+  expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
+  const native = {
+    ...legacy,
+    kinds: ['image', 'file'],
+    mime_types: ['image/jpeg', 'image/png', 'application/pdf'],
+    max_total_bytes: 8388608,
+    max_image_bytes: 5000000,
+    max_caption_chars: 1024,
+  };
+  expect(NativeMediaCapabilitiesSchema(native)).toEqual(native);
 });

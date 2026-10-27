@@ -36,6 +36,8 @@ pub struct ToolsState {
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
+    /// Bounded native WhatsApp image/PDF uploads, independently default-off.
+    pub native_whatsapp_outbound_media_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
     /// Advertise native Discord text/card editing after the selected reader rollout.
