@@ -38,6 +38,8 @@ export function defaultProfile(owner = ''): Fields {
   };
 }
 export function defaultSource(type: string): Fields {
+  if (type === 'whatsapp')
+    return { type, app_id: '', waba_id: '', phone_number_id: '', admission: { type: 'all' } };
   if (type === 'discord')
     return {
       type,
@@ -96,6 +98,13 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
 }
 export function credentialsPatch(values: Fields, create: boolean): Fields | undefined {
   const patch: Fields = {};
+  const whatsapp = object(values.whatsapp);
+  const bundle = ['app_secret', 'access_token', 'verify_token'];
+  if (bundle.some((key) => text(whatsapp[key]) !== '')) {
+    if (bundle.some((key) => text(whatsapp[key]) === ''))
+      throw new Error('Enter all three WhatsApp credentials to replace the saved bundle.');
+    patch.whatsapp = Object.fromEntries(bundle.map((key) => [key, text(whatsapp[key])]));
+  }
   for (const key of [
     'agent_key',
     'channel_key',
@@ -122,6 +131,12 @@ export function channelRequest(
 ): Fields {
   if (!channel && draft.connection_ref !== undefined && !text(draft.connection_ref))
     throw new Error('Choose a ready CMA-managed Telegram connection.');
+  const nativeCredentials = without(credentials, [
+    ...(!records(draft.sources).some((source) => source.type === 'discord')
+      ? ['discord_bot_token']
+      : []),
+    ...(!records(draft.sources).some((source) => source.type === 'whatsapp') ? ['whatsapp'] : []),
+  ]);
   const patch = credentialsPatch(
     !channel && draft.connection_ref
       ? without(credentials, [
@@ -129,10 +144,9 @@ export function channelRequest(
           'telegram_bot_token',
           'telegram_webhook_secret',
           'discord_bot_token',
+          'whatsapp',
         ])
-      : records(draft.sources).some((source) => source.type === 'discord')
-        ? credentials
-        : without(credentials, ['discord_bot_token']),
+      : nativeCredentials,
     !channel,
   );
   return {

@@ -3730,3 +3730,16 @@ Recorded event time label without claiming their source. These labels share the
 existing Presence animation and do not introduce another feed or polling.
 
 | 2026-10-27 | Distinguish message changes from new messages in Activity and its preview, retaining unknown actors and source times without inferring them from gateway receipt. |
+
+Direct WhatsApp setup uses the existing producer configuration popup and shared
+Section, TextField, Choice and endpoint-copy components. Account identifiers and
+private credentials are separate titled groups within that producer. All three
+credentials are masked and rotate together; blank fields preserve saved values,
+and confirmed saves clear the local secret inputs. Private-chat admission hides
+irrelevant group and bot-mention controls. Only credentials for selected producer
+types appear during channel creation. Gateway discovery explicitly enables new
+setup; unavailable support preserves existing sources and drafts. The Meta
+callback appears under its own WhatsApp webhook label. No new modal, palette,
+spacing, motion or background request is introduced.
+
+| 2026-10-27 | Add structured direct WhatsApp account and atomic credential controls to the producer inspector, preserve disabled/saved configurations, and show the exact Meta callback with shared endpoint-copy UI. |
