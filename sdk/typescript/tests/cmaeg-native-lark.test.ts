@@ -5,6 +5,7 @@ import {
   SourceKindSchema,
   NativeLarkCredentialsSchema,
   RelayAuthoringCapabilitiesSchema,
+  CapabilitiesSchema,
 } from '../src/cmaeg/types.js';
 
 it('keeps native app, regional identity and secrets distinct from relay authority', () => {
@@ -51,4 +52,29 @@ it('does not infer native Lark availability from relay gates', () => {
     native_lark_intake_enabled: false,
   };
   expect(RelayAuthoringCapabilitiesSchema(current)).toEqual(current);
+  for (const controls of [false, true]) {
+    for (const forms of [false, true]) {
+      const discovery = {
+        ...current,
+        native_lark_controls_enabled: controls,
+        native_lark_forms_enabled: forms,
+      };
+      expect(RelayAuthoringCapabilitiesSchema(discovery)).toEqual(discovery);
+    }
+  }
+});
+
+it('accepts optional per-event form discovery without inferring it from native cards', () => {
+  const capabilities = {
+    attachments: 'none',
+    buttons: 'native_card',
+    cards: 'native_card',
+    edit: true,
+    max_text_chars: 4000,
+    typing: false,
+  };
+  expect(CapabilitiesSchema(capabilities)).toEqual(capabilities);
+  for (const forms of [null, false, true])
+    expect(CapabilitiesSchema({ ...capabilities, forms })).toEqual({ ...capabilities, forms });
+  expect(() => CapabilitiesSchema({ ...capabilities, forms: 'enabled' })).toThrow();
 });

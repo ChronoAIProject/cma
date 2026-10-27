@@ -119,6 +119,7 @@ impl ToolsState {
             .payload;
         let channel = if message.native_media_edit.is_some()
             || message.received_reaction.is_some()
+            || crate::interactions::native_lark::is_reference(&message)
             || message.native_lark_effect.is_some()
             || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()

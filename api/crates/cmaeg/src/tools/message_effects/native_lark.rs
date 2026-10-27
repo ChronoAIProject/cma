@@ -21,15 +21,25 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 pub struct NativeLarkEffectsClient {
+    pub controls_issuance_enabled: bool,
+    pub forms_issuance_enabled: bool,
     pub confirmed_issuance_enabled: bool,
     pub received_issuance_enabled: bool,
     pub(crate) client: Client,
-    capacity: Semaphore,
+    pub(super) capacity: Semaphore,
 }
 impl NativeLarkEffectsClient {
+    pub fn with_controls(mut self, controls: bool, forms: bool) -> Self {
+        self.controls_issuance_enabled = controls;
+        self.forms_issuance_enabled = controls && forms;
+        self
+    }
+
     pub fn new(client: Client, confirmed: bool, received: bool) -> Self {
         Self {
             client,
+            controls_issuance_enabled: false,
+            forms_issuance_enabled: false,
             confirmed_issuance_enabled: confirmed,
             received_issuance_enabled: received,
             capacity: Semaphore::new(32),
@@ -80,34 +90,7 @@ impl ToolsState {
         message: MessageRefPayload,
     ) -> Result<MessageEffectReceipt, Problem> {
         authority::check(&message, &channel, caller)?;
-        let action = match effect {
-            Effect::Delete => Action::Delete,
-            Effect::Reaction { request } => {
-                if request.is_big || request.reaction.len() > 1 {
-                    return Err(super::invalid(
-                        "Lark requires one emoji_type without is_big",
-                    ));
-                }
-                let emoji = match request.reaction.first() {
-                    None => None,
-                    Some(TelegramReaction::Emoji { emoji })
-                        if !emoji.is_empty()
-                            && emoji.len() <= 64
-                            && emoji
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b == b'_') =>
-                    {
-                        Some(emoji.clone())
-                    }
-                    _ => {
-                        return Err(super::invalid(
-                            "Lark requires a platform emoji_type such as THUMBSUP",
-                        ))
-                    }
-                };
-                Action::Reaction { emoji }
-            }
-        };
+        let action = action(effect)?;
         let receipt = self
             .native_lark_mutation(caller, reference, request_id, action)
             .await?;
@@ -177,10 +160,7 @@ impl ToolsState {
             .capacity
             .try_acquire()
             .map_err(|_| Problem::new(ProblemCode::RateLimited, 429, "message_effect_capacity"))?;
-        let destination = receipts::hash(
-            &serde_json::json!({"domain":"native-lark", "identity":a.reply.identity,
-            "chat":a.reply.chat_id,"thread":a.reply.thread_id,"message":message.platform_message_id}),
-        );
+        let destination = lark_ledger::native_destination(&a.reply);
         // Stable logical identity excludes ciphertext, issuance and credential revisions.
         let scope = receipts::hash(
             &serde_json::json!({"destination":destination,"channel":message.channel_id,
@@ -245,5 +225,36 @@ pub(super) fn outcome(error: Error) -> DeliveryOutcome {
         Error::Invalid | Error::Rejected => rejected("native_lark_message_mutation_rejected"),
         Error::RateLimited => DeliveryOutcome::RateLimited { retry_after: 1 },
         Error::Unconfirmed => unknown().delivery,
+    }
+}
+
+pub(super) fn action(effect: Effect) -> Result<Action, Problem> {
+    match effect {
+        Effect::Delete => Ok(Action::Delete),
+        Effect::Reaction { request } => {
+            if request.is_big || request.reaction.len() > 1 {
+                return Err(super::invalid(
+                    "Lark requires one emoji_type without is_big",
+                ));
+            }
+            let emoji = match request.reaction.first() {
+                None => None,
+                Some(TelegramReaction::Emoji { emoji })
+                    if !emoji.is_empty()
+                        && emoji.len() <= 64
+                        && emoji
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'_') =>
+                {
+                    Some(emoji.clone())
+                }
+                _ => {
+                    return Err(super::invalid(
+                        "Lark requires a platform emoji_type such as THUMBSUP",
+                    ))
+                }
+            };
+            Ok(Action::Reaction { emoji })
+        }
     }
 }

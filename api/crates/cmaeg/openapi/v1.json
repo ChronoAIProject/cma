@@ -1669,6 +1669,12 @@
           "edit": {
             "type": "boolean"
           },
+          "forms": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "inbound_media": {
             "oneOf": [
               {
@@ -4911,6 +4917,18 @@
             ]
           },
           "native_discord_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_controls_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_forms_enabled": {
             "type": [
               "boolean",
               "null"

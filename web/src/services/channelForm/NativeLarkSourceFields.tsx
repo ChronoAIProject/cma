@@ -11,7 +11,8 @@ export function NativeLarkSourceFields({
   onChange: (value: Fields) => void;
 }) {
   const identity = object(value.identity);
-  const unavailable = nativeLarkUnavailable(useRelayCapabilities(), false);
+  const discovery = useRelayCapabilities();
+  const unavailable = nativeLarkUnavailable(discovery, false);
   const setIdentity = (key: string, next: string) =>
     onChange({ ...value, identity: { ...identity, [key]: next } });
   return (
@@ -66,6 +67,14 @@ export function NativeLarkSourceFields({
           and im.message.reaction.deleted_v1. Grant the app receive, recall and reaction-read
           permissions for those conversations, and send-message permission for text replies. Saving
           verifies app and bot identity; it does not configure subscriptions.
+        </p>
+        <p className="channel-field-hint">
+          {discovery.authoring?.native_lark_controls_enabled === true
+            ? 'Interactive cards, buttons and choices are enabled. In the separate app’s Callback configuration, subscribe to card.action.trigger only and use the same encrypted webhook URL. This subscription is separate from message events.'
+            : 'Interactive card, button and choice replies are disabled on this gateway.'}{' '}
+          {discovery.authoring?.native_lark_forms_enabled === true
+            ? 'Form submissions are enabled for the original person in the same conversation or existing group thread.'
+            : 'Form replies are disabled.'}
         </p>
         {unavailable ? (
           <p className="channel-field-hint">{unavailable} Saved settings are retained.</p>
