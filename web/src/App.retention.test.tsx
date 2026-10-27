@@ -119,9 +119,12 @@ it('closes the narrow Gateway drawer after choosing New channel while keeping it
     await screen.findByRole('region', { name: 'Channel workspace' });
     fireEvent.click(await screen.findByRole('button', { name: 'Show navigation' }));
     fireEvent.click(
-      within(screen.getByRole('region', { name: 'Channels' })).getByRole('button', {
-        name: 'New channel',
-      }),
+      within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+        'button',
+        {
+          name: 'New channel',
+        },
+      ),
     );
     expect(screen.getByRole('textbox', { name: 'Channel name' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Show navigation' })).toBeVisible();
@@ -171,7 +174,8 @@ it('keeps Consumers under Event Gateway and preserves channel drafts and the Age
   await screen.findByRole('region', { name: 'Consumer workspace' });
   expect(window.location.pathname).toBe('/bots');
   expect(currentService()).toBe('Service: Event Gateway');
-  expect(screen.getByRole('button', { name: 'Consumers' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('button', { name: 'Consumers' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('button', { name: 'Channels' })).toHaveAttribute('aria-pressed', 'false');
   fireEvent.click(
     await within(screen.getByRole('region', { name: 'Consumers' })).findByRole('button', {
       name: new RegExp(bot.name),
