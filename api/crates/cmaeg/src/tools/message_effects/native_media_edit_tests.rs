@@ -612,3 +612,33 @@ async fn native_media_key_payload_conflicts_and_explicit_rejections_do_not_resen
     );
     assert_eq!(app.platform.memory.lock().unwrap().writes.len(), 2);
 }
+
+#[tokio::test]
+async fn native_telegram_media_same_bot_token_rotation_requires_fresh_identity_but_keeps_authority()
+{
+    let (mut app, reference, platform) = telegram_app().await;
+    app.definition.secrets.telegram_bot_token = Some(cmaeg_core::channel::Secret::new(format!(
+        "77:{}",
+        uuid::Uuid::new_v4().simple()
+    )));
+    app.update().await;
+    answer_telegram(&platform, telegram_body("rotated"));
+    let receipt = edit(&app, &reference, "rotated", json!({"caption":"rotated"})).await;
+    assert_eq!(receipt["delivery"]["outcome"], "confirmed");
+    assert_eq!(platform.calls().len(), 2);
+    assert!(platform.calls()[0].path.ends_with("/getMe"));
+    let original = reference
+        .open(&app.state.keys)
+        .unwrap()
+        .payload
+        .native_media_edit
+        .unwrap();
+    let updated = next(&receipt)
+        .open(&app.state.keys)
+        .unwrap()
+        .payload
+        .native_media_edit
+        .unwrap();
+    assert_eq!(updated.expires_at, original.expires_at);
+    assert_eq!(updated.revision, original.revision + 1);
+}
