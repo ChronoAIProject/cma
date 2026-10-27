@@ -750,3 +750,50 @@ async fn deadline_during_durable_admission_is_explicitly_unknown_without_platfor
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(app.writes().is_empty());
 }
+
+#[tokio::test]
+async fn missing_persistent_storage_hides_capabilities_and_blocks_all_thread_io() {
+    let mut app = App::new(Some(11), false).await;
+    let records = crate::records::RecordClient::new(&app.backend.base_url, "cma-service").unwrap();
+    assert!(!records.thread_fences_ready().await);
+    assert!(records
+        .clone()
+        .thread_fences()
+        .record_url(&uuid::Uuid::new_v4().to_string())
+        .is_err());
+    let id = cmaeg_core::ids::RecordId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    assert!(records
+        .clone()
+        .interactions()
+        .put(&id, "owner", b"no-expiry", None)
+        .await
+        .is_err());
+    app.state.resolver = crate::channels::resolver::ChannelResolver::new(
+        Arc::new(records),
+        app.state.keys.clone(),
+        Default::default(),
+    );
+    app.mount().await;
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/v1/events/{}/context",
+            app.base,
+            app.reference().as_str()
+        ))
+        .bearer_auth(&app.key)
+        .json(&app.activity)
+        .send()
+        .await
+        .unwrap();
+    let value = body(response).await;
+    assert!(value["capabilities"].get("thread_lifecycle").is_none());
+    assert_eq!(app.list("active").await.status(), 503);
+    assert_eq!(app.create("missing-store").await.status(), 503);
+    assert_eq!(
+        app.manage(app.target(), "archive", "missing-store")
+            .await
+            .status(),
+        503
+    );
+    assert!(app.memory.lock().unwrap().calls.is_empty());
+}
