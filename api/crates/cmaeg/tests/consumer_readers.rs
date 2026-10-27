@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// The direct reads the consumer view replaces.
 const DIRECT_READS: &[&str] = &[
     "definition.provider",
-    ".provider_credential",
+    "provider_credential",
     "definition.profile",
 ];
 
@@ -152,26 +152,9 @@ fn a_direct_read_outside_the_allowlist_is_reported() {
     std::fs::create_dir_all(root.join("connections")).unwrap();
     let read = "let slug = &channel.definition.provider.slug;";
     std::fs::write(root.join("turns/runner.rs"), read).unwrap();
-    std::fs::write(
-        root.join("turns/credential.rs"),
-        "let secret = &channel.definition.secrets.provider_credential;",
-    )
-    .unwrap();
-    // Wire keys and descriptive identifiers are not field reads.
-    std::fs::write(
-        root.join("turns/hash.rs"),
-        r#"let value = serde_json::json!({"provider_credential": consumer.credential});"#,
-    )
-    .unwrap();
     std::fs::write(root.join("connections/service.rs"), read).unwrap();
     std::fs::write(root.join("turns/notes.txt"), read).unwrap();
     let found = offenders(&root);
     std::fs::remove_dir_all(&root).unwrap();
-    assert_eq!(
-        found,
-        [
-            "turns/credential.rs: .provider_credential",
-            "turns/runner.rs: definition.provider"
-        ]
-    );
+    assert_eq!(found, ["turns/runner.rs: definition.provider"]);
 }

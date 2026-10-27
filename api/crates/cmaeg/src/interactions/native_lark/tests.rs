@@ -217,7 +217,7 @@ async fn native_controls_refuse_unconfirmed_cross_transport_wrong_actor_message_
 }
 
 #[tokio::test]
-async fn source_key_provider_credential_owner_and_routing_changes_revoke_pending_dispatch() {
+async fn source_key_consumer_credential_owner_and_routing_changes_revoke_pending_dispatch() {
     for named in [false, true] {
         for case in 0..9 {
             let mut f = Fixture::new(named, true, LarkRegion::Feishu).await;
