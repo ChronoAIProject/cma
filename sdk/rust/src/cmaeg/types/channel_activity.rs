@@ -22,6 +22,15 @@ pub struct ActivityPage {
 pub struct ChannelActivity {
     /// Source event identifier.
     pub event_id: String,
+    /// Payload category only; absent on historical receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// CloudEvent type; event data is never included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    /// Explicit CloudEvent time, absent when the source did not report one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_occurred_at: Option<String>,
     /// Source transport.
     pub source: SourceKind,
     /// Source actor.

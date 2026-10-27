@@ -202,7 +202,10 @@
                 }
               ]
             }
-          ]
+          ],
+          "kind": "event",
+          "event_type": "custom.build.completed",
+          "source_occurred_at": "2026-10-27T03:00:00Z"
         }
       ],
       "cursor": "fixture-completed-cursor",
@@ -949,7 +952,63 @@
             }
           ]
         }
-      ]
+      ],
+      "kind": "event",
+      "event_type": "custom.build.completed",
+      "source_occurred_at": "2026-10-27T03:00:00Z"
+    },
+    {
+      "event_id": "fixture-edit",
+      "source": {
+        "type": "custom"
+      },
+      "actor": {
+        "kind": "human",
+        "id": "fixture-actor",
+        "display_name": "Fixture User"
+      },
+      "conversation": {
+        "id": "fixture-conversation",
+        "kind": "private",
+        "thread_id": "fixture-thread"
+      },
+      "occurred_at": "2026-10-27T03:00:00Z",
+      "received_at": "2026-10-27T03:00:01Z",
+      "consumers": [
+        {
+          "consumer_id": "default",
+          "state": "completed",
+          "display_name": "Fixture Agent",
+          "provider": "cma",
+          "agent_id": "agt_0123456789abcdef0123456789abcdef",
+          "conversation_id": "fixture-conversation",
+          "response_id": "fixture-response",
+          "dispatched_at": "2026-10-27T03:00:01Z",
+          "accepted_at": "2026-10-27T03:00:02Z",
+          "produced_at": "2026-10-27T03:00:04Z",
+          "completed_at": "2026-10-27T03:00:05Z",
+          "deliveries": [
+            {
+              "step": "answer",
+              "destination": "origin",
+              "outcome": "confirmed",
+              "observed_at": "2026-10-27T03:00:05Z",
+              "confirmed_at": "2026-10-27T03:00:05Z",
+              "platform_message_id": "fixture-reply",
+              "recipients": [
+                {
+                  "kind": "custom",
+                  "id": "fixture-recipient",
+                  "thread_id": "fixture-thread"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "kind": "event",
+      "event_type": "cma.message.updated.v1",
+      "source_occurred_at": "2026-10-27T03:00:00Z"
     }
   ],
   "ChannelId": [

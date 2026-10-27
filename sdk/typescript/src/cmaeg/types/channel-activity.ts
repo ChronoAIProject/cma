@@ -60,6 +60,12 @@ export type ActivityConsumer = Output<typeof ActivityConsumerSchema>;
 
 export const ChannelActivitySchema = object({
   event_id: text,
+  /** Payload category only; absent on historical receipts. */
+  kind: optional(nullable(text)),
+  /** CloudEvent type; event data is never included. */
+  event_type: optional(nullable(text)),
+  /** Explicit CloudEvent time, absent when the source did not report one. */
+  source_occurred_at: optional(nullable(text)),
   source: SourceKindSchema,
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
