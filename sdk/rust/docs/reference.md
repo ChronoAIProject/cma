@@ -380,18 +380,24 @@ Disabled or threaded contexts retain their advertised fallback capabilities. Nat
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
-### Native WhatsApp image and PDF replies
+### Native WhatsApp image, PDF and audio replies
 
 Discover `capabilities.native_media` before using `native_attachments`. Native
-WhatsApp has an independent default-off gate and supports only JPEG/PNG `image`
-and PDF `file` attachments. The additive optional `mime_types`, `max_total_bytes`,
+WhatsApp has an independent default-off gate and supports JPEG/PNG `image`,
+PDF `file` and bounded `audio` attachments. Audio supports AAC-LC ADTS (`audio/aac`,
+`.aac`), AMR narrowband (`audio/amr`, `.amr`), MPEG Layer III (`audio/mpeg`, `.mp3`),
+single-track self-contained AAC-LC M4A (`audio/mp4`, `.m4a`) and mono Opus Ogg
+(`audio/ogg`, `.ogg`). Audio captions are refused; text is a separate message,
+and voice-note presentation is not exposed. The additive optional `mime_types`, `max_total_bytes`,
 `max_image_bytes` and `max_caption_chars` fields report that exact subset: 8 MiB
 aggregate bytes, 5,000,000 bytes per image and 1024 caption characters; shared
 metadata still limits captions to 1024 UTF-8 bytes. Existing limits remain four
 attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
 address validation. Matching MIME type and filename extension are required when
-provided; images must have 8-bit RGB/RGBA headers. Native audio/video/sticker and
-other document formats remain unavailable. The original event fixes the recipient
+provided; images must have 8-bit RGB/RGBA headers. Audio undergoes bounded
+container/codec checks without a runtime decoder; those checks do not certify
+complete payload decodability. Native video/sticker and other document formats
+remain unavailable. The original event fixes the recipient
 and quoted message; clients cannot provide a Meta media ID. Confirmed replies
 record exact target receipts, while uncertain/partial sends must not be retried
 automatically. Actual Meta/client acceptance remains separate from local tests.
