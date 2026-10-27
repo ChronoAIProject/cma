@@ -1051,20 +1051,28 @@ production acceptance evidence.
 
 `CMAEG_LARK_FORMS_ENABLED=true`, together with the native-card gate, enables one
 neutral `Form` with 1–12 fields: text, number, date and single-choice. Named
-consumers also require the consumer-interaction gate. The flag defaults to false:
-Form-only replies retain ordinary text, and forms mixed into existing cards
-retain `plain_text_form`. Existing Telegram and plain relay form-text edits keep
-their historical behavior. No neutral schema change is required.
+consumers also require the consumer-interaction gate. The flag defaults to false.
+Enabling it selects native forms only after structural preflight and existing
+context eligibility checks succeed. Otherwise, valid replies retain their prior
+rendering and destination: Form-only replies use ordinary text, and forms mixed
+with eligible native Buttons/Choice retain those controls and `plain_text_form`.
+Threaded, published and nonhuman contexts retain the prior text path. These
+fallbacks grant no form callback authority. Invalid authorization, unavailable or
+mismatched provider context, and storage failures remain fail-closed; uncertain
+writes or sends never trigger fallback or another send. Existing media and
+unavailable-thread refusals still apply. Existing Telegram and plain relay
+form-text edits keep their historical behavior. No neutral schema change is required.
 
 Native forms contain opaque field names and choice indices. Their distinct
 `clf1:<record>:<revision>:<block>` submit locator resolves only a saved native
 form. The signed raw callback and normalized envelope must agree on the submitted
 object, actor, chat, message and action. Text remains text; number strings become
 JSON numbers, dates become `YYYY-MM-DD`, and choices resolve to saved option IDs.
-Unknown names/options, invalid types, missing required fields and unsupported
-form shapes fail closed. Optional empty/null/omitted values are absent from the
-canonical result. Forms cannot mix independent Buttons/Choice blocks, native
-media, threads or published-agent audiences.
+Unknown callback names/options, invalid submitted types and missing required
+fields fail closed. Optional empty/null/omitted values are absent from the
+canonical result. Native form issuance cannot mix independent Buttons/Choice
+blocks, native media, threads or published-agent audiences; new replies retain
+the legacy rendering behavior described above when native issuance is ineligible.
 
 The provider receives `InteractionResult` with both `block_id` and `action_id`
 equal to the authored Form ID, and `values.fields` keyed by authored field IDs:

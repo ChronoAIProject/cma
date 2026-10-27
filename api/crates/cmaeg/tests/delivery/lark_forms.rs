@@ -1,4 +1,6 @@
 use super::*;
+#[path = "lark_form_fallback.rs"]
+mod fallback;
 
 fn form() -> Value {
     json!({"blocks":[{"type":"form","id":"request","fields":[
@@ -245,42 +247,4 @@ async fn named_text_form_edits_keep_telegram_and_plain_relay_compatibility() {
         assert!(setup.backend.records().is_empty());
         recorder.finish().await;
     }
-}
-
-#[tokio::test]
-async fn native_lark_form_unsupported_schema_refuses_before_context_read_record_or_send() {
-    let setup = Setup::new(Platform::Lark).await;
-    let mut recording = recording(&setup, true);
-    for case in ["duplicate", "mixed", "threads", "media", "large"] {
-        let mut message = form();
-        match case {
-            "duplicate" => {
-                let field = message["blocks"][0]["fields"][0].clone();
-                message["blocks"][0]["fields"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(field);
-            }
-            "mixed" => message["blocks"].as_array_mut().unwrap().push(
-                json!({"type":"buttons","id":"approval","options":[{"id":"yes","label":"Yes"}]}),
-            ),
-            "threads" => message["thread_reply"] = true.into(),
-            "media" => {
-                message["native_attachments"] =
-                    json!([{"kind":"file","source":{"type":"base64","data":"YQ=="}}])
-            }
-            _ => message["text"] = "x".repeat(4001).into(),
-        }
-        let receipt = recording
-            .reply(&setup.channel, &setup.event, message, ReplySource::Tool)
-            .await;
-        assert!(
-            !matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }),
-            "{case}"
-        );
-        assert!(recording.http.sent().is_empty());
-        assert!(setup.backend.records().is_empty());
-        assert!(!setup.provider.log().iter().any(|r| r.method == "GET"));
-    }
-    recording.finish().await;
 }

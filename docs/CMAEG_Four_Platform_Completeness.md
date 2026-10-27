@@ -45,12 +45,18 @@ canonical submission saved before dispatch. Original actor, source, provider,
 consumer, conversation, partition, message and revision remain bound through
 restart, callback replay and replacement.
 
-`CMAEG_LARK_FORMS_ENABLED` defaults to false. Disabled preserves existing text
-forms, including forms mixed into native cards. Already-issued native forms
-remain consumable and editable after issuance is stopped; historical text forms
-cannot acquire native callback authority through an edit. Independent controls
-mixed with a native form, multi-choice fields, native media and threaded forms
-remain unsupported. Local signed callback and recorded delivery tests establish
+`CMAEG_LARK_FORMS_ENABLED` defaults to false. Enabling it issues native forms only
+when structural preflight and existing native-control context checks succeed.
+Otherwise valid replies preserve their prior rendering and destination, including
+plain-text forms alongside native Buttons/Choice and text replies in threaded,
+published or nonhuman contexts. Fallback grants no form callback authority.
+Authorization, provider-context and storage errors remain fail-closed; uncertain
+writes or sends never trigger fallback or another send. Already-issued native
+forms remain consumable and editable after issuance is stopped; historical text
+forms cannot acquire native callback authority through an edit. Independent
+controls mixed with a native form, multi-choice fields, native media and threaded
+forms remain unavailable for native issuance. Existing media and unavailable-thread
+refusals still apply. Local signed callback and recorded delivery tests establish
 the composed CMA path; actual Lark and Feishu rendering/submission acceptance
 remains unverified. See [native forms](CMAEG_Native_Lark_Forms.md).
 

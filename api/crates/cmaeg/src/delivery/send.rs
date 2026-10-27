@@ -201,33 +201,17 @@ impl Sender {
         };
         let native_controls = (self.relay.lark_cards_enabled()
             && crate::interactions::lark::supported(*platform)
-            && (crate::interactions::lark::requested(message)
-                || (self.relay.lark_forms_enabled()
-                    && crate::interactions::lark_form::requested(message))))
+            && (crate::interactions::lark::requested(message) || self.native_lark_form(message)))
             || (*platform == Platform::Whatsapp
                 && self.relay.whatsapp_interactions_enabled()
                 && crate::interactions::whatsapp::requested(message));
         if native_controls {
-            let form = self.relay.lark_forms_enabled()
-                && crate::interactions::lark::supported(*platform)
-                && crate::interactions::lark_form::requested(message);
-            if form
-                && crate::interactions::lark::render_form(
-                    message,
-                    "00000000000000000000000000000000",
-                    1,
-                )
-                .is_err()
-            {
-                return (unsupported(), SendEffects::default());
-            }
             match self.relay_control_context(ctx, event).await {
                 Ok(Some(context)) => {
                     return self
                         .interactive_reply(ctx, event, message, Some(context))
                         .await;
                 }
-                Ok(None) if form => return (unsupported(), SendEffects::default()),
                 Ok(None) => {} // Preserve legacy text for contexts without native controls.
                 Err(_) => return (unsupported(), SendEffects::default()),
             }
