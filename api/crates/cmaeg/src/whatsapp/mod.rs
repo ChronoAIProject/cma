@@ -2,6 +2,7 @@
 mod client;
 pub(crate) mod management;
 pub(crate) mod media;
+pub(crate) mod outbound;
 pub mod receipts;
 pub mod webhook;
 pub use client::{Client, Error, Transport};

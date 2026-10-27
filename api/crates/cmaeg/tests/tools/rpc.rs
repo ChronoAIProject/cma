@@ -143,7 +143,7 @@ async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     assert_tools_with_reviewed_extensions(&mut list["result"]);
 }
 
-/// Preserve recorded schemas apart from reviewed optional key/history and docs.
+/// Preserve recorded schemas apart from reviewed optional key/history, media and docs.
 pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     for (tool, previous) in list["tools"]
@@ -178,6 +178,11 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
             tool["annotations"]["openWorldHint"] = previous["annotations"]["openWorldHint"].clone();
             tool["description"] = previous["description"].clone();
         }
+        let media_kinds = &mut tool["inputSchema"]["$defs"]["NativeMediaKind"]["enum"];
+        let mut expanded = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
+        expanded.as_array_mut().unwrap().push(json!("sticker"));
+        assert_eq!(*media_kinds, expanded);
+        *media_kinds = previous["inputSchema"]["$defs"]["NativeMediaKind"]["enum"].clone();
         let media_description =
             &mut tool["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
         let previous_description =
