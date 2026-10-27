@@ -1,8 +1,34 @@
-//! Explicit WhatsApp templates use the existing authenticated relay reply route.
+//! WhatsApp issuance gates and authenticated relay controls/templates.
 use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_MAX_BYTES};
 use cmaeg_core::{channel::Platform, message::WhatsappTemplate};
 
 impl RelayClient {
+    pub fn with_native_whatsapp_outbound_media(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_outbound_media = enabled;
+        self
+    }
+    pub(crate) fn native_whatsapp_outbound_media_enabled(&self) -> bool {
+        self.native_whatsapp_outbound_media
+    }
+
+    /// Gate new WhatsApp controls until all readers support durable callbacks.
+    pub fn with_whatsapp_interactions(mut self, enabled: bool) -> Self {
+        self.whatsapp_interactions = enabled;
+        self
+    }
+    pub(in crate::delivery) fn whatsapp_interactions_enabled(&self) -> bool {
+        self.whatsapp_interactions
+    }
+
+    /// Enable only after the deployed relay preserves approved template metadata.
+    pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
+        self.whatsapp_templates = enabled;
+        self
+    }
+    pub(in crate::delivery) fn whatsapp_templates_enabled(&self) -> bool {
+        self.whatsapp_templates
+    }
+
     pub(crate) async fn send_whatsapp_interactive(
         &self,
         address: &ReplyAddress,

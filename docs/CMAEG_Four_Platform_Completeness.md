@@ -30,8 +30,9 @@ Native Discord thread creation, archive/reopen, join/follow and listing are not
 implemented. Explicit history reads have a default-off, source-opt-in path through
 `readEventContext`: at most 20 text messages preceding the original message in
 its exact existing thread, with no pagination or write authority. Existing-thread replies do not imply those
-operations. Native uploads and multi-part/uncertain sends do not issue the
-single-message edit/effect authority described above. WhatsApp editing and groups
+operations. Separately gated Discord and Telegram uploads can issue effects-only
+authority for one exact confirmed native message. Multiple-message and uncertain
+sends issue no aggregate authority; uploads grant no editing authority. WhatsApp editing and groups
 are limitations of this CMA integration, not universal claims about the platform;
 WhatsApp account identity also does not prove a human sender.
 
@@ -41,9 +42,11 @@ declaring activity callback support. See the [pinned reaction-contract review an
 CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 
 The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
-private text ingress, retained incoming/outbound reaction authority and native
-text replies without changing that relay. Its local signed-webhook/provider/send
-tests pass and structured source/credential setup is available in the portal; native audio/video/sticker delivery, templates and connected Meta
+private text ingress, separately gated inbound media retrieval, retained
+incoming/outbound reaction authority and native text replies without changing
+that relay. A separate default-off gate adds native JPEG/PNG and PDF replies.
+Its local signed-webhook/provider/send tests pass and structured source/credential
+setup is available in the portal; native audio/video/sticker delivery, templates and connected Meta
 acceptance remain required, so this does not complete WhatsApp support.
 
 ## Native Lark and Feishu forms

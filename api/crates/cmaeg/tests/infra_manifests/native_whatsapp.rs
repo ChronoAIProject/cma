@@ -15,3 +15,13 @@ fn native_whatsapp_authoring_stays_off_pending_reader_rollout_and_meta_acceptanc
         Some("false")
     );
 }
+
+#[test]
+fn native_upload_effects_wait_for_compatible_reader_rollout() {
+    for gate in [
+        "CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED",
+        "CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED",
+    ] {
+        assert_eq!(configmap_value(CONFIGMAP, gate), Some("false"), "{gate}");
+    }
+}
