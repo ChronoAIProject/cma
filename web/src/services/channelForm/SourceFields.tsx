@@ -1,5 +1,7 @@
+import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
+import { WhatsappSourceFields } from './WhatsappSourceFields';
 import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
 import { RelaySetupGuidance } from './RelaySetupGuidance';
@@ -24,6 +26,7 @@ export function SourceFields({
   );
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
   if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
+  if (value.type === 'whatsapp') return <WhatsappSourceFields value={value} onChange={onChange} />;
   if (value.type === 'custom') return <CustomSource value={value} onChange={onChange} />;
   if (value.type !== 'telegram' && value.type !== 'nyxid_relay')
     return (
@@ -147,6 +150,34 @@ export function SourceFields({
             <RelaySetupGuidance platform={String(value.platform)} />
           </>
         ) : null}
+        {value.type === 'telegram' ? (
+          <>
+            <Toggle
+              label="Receive message edits and reactions"
+              value={value.message_events}
+              disabled={
+                discovery.authoring?.native_telegram_message_events_enabled !== true &&
+                value.message_events !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'message_events', enabled || undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Private and group message edits and reactions from identifiable users reach the agents
+              that received the original message. Refresh the bot webhook after enabling this
+              setting. Reaction updates require bot administrator access. CMA does not yet support
+              channel-post edits or anonymous reaction counts. Telegram does not provide general
+              message deletion events.
+            </p>
+            {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
+              <p className="channel-field-hint">
+                This gateway has not enabled new message event settings. Saved settings are
+                retained.
+              </p>
+            ) : null}
+          </>
+        ) : null}
         <TextField
           label="Bot ID"
           value={value.bot_id}
@@ -161,7 +192,10 @@ export function SourceFields({
         />
       </Section>
       {value.type === 'nyxid_relay' && ['lark', 'feishu'].includes(String(value.platform)) ? (
-        <LarkResourceFields value={value} onChange={onChange} />
+        <>
+          <LarkResourceFields value={value} onChange={onChange} />
+          <LarkMessageEffectsFields value={value} onChange={onChange} />
+        </>
       ) : null}
       <AdmissionFields value={value.admission} onChange={(v) => set('admission', v)} />
     </>

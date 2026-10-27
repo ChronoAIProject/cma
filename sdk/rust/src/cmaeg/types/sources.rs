@@ -17,6 +17,18 @@ pub struct CustomAttachments {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Native Meta WhatsApp Cloud API, independent of relay sources.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+        /// Admission policy for raw private senders and conversations.
+        admission: AdmissionPolicy,
+    },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
     #[serde(rename = "discord")]
     Discord {
@@ -33,6 +45,9 @@ pub enum Source {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.
@@ -71,6 +86,9 @@ pub enum Source {
         /// Opt-in exact Lark/Feishu resource proxy binding.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -93,6 +111,18 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Native Meta WhatsApp Cloud API, independent of relay sources.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+        /// Admission policy for raw private senders and conversations.
+        admission: AdmissionPolicy,
+    },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
     #[serde(rename = "discord")]
     Discord {
@@ -109,6 +139,9 @@ pub enum SourceRequest {
     /// Native Telegram ingress owned by the gateway.
     #[serde(rename = "telegram")]
     Telegram {
+        /// Retain original message routing for edits and attributable reactions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_events: Option<bool>,
         /// Telegram bot identifier.
         bot_id: String,
         /// Telegram bot username when available.
@@ -145,6 +178,9 @@ pub enum SourceRequest {
         /// Exact authorized connection for opt-in embedded Lark/Feishu media.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -167,6 +203,16 @@ pub enum SourceRequest {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceKind {
+    /// Native Meta app/account/phone identities.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+    },
     /// Native Discord ingress.
     #[serde(rename = "discord")]
     Discord {
@@ -204,4 +250,18 @@ pub struct LarkResourceBinding {
     pub catalog_service_id: String,
     /// Independently configured receiving application ID (`cli_…`).
     pub app_id: String,
+}
+
+/// Independent opt-in to effects on confirmed CMA Lark/Feishu replies.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LarkMessageEffectsBinding {
+    /// Exact authorized regional bot-service connection.
+    pub connection: LarkResourceBinding,
+    /// Permit deletion of exact confirmed outbound messages.
+    #[serde(default)]
+    pub delete: bool,
+    /// Permit adding, replacing and clearing the reaction retained by CMA.
+    #[serde(default)]
+    pub reaction: bool,
 }

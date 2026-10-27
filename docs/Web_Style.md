@@ -3718,3 +3718,41 @@ first section and retains explicit section selections without requiring scroll.
 The existing smooth and reduced-motion navigation behaviors remain unchanged.
 
 | 2026-10-27 | Keep configuration navigation highlights on the requested section through bottom-clamped scrolling, resume position tracking on user scroll, and preserve first/explicit selections when all content fits. |
+
+Channel Activity and its map preview label the recorded event category using
+the existing heading and metadata styles: Message received, Message edited,
+Message deleted, Reaction updated, Interaction received or Command received.
+Unknown or historical categories use Event received. An unknown actor reads
+Actor not reported. Event receipts show Source event time only from the explicit
+source timestamp, otherwise Not reported; the separate Received timestamp always
+means gateway receipt. Historical and ordinary receipt timestamps retain the
+Recorded event time label without claiming their source. These labels share the
+existing Presence animation and do not introduce another feed or polling.
+
+| 2026-10-27 | Distinguish message changes from new messages in Activity and its preview, retaining unknown actors and source times without inferring them from gateway receipt. |
+
+Direct WhatsApp setup uses the existing producer configuration popup and shared
+Section, TextField, Choice and endpoint-copy components. Account identifiers and
+private credentials are separate titled groups within that producer. All three
+credentials are masked and rotate together; blank fields preserve saved values,
+and confirmed saves clear the local secret inputs. Private-chat admission hides
+irrelevant group and bot-mention controls. Only credentials for selected producer
+types appear during channel creation. Gateway discovery explicitly enables new
+setup; unavailable support preserves existing sources and drafts. The Meta
+callback appears under its own WhatsApp webhook label. No new modal, palette,
+spacing, motion or background request is introduced.
+
+| 2026-10-27 | Add structured direct WhatsApp account and atomic credential controls to the producer inspector, preserve disabled/saved configurations, and show the exact Meta callback with shared endpoint-copy UI. |
+
+The Agent toolsets inspector now lists only tools advertised by the gateway's
+shared owner-scoped capability discovery. Tool names and descriptions come from
+that catalog; known names may retain their plain-language labels. Read-only and
+destructive annotations use the existing secondary description text. An absent
+or null catalog means availability is not reported; an explicit empty catalog
+means no tools are advertised. Loading and failure use the shared field hint and
+explicit retry Button. Catalog rows use the existing Presence opacity transition
+and reduced-motion behavior. This supersedes the static core/optional tool list:
+opening the inspector adds no discovery request or polling, and catalog entries
+do not establish platform permissions or installation in connected agents.
+
+| 2026-10-27 | Render the authoritative advertised tool catalog in the existing inspector, distinguish unknown/empty/loading/error states, and preserve shared discovery, agent-installation caveats and reduced-motion arrival. |

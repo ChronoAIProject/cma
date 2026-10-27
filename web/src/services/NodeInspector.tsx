@@ -46,7 +46,9 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
       ? { custom_event_url: channel.endpoints.custom_event_url }
       : source.type === 'telegram'
         ? { telegram_webhook_url: channel.endpoints.telegram_webhook_url }
-        : { nyxid_callback_url: channel.endpoints.nyxid_callback_url };
+        : source.type === 'whatsapp'
+          ? { whatsapp_webhook_url: channel.endpoints.whatsapp_webhook_url }
+          : { nyxid_callback_url: channel.endpoints.nyxid_callback_url };
   const admission = object(source.admission);
   const facts: Fact[] = [
     [
@@ -59,6 +61,13 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
     if (channel.native_discord_activation)
       facts.push(['Activation', channel.native_discord_activation.detail]);
   }
+  if (source.type === 'whatsapp')
+    facts.push(
+      ['Connection', 'Direct WhatsApp Business'],
+      ['Meta app ID', text(source.app_id)],
+      ['Business account ID', text(source.waba_id)],
+      ['Phone number ID', text(source.phone_number_id)],
+    );
   if (source.type === 'nyxid_relay')
     facts.push(
       ['Routes', readableList(source.route_ids, 'No routes attached')],

@@ -17,7 +17,7 @@ impl DurableJournal {
         let body: Body = serde_json::from_slice(bytes).map_err(|_| GatewayError::Protocol)?;
         if body.channel.record_id.as_str() != authority.record
             || body.channel.owner.subject != authority.owner
-            || body.dispatch["id"].as_str() != Some(&inbox.message_id)
+            || body.message_id() != Some(&inbox.message_id)
         {
             return Err(GatewayError::Authority);
         }

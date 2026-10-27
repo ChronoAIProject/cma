@@ -1467,6 +1467,16 @@ The fallback leaves the original CloudEvent's `time` absent, so `occurred_at`
 alone does not establish that a timestamp came from the source. In channel
 Activity snapshots, `received_at` separately records gateway receipt.
 
+Recent channel receipts additionally expose optional `kind` (the category
+`message`, `interaction`, `command` or `event`), `event_type` (CloudEvent type)
+and `source_occurred_at` (explicit CloudEvent `time`). They never copy message
+text, event data or attachments into the recent-activity projection. Historical
+receipts may omit all three fields. A missing source time stays unknown even
+when `occurred_at` contains a normalization timestamp. Native message edits,
+deletions and reaction changes retain their explicit CloudEvent types in this
+projection; deletion actors remain unknown when the platform does not report
+them. These fields are descriptive and do not grant message or routing authority.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native
@@ -2681,6 +2691,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/relay-resource-connections` | `listRelayResourceConnections` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
+| `GET /v1/whatsapp/{channel_id}` | Verify the native WhatsApp webhook against the channel's exact configured Meta challenge token. |
+| `POST /v1/whatsapp/{channel_id}` | Receive a signed native WhatsApp webhook for the channel's exact app, business account and phone. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
 | `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |
@@ -2705,6 +2717,17 @@ or native managed creation. Bot Management Mode is an additional capability of
 an ordinary bot, not an exclusive replacement for a normal conversational bot.
 The owner enables it in official @BotFather; the gateway discovers it through
 `getMe.can_manage_bots`. No public API claims to enable that mode silently.
+
+The authenticated capability response also includes optional `agent_tools`, an
+array of `{name, description, read_only, destructive, idempotent, open_world}`.
+Names, descriptions and behavior hints come from the same tool definitions and
+runtime selection as MCP `tools/list`. Older servers may omit the catalog;
+missing or null means availability was not reported, while an empty array means
+no tools are advertised. Entries describe server tools and do not grant access
+to a channel, source, event, attachment or message. They do not attest that a
+provider installed the MCP server. Callers still need the existing agent
+credential and sealed references, and per-event capabilities remain authoritative.
+The response retains creator authentication and `Cache-Control: no-store`.
 
 The provider-facing connection operations are generic:
 
@@ -3409,6 +3432,20 @@ is independent of dynamic source writes. It gates introduction and changes to
 native source metadata or its credential; unchanged retained settings and removal
 remain possible while the flag is off. All serving and rollback readers must
 support the shape before enabling new writes.
+
+Owners may separately opt in to incoming reaction changes by adding
+`GUILD_MESSAGE_REACTIONS` (`1024`) and/or `DIRECT_MESSAGE_REACTIONS` (`8192`) to
+the corresponding enabled message scope. The default intent mask remains 37377.
+`CMAEG_DISCORD_REACTIONS_ENABLED=false` gates new or changed reaction settings,
+confirmed outbound receipts and new reaction intake; authenticated authoring
+discovery exposes optional `native_discord_reactions_enabled` in `/v1`.
+Reaction add/remove/all/emoji-clear notifications use
+`cma.message.reaction.updated.v1` with delta semantics, verified actors where
+available and no invented native time. They retain original consumer/thread
+routing. A reaction arriving before an exact confirmed outbound receipt waits in
+durable custody with bounded retries; it cannot adopt an arbitrary bot message.
+See [native Discord message events](CMAEG_Discord_Incoming_Message_Events.md) for
+actor rules, retained shapes, deadlines and reader-first rollout requirements.
 
 Read-only connection acquisition calls Discord `GET /users/@me` and
 `GET /gateway/bot` using the sealed credential at the fixed Discord API origin.

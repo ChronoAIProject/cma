@@ -11,6 +11,7 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         service.management.relay_raw_verification_writes_enabled = enabled;
         service.management.lark_resource_writes_enabled = enabled;
         service.management.native_discord_thread_history_enabled = enabled;
+        service.management.native_discord_reactions_enabled = enabled;
         service.management.multi_consumer_writes_enabled = !enabled;
         service.management.native_bot_mentions_writes_enabled = enabled;
         service.management.thread_contract_writes_enabled = !enabled;
@@ -38,6 +39,7 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         assert_eq!(relay["relay_raw_verification_writes_enabled"], enabled);
         assert_eq!(relay["lark_resource_writes_enabled"], enabled);
         assert_eq!(relay["native_discord_thread_history_enabled"], enabled);
+        assert_eq!(relay["native_discord_reactions_enabled"], enabled);
         assert_eq!(relay["multi_consumer_writes_enabled"], !enabled);
         assert_eq!(relay["native_bot_mentions_writes_enabled"], enabled);
         assert_eq!(relay["thread_contract_writes_enabled"], !enabled);
@@ -56,6 +58,32 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
             };
             assert_eq!(platform["verification_modes"], expected);
         }
+    }
+}
+
+#[tokio::test]
+async fn native_whatsapp_capabilities_separate_authoring_and_durable_activation_prerequisites() {
+    let fixture = Fixture::new().await;
+    for bits in 0..8 {
+        let mut service = fixture.service();
+        service.management.native_whatsapp_writes_enabled = bits & 1 != 0;
+        service.management.native_whatsapp_admission_enabled = bits & 2 != 0;
+        service.management.multi_consumer_writes_enabled = bits & 4 != 0;
+        let response =
+            crate::http::connections::capabilities(State(service), owner("alice", false)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let authoring = &value["relay_authoring"];
+        assert_eq!(authoring["native_whatsapp_writes_enabled"], bits & 1 != 0);
+        assert_eq!(
+            authoring["native_whatsapp_auto_activation_enabled"],
+            bits & 6 == 6
+        );
+        assert_eq!(value["platforms"][0]["id"], "telegram");
     }
 }
 

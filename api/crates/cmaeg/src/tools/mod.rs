@@ -33,6 +33,7 @@ pub use media_links::{
     DOWNLOAD_STREAMS_PER_CHANNEL,
 };
 pub use message_effects::discord::DiscordEffectsClient;
+pub use message_effects::lark_transport::LarkEffectsClient;
 pub use message_effects::{MessageEffectReceipt, MessageEffectsCapabilities, MessageEffectsClient};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;

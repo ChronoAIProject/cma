@@ -41,9 +41,13 @@ pub struct WriteFlags {
     pub relay_raw_verification: bool,
     /// Exact proxy bindings are admitted only after compatible readers deploy.
     pub lark_resources: bool,
+    pub lark_message_effects: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
+    pub native_whatsapp: bool,
     pub native_discord: bool,
+    pub telegram_message_events: bool,
     pub discord_thread_history: bool,
+    pub discord_reactions: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -65,6 +69,36 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                message_events: true,
+                ..
+            }
+        ) && !flags.telegram_message_events
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/message_events"),
+            "native_telegram_message_events_writes_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                lark_message_effects: Some(_),
+                ..
+            }
+        ) && !flags.lark_message_effects
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/lark_message_effects"),
+            "lark_message_effects_writes_disabled",
+        ));
+    }
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,
@@ -93,6 +127,15 @@ pub(crate) fn check(
         return Err(ValidationError::new(
             format!("/sources/{index}/thread_history"),
             "discord_thread_history_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(source, Source::Discord { intents, .. } if intents & crate::discord::REACTION_INTENTS != 0)
+            && !flags.discord_reactions
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/intents"), "discord_reactions_disabled",
         ));
     }
     if next.reply.thread_contract.is_some()
@@ -138,6 +181,26 @@ pub(crate) fn check(
                 RELAY_RAW_VERIFICATION_DISABLED,
             ));
         }
+    }
+    let whatsapp = |d: &ChannelDefinition| {
+        (
+            d.sources
+                .iter()
+                .filter(|s| matches!(s, Source::Whatsapp { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            d.secrets.whatsapp.clone(),
+        )
+    };
+    let next_whatsapp = whatsapp(next);
+    if (!next_whatsapp.0.is_empty() || next_whatsapp.1.is_some())
+        && !flags.native_whatsapp
+        && !current.is_some_and(|old| whatsapp(old) == next_whatsapp)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_whatsapp_writes_disabled",
+        ));
     }
     let discord = |d: &ChannelDefinition| {
         (
@@ -204,7 +267,7 @@ fn dynamic_sources(definition: &ChannelDefinition) -> bool {
     let mut legacy = definition.clone();
     legacy
         .sources
-        .retain(|s| !matches!(s, Source::Discord { .. }));
+        .retain(|s| !matches!(s, Source::Discord { .. } | Source::Whatsapp { .. }));
     if legacy.sources.is_empty() && !definition.sources.is_empty() {
         return definition.partition.custom_key.is_some();
     }

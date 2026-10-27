@@ -160,6 +160,12 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    whatsapp: object({
+      app_id: text,
+      waba_id: text,
+      phone_number_id: text,
+      type: enumeration('whatsapp'),
+    }),
     discord: object({ bot_id: text, type: enumeration('discord') }),
     telegram: object({
       platform: PlatformSchema,

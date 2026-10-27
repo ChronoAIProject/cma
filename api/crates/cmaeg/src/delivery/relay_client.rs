@@ -20,10 +20,9 @@ use std::{sync::Arc, time::Duration};
 
 /// The largest relay receipt the client reads.
 const RECEIPT_MAX_BYTES: usize = 4096;
-/// Complete ordinary delivery's serialized request limit, including identifiers,
-/// metadata and JSON escaping. Automatic output is bounded at 256 KiB and sanitization plus JSON
-/// expands at most fourfold; tool requests arrive within 128 KiB. Two MiB
-/// accommodates both with envelope headroom, independently of platform limits.
+/// Complete ordinary delivery limit, including identifiers, metadata and JSON escaping.
+/// Automatic output is bounded at 256 KiB with at most fourfold expansion; tools at
+/// 128 KiB. Two MiB accommodates both with envelope headroom, independently of platform limits.
 /// Low-level `send` and `send_rich` do not impose this limit.
 pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// NyxID sends a complete ordinary reply's parts sequentially. Leave room for
@@ -122,11 +121,14 @@ pub struct RelayClient {
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     discord_interactions: bool,
+    discord_reactions: bool,
     discord_forms: bool,
     discord_multiselect: bool,
     discord_card_edits: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
+    pub whatsapp: crate::whatsapp::Client,
+    pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub telegram: crate::telegram::TelegramClient,
     pub discord: crate::discord::DiscordRest,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
@@ -207,10 +209,6 @@ impl RelayClient {
     pub(super) fn complete_replies(&self) -> bool {
         self.complete_replies
     }
-    pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
-        self.telegram = client;
-        self
-    }
     pub fn with_interactions(
         mut self,
         store: std::sync::Arc<crate::interactions::InteractionStore>,
@@ -245,12 +243,15 @@ impl RelayClient {
             whatsapp_templates: false,
             whatsapp_interactions: false,
             discord_interactions: false,
+            discord_reactions: false,
             discord_forms: false,
             discord_multiselect: false,
             discord_card_edits: false,
             consumer_interactions: false,
             telegram_effects: false,
             interactions: None,
+            whatsapp: crate::whatsapp::Client::production()?,
+            whatsapp_receipts: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
             discord: crate::discord::DiscordRest::new()?,
         })

@@ -93,6 +93,7 @@ impl DurableJournal {
         }
         let inbox = Inbox {
             kind: "discord_inbox_v1".into(),
+            change_id: None,
             channel_record: authority.record.clone(),
             bot_id: authority.bot_id.clone(),
             message_id: message.into(),
@@ -125,14 +126,24 @@ impl DurableJournal {
         authority: &Authority,
         message: &str,
     ) -> Result<Vec<u8>, GatewayError> {
-        if inbox.kind != "discord_inbox_v1"
+        self.store.verify_inbox(inbox, authority, message).await
+    }
+}
+impl super::record_store::Store {
+    pub(super) async fn verify_inbox(
+        &self,
+        inbox: &Inbox,
+        authority: &Authority,
+        message: &str,
+    ) -> Result<Vec<u8>, GatewayError> {
+        if inbox.id().is_err()
             || inbox.channel_record != authority.record
             || inbox.bot_id != authority.bot_id
             || inbox.message_id != message
             || inbox.received_at < 0
             || inbox.received_at >= inbox.retained_until
-            || inbox.received_at > (self.store.clock)() / 1000
-            || inbox.retained_until <= (self.store.clock)() / 1000
+            || inbox.received_at > (self.clock)() / 1000
+            || inbox.retained_until <= (self.clock)() / 1000
             || inbox.parts.is_empty()
             || inbox.parts.len() > 64
         {
@@ -143,7 +154,6 @@ impl DurableJournal {
         let mut bytes = Vec::new();
         for part in &inbox.parts {
             let (chunk, version) = self
-                .store
                 .load::<Chunk>(part, true)
                 .await?
                 .ok_or(GatewayError::Unavailable)?;

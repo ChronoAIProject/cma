@@ -1,6 +1,7 @@
 import {
   modeUnavailable,
   nativeDiscordUnavailable,
+  nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
 import { credentialsPatch, object, records, text, type Fields } from './model';
@@ -22,7 +23,44 @@ export function validateRelayAuthoring(
   const oldSources = records(previous?.sources);
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
+    if (source.type === 'whatsapp') {
+      const saved = oldSources.some((old) => old.type === 'whatsapp');
+      const replacement = credentialsPatch(credentials, false)?.whatsapp;
+      const reason = nativeWhatsappUnavailable(discovery, !saved);
+      if (reason && (!unchanged || replacement))
+        throw new Error(`${reason} Your draft has been retained.`);
+      if (!saved && !replacement) throw new Error('Enter all three WhatsApp credentials.');
+      if (
+        ['app_id', 'waba_id', 'phone_number_id'].some(
+          (key) => !/^[1-9][0-9]{0,31}$/.test(text(source[key])),
+        )
+      )
+        throw new Error(
+          'Enter the numeric Meta app, WhatsApp Business account and phone number IDs.',
+        );
+      if (object(next.partition).key === 'thread')
+        throw new Error('Direct WhatsApp uses private chats. Choose a conversation partition.');
+      continue;
+    }
+    if (
+      source.type === 'telegram' &&
+      source.message_events === true &&
+      !unchanged &&
+      discovery.authoring?.native_telegram_message_events_enabled !== true
+    )
+      throw new Error(
+        'New or changed Telegram message event settings are disabled on this gateway. Your draft has been retained.',
+      );
     if (source.type === 'discord') {
+      if (
+        typeof source.intents === 'number' &&
+        (source.intents & (1024 | 8192)) !== 0 &&
+        !unchanged &&
+        discovery.authoring?.native_discord_reactions_enabled !== true
+      )
+        throw new Error(
+          'New or changed reaction access is disabled on this gateway. Your draft has been retained.',
+        );
       if (
         source.thread_history === true &&
         !unchanged &&
@@ -45,6 +83,23 @@ export function validateRelayAuthoring(
       continue;
     }
     if (source.type !== 'nyxid_relay') continue;
+    if (source.lark_message_effects != null && !unchanged) {
+      const effects = object(source.lark_message_effects);
+      const binding = object(effects.connection);
+      if (discovery.authoring?.lark_message_effects_writes_enabled !== true)
+        throw new Error(
+          'New or changed message effects are disabled on this gateway. Your draft has been retained.',
+        );
+      if (
+        (!effects.delete && !effects.reaction) ||
+        ['user_service_id', 'catalog_service_id', 'app_id'].some(
+          (field) => !text(binding[field]).trim(),
+        )
+      )
+        throw new Error(
+          'Select at least one message effect and confirm its bot API connection and app ID. Your draft has been retained.',
+        );
+    }
     if (source.lark_resources != null && !unchanged) {
       const binding = object(source.lark_resources);
       if (

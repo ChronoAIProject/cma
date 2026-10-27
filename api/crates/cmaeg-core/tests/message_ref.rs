@@ -16,6 +16,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
     .unwrap();
     MessageRefPayload {
         discord_message: None,
+        lark_effect: None,
         telegram_effect: None,
         channel_id,
         event_id: "event-1".parse().unwrap(),

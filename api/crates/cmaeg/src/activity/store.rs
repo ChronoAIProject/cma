@@ -16,6 +16,9 @@ use tokio::sync::{broadcast, Mutex};
 
 #[path = "refresh.rs"]
 mod refresh;
+#[cfg(test)]
+#[path = "semantic_tests.rs"]
+mod semantic_tests;
 
 const KIND: &str = "channel_recent_activity_v1";
 const MAX_PLAINTEXT: usize = 44_000;
@@ -163,8 +166,22 @@ impl ActivityStore {
         actor.display_name = actor.display_name.map(|v| bounded(&v, 256));
         let mut conversation = activity.conversation.clone();
         conversation.id = bounded(&conversation.id, 512);
+        use cmaeg_core::activity::ActivityKind;
+        let (kind, event_type, source_occurred_at) = match &activity.kind {
+            ActivityKind::Message { .. } => ("message", None, None),
+            ActivityKind::Interaction(_) => ("interaction", None, None),
+            ActivityKind::Command { .. } => ("command", None, None),
+            ActivityKind::Event { ce, .. } => (
+                "event",
+                Some(bounded(&ce.r#type, 256)),
+                ce.time.as_ref().map(|at| bounded(at, 128)),
+            ),
+        };
         let row = ChannelActivity {
             event_id: activity.event_id.to_string(),
+            kind: Some(kind.into()),
+            event_type,
+            source_occurred_at,
             source: activity.source.clone(),
             actor,
             conversation,

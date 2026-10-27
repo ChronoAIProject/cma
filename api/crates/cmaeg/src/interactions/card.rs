@@ -37,6 +37,9 @@ pub struct Card {
     /// Absent on all legacy/Telegram records. New issuance is rollout-gated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lark: Option<LarkIdentity>,
+    /// Pending/confirmed/uncertain deletion keeps fresh callbacks fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lark_delete: Option<String>,
     /// New WhatsApp records retain the exact control kind. Legacy bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp: Option<WhatsappKind>,

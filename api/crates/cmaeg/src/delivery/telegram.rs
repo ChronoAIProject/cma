@@ -171,6 +171,7 @@ impl Sender {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
                                 discord_message: None,
+                                lark_effect: None,
                                 telegram_effect: None,
                                 channel_id: event.channel_id.clone(),
                                 event_id: event.event_id.clone(),

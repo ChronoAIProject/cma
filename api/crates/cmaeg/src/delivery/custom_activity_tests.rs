@@ -95,6 +95,9 @@ async fn legacy_custom_activity_keeps_mixed_webhook_receipts_and_local_buffer_di
     );
     let mut row = crate::activity::ChannelActivity {
         event_id: "event".into(),
+        kind: None,
+        event_type: None,
+        source_occurred_at: None,
         source: request.activity.source.clone(),
         actor: request.activity.actor.clone(),
         conversation: request.activity.conversation.clone(),

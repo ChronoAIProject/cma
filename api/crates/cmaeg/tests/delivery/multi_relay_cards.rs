@@ -164,6 +164,7 @@ async fn replace_unknown(sources: Value, route: &str) -> DeliveryOutcome {
     );
     let reference = MessageRefPayload {
         discord_message: None,
+        lark_effect: None,
         telegram_effect: None,
         channel_id: channel.id.clone(),
         event_id: EventId::new("msg-1").unwrap(),

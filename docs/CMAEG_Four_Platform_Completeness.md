@@ -22,9 +22,9 @@ external platform send is authorized by this review.
 | Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
-| Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
+| Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
 | Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks; separately gated typed Form submissions | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
-| Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
+| Incoming edits/deletes/reactions | Owner-opted-in native retained private/group edits and attributable user reactions notify the original agents through durable admission. Channel-post edits and anonymous reactions remain CMA limitations; Bot API has no generic deletion update. See [native message events](CMAEG_Native_Telegram_Message_Events.md) | Native opt-in supports private text and reactions on retained incoming and confirmed outgoing messages; existing relay status/system/reaction input remains refused | No general message-edit/delete/reaction propagation | Default-off durable edits/deletes retain original consumers; separate owner reaction-intent opt-in supports add/remove/all/emoji-clear deltas on retained inbound and confirmed outbound messages, with exact original routing and bounded durable wait for confirming receipts and explicit expired-target refusals |
 
 Native Discord thread creation, archive/reopen, join/follow and listing are not
 implemented. Explicit history reads have a default-off, source-opt-in path through
@@ -34,6 +34,17 @@ operations. Native uploads and multi-part/uncertain sends do not issue the
 single-message edit/effect authority described above. WhatsApp editing and groups
 are limitations of this CMA integration, not universal claims about the platform;
 WhatsApp account identity also does not prove a human sender.
+
+Incoming WhatsApp reactions are filtered out by the pinned NyxID adapter before
+callback construction. CMA cannot enable them by widening its relay parser or
+declaring activity callback support. See the [pinned reaction-contract review and
+CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
+
+The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
+private text ingress, retained incoming/outbound reaction authority and native
+text replies without changing that relay. Its local signed-webhook/provider/send
+tests pass and structured source/credential setup is available in the portal; native media, templates and connected Meta
+acceptance remain required, so this does not complete WhatsApp support.
 
 ## Native Lark and Feishu forms
 
@@ -45,7 +56,8 @@ canonical submission saved before dispatch. Original actor, source, provider,
 consumer, conversation, partition, message and revision remain bound through
 restart, callback replay and replacement.
 
-`CMAEG_LARK_FORMS_ENABLED` defaults to false. Enabling it issues native forms only
+`CMAEG_LARK_FORMS_ENABLED` defaults to false in code; deployment policy enables it
+after compatible readers and isolated Custom verification. It issues native forms only
 when structural preflight and existing native-control context checks succeed.
 Otherwise valid replies preserve their prior rendering and destination, including
 plain-text forms alongside native Buttons/Choice and text replies in threaded,
@@ -147,7 +159,8 @@ then apply the reviewed activation values and roll only the Gateway. Existing
 outbound-message authoring, raw relay verification, thread-contract authoring and
 inbound media stay enabled. The desired user-testing activation also enables
 relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
-Native Lark/Feishu forms remain separately disabled in the manifest.
+Native Lark/Feishu and Discord forms plus Discord card effects were subsequently
+enabled after PR #1148 deployment and fresh isolated Custom verification.
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
@@ -263,3 +276,23 @@ thread/edit/effect and callback tests under each actual bot's permissions. Recor
 live gates and source/provider revisions separately from this source audit.
 Overall four-platform support remains incomplete until those gaps and external
 acceptance are resolved.
+
+
+### Gateway followup release and current test limits
+
+PR #1148 (CI40505257949) is deployed at Gateway digest
+`sha256:1fd3345ce6f1bf7c7bbfb49af5f064848d28ab99e71f2da735b722431f68a2eb`.
+Discord forms, Discord card effects and Lark forms are enabled. Agent Manager,
+Web and runtime images did not change in that rollout. Health/readiness and
+OpenAPI returned 200; existing user Pod/PVC identities and sampled histories
+were retained. A pre-existing exit-2 crash loop continued independently, and
+an unowned warm pool Pod/PVC was replaced; those differences were explicitly
+reviewed rather than described as unchanged.
+
+A fresh autonomous Custom fixture completed four events, including typed Form
+and multiselect replyMessage output. Invalid HMAC returned 401. Activity appeared
+after 251 ms in the measured run, and reconnect did not start another provider
+turn. The exact temporary channel, sandbox and key were retired afterwards.
+No Telegram, WhatsApp, Lark/Feishu or Discord messages were sent by this test.
+Native platform rendering, callbacks and platform permissions remain separate
+acceptance work; no claim of four-platform completion follows from this result.

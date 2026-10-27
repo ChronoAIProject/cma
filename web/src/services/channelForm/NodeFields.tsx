@@ -1,5 +1,10 @@
 import type { Denied } from '../client';
-import { nativeDiscordUnavailable, useRelayCapabilities } from '../RelayCapabilities';
+import {
+  nativeDiscordUnavailable,
+  nativeWhatsappUnavailable,
+  useRelayCapabilities,
+} from '../RelayCapabilities';
+import { WhatsappCredentialsFields } from './WhatsappSourceFields';
 import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { Button } from '../../ui/Button';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
@@ -7,7 +12,15 @@ import { CredentialsFields } from './CredentialsFields';
 import { Choice, Section } from './Fields';
 import { ProfileFields, ProviderFields } from './ProfileFields';
 import { SourceFields } from './SourceFields';
-import { defaultSource, object, records, type EditorSection, type Fields } from './model';
+import {
+  defaultSource,
+  object,
+  records,
+  producerCredentialKeys,
+  usesHmacCredentials,
+  type EditorSection,
+  type Fields,
+} from './model';
 export function NodeFields({
   draft,
   onChange,
@@ -53,6 +66,11 @@ export function NodeFields({
                       { value: 'nyxid_relay', label: 'NyxID messaging connection' },
                       { value: 'telegram', label: 'Direct Telegram bot' },
                       {
+                        value: 'whatsapp',
+                        label: 'Direct WhatsApp Business',
+                        unavailable: nativeWhatsappUnavailable(discovery),
+                      },
+                      {
                         value: 'discord',
                         label: 'Direct Discord bot',
                         unavailable: nativeDiscordUnavailable(discovery),
@@ -76,7 +94,14 @@ export function NodeFields({
                     )
                   }
                 />
-                {!create ? (
+                {source.type === 'whatsapp' ? (
+                  <WhatsappCredentialsFields
+                    value={credentials}
+                    onChange={onCredentials}
+                    create={create}
+                  />
+                ) : null}
+                {!create && source.type !== 'whatsapp' ? (
                   <CredentialsFields
                     value={credentials}
                     onChange={onCredentials}
@@ -123,9 +148,12 @@ export function NodeFields({
               create && draft.connection_ref === undefined
                 ? [
                     'agent_key',
-                    'channel_key',
-                    'telegram_bot_token',
-                    'telegram_webhook_secret',
+                    ...(sources.some((source) => source.type === 'nyxid_relay')
+                      ? ['channel_key']
+                      : []),
+                    ...(sources.some((source) => source.type === 'telegram')
+                      ? ['telegram_bot_token', 'telegram_webhook_secret']
+                      : []),
                     ...(sources.some((source) => source.type === 'discord')
                       ? ['discord_bot_token']
                       : []),
@@ -133,7 +161,7 @@ export function NodeFields({
                 : ['agent_key']
             }
             create={create}
-            hmac={create}
+            hmac={create && usesHmacCredentials(draft)}
           />
         </>
       ) : null}
@@ -146,19 +174,12 @@ export function NodeFields({
     </>
   );
 }
-export function nodeCredentials(values: Fields, section: EditorSection): Fields {
+export function nodeCredentials(values: Fields, section: EditorSection, draft: Fields): Fields {
   const keys =
     section.kind === 'consumer'
       ? ['agent_key']
       : section.kind === 'channel'
         ? ['replace_hmac', 'hmac_secrets']
-        : [
-            'channel_key',
-            'discord_bot_token',
-            'telegram_bot_token',
-            'telegram_webhook_secret',
-            'replace_hmac',
-            'hmac_secrets',
-          ];
+        : producerCredentialKeys(records(draft.sources)[section.index]?.type);
   return Object.fromEntries(Object.entries(values).filter(([key]) => keys.includes(key)));
 }

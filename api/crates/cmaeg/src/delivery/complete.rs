@@ -138,18 +138,26 @@ impl Sender {
             outcome = delivery.kind(),
             "complete relay delivery finished"
         );
-        let message_ref = if let DeliveryOutcome::Confirmed {
+        let mut message_ref = if let DeliveryOutcome::Confirmed {
             platform_message_id: Some(id),
         } = &delivery
         {
             MessageRef::seal(
                 &MessageRefPayload {
                     discord_message: None,
+                    lark_effect: None,
                     telegram_effect: None,
                     relay_message: self
                         .relay
                         .text_edits_enabled()
-                        .then(|| super::edit::destination(*platform, message, &part.text, outbound))
+                        .then(|| {
+                            super::edit::destination(
+                                *platform,
+                                message,
+                                &part.text,
+                                outbound.clone(),
+                            )
+                        })
                         .flatten(),
                     channel_id: event.channel_id.clone(),
                     event_id: event.event_id.clone(),
@@ -164,6 +172,16 @@ impl Sender {
         } else {
             None
         };
+        if !message.thread_reply
+            && super::edit::destination(*platform, message, &part.text, outbound.clone()).is_some()
+        {
+            if let (Some(reference), Some(outbound)) = (message_ref.as_ref(), outbound.as_deref()) {
+                message_ref = Some(
+                    self.lark_effect_reference(ctx.channel, event, reference.clone(), outbound)
+                        .await,
+                );
+            }
+        }
         (
             IntentReceipt {
                 message_ref,

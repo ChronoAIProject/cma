@@ -29,6 +29,7 @@ pub mod telegram;
 pub mod telemetry;
 pub mod tools;
 pub mod turns;
+pub mod whatsapp;
 
 use axum::{routing::get, Json, Router};
 use serde::Serialize;

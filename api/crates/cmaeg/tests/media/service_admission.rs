@@ -231,14 +231,18 @@ fn turn_targets_open_and_verify_the_sealed_event_ref() {
 
 fn config(media: MediaConfig) -> Config {
     Config {
+        native_whatsapp_writes_enabled: false,
         native_bot_mentions_writes_enabled: false,
         thread_contract_writes_enabled: false,
         multi_consumer_writes_enabled: false,
         dynamic_sources_writes_enabled: false,
         relay_raw_verification_writes_enabled: false,
         lark_resource_writes_enabled: false,
+        lark_message_effects_writes_enabled: false,
         native_discord_writes_enabled: false,
+        native_telegram_message_events_writes_enabled: false,
         native_discord_thread_history_enabled: false,
+        native_discord_reactions_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),

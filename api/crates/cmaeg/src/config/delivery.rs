@@ -17,6 +17,7 @@ pub const CMAEG_DISCORD_CARD_EDITS_ENABLED: &str = "CMAEG_DISCORD_CARD_EDITS_ENA
 pub const CMAEG_DISCORD_MULTISELECT_ENABLED: &str = "CMAEG_DISCORD_MULTISELECT_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
+pub const CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: &str = "CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED";
 pub const CMAEG_DISCORD_FORMS_ENABLED: &str = "CMAEG_DISCORD_FORMS_ENABLED";
 pub const CMAEG_LARK_FORMS_ENABLED: &str = "CMAEG_LARK_FORMS_ENABLED";
 pub const CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED";
@@ -126,6 +127,12 @@ pub(crate) fn discord_card_effects_from_env() -> Result<bool, ConfigError> {
 }
 pub(crate) fn discord_card_edits_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_DISCORD_CARD_EDITS_ENABLED)
+}
+pub(crate) fn discord_reactions_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag("CMAEG_DISCORD_REACTIONS_ENABLED")
+}
+pub(crate) fn discord_message_events_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED)
 }
 pub(crate) fn discord_forms_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_DISCORD_FORMS_ENABLED)

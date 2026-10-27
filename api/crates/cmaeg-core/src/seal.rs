@@ -13,6 +13,7 @@ use serde::{de::DeserializeOwned, Serialize};
 mod console_login;
 pub mod event_ref;
 mod interaction;
+pub mod lark_effect;
 pub mod lineage;
 pub mod media_link;
 pub mod message_ref;
