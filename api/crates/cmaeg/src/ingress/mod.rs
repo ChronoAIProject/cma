@@ -15,6 +15,7 @@ pub mod telegram;
 pub(crate) mod whatsapp;
 
 mod state;
+mod whatsapp_status;
 pub use state::IngressState;
 
 #[cfg(test)]
