@@ -142,7 +142,7 @@ async fn native_whatsapp_delivery_never_resends_after_receipt_storage_loss() {
 
 use crate::whatsapp::outbound::tests::{answer, attachment, confirmed, Graph as MediaGraph};
 
-async fn media_setup(
+pub(super) async fn media_setup(
     replies: Vec<Result<HttpReply, TransportError>>,
 ) -> (
     Sender,
@@ -180,7 +180,7 @@ fn media_message() -> OutboundMessage {
     message.native_attachments = vec![attachment("application/pdf")];
     message
 }
-async fn send_media(
+pub(super) async fn send_media(
     sender: &Sender,
     channel: &Arc<ResolvedChannel>,
     event: &EventRefPayload,
@@ -492,7 +492,7 @@ async fn native_whatsapp_media_partial_delivery_and_receipt_loss_stop_remaining_
     }
 }
 
-struct RevokeAfterUpload(std::sync::atomic::AtomicUsize);
+pub(super) struct RevokeAfterUpload(pub(super) std::sync::atomic::AtomicUsize);
 impl crate::delivery::gate::SendGate for RevokeAfterUpload {
     fn enter_route<'a>(
         &'a self,
