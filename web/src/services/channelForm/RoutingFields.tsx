@@ -36,7 +36,10 @@ export function ConsumerPolicyFields({
     publish = object(value.publish);
   const set = (key: string, next: unknown) => onChange(optional(value, key, next));
   return (
-    <Section title="Consumer policy">
+    <Section
+      title="Consumer policy"
+      description="Control how this agent is addressed, which senders it accepts, and how it replies."
+    >
       <TextField
         label="Consumer name"
         value={value.name}
@@ -118,7 +121,10 @@ export function RoutingFields({
     );
   return (
     <>
-      <Section title="Event routing">
+      <Section
+        title="Event routing"
+        description="Choose the default recipients and how a sender can address a particular agent."
+      >
         <StringList
           label="Default consumer IDs"
           value={strings(value.default_targets)}
@@ -233,7 +239,10 @@ export function RoutingFields({
           Add routing rule
         </Button>
       </Section>
-      <Section title="Default reply destination">
+      <Section
+        title="Default reply destination"
+        description="Used when a consumer chooses the channel default instead of replying to the original conversation."
+      >
         <Choice
           label="Default reply type"
           value={destination.type ?? ''}
@@ -290,7 +299,10 @@ export function RoutingFields({
           />
         ) : null}
       </Section>
-      <Section title="Agent event limits">
+      <Section
+        title="Agent event limits"
+        description="Bound handoffs between agents to avoid loops and excessive message traffic."
+      >
         <NumberField
           label="Maximum handoff hops"
           value={events.max_hops ?? 2}
