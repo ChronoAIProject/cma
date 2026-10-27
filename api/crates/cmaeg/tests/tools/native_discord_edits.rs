@@ -111,3 +111,43 @@ async fn native_edit_authorization_rechecks_current_record_after_cached_key_revo
     );
     assert!(app.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn native_card_edit_authorization_rechecks_current_record_after_cached_key_revocation() {
+    let app = App::new().await;
+    let channel = app
+        .state
+        .resolver
+        .resolve(app.fixture.id.as_str())
+        .await
+        .unwrap();
+    let reference = MessageRef::seal(
+        &MessageRefPayload {
+            discord_message: None,
+            telegram_effect: None,
+            channel_id: channel.id.clone(),
+            event_id: "discord:77:700".parse().unwrap(),
+            platform_message_id: "800".into(),
+            route_id: "discord:77:99".into(),
+            interaction_record_id: Some("11111111-1111-4111-8111-111111111111".into()),
+            relay_message: None,
+            consumer: None,
+        },
+        &app.state.keys,
+    )
+    .unwrap();
+    app.state
+        .authorize_message(caller(&app), &reference, "updateMessage")
+        .await
+        .unwrap();
+    let mut revoked = channel.definition.clone();
+    revoked.secrets.agent_key_hash = format!("sha256:{}", "1".repeat(64));
+    *app.fixture.backend.blob.lock().unwrap() =
+        seal_blob(&app.state.keys, &serde_json::to_vec(&revoked).unwrap()).unwrap();
+    assert!(app
+        .state
+        .authorize_message(caller(&app), &reference, "updateMessage")
+        .await
+        .is_err());
+    assert!(app.requests.lock().unwrap().is_empty());
+}

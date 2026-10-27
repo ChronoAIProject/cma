@@ -364,6 +364,14 @@ pub(super) fn project(
     {
         capabilities.buttons = "native_components".into();
     }
+    // A confirmed successor reference keeps editing after new chains are disabled.
+    if activity_verified
+        && crate::interactions::discord::eligible(channel, event, &activity)
+        && matches!(&activity.kind, ActivityKind::Interaction(result)
+            if result.values.get("revision").and_then(serde_json::Value::as_u64).is_some_and(|revision| revision > 1))
+    {
+        capabilities.edit = true;
+    }
     if !consumer_controls && !matches!(activity.source, SourceKind::Custom) {
         capabilities.buttons = "numbered_text".into();
     }

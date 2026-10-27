@@ -137,7 +137,12 @@ pub(crate) fn valid(card: &Card) -> bool {
         && identity.partition_key.len() <= 4096
         && cmaeg_core::channel::valid_discord_id(&identity.bot_id)
         && card.route_id == route(&identity.bot_id, &card.chat)
-        && render(&card.message, &card.id, card.revision).is_ok()
+        && (if card.revision > 1 {
+            render_replacement
+        } else {
+            render
+        })(&card.message, &card.id, card.revision)
+        .is_ok()
         && selection_valid(card)
 }
 pub(crate) fn route(bot: &str, channel: &str) -> String {
@@ -205,6 +210,23 @@ pub(crate) fn render(message: &OutboundMessage, id: &str, revision: u64) -> Resu
         return Err(Error::Denied);
     }
     Ok(Value::Array(rows))
+}
+/// A confirmed replacement can remove every control while retaining its exact
+/// card reference for subsequent edits. Initial issuance still requires controls.
+pub(crate) fn render_replacement(
+    message: &OutboundMessage,
+    id: &str,
+    revision: u64,
+) -> Result<Value, Error> {
+    if !requested(message)
+        && crate::delivery::discord_edit::editable_content(message)
+        && message.reply_to.is_none()
+        && revision > 1
+    {
+        Ok(json!([]))
+    } else {
+        render(message, id, revision)
+    }
 }
 pub(super) struct CallbackAction {
     pub index: usize,

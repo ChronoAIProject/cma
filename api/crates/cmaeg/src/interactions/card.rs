@@ -43,6 +43,9 @@ pub struct Card {
     /// Native Discord identity is absent from every historical card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<super::discord::Identity>,
+    /// Native replacement claim and result; omitted on all historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_edit: Option<super::discord_edit::Edit>,
 }
 impl Card {
     pub(crate) fn consumed_at(&self) -> Option<&str> {
