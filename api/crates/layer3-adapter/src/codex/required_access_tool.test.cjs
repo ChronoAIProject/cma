@@ -17,6 +17,7 @@ function sources() {
   const base = installed.includes(after) ? installed.replace(after, before) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
   const compositions = {
+    "84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c": "b0d4c534287a41824d94b87ea0f3dcf629f9052c03705238624dd48d80d88301",
     "4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888": "6aabe4f5724f0183015b2cd7bfdc6dbbca1cd3d604ba759c30476e512316876d",
     b2676ef9a4a57a5bedf15c0b576b96f2c67c45e53880f08b4b8ba80f2f8ce8d9: "87d08828c723db16ada3e7cd56a075373d7d01837af389bd5906c1ff7c3187c8",
     "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4": "f2dc53b3c73f3844cb596ac5e7ee42e4057f49b06c82449ef43f3713a9b57bb5",
@@ -172,7 +173,8 @@ test("pinned Codex waits for access discovery on new and prepared conversations,
     await server.state.started; await delay(50);
     assert.equal(opened, false, "Prepared conversation rebind must wait for discovery");
     server.release(); await loading;
-    await bridge.call("session/prompt", { sessionId: created.sessionId, prompt: [{ type: "text", text: "Request GitHub access using the owner consent tool." }] });
+    await bridge.call("session/prompt", { sessionId: created.sessionId, prompt: [{ type: "text", text: "Request GitHub access using the owner consent tool." }] })
+      .catch(error => { throw server.state.failure ?? error; });
     if (server.state.failure) throw server.state.failure;
     assert.equal(server.state.calls.length, 1);
     await bridge.close();

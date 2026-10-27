@@ -107,7 +107,10 @@ impl DocumentService {
 
 fn authority_error(error: AgentAccessError) -> DocumentError {
     match error {
-        AgentAccessError::Forbidden | AgentAccessError::NotFound => DocumentError::NotFound,
+        AgentAccessError::Forbidden
+        | AgentAccessError::NotFound
+        | AgentAccessError::OwnerAuthorityRequired
+        | AgentAccessError::ServiceConnectionRequired => DocumentError::NotFound,
         AgentAccessError::Unavailable => DocumentError::Unavailable,
         AgentAccessError::Invalid => DocumentError::Invalid,
         AgentAccessError::Conflict => DocumentError::Conflict,

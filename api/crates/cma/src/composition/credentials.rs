@@ -29,7 +29,9 @@ pub(super) fn sandbox_credentials(
     };
     let ordinary: Arc<dyn SandboxCredentialController> = match key_issuer(config) {
         Some(issuer) => {
-            ManagedSandboxCredentials::new(issuer, auth, stores.sandbox_credentials.clone())
+            let tokens =
+                crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone());
+            ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };

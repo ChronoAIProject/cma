@@ -34,6 +34,9 @@ function processRpc(program, args, options) {
         return frame.result;
       } finally { clearTimeout(timer); pending.delete(id); }
     },
+    notify(method, params) {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+    },
     close() { lines.close(); return stop(child); },
   };
 }

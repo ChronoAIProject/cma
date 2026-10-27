@@ -16,6 +16,34 @@ pub trait PersonalCommandAdmissionAuthority: Send + Sync {
         caller: &Caller,
         credential: &str,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError>;
+
+    /// Service management requires direct owner authority. Implementations may
+    /// retain a verified independent owner credential without borrowing a login.
+    async fn owner_service_access_authority(
+        &self,
+        context: &crate::resource_access::CallerContext,
+        credential: &str,
+    ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        if context.credential_source != crate::resource_access::CredentialSource::Retained {
+            return Err(CommandAuthorizationError::Revoked);
+        }
+        self.personal_command_authority(&context.caller, credential)
+            .await
+    }
+
+    /// Independent clients must already hold the requested connection authority.
+    /// Interactive owners retain the existing explicit connection workflow.
+    async fn confirm_owner_service_scope(
+        &self,
+        context: &crate::resource_access::CallerContext,
+        _credential: &str,
+        _services: &[String],
+    ) -> Result<(), crate::sandbox::agent_access::AgentAccessError> {
+        if context.credential_source != crate::resource_access::CredentialSource::Retained {
+            return Err(crate::sandbox::agent_access::AgentAccessError::OwnerAuthorityRequired);
+        }
+        Ok(())
+    }
 }
 
 /// Select durable execution custody for a currently authorized resource. The

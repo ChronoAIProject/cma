@@ -108,6 +108,12 @@ impl AgentWorker {
                 )
                 .await;
         }
+        if sandbox.runtime.is_none() {
+            return self.handle_failure(agent, WorkerFailure::retryable(
+                "agent_stop_runtime_verification_required",
+                "The runtime binding is absent but process absence is not proved. Retire the Sandbox to reconcile its provider ownership and retained home; if retirement is already pending, restore provider access or repair the retained ownership evidence. No process has been reported stopped.",
+            ), now).await;
+        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,

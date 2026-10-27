@@ -175,7 +175,9 @@ impl BotExternal for GatewayBots {
                 .map_err(|_| BotError::Unavailable)?;
             let observed = self.nyxid.owned_key(token.expose(), bot, &key.id).await?;
             let expires_at = layer2_core::rfc3339_at(key.expires_at);
-            if !keys::matches_expiry(observed.expires_at.as_deref(), &expires_at) {
+            if !keys::matches_expiry(observed.expires_at.as_deref(), &expires_at)
+                || !key.matches_grant(&observed.allowed_service_ids, &observed.allowed_node_ids)
+            {
                 return Err(BotError::Unavailable);
             }
             KeyIssuer::provided(key.value.expose()).map_err(|_| BotError::Unavailable)?;

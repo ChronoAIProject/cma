@@ -154,7 +154,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
           "title": "agent_access_forbidden",
           "status": 403,
-          "detail": "sign in as the Agent owner to approve service access",
+          "detail": "the caller cannot manage this Agent's service access",
           "code": "agent_access_forbidden"
         },
         "bodyKind": "json"
@@ -449,7 +449,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
           "title": "agent_access_forbidden",
           "status": 403,
-          "detail": "sign in as the Agent owner to approve service access",
+          "detail": "the caller cannot manage this Agent's service access",
           "code": "agent_access_forbidden"
         },
         "bodyKind": "json"

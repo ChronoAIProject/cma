@@ -4,7 +4,9 @@ use std::{sync::Arc, time::Duration};
 
 use layer2_core::resource_access::CallerContext;
 use layer2_core::sandbox::agent_access::AgentAccessError;
-use layer2_core::sandbox::agent_io::{AgentCommandService, CommandAuthorizationError};
+use layer2_core::sandbox::agent_io::{
+    AgentCommandService, CommandAuthorizationError, PersonalCommandAdmissionAuthority,
+};
 use layer2_core::sandbox::SandboxStatus;
 use layer2_core::trigger_domain::{ServiceConnectionBroker, ServiceRequirementState};
 use tokio::{sync::watch, task::JoinHandle};
@@ -139,7 +141,12 @@ impl AgentAccessWorker {
                 }
                 Err(error) => {
                     let code = match error {
-                        AgentAccessError::Forbidden => "owner_authority_revoked",
+                        AgentAccessError::Forbidden | AgentAccessError::OwnerAuthorityRequired => {
+                            "owner_authority_revoked"
+                        }
+                        AgentAccessError::ServiceConnectionRequired => {
+                            "service_connection_required"
+                        }
                         AgentAccessError::NotFound => "agent_identity_changed",
                         _ => "access_update_cannot_continue",
                     };
@@ -164,7 +171,7 @@ impl AgentAccessWorker {
             return Err(AgentAccessError::Forbidden);
         };
         self.auth
-            .retained_personal_owner_authority(&record.requester.owner, authorization)
+            .retained_owner_service_authority(&record.requester.owner, authorization)
             .await
             .map_err(|error| match error {
                 CommandAuthorizationError::Unavailable => AgentAccessError::Unavailable,
@@ -177,6 +184,18 @@ impl AgentAccessWorker {
         record: &AgentAccessRecord,
     ) -> Result<bool, AgentAccessError> {
         let services = record.approved_services()?;
+        if matches!(&record.decision, Some(AgentAccessDecision::Approved { authorization, .. }) if authorization.authority_id.starts_with("owner-api:"))
+        {
+            let (context, credential) = self.authority(record).await?;
+            self.auth
+                .confirm_owner_service_scope(
+                    &context,
+                    credential.expose(),
+                    &services.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                )
+                .await?;
+            return Ok(true);
+        }
         let requirements = tokio::time::timeout(
             Duration::from_secs(20),
             self.broker.requirements(&record.requester.owner, services),
