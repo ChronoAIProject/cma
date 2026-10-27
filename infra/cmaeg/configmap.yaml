@@ -18,6 +18,8 @@ data:
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "true"
   # Compatible readers are deployed; each delivery still requires owner commit.
   CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED: "true"
+  # Enable only after all serving and rollback readers support exact Lark resource bindings.
+  CMAEG_LARK_RESOURCE_WRITES_ENABLED: "false"
   CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED: "true"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"

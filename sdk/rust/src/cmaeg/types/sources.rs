@@ -65,6 +65,9 @@ pub enum Source {
         /// Opt into raw Discord/WhatsApp event verification; never combine with trust_normalized.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_raw_event: Option<bool>,
+        /// Opt-in exact Lark/Feishu resource proxy binding.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<LarkResourceBinding>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -133,6 +136,9 @@ pub enum SourceRequest {
         /// Opt into raw Discord/WhatsApp event verification; never combine with trust_normalized.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verify_raw_event: Option<bool>,
+        /// Exact authorized connection for opt-in embedded Lark/Feishu media.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<LarkResourceBinding>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -180,4 +186,16 @@ pub enum SourceKind {
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
     Custom {},
+}
+
+/// Explicit scoped connection for embedded Lark/Feishu media; contains no credentials.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LarkResourceBinding {
+    /// Exact authorized NyxID UserService identifier.
+    pub user_service_id: String,
+    /// Exact regional Lark/Feishu catalog service identifier.
+    pub catalog_service_id: String,
+    /// Independently configured receiving application ID (`cli_…`).
+    pub app_id: String,
 }

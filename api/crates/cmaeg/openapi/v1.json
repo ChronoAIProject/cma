@@ -853,6 +853,45 @@
             "type": "object"
           },
           {
+            "description": "Authenticated embedded Lark/Feishu resource, bound to its source authority revision.",
+            "properties": {
+              "binding": {
+                "$ref": "#/components/schemas/LarkResourceBinding"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "resource_key": {
+                "type": "string"
+              },
+              "resource_kind": {
+                "$ref": "#/components/schemas/LarkResourceKind"
+              },
+              "source_revision": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "lark_resource"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message_id",
+              "resource_key",
+              "resource_kind",
+              "binding",
+              "bot_id",
+              "source_revision",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Telegram Bot API file identifiers of a natively received message.",
             "properties": {
               "file_id": {
@@ -3214,6 +3253,35 @@
         ],
         "type": "object"
       },
+      "LarkResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "description": "Receiving app from the independently configured relay bot.",
+            "type": "string"
+          },
+          "catalog_service_id": {
+            "type": "string"
+          },
+          "user_service_id": {
+            "description": "Exact allowed NyxID UserService; never a provider credential.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_service_id",
+          "catalog_service_id",
+          "app_id"
+        ],
+        "type": "object"
+      },
+      "LarkResourceKind": {
+        "enum": [
+          "image",
+          "file"
+        ],
+        "type": "string"
+      },
       "McpAuth": {
         "oneOf": [
           {
@@ -4301,6 +4369,12 @@
           "dynamic_sources_writes_enabled": {
             "type": "boolean"
           },
+          "lark_resource_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "multi_consumer_writes_enabled": {
             "type": "boolean"
           },
@@ -4966,6 +5040,17 @@
               "key_id": {
                 "type": "string"
               },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding",
+                    "description": "Optional exact NyxID connection for embedded Lark/Feishu resources."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -5263,6 +5348,16 @@
               },
               "key_id": {
                 "type": "string"
+              },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "platform": {
                 "$ref": "#/components/schemas/Platform"

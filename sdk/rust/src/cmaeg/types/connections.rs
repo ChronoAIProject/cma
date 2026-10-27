@@ -99,6 +99,9 @@ pub struct RelayAuthoringCapabilities {
     pub dynamic_sources_writes_enabled: bool,
     /// Enables Discord/WhatsApp raw-event verification writes independently.
     pub relay_raw_verification_writes_enabled: bool,
+    /// Enables explicit bindings for embedded Lark/Feishu media reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lark_resource_writes_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Whether owner-initiated message preparation and commit are enabled.
     pub outbound_messages_writes_enabled: Option<bool>,

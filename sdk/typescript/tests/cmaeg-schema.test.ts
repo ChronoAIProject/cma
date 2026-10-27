@@ -140,6 +140,7 @@ describe('CMAEG attachment locators', () => {
       'url',
       'inline',
       'discord',
+      'lark_resource',
     ]);
     for (const example of locators) expect(AttachmentSourceSchema(example)).toEqual(example);
     for (const example of examples.Attachment ?? [])
@@ -155,6 +156,25 @@ describe('CMAEG attachment locators', () => {
     ).toThrow('variant');
   });
 });
+
+it.each(['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack'])(
+  'preserves a legacy %s relay without introducing a resource binding',
+  (platform) => {
+    const request = {
+      type: 'nyxid_relay',
+      platform,
+      issuer: 'https://nyx.example',
+      key_id: 'key-fixture',
+      route_ids: ['route-fixture'],
+      admission: { type: 'all' },
+    };
+    expect(SourceRequestSchema(request)).toEqual(request);
+    expect(JSON.stringify(SourceRequestSchema(request))).not.toContain('lark_resources');
+    const source = { ...request, jwks_url: 'https://nyx.example/.well-known/jwks.json' };
+    expect(SourceSchema(source)).toEqual(source);
+    expect(JSON.stringify(SourceSchema(source))).not.toContain('lark_resources');
+  },
+);
 
 describe('CMAEG custom source attachments', () => {
   const examples = JSON.parse(
