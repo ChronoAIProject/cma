@@ -81,6 +81,7 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
             bytes
         }
         "application/pdf" => b"%PDF-1.7\nfixture\n%%EOF".to_vec(),
+        "image/webp" => sticker::tests::fixtures()[0].1.to_vec(),
         _ => audio::tests::fixtures()
             .into_iter()
             .find(|(kind, _)| *kind == mime)
@@ -89,9 +90,9 @@ pub(crate) fn attachment(mime: &str) -> NativeAttachment {
             .to_vec(),
     };
     serde_json::from_value(
-        json!({"kind":if mime.starts_with("image/") {"image"} else if mime.starts_with("audio/") {"audio"} else {"file"},
+        json!({"kind":if mime == "image/webp" {"sticker"} else if mime.starts_with("image/") {"image"} else if mime.starts_with("audio/") {"audio"} else {"file"},
         "source":{"type":"base64","data":STANDARD.encode(bytes)},"mime_type":mime,
-        "caption":if mime.starts_with("audio/") {None} else {Some("A caption")}}),
+        "caption":if mime.starts_with("audio/") || mime == "image/webp" {None} else {Some("A caption")}}),
     )
     .unwrap()
 }
@@ -149,6 +150,8 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
         let body: Value = serde_json::from_slice(&calls[1].2).unwrap();
         let kind = if mime == "application/pdf" {
             "document"
+        } else if mime == "image/webp" {
+            "sticker"
         } else if mime.starts_with("audio/") {
             "audio"
         } else {
@@ -158,7 +161,7 @@ async fn native_whatsapp_uploads_exact_bytes_then_sends_only_returned_id_to_boun
         assert_eq!(body["context"]["message_id"], "wamid.original");
         assert_eq!(body["type"], kind);
         assert_eq!(body[kind]["id"], "45678");
-        if kind == "audio" {
+        if matches!(kind, "audio" | "sticker") {
             assert_eq!(body[kind], json!({"id":"45678"}));
         } else {
             assert_eq!(body[kind]["caption"], "A caption");

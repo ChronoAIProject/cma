@@ -7,6 +7,7 @@ use super::{
 };
 mod destinations;
 mod durable;
+mod native_whatsapp_sticker_tests;
 mod native_whatsapp_tests;
 mod whatsapp;
 use crate::{

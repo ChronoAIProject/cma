@@ -43,6 +43,7 @@ impl TelegramClient {
             NativeMediaKind::File => ("sendDocument", "document"),
             NativeMediaKind::Audio => ("sendAudio", "audio"),
             NativeMediaKind::Video => ("sendVideo", "video"),
+            NativeMediaKind::Sticker => return Err(Error::Rejected),
         };
         let part = Part::bytes(file.bytes)
             .file_name(file.filename)

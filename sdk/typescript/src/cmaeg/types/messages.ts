@@ -124,7 +124,7 @@ export const IntentReceiptSchema = object({
 });
 export type IntentReceipt = Output<typeof IntentReceiptSchema>;
 
-export const NativeMediaKindSchema = enumeration('image', 'file', 'audio', 'video');
+export const NativeMediaKindSchema = enumeration('image', 'file', 'audio', 'video', 'sticker');
 export type NativeMediaKind = Output<typeof NativeMediaKindSchema>;
 export const NativeMediaSourceSchema = tagged(
   {
@@ -142,6 +142,16 @@ export const NativeAttachmentSchema = object({
   caption: optional(nullable(text)),
 });
 export type NativeAttachment = Output<typeof NativeAttachmentSchema>;
+export const NativeStickerCapabilitiesSchema = object({
+  width: integer,
+  height: integer,
+  max_static_bytes: integer,
+  max_animated_bytes: integer,
+  max_frames: integer,
+  max_duration_ms: integer,
+  min_frame_duration_ms: integer,
+});
+export type NativeStickerCapabilities = Output<typeof NativeStickerCapabilitiesSchema>;
 export const NativeMediaCapabilitiesSchema = object({
   kinds: array(text),
   sources: array(text),
@@ -151,6 +161,7 @@ export const NativeMediaCapabilitiesSchema = object({
   max_total_bytes: optional(nullable(integer)),
   max_image_bytes: optional(nullable(integer)),
   max_caption_chars: optional(nullable(integer)),
+  sticker: optional(nullable(NativeStickerCapabilitiesSchema)),
 });
 export type NativeMediaCapabilities = Output<typeof NativeMediaCapabilitiesSchema>;
 
