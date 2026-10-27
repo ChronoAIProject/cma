@@ -1,10 +1,11 @@
 use super::*;
+use crate::channels::definition::fixture as definition_fixture;
 use crate::ingress::{
     launch::LaunchRequest, routing_plan::fixture, routing_store::test_server::Server,
 };
 use cmaeg_core::{
     activity::{ActorKind, SourceKind},
-    channel::{AdmissionPolicy, Secret, Source},
+    channel::{AdmissionPolicy, Source},
     seal::{event_ref::activity_digest, EventRef, ReplyAddress},
 };
 use serde_json::json;
@@ -137,8 +138,11 @@ async fn received_message_remint_refuses_changed_source_provider_or_missing_curr
                 };
             }
             1 => channel.definition.sources.clear(),
-            2 => channel.definition.provider.binding_id = "different-binding".parse().unwrap(),
-            3 => channel.definition.secrets.provider_credential = None,
+            2 => definition_fixture::replace_default_binding(
+                &mut channel.definition,
+                "different-binding".parse().unwrap(),
+            ),
+            3 => definition_fixture::replace_default_credential(&mut channel.definition, None),
             4 => channel.definition.owner.subject = "different-owner".into(),
             5 => channel.agent_key_hash = [9; 32],
             _ => unreachable!(),
@@ -162,8 +166,10 @@ async fn received_message_remint_refuses_changed_source_provider_or_missing_curr
     // Routed execution allows a currently authorized replacement credential.
     // The caller issuing a reaction reference then hashes this current revision.
     let mut rotated = (*request.channel).clone();
-    rotated.definition.secrets.provider_credential =
-        Some(Secret::new("replacement-consumer-credential"));
+    definition_fixture::replace_default_credential(
+        &mut rotated.definition,
+        Some("replacement-consumer-credential"),
+    );
     assert!(current_received_message(
         server.records.clone(),
         keys,
