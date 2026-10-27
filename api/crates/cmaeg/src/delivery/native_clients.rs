@@ -38,3 +38,17 @@ impl RelayClient {
         self
     }
 }
+
+impl super::relay_client::RelayClient {
+    pub fn with_native_media_edits(
+        mut self,
+        telegram: bool,
+        discord: bool,
+        store: std::sync::Arc<crate::native_media::store::Store>,
+    ) -> Self {
+        self.telegram_media_edits = telegram;
+        self.discord_media_edits = discord;
+        self.native_media_receipts = Some(store);
+        self
+    }
+}

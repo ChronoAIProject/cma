@@ -65,6 +65,8 @@ impl MessageEffectsClient {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageEffectsCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_edit: Option<crate::native_media::Capabilities>,
     pub delete: bool,
     pub reaction: bool,
     /// Exact bot-message or received-user-message authority; never arbitrary IDs.
@@ -76,6 +78,7 @@ pub struct MessageEffectsCapabilities {
 impl MessageEffectsCapabilities {
     pub(crate) fn new(supported: bool, expires_at: Option<i64>) -> Self {
         Self {
+            media_edit: None,
             delete: supported,
             reaction: supported,
             scope: "confirmed_native_bot_message".into(),
@@ -102,6 +105,9 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.native_media_edit.is_some() {
+            return self.native_media_capabilities(caller, reference).await;
+        }
         if message.received_reaction.is_some() {
             return received::capabilities(
                 &message,
