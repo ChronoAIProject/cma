@@ -655,7 +655,7 @@ Disabled or threaded contexts retain their advertised fallback capabilities. Nat
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
-### Native WhatsApp image, PDF and audio replies
+### Native WhatsApp image, PDF, audio and sticker replies
 
 Discover `capabilities.native_media` before using `native_attachments`. Native
 WhatsApp has an independent default-off gate and supports JPEG/PNG `image`,
@@ -671,11 +671,19 @@ attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
 address validation. Matching MIME type and filename extension are required when
 provided; images must have 8-bit RGB/RGBA headers. Audio undergoes bounded
 container/codec checks without a runtime decoder; those checks do not certify
-complete payload decodability. Native video/sticker and other document formats
-remain unavailable. The original event fixes the recipient
+complete payload decodability. Native video and other document formats remain unavailable. The original event fixes the recipient
 and quoted message; clients cannot provide a Meta media ID. Confirmed replies
 record exact target receipts, while uncertain/partial sends must not be retried
 automatically. Actual Meta/client acceptance remains separate from local tests.
+
+The additive `sticker` kind requests static or animated `image/webp` presentation;
+`.webp` is the matching extension. `native_media.sticker` (`NativeStickerCapabilities`)
+reports a 512×512 canvas, 100000 static/500000 animated bytes, at most 128 frames,
+10000 ms per cycle and at least 8 ms per frame. Captions are refused; accompanying
+text stays separate. Files undergo bounded container/frame checks without pixel
+decoding. The sticker message carries only the upload result ID. Unsupported
+native transports and all NyxID/initiated paths refuse this kind before any send;
+legacy capabilities omit the optional `sticker` object.
 
 ### Approved WhatsApp templates
 

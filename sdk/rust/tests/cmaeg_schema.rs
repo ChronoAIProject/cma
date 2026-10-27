@@ -241,6 +241,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         NativeMediaKind,
         NativeMediaSource,
         NativeMediaCapabilities,
+        NativeStickerCapabilities,
         SourceCheckResponse,
         SourceCheck,
         SourceCheckStatus,

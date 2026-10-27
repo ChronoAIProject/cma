@@ -15,6 +15,8 @@ pub enum NativeMediaKind {
     File,
     Audio,
     Video,
+    /// Sticker presentation; only destinations advertising it may issue one.
+    Sticker,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize, ToSchema)]
