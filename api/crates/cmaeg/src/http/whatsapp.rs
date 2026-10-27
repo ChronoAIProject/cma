@@ -283,10 +283,16 @@ pub async fn callback(
             );
         };
         use futures_util::{stream, StreamExt, TryStreamExt};
-        let observed = stream::iter(statuses.iter())
-            .map(|status| state.observe_whatsapp_status(&channel, source, status, now))
-            .buffer_unordered(8)
-            .try_collect::<Vec<_>>();
+        let observed = stream::iter(statuses.into_iter().map(|status| {
+            let (state, channel, source) = (&state, &channel, source);
+            async move {
+                state
+                    .observe_whatsapp_status(channel, source, &status, now)
+                    .await
+            }
+        }))
+        .buffer_unordered(8)
+        .try_collect::<Vec<_>>();
         if !matches!(
             tokio::time::timeout(Duration::from_secs(15), observed).await,
             Ok(Ok(_))
