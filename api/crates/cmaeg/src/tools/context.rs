@@ -98,7 +98,7 @@ pub struct NativeMediaCapabilities {
 impl NativeMediaCapabilities {
     fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
-            kinds: ["image", "file"].map(String::from).into(),
+            kinds: ["image", "file", "audio"].map(String::from).into(),
             sources: ["url", "base64"].map(String::from).into(),
             max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
             max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,

@@ -19,7 +19,7 @@ external platform send is authorized by this review.
 | --- | --- | --- | --- | --- |
 | Ordinary ingress | Native webhook and authenticated relay; private/group admission | Raw-verified relay for private conversations | Verified relay private/group text and rich-post text | Native authenticated Gateway, owned supervision, durable inbox and routed execution; bounded source discovery and self-service creation. Relay slash commands are also supported |
 | Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts | Standalone image/file/audio/video retrieval; default-off exact-source proxy binding can retrieve embedded rich-post images/videos, otherwise honest placeholders | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
-| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Default-off native JPEG/PNG images and PDF documents; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
+| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Default-off native JPEG/PNG, PDF and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
@@ -43,7 +43,7 @@ CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
 private text ingress, retained incoming/outbound reaction authority and native
 text replies without changing that relay. Its local signed-webhook/provider/send
-tests pass and structured source/credential setup is available in the portal; native audio/video/sticker delivery, templates and connected Meta
+tests pass and structured source/credential setup is available in the portal; native video/sticker delivery, further document/audio profiles, templates and connected Meta
 acceptance remain required, so this does not complete WhatsApp support.
 
 ## Native Lark and Feishu forms

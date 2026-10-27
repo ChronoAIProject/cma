@@ -28,7 +28,7 @@ data:
   # Keep native Meta source authoring off until compatible readers and setup acceptance.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "false"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "false"
-  # Independent native JPEG/PNG/PDF reply uploads, pending connected Meta acceptance.
+  # Independent native JPEG/PNG/PDF/audio reply uploads, pending connected Meta acceptance.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "false"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
   CMAEG_NATIVE_DISCORD_WRITES_ENABLED: "true"
