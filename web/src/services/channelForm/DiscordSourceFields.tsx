@@ -1,7 +1,7 @@
 import { nativeDiscordUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { AdmissionFields } from './AdmissionFields';
 import { Section, TextField, Toggle } from './Fields';
-import type { Fields } from './model';
+import { optional, type Fields } from './model';
 
 export function DiscordSourceFields({
   value,
@@ -56,11 +56,30 @@ export function DiscordSourceFields({
           disabled={direct && !guilds}
           onChange={(enabled) => intent(4096, enabled)}
         />
+        {discovery.authoring?.native_discord_thread_history_enabled === true ||
+        value.thread_history === true ? (
+          <>
+            <Toggle
+              label="Read earlier thread messages"
+              value={value.thread_history === true}
+              disabled={
+                discovery.authoring?.native_discord_thread_history_enabled !== true &&
+                value.thread_history !== true
+              }
+              onChange={(enabled) =>
+                onChange(optional(value, 'thread_history', enabled ? true : undefined))
+              }
+            />
+            <p className="channel-field-hint">
+              Allow the agent to read up to 20 earlier messages in the same thread when needed. This
+              does not include other channels or older history.
+            </p>
+          </>
+        ) : null}
         <p className="channel-field-hint">
           Message Content Intent is required. Bot messages are not supported. Native buttons and
-          single-select menus require operator enablement and are unavailable in threads. Thread
-          sessions require verified native channel metadata enabled by the operator; otherwise
-          thread partitioning is refused.
+          single-select menus require operator enablement. Thread sessions require verified native
+          channel metadata enabled by the operator; otherwise thread partitioning is refused.
         </p>
       </Section>
       <AdmissionFields

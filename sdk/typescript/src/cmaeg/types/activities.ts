@@ -1,3 +1,4 @@
+import { LarkResourceBindingSchema } from './channels.js';
 import { NativeMediaCapabilitiesSchema } from './messages.js';
 import { MessageEffectsCapabilitiesSchema } from './message-effects.js';
 import {
@@ -59,6 +60,9 @@ export const ActivityConversationSchema = object({
 });
 export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 
+export const LarkResourceKindSchema = enumeration('image', 'file');
+export type LarkResourceKind = Output<typeof LarkResourceKindSchema>;
+
 // A non-secret locator bound into the activity digest; fetching still requires
 // the event reference's authority.
 export const AttachmentSourceSchema = tagged(
@@ -70,6 +74,15 @@ export const AttachmentSourceSchema = tagged(
       type: enumeration('discord'),
     }),
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    lark_resource: object({
+      type: enumeration('lark_resource'),
+      message_id: text,
+      resource_key: text,
+      resource_kind: LarkResourceKindSchema,
+      binding: LarkResourceBindingSchema,
+      bot_id: text,
+      source_revision: text,
+    }),
     telegram: object({
       file_id: text,
       file_unique_id: text,
@@ -244,7 +257,25 @@ export const ActivitySchema = object({
 });
 export type Activity = Output<typeof ActivitySchema>;
 
+export const ThreadHistoryMessageSchema = object({
+  message_id: text,
+  author: ActorSchema,
+  text,
+  occurred_at: text,
+  edited_at: optional(nullable(text)),
+  attachment_count: integer,
+});
+export type ThreadHistoryMessage = Output<typeof ThreadHistoryMessageSchema>;
+export const ThreadHistorySchema = object({
+  thread_id: text,
+  before_message_id: text,
+  messages: array(ThreadHistoryMessageSchema),
+  text_truncated: boolean,
+});
+export type ThreadHistory = Output<typeof ThreadHistorySchema>;
+
 export const CapabilitiesSchema = object({
+  thread_history: optional(nullable(boolean)),
   message_effects: optional(nullable(MessageEffectsCapabilitiesSchema)),
   whatsapp_templates: optional(nullable(boolean)),
   native_media: optional(nullable(NativeMediaCapabilitiesSchema)),
@@ -268,6 +299,7 @@ export const PublicActivitySchema = object({
 export type PublicActivity = Output<typeof PublicActivitySchema>;
 
 export const ContextResponseSchema = object({
+  thread_history: optional(nullable(ThreadHistorySchema)),
   activity: PublicActivitySchema,
   activity_verified: boolean,
   capabilities: CapabilitiesSchema,

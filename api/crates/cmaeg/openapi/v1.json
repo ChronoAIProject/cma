@@ -853,6 +853,45 @@
             "type": "object"
           },
           {
+            "description": "Authenticated embedded Lark/Feishu resource, bound to its source authority revision.",
+            "properties": {
+              "binding": {
+                "$ref": "#/components/schemas/LarkResourceBinding"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "resource_key": {
+                "type": "string"
+              },
+              "resource_kind": {
+                "$ref": "#/components/schemas/LarkResourceKind"
+              },
+              "source_revision": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "lark_resource"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message_id",
+              "resource_key",
+              "resource_kind",
+              "binding",
+              "bot_id",
+              "source_revision",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Telegram Bot API file identifiers of a natively received message.",
             "properties": {
               "file_id": {
@@ -1575,6 +1614,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "thread_history": {
+            "description": "A fixed 20-message prior window is available on explicit request.",
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "typing": {
@@ -2388,6 +2434,17 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "thread_history": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadHistory",
+                "description": "Explicitly requested current text context of the original native thread."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3213,6 +3270,35 @@
           "action_id"
         ],
         "type": "object"
+      },
+      "LarkResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "description": "Receiving app from the independently configured relay bot.",
+            "type": "string"
+          },
+          "catalog_service_id": {
+            "type": "string"
+          },
+          "user_service_id": {
+            "description": "Exact allowed NyxID UserService; never a provider credential.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_service_id",
+          "catalog_service_id",
+          "app_id"
+        ],
+        "type": "object"
+      },
+      "LarkResourceKind": {
+        "enum": [
+          "image",
+          "file"
+        ],
+        "type": "string"
       },
       "McpAuth": {
         "oneOf": [
@@ -4301,6 +4387,12 @@
           "dynamic_sources_writes_enabled": {
             "type": "boolean"
           },
+          "lark_resource_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "multi_consumer_writes_enabled": {
             "type": "boolean"
           },
@@ -4317,6 +4409,12 @@
             "minimum": 0,
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "native_discord_thread_history_enabled": {
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -4925,6 +5023,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -4965,6 +5067,17 @@
               },
               "key_id": {
                 "type": "string"
+              },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding",
+                    "description": "Optional exact NyxID connection for embedded Lark/Feishu resources."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
@@ -5226,6 +5339,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -5263,6 +5380,16 @@
               },
               "key_id": {
                 "type": "string"
+              },
+              "lark_resources": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LarkResourceBinding"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
@@ -5497,6 +5624,70 @@
           "message_id",
           "sender_kind",
           "address"
+        ],
+        "type": "object"
+      },
+      "ThreadHistory": {
+        "description": "A current text-only window, with no pagination or transferable message authority.",
+        "properties": {
+          "before_message_id": {
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadHistoryMessage"
+            },
+            "type": "array"
+          },
+          "text_truncated": {
+            "description": "True when text was clipped to the 32 KiB total content budget.",
+            "type": "boolean"
+          },
+          "thread_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "before_message_id",
+          "messages",
+          "text_truncated"
+        ],
+        "type": "object"
+      },
+      "ThreadHistoryMessage": {
+        "properties": {
+          "attachment_count": {
+            "description": "Historical attachments have no download or effect authority in this result.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "author",
+          "text",
+          "occurred_at",
+          "attachment_count"
         ],
         "type": "object"
       },
@@ -7527,6 +7718,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Explicitly request up to 20 earlier messages from this event’s opted-in native Discord thread.",
+            "in": "query",
+            "name": "include_thread_history",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

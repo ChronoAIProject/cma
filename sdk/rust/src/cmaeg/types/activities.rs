@@ -1,8 +1,8 @@
 //! Activities wire types for the independent CMAEG v1 protocol.
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConsumerId, ConsumerName,
-    ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode, ReplyChoice,
-    RuleId, SourceId, SourceKind, ThreadFacts,
+    ConversationId, ConversationKind, EventId, EventRef, LarkResourceKind, MessageRef, ProblemCode,
+    ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -231,6 +231,22 @@ pub struct Attachment {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttachmentSource {
+    /// Sealed native resource retrieved through an exact scoped NyxID connection.
+    #[serde(rename = "lark_resource")]
+    LarkResource {
+        /// Native Lark/Feishu message ID (`om_…`).
+        message_id: String,
+        /// Native image or file resource key.
+        resource_key: String,
+        /// Regional API resource type.
+        resource_kind: LarkResourceKind,
+        /// Authorized connection and expected application identity.
+        binding: super::LarkResourceBinding,
+        /// Independently pinned receiving bot open ID (`ou_…`).
+        bot_id: String,
+        /// Digest of the exact source and channel credential revision.
+        source_revision: String,
+    },
     /// Native Discord attachment, resolved with current bot custody.
     #[serde(rename = "discord")]
     Discord {
@@ -313,6 +329,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Explicit bounded prior-thread text reads are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<bool>,
     /// Exact-message effect support, absent before compatible reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,
@@ -373,6 +392,9 @@ pub struct CloudEvent {
 /// CMAEG `ContextResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextResponse {
+    /// Included only when explicitly requested and authorized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<super::ThreadHistory>,
     /// Wire field `activity`.
     pub activity: PublicActivity,
     /// Wire field `activity_verified`.

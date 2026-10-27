@@ -17,6 +17,8 @@ mod attachment_transformer;
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]
 mod attachments_mcp;
+#[path = "tools/complete_budget.rs"]
+mod complete_budget;
 #[path = "tools/consumer_auth.rs"]
 mod consumer_auth;
 #[path = "tools/consumer_context.rs"]

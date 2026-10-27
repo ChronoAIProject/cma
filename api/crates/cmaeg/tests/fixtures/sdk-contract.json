@@ -459,6 +459,19 @@
       "channel_id": "99",
       "message_id": "700",
       "attachment_id": "500"
+    },
+    {
+      "type": "lark_resource",
+      "message_id": "om_native",
+      "resource_key": "img_resource",
+      "resource_kind": "image",
+      "binding": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      },
+      "bot_id": "ou_receiver",
+      "source_revision": "abababababababababababababababababababababababababababababababab"
     }
   ],
   "AttachmentImage": [
@@ -758,7 +771,8 @@
         "max_reactions": 1,
         "reaction": true,
         "scope": "confirmed_native_bot_message"
-      }
+      },
+      "thread_history": true
     }
   ],
   "ChannelCreateRequest": [
@@ -855,17 +869,22 @@
           "admission": {
             "type": "all"
           },
-          "bot_id": "fixture",
+          "bot_id": "ou_receiver",
           "bot_username": "fixture",
           "issuer": "fixture",
           "key_id": "fixture",
-          "platform": "telegram",
+          "platform": "lark",
           "route_ids": [
             "fixture"
           ],
           "trust_normalized": false,
           "type": "nyxid_relay",
-          "verify_raw_event": false
+          "verify_raw_event": false,
+          "lark_resources": {
+            "user_service_id": "connection-fixture",
+            "catalog_service_id": "catalog-fixture",
+            "app_id": "cli_source"
+          }
         }
       ],
       "connection_admission": {
@@ -1035,18 +1054,23 @@
             "admission": {
               "type": "all"
             },
-            "bot_id": "fixture",
+            "bot_id": "ou_receiver",
             "bot_username": "fixture",
             "issuer": "fixture",
             "jwks_url": "fixture",
             "key_id": "fixture",
-            "platform": "telegram",
+            "platform": "lark",
             "route_ids": [
               "fixture"
             ],
             "trust_normalized": false,
             "type": "nyxid_relay",
-            "verify_raw_event": false
+            "verify_raw_event": false,
+            "lark_resources": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            }
           }
         ],
         "version": 1,
@@ -1324,18 +1348,23 @@
             "admission": {
               "type": "all"
             },
-            "bot_id": "fixture",
+            "bot_id": "ou_receiver",
             "bot_username": "fixture",
             "issuer": "fixture",
             "jwks_url": "fixture",
             "key_id": "fixture",
-            "platform": "telegram",
+            "platform": "lark",
             "route_ids": [
               "fixture"
             ],
             "trust_normalized": false,
             "type": "nyxid_relay",
-            "verify_raw_event": false
+            "verify_raw_event": false,
+            "lark_resources": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            }
           }
         ],
         "version": 1,
@@ -1614,18 +1643,23 @@
                 "admission": {
                   "type": "all"
                 },
-                "bot_id": "fixture",
+                "bot_id": "ou_receiver",
                 "bot_username": "fixture",
                 "issuer": "fixture",
                 "jwks_url": "fixture",
                 "key_id": "fixture",
-                "platform": "telegram",
+                "platform": "lark",
                 "route_ids": [
                   "fixture"
                 ],
                 "trust_normalized": false,
                 "type": "nyxid_relay",
-                "verify_raw_event": false
+                "verify_raw_event": false,
+                "lark_resources": {
+                  "user_service_id": "connection-fixture",
+                  "catalog_service_id": "catalog-fixture",
+                  "app_id": "cli_source"
+                }
               }
             ],
             "version": 1,
@@ -1903,18 +1937,23 @@
                 "admission": {
                   "type": "all"
                 },
-                "bot_id": "fixture",
+                "bot_id": "ou_receiver",
                 "bot_username": "fixture",
                 "issuer": "fixture",
                 "jwks_url": "fixture",
                 "key_id": "fixture",
-                "platform": "telegram",
+                "platform": "lark",
                 "route_ids": [
                   "fixture"
                 ],
                 "trust_normalized": false,
                 "type": "nyxid_relay",
-                "verify_raw_event": false
+                "verify_raw_event": false,
+                "lark_resources": {
+                  "user_service_id": "connection-fixture",
+                  "catalog_service_id": "catalog-fixture",
+                  "app_id": "cli_source"
+                }
               }
             ],
             "version": 1,
@@ -2194,18 +2233,23 @@
             "admission": {
               "type": "all"
             },
-            "bot_id": "fixture",
+            "bot_id": "ou_receiver",
             "bot_username": "fixture",
             "issuer": "fixture",
             "jwks_url": "fixture",
             "key_id": "fixture",
-            "platform": "telegram",
+            "platform": "lark",
             "route_ids": [
               "fixture"
             ],
             "trust_normalized": false,
             "type": "nyxid_relay",
-            "verify_raw_event": false
+            "verify_raw_event": false,
+            "lark_resources": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            }
           }
         ],
         "version": 1,
@@ -2486,18 +2530,23 @@
             "admission": {
               "type": "all"
             },
-            "bot_id": "fixture",
+            "bot_id": "ou_receiver",
             "bot_username": "fixture",
             "issuer": "fixture",
             "jwks_url": "fixture",
             "key_id": "fixture",
-            "platform": "telegram",
+            "platform": "lark",
             "route_ids": [
               "fixture"
             ],
             "trust_normalized": false,
             "type": "nyxid_relay",
-            "verify_raw_event": false
+            "verify_raw_event": false,
+            "lark_resources": {
+              "user_service_id": "connection-fixture",
+              "catalog_service_id": "catalog-fixture",
+              "app_id": "cli_source"
+            }
           }
         ],
         "version": 1,
@@ -2772,17 +2821,22 @@
           "admission": {
             "type": "all"
           },
-          "bot_id": "fixture",
+          "bot_id": "ou_receiver",
           "bot_username": "fixture",
           "issuer": "fixture",
           "key_id": "fixture",
-          "platform": "telegram",
+          "platform": "lark",
           "route_ids": [
             "fixture"
           ],
           "trust_normalized": false,
           "type": "nyxid_relay",
-          "verify_raw_event": false
+          "verify_raw_event": false,
+          "lark_resources": {
+            "user_service_id": "connection-fixture",
+            "catalog_service_id": "catalog-fixture",
+            "app_id": "cli_source"
+          }
         }
       ],
       "connection_admission": {
@@ -2945,7 +2999,8 @@
           "max_reactions": 1,
           "reaction": true,
           "scope": "confirmed_native_bot_message"
-        }
+        },
+        "thread_history": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -2959,7 +3014,26 @@
       "source": {
         "type": "custom"
       },
-      "expires_at": 1
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      }
     },
     {
       "activity": {
@@ -3065,7 +3139,8 @@
           "max_reactions": 1,
           "reaction": true,
           "scope": "confirmed_native_bot_message"
-        }
+        },
+        "thread_history": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3079,7 +3154,26 @@
       "source": {
         "type": "custom"
       },
-      "expires_at": 1
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      }
     }
   ],
   "ConversationId": [
@@ -3794,18 +3888,23 @@
           "admission": {
             "type": "all"
           },
-          "bot_id": "fixture",
+          "bot_id": "ou_receiver",
           "bot_username": "fixture",
           "issuer": "fixture",
           "jwks_url": "fixture",
           "key_id": "fixture",
-          "platform": "telegram",
+          "platform": "lark",
           "route_ids": [
             "fixture"
           ],
           "trust_normalized": false,
           "type": "nyxid_relay",
-          "verify_raw_event": false
+          "verify_raw_event": false,
+          "lark_resources": {
+            "user_service_id": "connection-fixture",
+            "catalog_service_id": "catalog-fixture",
+            "app_id": "cli_source"
+          }
         }
       ],
       "version": 1,
@@ -4114,24 +4213,7 @@
       "admission": {
         "type": "all"
       },
-      "bot_id": "fixture",
-      "bot_username": "fixture",
-      "issuer": "fixture",
-      "jwks_url": "fixture",
-      "key_id": "fixture",
-      "platform": "telegram",
-      "route_ids": [
-        "fixture"
-      ],
-      "trust_normalized": false,
-      "type": "nyxid_relay",
-      "verify_raw_event": false
-    },
-    {
-      "admission": {
-        "type": "all"
-      },
-      "bot_id": "ou_fixture",
+      "bot_id": "ou_receiver",
       "bot_username": "fixture",
       "issuer": "fixture",
       "jwks_url": "fixture",
@@ -4142,24 +4224,56 @@
       ],
       "trust_normalized": false,
       "type": "nyxid_relay",
-      "verify_raw_event": false
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
     },
     {
       "admission": {
         "type": "all"
       },
-      "bot_id": "fixture",
+      "bot_id": "ou_receiver",
       "bot_username": "fixture",
       "issuer": "fixture",
       "jwks_url": "fixture",
       "key_id": "fixture",
-      "platform": "slack",
+      "platform": "feishu",
       "route_ids": [
         "fixture"
       ],
-      "trust_normalized": true,
+      "trust_normalized": false,
       "type": "nyxid_relay",
-      "verify_raw_event": false
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_receiver",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay",
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
     },
     {
       "attachments": {
@@ -4190,7 +4304,8 @@
       "intents": 37377,
       "admission": {
         "type": "all"
-      }
+      },
+      "thread_history": true
     }
   ],
   "SourceKind": [
@@ -4222,23 +4337,7 @@
       "admission": {
         "type": "all"
       },
-      "bot_id": "fixture",
-      "bot_username": "fixture",
-      "issuer": "fixture",
-      "key_id": "fixture",
-      "platform": "telegram",
-      "route_ids": [
-        "fixture"
-      ],
-      "trust_normalized": false,
-      "type": "nyxid_relay",
-      "verify_raw_event": false
-    },
-    {
-      "admission": {
-        "type": "all"
-      },
-      "bot_id": "ou_fixture",
+      "bot_id": "ou_receiver",
       "bot_username": "fixture",
       "issuer": "fixture",
       "key_id": "fixture",
@@ -4248,23 +4347,54 @@
       ],
       "trust_normalized": false,
       "type": "nyxid_relay",
-      "verify_raw_event": false
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
     },
     {
       "admission": {
         "type": "all"
       },
-      "bot_id": "fixture",
+      "bot_id": "ou_receiver",
       "bot_username": "fixture",
       "issuer": "fixture",
       "key_id": "fixture",
-      "platform": "slack",
+      "platform": "feishu",
       "route_ids": [
         "fixture"
       ],
-      "trust_normalized": true,
+      "trust_normalized": false,
       "type": "nyxid_relay",
-      "verify_raw_event": false
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_receiver",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay",
+      "verify_raw_event": false,
+      "lark_resources": {
+        "user_service_id": "connection-fixture",
+        "catalog_service_id": "catalog-fixture",
+        "app_id": "cli_source"
+      }
     },
     {
       "attachments": {
@@ -4295,7 +4425,8 @@
       "intents": 37377,
       "admission": {
         "type": "all"
-      }
+      },
+      "thread_history": true
     }
   ],
   "TestChannelResponse": [
@@ -4419,7 +4550,9 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "lark_resource_writes_enabled": false,
+        "native_discord_thread_history_enabled": false
       }
     },
     {
@@ -4453,7 +4586,9 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "lark_resource_writes_enabled": false,
+        "native_discord_thread_history_enabled": false
       }
     },
     {
@@ -4496,7 +4631,9 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "lark_resource_writes_enabled": false,
+        "native_discord_thread_history_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5774,7 +5911,9 @@
       "native_media_writes_enabled": false,
       "native_discord_writes_enabled": true,
       "native_discord_auto_activation_enabled": true,
-      "native_discord_capacity": 64
+      "native_discord_capacity": 64,
+      "lark_resource_writes_enabled": false,
+      "native_discord_thread_history_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -5935,6 +6074,52 @@
       "detail": "Selected for native Discord intake; connection health is unconfirmed.",
       "capacity": 64,
       "selected_records": 1
+    }
+  ],
+  "LarkResourceBinding": [
+    {
+      "user_service_id": "connection-fixture",
+      "catalog_service_id": "catalog-fixture",
+      "app_id": "cli_source"
+    }
+  ],
+  "LarkResourceKind": [
+    "image",
+    "file"
+  ],
+  "ThreadHistory": [
+    {
+      "thread_id": "99",
+      "before_message_id": "700",
+      "messages": [
+        {
+          "message_id": "698",
+          "author": {
+            "id": "51",
+            "display_name": "Reader",
+            "kind": "human"
+          },
+          "text": "Earlier thread text",
+          "occurred_at": "2026-10-27T01:00:00Z",
+          "edited_at": "2026-10-27T01:01:00Z",
+          "attachment_count": 0
+        }
+      ],
+      "text_truncated": false
+    }
+  ],
+  "ThreadHistoryMessage": [
+    {
+      "message_id": "698",
+      "author": {
+        "id": "51",
+        "display_name": "Reader",
+        "kind": "human"
+      },
+      "text": "Earlier thread text",
+      "occurred_at": "2026-10-27T01:00:00Z",
+      "edited_at": "2026-10-27T01:01:00Z",
+      "attachment_count": 0
     }
   ]
 }

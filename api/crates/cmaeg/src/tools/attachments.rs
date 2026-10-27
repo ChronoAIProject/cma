@@ -190,6 +190,32 @@ impl ToolsState {
                 "attachment_not_found",
             ));
         };
+        let channel = if matches!(
+            attachment.source,
+            Some(cmaeg_core::activity::AttachmentSource::LarkResource { .. })
+        ) {
+            let current = self
+                .resolver
+                .resolve_current(channel.id.as_str())
+                .await
+                .map_err(|error| error.problem())?;
+            super::state::owner(
+                caller,
+                &current,
+                event.consumer.as_ref(),
+                "readEventAttachment",
+            )?;
+            if !crate::media::source::configured(&current, &activity, attachment.source.as_ref()) {
+                return Err(Problem::new(
+                    ProblemCode::Forbidden,
+                    403,
+                    "attachment_source_revoked",
+                ));
+            }
+            current
+        } else {
+            channel
+        };
         let target =
             MediaTarget::new(channel, event, Arc::new(activity)).map_err(|_| unverified())?;
         let reader = Reader {

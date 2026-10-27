@@ -9,6 +9,8 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         let mut service = fixture.service();
         service.management.dynamic_sources_writes_enabled = !enabled;
         service.management.relay_raw_verification_writes_enabled = enabled;
+        service.management.lark_resource_writes_enabled = enabled;
+        service.management.native_discord_thread_history_enabled = enabled;
         service.management.multi_consumer_writes_enabled = !enabled;
         service.management.native_bot_mentions_writes_enabled = enabled;
         service.management.thread_contract_writes_enabled = !enabled;
@@ -34,6 +36,8 @@ async fn relay_authoring_reports_writer_gates_without_expanding_native_connectio
         let relay = &value["relay_authoring"];
         assert_eq!(relay["dynamic_sources_writes_enabled"], !enabled);
         assert_eq!(relay["relay_raw_verification_writes_enabled"], enabled);
+        assert_eq!(relay["lark_resource_writes_enabled"], enabled);
+        assert_eq!(relay["native_discord_thread_history_enabled"], enabled);
         assert_eq!(relay["multi_consumer_writes_enabled"], !enabled);
         assert_eq!(relay["native_bot_mentions_writes_enabled"], enabled);
         assert_eq!(relay["thread_contract_writes_enabled"], !enabled);

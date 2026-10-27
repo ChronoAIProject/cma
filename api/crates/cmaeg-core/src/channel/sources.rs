@@ -179,6 +179,7 @@ fn validate_source(
             bot_id,
             intents,
             admission,
+            ..
         } => super::discord::validate(bot_id, *intents, admission, secrets, pointer),
         Source::Telegram {
             bot_id,
@@ -195,8 +196,22 @@ fn validate_source(
             bot_id,
             trust_normalized,
             verify_raw_event,
+            lark_resources,
             admission,
         } => {
+            if let Some(binding) = lark_resources {
+                let field = format!("{pointer}/lark_resources");
+                binding.validate(&field)?;
+                if super::lark_resources::lark_resource_service(*platform).is_none()
+                    || *trust_normalized
+                    || !bot_id.as_deref().is_some_and(|id| {
+                        id.starts_with("ou_") && super::lark_resources::safe_id(id, 128)
+                    })
+                    || secrets.channel_key.is_none()
+                {
+                    return Err(ValidationError::new(field, "requires a verified Lark/Feishu source, independently pinned bot open_id and channel key"));
+                }
+            }
             require_string(issuer, &format!("{pointer}/issuer"), 1, 512)?;
             require_string(key_id, &format!("{pointer}/key_id"), 1, 512)?;
             validate_https_url(jwks_url, &format!("{pointer}/jwks_url"))?;

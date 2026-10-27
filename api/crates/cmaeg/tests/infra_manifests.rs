@@ -29,6 +29,14 @@ const MIN_MEDIA_MEMORY_MIB: u64 = 1536;
 const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
+#[test]
+fn lark_resource_writes_ship_disabled_until_reader_and_binding_acceptance() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),
+        Some("false")
+    );
+}
+
 struct Line<'a> {
     indent: usize,
     text: &'a str,
@@ -442,4 +450,12 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
             Ok(2048 * MIB)
         );
     }
+}
+
+#[test]
+fn native_thread_history_is_default_off_until_compatible_reader_rollout() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED"),
+        Some("false")
+    );
 }
