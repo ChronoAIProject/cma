@@ -43,7 +43,7 @@ CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
 private text ingress, retained incoming/outbound reaction authority and native
 text replies without changing that relay. Its local signed-webhook/provider/send
-tests pass; native media, templates, structured setup UI and connected Meta
+tests pass and structured source/credential setup is available in the portal; native media, templates and connected Meta
 acceptance remain required, so this does not complete WhatsApp support.
 
 ## Native Lark and Feishu forms
@@ -56,7 +56,8 @@ canonical submission saved before dispatch. Original actor, source, provider,
 consumer, conversation, partition, message and revision remain bound through
 restart, callback replay and replacement.
 
-`CMAEG_LARK_FORMS_ENABLED` defaults to false. Enabling it issues native forms only
+`CMAEG_LARK_FORMS_ENABLED` defaults to false in code; deployment policy enables it
+after compatible readers and isolated Custom verification. It issues native forms only
 when structural preflight and existing native-control context checks succeed.
 Otherwise valid replies preserve their prior rendering and destination, including
 plain-text forms alongside native Buttons/Choice and text replies in threaded,
@@ -158,7 +159,8 @@ then apply the reviewed activation values and roll only the Gateway. Existing
 outbound-message authoring, raw relay verification, thread-contract authoring and
 inbound media stay enabled. The desired user-testing activation also enables
 relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
-Native Lark/Feishu forms remain separately disabled in the manifest.
+Native Lark/Feishu and Discord forms plus Discord card effects were subsequently
+enabled after PR #1148 deployment and fresh isolated Custom verification.
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
@@ -274,3 +276,23 @@ thread/edit/effect and callback tests under each actual bot's permissions. Recor
 live gates and source/provider revisions separately from this source audit.
 Overall four-platform support remains incomplete until those gaps and external
 acceptance are resolved.
+
+
+### Gateway followup release and current test limits
+
+PR #1148 (CI40505257949) is deployed at Gateway digest
+`sha256:1fd3345ce6f1bf7c7bbfb49af5f064848d28ab99e71f2da735b722431f68a2eb`.
+Discord forms, Discord card effects and Lark forms are enabled. Agent Manager,
+Web and runtime images did not change in that rollout. Health/readiness and
+OpenAPI returned 200; existing user Pod/PVC identities and sampled histories
+were retained. A pre-existing exit-2 crash loop continued independently, and
+an unowned warm pool Pod/PVC was replaced; those differences were explicitly
+reviewed rather than described as unchanged.
+
+A fresh autonomous Custom fixture completed four events, including typed Form
+and multiselect replyMessage output. Invalid HMAC returned 401. Activity appeared
+after 251 ms in the measured run, and reconnect did not start another provider
+turn. The exact temporary channel, sandbox and key were retired afterwards.
+No Telegram, WhatsApp, Lark/Feishu or Discord messages were sent by this test.
+Native platform rendering, callbacks and platform permissions remain separate
+acceptance work; no claim of four-platform completion follows from this result.
