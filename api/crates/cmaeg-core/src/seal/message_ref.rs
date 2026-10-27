@@ -9,6 +9,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRefPayload {
+    /// Exact separate native app authority; never a NyxID relay destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lark_effect: Option<Box<super::native_lark_effect::NativeLarkEffectAuthority>>,
     /// Reaction-only authority for an original received native WhatsApp message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_reaction: Option<Box<super::whatsapp_reaction::WhatsappReactionAuthority>>,
@@ -37,6 +40,9 @@ pub struct MessageRefPayload {
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(authority) = &self.native_lark_effect {
+            authority.validate(self)?;
+        }
         if let Some(authority) = &self.whatsapp_reaction {
             authority.validate(self)?;
         }

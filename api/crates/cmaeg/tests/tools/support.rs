@@ -137,6 +137,7 @@ impl App {
         let message_ref = MessageRef::seal(
             &MessageRefPayload {
                 discord_message: None,
+                native_lark_effect: None,
                 whatsapp_reaction: None,
                 lark_effect: None,
                 telegram_effect: None,
@@ -222,6 +223,7 @@ impl App {
             native_whatsapp_interactions_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
             telegram_effects: None,
