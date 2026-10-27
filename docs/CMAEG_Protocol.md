@@ -4094,3 +4094,11 @@ for limits, rollback rules, official reference pin and local/live evidence bound
 ### Native separate-app Lark / Feishu ingress
 
 `POST /v1/native-lark/{channel_id}` accepts encrypted signed schema-2.0 callbacks from an explicitly configured separate native app. The `native_lark` source pins region, app, tenant and bot identity; its encrypted app secret, Encrypt Key and Verification Token are independent of NyxID. Authoring and intake gates default off. Text, recall and human reaction deltas use durable original-plan routing and native text replies with confirmed target receipts. Incoming edits are not claimed. See [native Lark / Feishu](CMAEG_Native_Lark.md) for setup, authentication, source shape, acknowledgment behavior, retention and limitations. Existing NyxID webhook URLs must not be replaced.
+
+Native Telegram opted-in retained-message notifications also preserve anonymous
+`actor_chat` reactions and aggregate `message_reaction_count` updates. Both use
+`cma.message.reaction.updated.v1` with an unknown Activity actor and require an
+open sender policy. Aggregate data uses `observation: aggregate` and
+`reaction_counts: [{type, total_count}]`, without inventing per-user old/new
+reactions. Exact source, original consumer, partition and chat/topic custody
+remain mandatory. See `CMAEG_Native_Telegram_Message_Events.md`.
