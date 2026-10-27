@@ -5856,7 +5856,8 @@
     {
       "kinds": [
         "image",
-        "file"
+        "file",
+        "audio"
       ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
@@ -5867,7 +5868,12 @@
       "mime_types": [
         "image/jpeg",
         "image/png",
-        "application/pdf"
+        "application/pdf",
+        "audio/aac",
+        "audio/amr",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/ogg"
       ],
       "max_total_bytes": 8388608,
       "max_image_bytes": 5000000,
