@@ -169,6 +169,7 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on exact confirmed native Discord messages. Text/link replies also require native edit issuance; native uploads instead require the separate media effects gate. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
 | `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue effects-only references for native uploads fully contained in one confirmed Discord message, with up to four files. Requires the message effects gate, independently of text edits. Multiple native messages and uncertain sends get no reference; content/attachment edits remain unsupported. Deploy serving and rollback readers for the new sealed scope before enabling. Checked-in ConfigMap stays off. See [native media effects](CMAEG_Native_Discord_Media_Effects.md). |
 | `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` | `true` or `false` | `false` | Allows new native source `thread_history` opt-ins and explicit bounded `readEventContext` history reads after compatible readers are deployed. Both this gate and source consent are required for execution. Off revokes history reads, retained settings can be removed; ordinary context reads are unchanged. See [native thread history](CMAEG_Protocol.md#bounded-native-discord-thread-history). |
+| `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` | `true` or `false` | `false` | Allows native source `thread_lifecycle` consent and bounded create/list/archive/reopen/current-bot join/leave operations only when the optional persistent fence collection and grants are ready. Off revokes execution including retained references. See [lifecycle rollout](#native-discord-thread-lifecycle-rollout). |
 | `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
 | `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for explicit canaries or bounded automatic discovery. Off starts no native worker, scans or Discord requests. Authoring remains separately gated. |
 | `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | `true` or `false` | `false` | Discovers eligible ready native sources from the persisted channel index in pages of 32, with at most 64 selections/workers per process. Requires native runtime and routed recovery. Explicit canaries take precedence; dynamic selection authorizes verified native inbox admission only. It does not activate arbitrary HTTP, Custom or relay routing. |
@@ -2852,3 +2853,28 @@ be removed without enabling the gate. No runtime or infrastructure flag is
 activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
 for authority boundaries, persistent uncertain-write fences, unsupported private
 and forum creation, and exact API semantics.
+
+Before enabling lifecycle, install its optional Mongo storage separately from
+the base schema. `--print-thread-fences-migration-role` emits
+`cma_eg_thread_fences_migrator`; use that credential with
+`--migrate-thread-fences` after the ordinary `--migrate` has completed.
+`--print-thread-fences-runtime-role` emits `cma_eg_thread_fences_runtime`, which
+must be added to the existing Gateway runtime credential. These commands use
+`CMAEG_MONGODB_DATABASE` and, for migration, `CMAEG_MONGODB_URI`.
+
+The optional `eg_thread_fence_records` collection has strict opaque-record
+validation, exactly the `_id` and `(owner, _id)` indexes, and no TTL index. Its
+generated runtime role grants no delete privilege, and the record client rejects
+fence deletion. Its `thread_fences:1` migration marker is independent
+of base `schema:2`. Base migrations retain optional Forms and thread markers;
+default deployments do not require either optional collection or grant.
+Thread claims retain their fixed event expiry in `eg_interaction_records`.
+An ambiguous bot/thread fence has no expiry and must not be deleted to retry a
+write whose platform result is unknown.
+
+Activation requires both the lifecycle flag and verified storage readiness;
+otherwise source authoring and lifecycle clients remain disabled. Execution and
+capability restoration recheck readiness before platform IO. A missing marker,
+missing grant, unexpected index, or TTL index fails closed. The legacy CMA HTTP
+record transport does not support persistent thread fences. Rollback may turn
+off the lifecycle flag while retaining its durable collection and grants.
