@@ -61,6 +61,49 @@ module CIContract
     order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image", "Retain tested native image"])
   end
 
+  def self.api_cargo_cache(ci, images)
+    base = "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
+    prepare = step(images, "Prepare API Cargo cache identity", "python3 .github/scripts/api-cargo-cache.py prepare",
+      "matrix.component == 'api' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)")
+    require!(prepare["id"] == "api-cargo-cache", "API cache identity changed")
+    inject = step(images, "Inject API Cargo cache mounts", "python3 .github/scripts/api-cargo-cache.py inject", base)
+    extract = step(images, "Extract API Cargo cache before pruning", "python3 .github/scripts/api-cargo-cache.py extract",
+      "#{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
+    require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
+    require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
+    revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
+    shared = { "path" => "${{ runner.temp }}/cma-api-cargo-cache/data",
+      "key" => "${{ steps.api-cargo-cache.outputs.key }}", "enableCrossOsArchive" => false }
+    expected = [
+      { "name" => "Restore API Cargo cache archive", "if" => base, "id" => "api-cargo-cache-restore",
+        "uses" => "actions/cache/restore@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true,
+        "with" => shared.merge("restore-keys" => "${{ steps.api-cargo-cache.outputs.prefix }}", "fail-on-cache-miss" => false) },
+      { "name" => "Save accepted API Cargo cache archive",
+        "if" => "success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+        "uses" => "actions/cache/save@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true, "with" => shared },
+    ]
+    expected.each do |wanted|
+      rows = images.fetch("steps").select { |row| row["name"] == wanted["name"] }
+      require!(rows == [wanted], "API cache action authority, isolation or bounds changed: #{wanted['name']}")
+    end
+    step(job(ci, "trigger-release-contract", "Trigger release contract"), "API Cargo cache bridge regressions",
+      "python3 .github/scripts/api-cargo-cache-tests.py")
+    %w[Build\ image\ for\ all\ target\ platforms Load\ native\ image\ for\ scanning Vulnerability\ scan].each do |name|
+      step(images, name) # A cache hit must never skip the build or vulnerability gate.
+    end
+    prune = step(images, "Release build cache before image checks")
+    require!(prune["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" } && prune["run"] == <<~'SH', "mandatory image-preserving prune changed")
+      native_image_id=$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')
+      docker buildx prune --all --force
+      test "$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')" = "$native_image_id"
+      df -h .
+    SH
+    order(images, ["Prepare API Cargo cache identity", "Restore API Cargo cache archive", "Inject API Cargo cache mounts",
+      "Build image for all target platforms", "Load native image for scanning", "Extract API Cargo cache before pruning",
+      "Release build cache before image checks", "Vulnerability scan", "Export tested native image",
+      "Retain tested native image", "Save accepted API Cargo cache archive"])
+  end
+
   def self.release(inputs)
     ci = inputs.fetch("ci")
     publish = inputs.fetch("publish")
@@ -79,6 +122,7 @@ module CIContract
     artifact(images, "always() && matrix.component == 'runtime'", "runtime-image-evidence")
     order(images, ["Load native image for scanning", "Vulnerability scan", "Execute built runtime image contract", "Retain runtime image evidence", "Require passing runtime image evidence"])
     native_image_artifacts(images)
+    api_cargo_cache(ci, images)
     runtime = job(publish, "runtime-image-gate", "Runtime image evidence")
     require!(runtime["needs"] == %w[plan images image-exports] && !runtime.key?("if"), "release runtime dependency authority changed")
     require!(runtime["permissions"] == { "contents" => "read", "packages" => "read" }, "runtime evidence cannot publish")
