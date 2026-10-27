@@ -125,6 +125,16 @@ impl Fixture {
                     StatusCode::NO_CONTENT
                 }),
             )
+            .route(
+                "/v1/relay-resource-connections",
+                get(
+                    |State(control): State<Arc<Control>>, headers: HeaderMap| async move {
+                        control.calls.fetch_add(1, Ordering::SeqCst);
+                        *control.headers.write().await = headers;
+                        Json(json!({"items":[]}))
+                    },
+                ),
+            )
             .merge(streaming_tests::routes(eg_auth.clone()))
             .with_state(control.clone())
             .merge(cma_service_auth::session::router(eg_auth));
@@ -330,6 +340,40 @@ async fn existing_cma_refresh_rotates_token_before_forwarding() {
         f.control.headers.read().await[header::AUTHORIZATION],
         "Bearer renewed-test-access"
     );
+}
+
+#[tokio::test]
+async fn resource_discovery_uses_existing_refreshed_custody_without_forwarding_owner_or_secrets() {
+    let f = Fixture::new().await;
+    let mut state = f
+        .store
+        .subject(&SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap();
+    state.tokens.as_mut().unwrap().expires_at = SystemTime::now() + Duration::from_secs(10);
+    f.store.put_subject(state).await.unwrap();
+    let mut request = f.request(
+        Method::GET,
+        "/v1/relay-resource-connections?platform=feishu",
+    );
+    request
+        .headers_mut()
+        .insert("x-cmaeg-owner", HeaderValue::from_static("another-owner"));
+    let response = f.send(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"items":[]})
+    );
+    let headers = f.control.headers.read().await;
+    assert_eq!(headers[header::AUTHORIZATION], "Bearer renewed-test-access");
+    assert!(!headers.contains_key("x-cmaeg-owner"));
+    assert!(!headers.contains_key(header::COOKIE));
+    assert_eq!(f.control.calls.load(Ordering::SeqCst), 1);
+    assert!(!allowed(&Method::POST, "/v1/relay-resource-connections"));
 }
 #[tokio::test]
 async fn upstream_redirects_cannot_exfiltrate_server_bearer() {

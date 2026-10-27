@@ -32,6 +32,35 @@ fn event() -> CloudEvent {
     serde_json::from_value(json!({"specversion":"1.0","id":"event-1","source":"urn:fixture","type":"example.event","data":{"value":1},"traceid":"trace"})).unwrap()
 }
 
+#[tokio::test]
+async fn current_subject_resource_discovery_has_no_selected_owner_or_originating_agent_credential()
+{
+    let server = WireServer::new().await;
+    let client = client(&server);
+    for (platform, name) in [
+        (ResourcePlatform::Lark, "lark"),
+        (ResourcePlatform::Feishu, "feishu"),
+    ] {
+        let expected = json!({"items":[{"user_service_id":"connection","catalog_service_id":"catalog","name":"Research bot","platform":name,"source":"organization"}]});
+        server.expect(wire::json(
+            "GET",
+            &format!("/v1/relay-resource-connections?platform={name}"),
+            None,
+            200,
+            expected.clone(),
+            true,
+        ));
+        same(
+            client
+                .list_relay_resource_connections(platform)
+                .await
+                .unwrap(),
+            expected,
+        );
+    }
+    server.assert_drained();
+}
+
 #[test]
 fn gateway_credential_debug_is_redacted() {
     assert_eq!(

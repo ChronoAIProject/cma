@@ -440,6 +440,13 @@ is per operation; omit `owner` for personal resources. Listing accepts `after`
 and returns one page; follow `next_after` even when `items` is empty. Channel
 creation/update accepts `connection_ref` and `connection_admission`. Native
 Telegram source, credential and webhook endpoint fields are typed as well.
+`listRelayResourceConnections('lark' | 'feishu')` reads optional existing personal
+and eligible shared organization bot API connections for the current credential subject. It returns `items` with
+`user_service_id`, `catalog_service_id`, `name`, `platform` and `source` (`personal`
+or `organization`); there is no owner override or credential creation. An empty list does not invalidate saved/manual
+bindings. Keep receiving app/bot identity explicit and grant the channel key
+access separately. Older gateways may return 404; unavailable inventory is an
+error rather than an empty successful list.
 A channel read with several consumers carries the read-only
 `definition.routing` (`cmaeg.RoutingPolicy`), with each consumer's public key
 hash and never a key; it is absent on every other channel. A routed event's

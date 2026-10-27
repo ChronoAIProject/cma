@@ -323,3 +323,109 @@ async fn eager_derivative_cache_cannot_bypass_channel_key_rotation() {
         "revoked cache access must not refetch under another key"
     );
 }
+
+fn shared_metadata(fixture: &Fixture, source: Value) {
+    let (mut services, _, _) = super::tests::metadata();
+    services["services"][0]["credential_source"] = source;
+    fixture
+        .server
+        .set("/api/v1/user-services", Reply::json(services));
+    fixture
+        .server
+        .set("/api/v1/endpoints", Reply::json(json!({"endpoints":[]})));
+}
+const AUTHORIZATION: &str = "/api/v1/endpoints/endpoint-one/authorization";
+fn shared_evidence() -> Value {
+    json!({"id":"endpoint-one","catalog_service_id":"catalog-one","auto_connected":true,"updated_at":"2026-10-27T00:00:00Z"})
+}
+
+#[tokio::test]
+async fn shared_auto_connected_endpoint_uses_exact_channel_key_and_retains_bot_proof() {
+    let fixture = Fixture::new(Platform::Lark).await;
+    shared_metadata(
+        &fixture,
+        json!({"type":"org","allowed":true,"role":"member"}),
+    );
+    fixture
+        .server
+        .set(AUTHORIZATION, Reply::json(shared_evidence()));
+    assert_eq!(fixture.fetch().await.unwrap(), b"opaque-image-fixture");
+    assert!(fixture
+        .server
+        .requests
+        .lock()
+        .unwrap()
+        .contains(&(AUTHORIZATION.into(), format!("Bearer {KEY}"))));
+    fixture.server.set(
+        BOT,
+        Reply::json(json!({"code":0,"bot":{"open_id":"ou_other"}})),
+    );
+    assert_eq!(fixture.fetch().await.unwrap_err(), FetchError::Unauthorized);
+    assert_eq!(
+        fixture
+            .server
+            .paths()
+            .iter()
+            .filter(|path| path.as_str() == MEDIA)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn shared_endpoint_denials_mismatches_and_custom_origins_never_reach_provider() {
+    for change in [
+        "denied",
+        "wrong-id",
+        "wrong-catalog",
+        "custom",
+        "custom-url",
+        "viewer",
+        "disallowed",
+    ] {
+        let fixture = Fixture::new(Platform::Lark).await;
+        let mut source = json!({"type":"org","allowed":true,"role":"member"});
+        if change == "viewer" {
+            source["role"] = json!("viewer");
+        }
+        if change == "disallowed" {
+            source["allowed"] = json!(false);
+        }
+        shared_metadata(&fixture, source);
+        let mut evidence = shared_evidence();
+        match change {
+            "wrong-id" => evidence["id"] = json!("other"),
+            "wrong-catalog" => evidence["catalog_service_id"] = json!("other"),
+            "custom" => evidence["auto_connected"] = json!(false),
+            "custom-url" => evidence["url"] = json!("https://unrelated.example"),
+            _ => {}
+        }
+        fixture.server.set(
+            AUTHORIZATION,
+            Reply {
+                status: if change == "denied" { 403 } else { 200 },
+                ..Reply::json(evidence)
+            },
+        );
+        assert_eq!(
+            fixture.fetch().await.unwrap_err(),
+            FetchError::Unauthorized,
+            "{change}"
+        );
+        assert!(
+            !fixture
+                .server
+                .paths()
+                .iter()
+                .any(|path| path == BOT || path == MEDIA),
+            "{change}"
+        );
+        if matches!(change, "viewer" | "disallowed") {
+            assert!(!fixture
+                .server
+                .paths()
+                .iter()
+                .any(|path| path == AUTHORIZATION));
+        }
+    }
+}

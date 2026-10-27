@@ -150,7 +150,7 @@ pub(super) async fn response(
     let deadline = request.deadline.min(Instant::now() + DEADLINE);
     let (slug, origin) = lark_resource_service(*platform).ok_or(FetchError::NotRetrievable)?;
     // Independent metadata reads; no provider credential is returned or inspected.
-    let (services, endpoints, catalog) = tokio::try_join!(
+    let (services, mut endpoints, catalog) = tokio::try_join!(
         json(
             http,
             endpoint(base, &["api", "v1", "user-services"])?,
@@ -173,6 +173,45 @@ pub(super) async fn response(
             deadline
         ),
     )?;
+    let endpoint_id = authorize_service(binding, slug, origin, &services, &catalog)?;
+    let rows = endpoints
+        .get_mut("endpoints")
+        .and_then(Value::as_array_mut)
+        .ok_or(FetchError::Unauthorized)?;
+    if !rows
+        .iter()
+        .any(|row| row.get("id").and_then(Value::as_str) == Some(endpoint_id))
+    {
+        let service = unique(&services, "services", &binding.user_service_id)?;
+        if !allowed_shared_service(service)
+            || endpoint_id.is_empty()
+            || endpoint_id.len() > 128
+            || !endpoint_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+        {
+            return Err(FetchError::Unauthorized);
+        }
+        let evidence = json(
+            http,
+            endpoint(
+                base,
+                &["api", "v1", "endpoints", endpoint_id, "authorization"],
+            )?,
+            key,
+            deadline,
+        )
+        .await?;
+        if evidence.get("id").and_then(Value::as_str) != Some(endpoint_id)
+            || evidence.get("catalog_service_id").and_then(Value::as_str)
+                != Some(&binding.catalog_service_id)
+            || evidence.get("auto_connected") != Some(&Value::Bool(true))
+            || evidence.get("url").is_some_and(|value| !value.is_null())
+        {
+            return Err(FetchError::Unauthorized);
+        }
+        rows.push(evidence);
+    }
     authorize_metadata(binding, slug, origin, &services, &endpoints, &catalog)?;
     let identity = json(
         http,
@@ -218,6 +257,57 @@ pub(super) async fn response(
     Ok((response, deadline))
 }
 
+fn allowed_shared_service(service: &Value) -> bool {
+    service
+        .pointer("/credential_source/type")
+        .and_then(Value::as_str)
+        == Some("org")
+        && service.pointer("/credential_source/allowed") == Some(&Value::Bool(true))
+        && matches!(
+            service
+                .pointer("/credential_source/role")
+                .and_then(Value::as_str),
+            Some("admin" | "member")
+        )
+}
+
+fn authorize_service<'a>(
+    binding: &LarkResourceBinding,
+    slug: &str,
+    origin: &str,
+    services: &'a Value,
+    catalog: &Value,
+) -> Result<&'a str, FetchError> {
+    let service = unique(services, "services", &binding.user_service_id)?;
+    let endpoint_id = service
+        .get("endpoint_id")
+        .and_then(Value::as_str)
+        .ok_or(FetchError::Unauthorized)?;
+    if service.get("slug").and_then(Value::as_str) != Some(slug)
+        || service.get("catalog_service_id").and_then(Value::as_str)
+            != Some(&binding.catalog_service_id)
+        || service.get("is_active") != Some(&Value::Bool(true))
+        || service.get("auth_method").and_then(Value::as_str) != Some("token_exchange")
+        || service.get("node_id").is_some_and(|value| !value.is_null())
+        || (service
+            .pointer("/credential_source/type")
+            .and_then(Value::as_str)
+            == Some("org")
+            && !allowed_shared_service(service))
+        || catalog.get("id").and_then(Value::as_str) != Some(&binding.catalog_service_id)
+        || catalog.get("slug").and_then(Value::as_str) != Some(slug)
+        || catalog
+            .get("base_url")
+            .and_then(Value::as_str)
+            .is_none_or(|url| url.trim_end_matches('/') != origin)
+        || catalog.get("auth_method").and_then(Value::as_str) != Some("token_exchange")
+        || catalog.get("is_active") != Some(&Value::Bool(true))
+    {
+        return Err(FetchError::Unauthorized);
+    }
+    Ok(endpoint_id)
+}
+
 fn authorize_metadata(
     binding: &LarkResourceBinding,
     slug: &str,
@@ -226,35 +316,19 @@ fn authorize_metadata(
     endpoints: &Value,
     catalog: &Value,
 ) -> Result<(), FetchError> {
-    let service = unique(services, "services", &binding.user_service_id)?;
-    let endpoint_id = service
-        .get("endpoint_id")
-        .and_then(Value::as_str)
-        .ok_or(FetchError::Unauthorized)?;
+    let endpoint_id = authorize_service(binding, slug, origin, services, catalog)?;
     let selected_endpoint = unique(endpoints, "endpoints", endpoint_id)?;
-    let same_catalog = |item: &Value| {
-        item.get("catalog_service_id").and_then(Value::as_str)
-            == Some(binding.catalog_service_id.as_str())
-    };
-    let official_url = |item: &Value, field: &str| {
-        item.get(field)
-            .and_then(Value::as_str)
-            .is_some_and(|url| url.trim_end_matches('/') == origin)
-    };
-    if service.get("slug").and_then(Value::as_str) != Some(slug)
-        || !same_catalog(service)
-        || service.get("is_active") != Some(&Value::Bool(true))
-        || service.get("auth_method").and_then(Value::as_str) != Some("token_exchange")
-        || service.get("node_id").is_some_and(|value| !value.is_null())
-        || !same_catalog(selected_endpoint)
-        || !(official_url(selected_endpoint, "url")
-            || (selected_endpoint.get("auto_connected") == Some(&Value::Bool(true))
-                && selected_endpoint.get("url").is_none_or(Value::is_null)))
-        || catalog.get("id").and_then(Value::as_str) != Some(binding.catalog_service_id.as_str())
-        || catalog.get("slug").and_then(Value::as_str) != Some(slug)
-        || !official_url(catalog, "base_url")
-        || catalog.get("auth_method").and_then(Value::as_str) != Some("token_exchange")
-        || catalog.get("is_active") != Some(&Value::Bool(true))
+    let official = selected_endpoint
+        .get("url")
+        .and_then(Value::as_str)
+        .is_some_and(|url| url.trim_end_matches('/') == origin);
+    if selected_endpoint
+        .get("catalog_service_id")
+        .and_then(Value::as_str)
+        != Some(&binding.catalog_service_id)
+        || !(official
+            || selected_endpoint.get("auto_connected") == Some(&Value::Bool(true))
+                && selected_endpoint.get("url").is_none_or(Value::is_null))
     {
         return Err(FetchError::Unauthorized);
     }
