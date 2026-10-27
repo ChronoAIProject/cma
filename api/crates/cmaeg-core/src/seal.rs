@@ -18,6 +18,7 @@ pub mod lineage;
 pub mod media_link;
 pub mod message_ref;
 pub mod native_lark_effect;
+pub mod native_media_edit;
 pub mod pointer;
 pub mod received_reaction;
 pub mod reply_target;

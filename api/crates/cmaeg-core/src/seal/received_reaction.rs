@@ -79,6 +79,7 @@ impl ReceivedReactionAuthority {
             || self.received_at <= 0
             || self.expires_at <= self.received_at
             || self.expires_at > self.received_at.saturating_add(MAX_AGE)
+            || message.native_media_edit.is_some()
             || message.route_id != self.route()
             || message.native_lark_effect.is_some()
             || message.whatsapp_reaction.is_some()

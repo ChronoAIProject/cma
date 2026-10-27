@@ -15,6 +15,9 @@ use utoipa::OpenApi;
         cmaeg_core::channel::ProviderTarget,
         crate::tools::AttachmentViewKind,
         cmaeg_core::thread_lifecycle::ThreadListView,
+        cmaeg_core::message::NativeMediaUpdate,
+        cmaeg_core::message::NativeMediaReplacement,
+        crate::native_media::Capabilities,
     )),
     paths(
         http::activity::latest,

@@ -113,6 +113,34 @@ async fn receive(state: IngressState, channel_id: String, request: Request) -> R
             return invalid();
         }
     };
+    if event["header"]["event_type"] == "card.action.trigger" {
+        let callback =
+            match crate::native_lark::callback::Callback::extract(&event, &source.identity, now) {
+                Ok(callback) => callback,
+                Err(_) => {
+                    return problem(
+                        StatusCode::BAD_REQUEST,
+                        ProblemCode::InvalidRequest,
+                        "native_lark_control_invalid",
+                    )
+                }
+            };
+        return match state
+            .launch_native_lark_control(channel.clone(), callback, permit)
+            .await
+        {
+            LaunchOutcome::Admitted { .. } => Json(json!({})).into_response(),
+            LaunchOutcome::Refused(error) => problem(
+                StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                error.code,
+                error
+                    .detail
+                    .as_deref()
+                    .unwrap_or("native_lark_control_refused"),
+            ),
+            _ => unavailable("native_lark_control_durable_admission_required"),
+        };
+    }
     let message = match message::extract(source, &event, now) {
         Ok(Some(m)) => m,
         Ok(None) => {

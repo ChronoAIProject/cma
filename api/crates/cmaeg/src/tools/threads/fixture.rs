@@ -246,6 +246,7 @@ impl App {
         let registry = ProviderRegistry::parse("[]").unwrap();
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
+            native_media_edits: None,
             discord_threads: Some(Arc::new(DiscordThreads::new(DiscordRest::fixture(
                 &format!("{platform_base}/api/v10/"),
             )))),
