@@ -1,4 +1,4 @@
-//! Text replies through the retained app/chat, with durable confirmed target receipts.
+//! Text and bounded media replies through the retained app/chat, with durable confirmed target receipts.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     render::{RelayText, Renderer},
@@ -7,6 +7,7 @@ use super::{
 use crate::{
     ingress::routing_store::EventIdentity,
     native_lark::{
+        outbound::{MediaUpload, UploadedMedia},
         receipts::{Receipt, RETENTION},
         Error,
     },
@@ -17,6 +18,14 @@ use cmaeg_core::{
     message::OutboundMessage,
     seal::{EventRefPayload, ReplyAddress},
 };
+use std::{collections::VecDeque, time::Duration};
+use tokio::time::{timeout_at, Instant};
+
+enum NativePart {
+    Text(String),
+    Upload(MediaUpload),
+    Media(UploadedMedia),
+}
 impl Sender {
     pub(super) async fn native_lark_reply(
         &self,
@@ -28,8 +37,9 @@ impl Sender {
         let ReplyAddress::NativeLark(reply) = &event.reply else {
             return (unsupported(), effects);
         };
+        let media = !message.native_attachments.is_empty();
         if message.validate().is_err()
-            || !message.native_attachments.is_empty()
+            || (media && !self.relay.native_lark_outbound_media_enabled())
             || crate::interactions::has_controls(message)
             || message.whatsapp_template.is_some()
             || message.reply_to.is_some()
@@ -53,6 +63,28 @@ impl Sender {
             rendering,
             ..rejected("empty_message")
         };
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let prepared = async {
+            let files = crate::media::outbound::prepare(&message.native_attachments)
+                .await
+                .ok()?;
+            let mut operations: VecDeque<_> = parts
+                .into_iter()
+                .map(|part| NativePart::Text(part.text))
+                .collect();
+            for (item, file) in message.native_attachments.iter().zip(files) {
+                operations.push_back(NativePart::Upload(
+                    crate::native_lark::Client::prepare_media(item, file)
+                        .await
+                        .ok()?,
+                ));
+            }
+            Some(operations)
+        };
+        let Ok(Some(mut operations)) = timeout_at(deadline, prepared).await else {
+            result.delivery = rejected("native_lark_media_invalid").delivery;
+            return (result, effects);
+        };
         let route = format!(
             "native-lark:{}:{}:{}:{}",
             reply.identity.region.as_str(),
@@ -60,36 +92,52 @@ impl Sender {
             reply.identity.tenant_key,
             reply.chat_id
         );
-        let _ticket = match ctx.gate.enter_route(&route).await {
-            Ok(t) => t,
-            Err(r) => {
+        let _ticket = match timeout_at(deadline, ctx.gate.enter_route(&route)).await {
+            Ok(Ok(t)) => t,
+            Ok(Err(r)) => {
                 result.delivery = r.outcome();
+                return (result, effects);
+            }
+            Err(_) => {
+                result.delivery = super::gate::expired();
                 return (result, effects);
             }
         };
         let mut confirmed = 0;
         let mut first = None;
-        for part in &parts {
-            let Some(_pace) = self.pacing.acquire(&route).await else {
-                result = rejected("pacing_capacity");
+        while let Some(operation) = operations.pop_front() {
+            let Ok(Some(_pace)) = timeout_at(deadline, self.pacing.acquire(&route)).await else {
+                result.delivery = rejected("pacing_capacity").delivery;
                 break;
             };
-            let token = match self
-                .relay
-                .native_lark
-                .token(&reply.identity, credentials)
-                .await
-            {
-                Ok(token) => token,
-                Err(_) => {
-                    result = rejected("native_lark_credentials_unavailable");
+            let token = timeout_at(deadline, async {
+                if media {
+                    self.relay
+                        .native_lark
+                        .verified_token(&reply.identity, credentials)
+                        .await
+                } else {
+                    self.relay
+                        .native_lark
+                        .token(&reply.identity, credentials)
+                        .await
+                }
+            })
+            .await;
+            let Ok(Ok(token)) = token else {
+                result.delivery = rejected("native_lark_credentials_unavailable").delivery;
+                break;
+            };
+            // Check current default/named consumer, provider and source revision after
+            // custody verification and before each upload or recipient message write.
+            let permit = match timeout_at(deadline, ctx.gate.attempt()).await {
+                Ok(Ok(p)) => p,
+                Ok(Err(r)) => {
+                    result.delivery = r.outcome();
                     break;
                 }
-            };
-            let permit = match ctx.gate.attempt().await {
-                Ok(p) => p,
-                Err(r) => {
-                    result.delivery = r.outcome();
+                Err(_) => {
+                    result.delivery = super::gate::expired();
                     break;
                 }
             };
@@ -97,15 +145,39 @@ impl Sender {
                 result.delivery = super::gate::expired();
                 break;
             }
-            let sent = self
-                .relay
-                .native_lark
-                .send_text(&token, reply, &part.text)
-                .await;
+            let send = async {
+                match operation {
+                    NativePart::Text(text) => self
+                        .relay
+                        .native_lark
+                        .send_text(&token, reply, &text)
+                        .await
+                        .map(Some),
+                    NativePart::Upload(upload) => {
+                        let uploaded = self
+                            .relay
+                            .native_lark
+                            .upload_media(&token, reply, upload)
+                            .await?;
+                        operations.push_front(NativePart::Media(uploaded));
+                        Ok(None)
+                    }
+                    NativePart::Media(uploaded) => self
+                        .relay
+                        .native_lark
+                        .send_media(&token, reply, uploaded)
+                        .await
+                        .map(Some),
+                }
+            };
+            let sent = timeout_at(deadline, send)
+                .await
+                .unwrap_or(Err(Error::Unconfirmed));
             drop(permit);
             ctx.gate.progress();
             match sent {
-                Ok(id) => {
+                Ok(None) => continue,
+                Ok(Some(id)) => {
                     confirmed += 1;
                     let now = time::OffsetDateTime::now_utc().unix_timestamp();
                     let mut destination = reply.clone();
@@ -156,7 +228,12 @@ impl Sender {
                 }
             }
         }
-        if confirmed > 0 && confirmed < parts.len() {
+        if confirmed > 0
+            && !matches!(
+                result.delivery,
+                DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
+            )
+        {
             result.delivery = DeliveryOutcome::Unknown {
                 reason: "native_lark_partial_delivery".into(),
             }

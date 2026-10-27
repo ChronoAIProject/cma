@@ -341,26 +341,13 @@ pub(super) fn project(
                 activity_verified,
             ))
         .then_some(true),
-        native_media: if matches!(
-            event.reply,
-            cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
-        ) {
-            NativeMediaCapabilities::native_whatsapp_group(
-                state.native_whatsapp_outbound_media_enabled
-                    && state.native_whatsapp_groups_enabled
-                    && native_whatsapp_templates(
-                        true,
-                        channel,
-                        event,
-                        &activity,
-                        activity_verified,
-                    ),
-            )
-        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
-            NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
-        } else {
-            NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
-        },
+        native_media: NativeMediaCapabilities::for_event(
+            state,
+            channel,
+            event,
+            &activity,
+            activity_verified,
+        ),
         inbound_media,
         ..match activity.source {
             SourceKind::NativeLark(_) => Capabilities::native_lark(),

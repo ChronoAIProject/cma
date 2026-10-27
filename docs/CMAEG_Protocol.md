@@ -2975,8 +2975,8 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. The separate `native_lark` source is text-only
-and never advertises this capability; its relay counterpart keeps the existing
+before using native attachments. The separate `native_lark` source advertises its bounded subset only under
+`CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED`; its relay counterpart keeps the existing
 relay contract. Native Telegram and native Discord advertise
 this capability independently of the NyxID-specific relay gate. For relay
 sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
@@ -2984,6 +2984,17 @@ always absent on custom events and relay platforms outside Telegram,
 Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
+
+Native Lark/Feishu advertises `kinds: ["image", "file", "audio", "video"]`,
+`mime_types: ["image/jpeg", "image/png", "application/pdf", "text/plain", "audio/ogg", "video/mp4"]`,
+`max_total_bytes: 8388608`, `max_image_bytes: 8388608` and `max_caption_chars: 0`.
+It supports RGB/RGBA PNG/JPEG, PDF, UTF-8 text, mono Opus Ogg and the shared
+Baseline H.264/AAC-LC MP4 structural profile. Explanation text remains separate;
+unsupported captions/control mixtures fail before upload. Every upload and send
+rechecks regional bot custody and exact current default/named consumer/provider
+and source authority. Confirmed messages retain durable receipts; unknown or
+partial delivery never automatically resends. See [native Lark outbound media](CMAEG_Native_Lark_Outbound_Media.md)
+for exact limits, remaining format gaps and official regional API evidence.
 
 Native WhatsApp private replies advertise a separate bounded subset only when
 `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,

@@ -1,4 +1,7 @@
-use super::{NativeStickerCapabilities, NativeVideoCapabilities};
+use super::{
+    native_whatsapp_templates, Activity, EventRefPayload, NativeStickerCapabilities,
+    NativeVideoCapabilities, ResolvedChannel, ToolsState,
+};
 use cmaeg_core::activity::SourceKind;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -30,6 +33,50 @@ pub struct NativeMediaCapabilities {
 }
 
 impl NativeMediaCapabilities {
+    pub(super) fn for_event(
+        state: &ToolsState,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        activity: &Activity,
+        verified: bool,
+    ) -> Option<Self> {
+        if matches!(
+            event.reply,
+            cmaeg_core::seal::ReplyAddress::WhatsappGroup(_)
+        ) {
+            Self::native_whatsapp_group(
+                state.native_whatsapp_outbound_media_enabled
+                    && state.native_whatsapp_groups_enabled
+                    && native_whatsapp_templates(true, channel, event, activity, verified),
+            )
+        } else if matches!(activity.source, SourceKind::NativeLark(_)) {
+            Self::native_lark(state.native_lark_outbound_media_enabled)
+        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+            Self::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
+        } else {
+            Self::for_source(&activity.source, state.native_media_enabled)
+        }
+    }
+
+    pub(super) fn native_lark(enabled: bool) -> Option<Self> {
+        enabled.then(|| Self {
+            kinds: ["image", "file", "audio", "video"].map(String::from).into(),
+            sources: ["url", "base64"].map(String::from).into(),
+            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
+            max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
+            mime_types: Some(
+                crate::native_lark::outbound::MIME_TYPES
+                    .map(String::from)
+                    .into(),
+            ),
+            max_total_bytes: Some(crate::media::outbound::MAX_OUTBOUND_BYTES),
+            max_image_bytes: Some(crate::media::outbound::MAX_OUTBOUND_BYTES),
+            max_caption_chars: Some(0),
+            sticker: None,
+            video: Some(NativeVideoCapabilities::bounded_baseline()),
+        })
+    }
+
     pub(super) fn native_whatsapp(enabled: bool) -> Option<Self> {
         enabled.then(|| Self {
             kinds: ["image", "file", "audio", "sticker", "video"]
