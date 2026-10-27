@@ -1,5 +1,7 @@
 #[path = "latency/app.rs"]
 mod app;
+#[path = "latency/batch_tests.rs"]
+mod batch_tests;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_provider.rs"]
@@ -69,21 +71,13 @@ async fn run(mut app: App, report_file: &str) {
 
     let mut cold = Vec::new();
     for batch in 0..25 {
-        // Every member starts after invalidation, before any member is polled.
+        // Build and sign the full batch before invalidating the warm channel.
         // The eight simultaneous cold callers share the production restore flight.
-        let pending: Vec<_> = (0..8)
-            .map(|lane| {
-                app.state.resolver.invalidate(&app.channel);
-                let app = &app;
-                async move {
-                    measure(
-                        app.callback(&format!("cold-{batch}-{lane}"), lane).await,
-                        202,
-                    )
-                    .await
-                }
-            })
-            .collect();
+        let requests =
+            app.cold_callbacks((0..8).map(|lane| (format!("cold-{batch}-{lane}"), lane)));
+        let pending = requests
+            .into_iter()
+            .map(|request| async move { measure(request.send().await.unwrap(), 202).await });
         cold.extend(futures_util::future::join_all(pending).await);
     }
     app.quiet().await;

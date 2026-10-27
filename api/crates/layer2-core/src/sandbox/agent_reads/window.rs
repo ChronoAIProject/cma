@@ -26,6 +26,7 @@ pub struct AgentReplayEntry {
     pub appended_at: String,
     pub kind: Option<AgentEventKind>,
     pub response_binding: Option<AgentResponseBinding>,
+    pub message_command_id: Option<crate::ids::AgentCommandId>,
     pub(in crate::sandbox) command_candidate: Option<String>,
 }
 
@@ -36,6 +37,42 @@ pub struct AgentReplayWindow {
 }
 
 impl AgentReadService {
+    /// Only the immediately preceding immutable steering fence can bind this message.
+    pub(in crate::sandbox) async fn steering_operation(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        entry: &AgentReplayEntry,
+    ) -> Result<Option<u64>, AgentReadError> {
+        if entry.sequence < 2 {
+            return Ok(None);
+        }
+        let (_, id, _) = authorization.resource();
+        let previous = self
+            .store
+            .agent_log(id, entry.sequence - 2, 1)
+            .await
+            .map_err(log_store_error)?;
+        let previous = previous
+            .first()
+            .ok_or_else(|| corrupt("message predecessor is missing"))?;
+        if &previous.agent_id != id || previous.seq != entry.sequence - 1 {
+            return Err(corrupt("message predecessor identity is invalid"));
+        }
+        match previous.kind {
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence,
+                operation: super::super::AgentOperationKind::Steer,
+                state: super::super::AgentOperationDelivery::DispatchFenced,
+            } => {
+                if operation_sequence != previous.seq || previous.appended_at != entry.appended_at {
+                    return Err(corrupt("steering message has no matching operation fence"));
+                }
+                Ok(Some(operation_sequence))
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub async fn event_stream_header(
         &self,
         authorization: &AgentEventStreamAuthorization,
@@ -132,6 +169,7 @@ impl AgentReadService {
                         appended_at: visible.appended_at,
                         kind,
                         response_binding: None,
+                        message_command_id: None,
                         command_candidate,
                     });
                 }

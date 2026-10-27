@@ -3,7 +3,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxStoreError, WorktreeStore,
+    AgentReopenGuard, SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope,
+    SandboxMutationGuard, SandboxStoreError, WorktreeStore,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, FirstMessageDelivery,
@@ -87,18 +88,28 @@ impl SandboxWorker {
                 None,
             );
             let authority_fence = agent.work.next_fence;
-            let (updates, receiver) = mpsc::channel(UPDATE_BUFFER);
-            let channel = match self
-                .dependencies
-                .adapter
-                .reconnect_agent(
-                    &runtime,
-                    authority_fence,
-                    &request,
-                    &conversation_id,
-                    updates,
-                )
-                .await
+            let guard = AgentReopenGuard {
+                sandbox: SandboxMutationGuard::capture(&sandbox),
+                agent_fence: authority_fence,
+                native_conversation_id: conversation_id.clone(),
+                runtime_generation: generation,
+            };
+            let (updates, mut receiver) = mpsc::channel(UPDATE_BUFFER);
+            let opening = self.dependencies.adapter.reconnect_agent(
+                &runtime,
+                authority_fence,
+                &request,
+                &conversation_id,
+                updates,
+            );
+            let channel = match super::reopen_output::drain_while(
+                opening,
+                &mut receiver,
+                self.dependencies.updates.as_ref(),
+                &agent.id,
+                &guard,
+            )
+            .await
             {
                 Ok(channel) if channel.conversation_id.as_deref() == Some(&conversation_id) => {
                     channel
@@ -122,7 +133,15 @@ impl SandboxWorker {
                 }
             };
             if let Some(settings) = &agent.conversation.settings {
-                if let Err(error) = channel.input.send(settings.runtime_input()).await {
+                if let Err(error) = super::reopen_output::drain_while(
+                    channel.input.send(settings.runtime_input()),
+                    &mut receiver,
+                    self.dependencies.updates.as_ref(),
+                    &agent.id,
+                    &guard,
+                )
+                .await
+                {
                     return self
                         .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
                         .await;
@@ -157,6 +176,31 @@ impl SandboxWorker {
             );
         }
 
+        // Startup metadata may have appended durable logs. Publish from those
+        // current rows so the final CAS cannot erase already acknowledged output.
+        let refreshed = self.lifecycle_agents(&sandbox).await?;
+        let refreshed_live = match validate_reopen_set(&sandbox, &refreshed, checkpoint) {
+            Ok(live) => live,
+            Err(failure) => {
+                return self
+                    .rollback_reopen(sandbox, attachments, failure, now)
+                    .await
+            }
+        };
+        if refreshed_live.len() != live.len()
+            || refreshed_live.iter().any(|agent| {
+                !live.iter().any(|original| {
+                    original.id == agent.id
+                        && original.conversation.conversation_id
+                            == agent.conversation.conversation_id
+                        && original.work.next_fence == agent.work.next_fence
+                })
+            })
+        {
+            rollback_attachments(self, &attachments);
+            return Err(SandboxStoreError::Conflict);
+        }
+        let live = refreshed_live;
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();

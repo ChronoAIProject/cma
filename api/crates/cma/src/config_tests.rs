@@ -136,6 +136,8 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
+    assert_eq!(config.agent_manager_sandbox_capacity.cpu_millis, 2_000);
+    assert_eq!(config.agent_manager_sandbox_capacity.memory_mib, 8_192);
     assert_eq!(
         config
             .baseline_services
@@ -375,9 +377,11 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
+    assert!(!config.features.nyxid_resource_request);
     for key in [
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
+        "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
         assert_eq!(
@@ -387,6 +391,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         assert_eq!(
             config.features.trigger_command_admission,
             key == "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED"
+        );
+        assert_eq!(
+            config.features.nyxid_resource_request,
+            key == "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED"
         );
         assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),

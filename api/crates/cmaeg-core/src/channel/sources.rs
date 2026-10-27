@@ -33,6 +33,12 @@ pub(super) fn validate_legacy_sources(
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
         match source {
+            Source::Discord { .. } => {
+                return Err(ValidationError::new(
+                    &pointer,
+                    "native_discord_writes_disabled",
+                ));
+            }
             Source::Telegram { .. } => {
                 if !variants.insert("telegram") {
                     return Err(ValidationError::new(&pointer, DUPLICATED));
@@ -75,7 +81,7 @@ pub(super) fn validate_extended_sources(
             "must contain at most eight sources",
         ));
     }
-    let (mut telegram, mut custom) = (false, false);
+    let (mut telegram, mut discord, mut custom) = (false, false, false);
     let mut platforms = BTreeSet::<Platform>::new();
     let mut routes = BTreeSet::<&str>::new();
     let mut identity: Option<(&str, &str, &str)> = None;
@@ -83,6 +89,7 @@ pub(super) fn validate_extended_sources(
         let pointer = format!("/sources/{index}");
         let duplicated = match source {
             Source::Telegram { .. } => std::mem::replace(&mut telegram, true),
+            Source::Discord { .. } => std::mem::replace(&mut discord, true),
             Source::Custom { .. } => std::mem::replace(&mut custom, true),
             Source::NyxidRelay { .. } => false,
         };
@@ -130,7 +137,50 @@ fn validate_source(
     secrets: &ChannelSecrets,
     pointer: &str,
 ) -> Result<(), ValidationError> {
+    if source.native_bot_mentions() {
+        let identity = match source {
+            Source::Telegram {
+                bot_id,
+                bot_username,
+                ..
+            } => !bot_id.is_empty() && bot_username.is_some(),
+            Source::NyxidRelay {
+                platform,
+                bot_id,
+                bot_username,
+                trust_normalized,
+                ..
+            } => {
+                !trust_normalized
+                    && match platform {
+                        Platform::Telegram => {
+                            bot_id.as_deref().is_some_and(|id| {
+                                id.parse::<i64>()
+                                    .is_ok_and(|n| n > 0 && n.to_string() == id)
+                            }) && bot_username.is_some()
+                        }
+                        Platform::Lark | Platform::Feishu => bot_id
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("ou_") && id.len() > 3),
+                        _ => false,
+                    }
+            }
+            _ => false,
+        };
+        if !identity {
+            return Err(ValidationError::new(
+                format!("{pointer}/admission/bot_messages"),
+                "native bot mentions require a raw verifier and pinned receiving identity",
+            ));
+        }
+    }
     match source {
+        Source::Discord {
+            bot_id,
+            intents,
+            admission,
+            ..
+        } => super::discord::validate(bot_id, *intents, admission, secrets, pointer),
         Source::Telegram {
             bot_id,
             bot_username,
@@ -145,8 +195,23 @@ fn validate_source(
             bot_username,
             bot_id,
             trust_normalized,
+            verify_raw_event,
+            lark_resources,
             admission,
         } => {
+            if let Some(binding) = lark_resources {
+                let field = format!("{pointer}/lark_resources");
+                binding.validate(&field)?;
+                if super::lark_resources::lark_resource_service(*platform).is_none()
+                    || *trust_normalized
+                    || !bot_id.as_deref().is_some_and(|id| {
+                        id.starts_with("ou_") && super::lark_resources::safe_id(id, 128)
+                    })
+                    || secrets.channel_key.is_none()
+                {
+                    return Err(ValidationError::new(field, "requires a verified Lark/Feishu source, independently pinned bot open_id and channel key"));
+                }
+            }
             require_string(issuer, &format!("{pointer}/issuer"), 1, 512)?;
             require_string(key_id, &format!("{pointer}/key_id"), 1, 512)?;
             validate_https_url(jwks_url, &format!("{pointer}/jwks_url"))?;
@@ -163,6 +228,7 @@ fn validate_source(
                 bot_username.as_deref(),
                 bot_id.as_deref(),
                 *trust_normalized,
+                *verify_raw_event,
                 pointer,
             )?;
             validate_admission(admission, pointer)

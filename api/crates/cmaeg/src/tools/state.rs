@@ -21,12 +21,36 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
+    /// Match the delivery engine's complete ordinary relay mode and wait budget.
+    pub complete_replies_enabled: bool,
+    pub telegram_effects_issuance_enabled: bool,
+    pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
+    /// Advertise templates only after the WhatsApp relay contract is verified.
+    pub whatsapp_templates_enabled: bool,
+    pub discord_interactions_enabled: bool,
+    pub whatsapp_interactions_enabled: bool,
+    pub consumer_interactions_enabled: bool,
+    /// Advertise native relay media only after the deployed NyxID contract is verified.
+    pub native_media_enabled: bool,
+    /// Issue and advertise ordinary relay text edits after all readers are upgraded.
+    pub relay_text_edits_enabled: bool,
+    /// Advertise newly issued native Discord edit references after reader rollout.
+    pub native_discord_edits_enabled: bool,
+    pub discord_effects_issuance_enabled: bool,
+    pub discord_effects: Option<Arc<super::DiscordEffectsClient>>,
+    /// Native Lark/Feishu card issuance after compatible readers are deployed.
+    pub lark_cards_enabled: bool,
     pub resolver: ChannelResolver,
     pub keys: Arc<MasterKeyRing>,
     pub providers: Arc<ProviderClient>,
     pub delivery: Arc<dyn DeliverySink>,
+    /// Wire together with routed execution; None preserves legacy live tools.
+    pub routed_replies: Option<Arc<crate::turns::routed::RoutedToolReplies>>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
+    pub public_api_url: String,
+    pub advertise_public_api_url: bool,
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.
     pub media: Option<Arc<MediaService>>,
@@ -34,6 +58,14 @@ pub struct ToolsState {
     pub downloads: Arc<MediaDownloads>,
 }
 impl ToolsState {
+    pub fn advertised_api_url(&self) -> &str {
+        if self.advertise_public_api_url {
+            &self.public_api_url
+        } else {
+            &self.public_origin
+        }
+    }
+
     /// Open `reference` and authorize `caller` as the consumer it was issued
     /// to, returning that consumer with the channel and event. `tool` names
     /// the operation in refusal logs.
@@ -70,11 +102,14 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = self
-            .resolver
-            .resolve(message.channel_id.as_str())
-            .await
-            .map_err(|error| error.problem())?;
+        let channel = if message.discord_message.is_some() {
+            self.resolver
+                .resolve_current(message.channel_id.as_str())
+                .await
+        } else {
+            self.resolver.resolve(message.channel_id.as_str()).await
+        }
+        .map_err(|error| error.problem())?;
         let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
         Ok((channel, message, matched))
     }
@@ -84,6 +119,17 @@ impl ToolsState {
         reference: &EventRef,
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
+        self.reply_with_idempotency(caller, reference, message, None)
+            .await
+    }
+    pub async fn reply_with_idempotency(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        message: OutboundMessage,
+        idempotency_key: Option<&str>,
+    ) -> Result<IntentReceipt, Problem> {
+        super::validate_reply_key(idempotency_key)?;
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
             crate::telemetry::names::TOOL,
@@ -95,6 +141,22 @@ impl ToolsState {
                 .authorize_event(caller, reference, "replyToEvent")
                 .await?;
             let expires_at = event.expires_at;
+            if let Some(routed) = &self.routed_replies {
+                if let Some(receipt) = routed
+                    .reply_with_idempotency(
+                        caller,
+                        &channel,
+                        &event,
+                        message.clone(),
+                        false,
+                        idempotency_key,
+                    )
+                    .await
+                    .map_err(super::routed_reply_error)?
+                {
+                    return Ok(receipt);
+                }
+            }
             let (receipt, received) = oneshot::channel();
             let result = self
                 .deliver(
@@ -235,6 +297,7 @@ impl ToolsState {
             activity,
             true,
             inbound_media,
+            self,
         ))
     }
     pub(super) async fn deliver<T>(
@@ -242,7 +305,31 @@ impl ToolsState {
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
+        // These include queueing/pacing before the exchange. Routed tool replies
+        // use their separate 20 s window and 30 s claims before reaching this path.
+        // Structured relay replies can fall back to complete text after the
+        // engine checks their Activity. Their outer wait is also 18 s; native
+        // card/control transport still uses the configured ordinary timeout.
+        // Template media lives in its components, not native_attachments; both
+        // use the same 60 s exchange and need room for queueing/pacing here.
+        let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. }
+            if !message.native_attachments.is_empty()
+                || message.whatsapp_template.as_ref().is_some_and(|template| template.has_media()))
+        {
+            Duration::from_secs(65)
+        } else if self.complete_replies_enabled
+            && matches!(&command, DeliveryCommand::Reply { event, message, .. }
+                if matches!(event.reply, cmaeg_core::seal::ReplyAddress::NyxidRelay { .. })
+                    && message.whatsapp_template.is_none())
+        {
+            crate::delivery::relay_client::COMPLETE_REPLY_TOOL_TIMEOUT
+        } else {
+            Duration::from_secs(8)
+        };
         let (channel, event_id) = match &command {
+            DeliveryCommand::DurableReply(reply) => {
+                (reply.channel.id.as_str(), reply.event.event_id.as_str())
+            }
             DeliveryCommand::Reply { channel, event, .. }
             | DeliveryCommand::Typing { channel, event, .. } => {
                 (channel.id.as_str(), event.event_id.as_str())
@@ -258,7 +345,7 @@ impl ToolsState {
         };
         let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel), event_id);
         tokio::time::timeout(
-            Duration::from_secs(8),
+            timeout,
             async {
                 self.delivery.submit(command).await.map_err(|_| {
                     Problem::new(ProblemCode::Internal, 503, "delivery_unavailable")

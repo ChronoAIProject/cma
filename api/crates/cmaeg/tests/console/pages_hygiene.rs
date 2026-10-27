@@ -46,6 +46,7 @@ async fn every_owner_controlled_string_is_escaped_and_no_secret_is_rendered() {
     for source in &mut stored.sources {
         match source {
             Source::Telegram { bot_username, .. } => *bot_username = Some(IMG.into()),
+            Source::Discord { bot_id, .. } => *bot_id = SCRIPT.into(),
             Source::NyxidRelay {
                 issuer,
                 bot_username,

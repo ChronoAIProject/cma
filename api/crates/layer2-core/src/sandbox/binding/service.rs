@@ -55,6 +55,8 @@ pub enum BindingError {
     InvalidRequest(String),
     #[error("binding changed or is not ready")]
     Conflict,
+    #[error("This binding's sandbox or workspace is missing or removed. Reconnect the channel to an available agent.")]
+    ResourcesUnavailable,
     #[error("binding dependency unavailable: {0}")]
     Unavailable(String),
     #[error("binding data is not usable: {0}")]
@@ -81,6 +83,18 @@ impl BindingService {
     }
 
     pub async fn read(&self, caller: &Caller, id: &str) -> Result<ProviderBinding, BindingError> {
+        let binding = self.read_for_retirement(caller, id).await?;
+        super::readiness::validate(self.store.as_ref(), &binding).await?;
+        Ok(binding)
+    }
+
+    /// Ownership checks still apply, but missing backing resources must not
+    /// prevent an authorized manager from retiring a stale binding.
+    pub async fn read_for_retirement(
+        &self,
+        caller: &Caller,
+        id: &str,
+    ) -> Result<ProviderBinding, BindingError> {
         require(caller)?;
         let binding = self
             .store
@@ -187,6 +201,9 @@ impl BindingService {
             {
                 return Err(BindingError::Conflict);
             }
+            if let Some(value) = &current {
+                super::readiness::validate(self.store.as_ref(), value).await?;
+            }
             let binding = match current {
                 Some(value) if value.state == BindingState::Retired => {
                     return Err(BindingError::Conflict)
@@ -265,7 +282,7 @@ impl BindingService {
 
     pub async fn retire(&self, caller: &Caller, id: &str) -> Result<(), BindingError> {
         for _ in 0..8 {
-            let binding = match self.read(caller, id).await {
+            let binding = match self.read_for_retirement(caller, id).await {
                 Ok(value) => value,
                 Err(BindingError::NotFound) => return Ok(()),
                 Err(error) => return Err(error),
@@ -352,7 +369,7 @@ impl BindingService {
             ));
         }
         for _ in 0..8 {
-            let binding = self.read(caller, id).await?;
+            let binding = self.read_for_retirement(caller, id).await?;
             let conversation_id = if binding.existing_agent.is_some() {
                 EXISTING_AGENT_CONVERSATION
             } else {
@@ -366,8 +383,14 @@ impl BindingService {
                 if binding.state != BindingState::Ready {
                     return Ok(());
                 }
-                self.ensure_conversation(caller, id, conversation_id)
-                    .await?;
+                match self.ensure_conversation(caller, id, conversation_id).await {
+                    // There is no conversation to retire, and an orphaned
+                    // binding must not create one merely to acknowledge delete.
+                    Err(BindingError::ResourcesUnavailable) => return Ok(()),
+                    result => {
+                        result?;
+                    }
+                }
                 continue;
             };
             if matches!(

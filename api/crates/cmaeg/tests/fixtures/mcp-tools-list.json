@@ -1,1 +1,3540 @@
-{"tools":[{"annotations":{"destructiveHint":false,"idempotentHint":false,"openWorldHint":true,"readOnlyHint":false},"description":"Send a message in reply to an event.","inputSchema":{"$defs":{"AttachmentKind":{"enum":["image","file","audio","video","other"],"type":"string"},"Block":{"oneOf":[{"properties":{"text":{"type":"string"},"type":{"enum":["text"],"type":"string"}},"required":["text","type"],"type":"object"},{"properties":{"body":{"type":["string","null"]},"fields":{"items":{"$ref":"#/$defs/Field"},"type":"array"},"image":{"type":["string","null"]},"title":{"type":"string"},"type":{"enum":["card"],"type":"string"}},"required":["title","type"],"type":"object"},{"properties":{"id":{"type":"string"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["buttons"],"type":"string"}},"required":["id","options","type"],"type":"object"},{"properties":{"id":{"type":"string"},"multi":{"type":"boolean"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"prompt":{"type":"string"},"type":{"enum":["choice"],"type":"string"}},"required":["id","prompt","options","multi","type"],"type":"object"},{"properties":{"fields":{"items":{"$ref":"#/$defs/FormField"},"type":"array"},"id":{"type":"string"},"type":{"enum":["form"],"type":"string"}},"required":["id","fields","type"],"type":"object"},{"properties":{"caption":{"type":["string","null"]},"kind":{"$ref":"#/$defs/AttachmentKind"},"reference":{"type":"string"},"type":{"enum":["attachment"],"type":"string"}},"required":["reference","kind","type"],"type":"object"},{"properties":{"label":{"type":["string","null"]},"type":{"enum":["link"],"type":"string"},"url":{"type":"string"}},"required":["url","type"],"type":"object"}]},"ChoiceOption":{"additionalProperties":false,"properties":{"id":{"type":"string"},"label":{"type":"string"},"selected":{"type":"boolean"},"style":{"$ref":"#/$defs/OptionStyle"}},"required":["id","label"],"type":"object"},"EventArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"Field":{"additionalProperties":false,"properties":{"label":{"type":"string"},"value":{"type":"string"}},"required":["label","value"],"type":"object"},"FormField":{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"$ref":"#/$defs/FormFieldKind"},"label":{"type":"string"},"required":{"type":"boolean"}},"required":["id","label","kind","required"],"type":"object"},"FormFieldKind":{"oneOf":[{"properties":{"type":{"enum":["text"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"type":{"enum":["number"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["choice"],"type":"string"}},"required":["options","type"],"type":"object"},{"properties":{"type":{"enum":["date"],"type":"string"}},"required":["type"],"type":"object"}]},"MessageRef":{"type":"string"},"OptionStyle":{"enum":["default","primary","danger"],"type":"string"},"OutboundMessage":{"additionalProperties":false,"properties":{"blocks":{"items":{"$ref":"#/$defs/Block"},"type":"array"},"reply_to":{"oneOf":[{"$ref":"#/$defs/MessageRef"},{"type":"null"}]},"text":{"type":["string","null"]}},"type":"object"},"ReplyArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"}},"required":["event_ref","message"],"type":"object"},"UpdateArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"},"message_ref":{"$ref":"#/$defs/MessageRef"}},"required":["event_ref","message_ref","message"],"type":"object"}},"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"}},"required":["event_ref","message"],"type":"object"},"name":"replyToEvent"},{"annotations":{"destructiveHint":true,"idempotentHint":false,"openWorldHint":true,"readOnlyHint":false},"description":"Update a confirmed message when its transport supports edits.","inputSchema":{"$defs":{"AttachmentKind":{"enum":["image","file","audio","video","other"],"type":"string"},"Block":{"oneOf":[{"properties":{"text":{"type":"string"},"type":{"enum":["text"],"type":"string"}},"required":["text","type"],"type":"object"},{"properties":{"body":{"type":["string","null"]},"fields":{"items":{"$ref":"#/$defs/Field"},"type":"array"},"image":{"type":["string","null"]},"title":{"type":"string"},"type":{"enum":["card"],"type":"string"}},"required":["title","type"],"type":"object"},{"properties":{"id":{"type":"string"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["buttons"],"type":"string"}},"required":["id","options","type"],"type":"object"},{"properties":{"id":{"type":"string"},"multi":{"type":"boolean"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"prompt":{"type":"string"},"type":{"enum":["choice"],"type":"string"}},"required":["id","prompt","options","multi","type"],"type":"object"},{"properties":{"fields":{"items":{"$ref":"#/$defs/FormField"},"type":"array"},"id":{"type":"string"},"type":{"enum":["form"],"type":"string"}},"required":["id","fields","type"],"type":"object"},{"properties":{"caption":{"type":["string","null"]},"kind":{"$ref":"#/$defs/AttachmentKind"},"reference":{"type":"string"},"type":{"enum":["attachment"],"type":"string"}},"required":["reference","kind","type"],"type":"object"},{"properties":{"label":{"type":["string","null"]},"type":{"enum":["link"],"type":"string"},"url":{"type":"string"}},"required":["url","type"],"type":"object"}]},"ChoiceOption":{"additionalProperties":false,"properties":{"id":{"type":"string"},"label":{"type":"string"},"selected":{"type":"boolean"},"style":{"$ref":"#/$defs/OptionStyle"}},"required":["id","label"],"type":"object"},"EventArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"Field":{"additionalProperties":false,"properties":{"label":{"type":"string"},"value":{"type":"string"}},"required":["label","value"],"type":"object"},"FormField":{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"$ref":"#/$defs/FormFieldKind"},"label":{"type":"string"},"required":{"type":"boolean"}},"required":["id","label","kind","required"],"type":"object"},"FormFieldKind":{"oneOf":[{"properties":{"type":{"enum":["text"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"type":{"enum":["number"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["choice"],"type":"string"}},"required":["options","type"],"type":"object"},{"properties":{"type":{"enum":["date"],"type":"string"}},"required":["type"],"type":"object"}]},"MessageRef":{"type":"string"},"OptionStyle":{"enum":["default","primary","danger"],"type":"string"},"OutboundMessage":{"additionalProperties":false,"properties":{"blocks":{"items":{"$ref":"#/$defs/Block"},"type":"array"},"reply_to":{"oneOf":[{"$ref":"#/$defs/MessageRef"},{"type":"null"}]},"text":{"type":["string","null"]}},"type":"object"},"ReplyArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"}},"required":["event_ref","message"],"type":"object"},"UpdateArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"},"message_ref":{"$ref":"#/$defs/MessageRef"}},"required":["event_ref","message_ref","message"],"type":"object"}},"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"},"message_ref":{"$ref":"#/$defs/MessageRef"}},"required":["event_ref","message_ref","message"],"type":"object"},"name":"updateMessage"},{"annotations":{"destructiveHint":false,"idempotentHint":false,"openWorldHint":true,"readOnlyHint":false},"description":"Send a typing indicator when supported.","inputSchema":{"$defs":{"AttachmentKind":{"enum":["image","file","audio","video","other"],"type":"string"},"Block":{"oneOf":[{"properties":{"text":{"type":"string"},"type":{"enum":["text"],"type":"string"}},"required":["text","type"],"type":"object"},{"properties":{"body":{"type":["string","null"]},"fields":{"items":{"$ref":"#/$defs/Field"},"type":"array"},"image":{"type":["string","null"]},"title":{"type":"string"},"type":{"enum":["card"],"type":"string"}},"required":["title","type"],"type":"object"},{"properties":{"id":{"type":"string"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["buttons"],"type":"string"}},"required":["id","options","type"],"type":"object"},{"properties":{"id":{"type":"string"},"multi":{"type":"boolean"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"prompt":{"type":"string"},"type":{"enum":["choice"],"type":"string"}},"required":["id","prompt","options","multi","type"],"type":"object"},{"properties":{"fields":{"items":{"$ref":"#/$defs/FormField"},"type":"array"},"id":{"type":"string"},"type":{"enum":["form"],"type":"string"}},"required":["id","fields","type"],"type":"object"},{"properties":{"caption":{"type":["string","null"]},"kind":{"$ref":"#/$defs/AttachmentKind"},"reference":{"type":"string"},"type":{"enum":["attachment"],"type":"string"}},"required":["reference","kind","type"],"type":"object"},{"properties":{"label":{"type":["string","null"]},"type":{"enum":["link"],"type":"string"},"url":{"type":"string"}},"required":["url","type"],"type":"object"}]},"ChoiceOption":{"additionalProperties":false,"properties":{"id":{"type":"string"},"label":{"type":"string"},"selected":{"type":"boolean"},"style":{"$ref":"#/$defs/OptionStyle"}},"required":["id","label"],"type":"object"},"EventArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"Field":{"additionalProperties":false,"properties":{"label":{"type":"string"},"value":{"type":"string"}},"required":["label","value"],"type":"object"},"FormField":{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"$ref":"#/$defs/FormFieldKind"},"label":{"type":"string"},"required":{"type":"boolean"}},"required":["id","label","kind","required"],"type":"object"},"FormFieldKind":{"oneOf":[{"properties":{"type":{"enum":["text"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"type":{"enum":["number"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["choice"],"type":"string"}},"required":["options","type"],"type":"object"},{"properties":{"type":{"enum":["date"],"type":"string"}},"required":["type"],"type":"object"}]},"MessageRef":{"type":"string"},"OptionStyle":{"enum":["default","primary","danger"],"type":"string"},"OutboundMessage":{"additionalProperties":false,"properties":{"blocks":{"items":{"$ref":"#/$defs/Block"},"type":"array"},"reply_to":{"oneOf":[{"$ref":"#/$defs/MessageRef"},{"type":"null"}]},"text":{"type":["string","null"]}},"type":"object"},"ReplyArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"}},"required":["event_ref","message"],"type":"object"},"UpdateArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"},"message_ref":{"$ref":"#/$defs/MessageRef"}},"required":["event_ref","message_ref","message"],"type":"object"}},"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"name":"sendTyping"},{"annotations":{"destructiveHint":false,"idempotentHint":true,"openWorldHint":false,"readOnlyHint":true},"description":"Read the event's public activity and available reply capabilities.","inputSchema":{"$defs":{"AttachmentKind":{"enum":["image","file","audio","video","other"],"type":"string"},"Block":{"oneOf":[{"properties":{"text":{"type":"string"},"type":{"enum":["text"],"type":"string"}},"required":["text","type"],"type":"object"},{"properties":{"body":{"type":["string","null"]},"fields":{"items":{"$ref":"#/$defs/Field"},"type":"array"},"image":{"type":["string","null"]},"title":{"type":"string"},"type":{"enum":["card"],"type":"string"}},"required":["title","type"],"type":"object"},{"properties":{"id":{"type":"string"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["buttons"],"type":"string"}},"required":["id","options","type"],"type":"object"},{"properties":{"id":{"type":"string"},"multi":{"type":"boolean"},"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"prompt":{"type":"string"},"type":{"enum":["choice"],"type":"string"}},"required":["id","prompt","options","multi","type"],"type":"object"},{"properties":{"fields":{"items":{"$ref":"#/$defs/FormField"},"type":"array"},"id":{"type":"string"},"type":{"enum":["form"],"type":"string"}},"required":["id","fields","type"],"type":"object"},{"properties":{"caption":{"type":["string","null"]},"kind":{"$ref":"#/$defs/AttachmentKind"},"reference":{"type":"string"},"type":{"enum":["attachment"],"type":"string"}},"required":["reference","kind","type"],"type":"object"},{"properties":{"label":{"type":["string","null"]},"type":{"enum":["link"],"type":"string"},"url":{"type":"string"}},"required":["url","type"],"type":"object"}]},"ChoiceOption":{"additionalProperties":false,"properties":{"id":{"type":"string"},"label":{"type":"string"},"selected":{"type":"boolean"},"style":{"$ref":"#/$defs/OptionStyle"}},"required":["id","label"],"type":"object"},"EventArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"Field":{"additionalProperties":false,"properties":{"label":{"type":"string"},"value":{"type":"string"}},"required":["label","value"],"type":"object"},"FormField":{"additionalProperties":false,"properties":{"id":{"type":"string"},"kind":{"$ref":"#/$defs/FormFieldKind"},"label":{"type":"string"},"required":{"type":"boolean"}},"required":["id","label","kind","required"],"type":"object"},"FormFieldKind":{"oneOf":[{"properties":{"type":{"enum":["text"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"type":{"enum":["number"],"type":"string"}},"required":["type"],"type":"object"},{"properties":{"options":{"items":{"$ref":"#/$defs/ChoiceOption"},"type":"array"},"type":{"enum":["choice"],"type":"string"}},"required":["options","type"],"type":"object"},{"properties":{"type":{"enum":["date"],"type":"string"}},"required":["type"],"type":"object"}]},"MessageRef":{"type":"string"},"OptionStyle":{"enum":["default","primary","danger"],"type":"string"},"OutboundMessage":{"additionalProperties":false,"properties":{"blocks":{"items":{"$ref":"#/$defs/Block"},"type":"array"},"reply_to":{"oneOf":[{"$ref":"#/$defs/MessageRef"},{"type":"null"}]},"text":{"type":["string","null"]}},"type":"object"},"ReplyArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"}},"required":["event_ref","message"],"type":"object"},"UpdateArguments":{"additionalProperties":false,"properties":{"event_ref":{"type":"string"},"message":{"$ref":"#/$defs/OutboundMessage"},"message_ref":{"$ref":"#/$defs/MessageRef"}},"required":["event_ref","message_ref","message"],"type":"object"}},"additionalProperties":false,"properties":{"event_ref":{"type":"string"}},"required":["event_ref"],"type":"object"},"name":"readEventContext"}]}
+{
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Send a message in reply to an event.",
+      "inputSchema": {
+        "$defs": {
+          "AttachmentKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video",
+              "other"
+            ],
+            "type": "string"
+          },
+          "Block": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/Field"
+                    },
+                    "type": "array"
+                  },
+                  "image": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "card"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "buttons"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "multi": {
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "prompt",
+                  "options",
+                  "multi",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/FormField"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "form"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "fields",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "caption": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "$ref": "#/$defs/AttachmentKind"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "attachment"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "kind",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "enum": [
+                      "link"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ChoiceOption": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "style": {
+                "$ref": "#/$defs/OptionStyle"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "EventArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_ref"
+            ],
+            "type": "object"
+          },
+          "Field": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "FormField": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/FormFieldKind"
+              },
+              "label": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "required"
+            ],
+            "type": "object"
+          },
+          "FormFieldKind": {
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "number"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "date"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "MessageRef": {
+            "type": "string"
+          },
+          "NativeAttachment": {
+            "additionalProperties": false,
+            "properties": {
+              "caption": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "filename": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/NativeMediaKind"
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/NativeMediaSource"
+              }
+            },
+            "required": [
+              "kind",
+              "source"
+            ],
+            "type": "object"
+          },
+          "NativeMediaKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video"
+            ],
+            "type": "string"
+          },
+          "NativeMediaSource": {
+            "oneOf": [
+              {
+                "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "url"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "base64"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "data",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "OptionStyle": {
+            "enum": [
+              "default",
+              "primary",
+              "danger"
+            ],
+            "type": "string"
+          },
+          "OutboundMessage": {
+            "additionalProperties": false,
+            "properties": {
+              "blocks": {
+                "items": {
+                  "$ref": "#/$defs/Block"
+                },
+                "type": "array"
+              },
+              "native_attachments": {
+                "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+                "items": {
+                  "$ref": "#/$defs/NativeAttachment"
+                },
+                "type": "array"
+              },
+              "reply_to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/MessageRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "thread_reply": {
+                "description": "Request the verified source thread; never fall back when unavailable.",
+                "type": "boolean"
+              },
+              "whatsapp_template": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/WhatsappTemplate",
+                    "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "ReplyArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpdateArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              },
+              "message_ref": {
+                "$ref": "#/$defs/MessageRef"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplate": {
+            "additionalProperties": false,
+            "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+            "properties": {
+              "components": {
+                "items": {
+                  "$ref": "#/$defs/WhatsappTemplateComponent"
+                },
+                "type": "array"
+              },
+              "language": {
+                "$ref": "#/$defs/WhatsappTemplateLanguage"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "language"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateButtonType": {
+            "enum": [
+              "url"
+            ],
+            "type": "string"
+          },
+          "WhatsappTemplateComponent": {
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "oneOf": [
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "header"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "body"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "index": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "sub_type": {
+                    "$ref": "#/$defs/WhatsappTemplateButtonType"
+                  },
+                  "type": {
+                    "enum": [
+                      "button"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub_type",
+                  "index",
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateLanguage": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateParameter": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/$defs/OutboundMessage"
+          }
+        },
+        "required": [
+          "event_ref",
+          "message"
+        ],
+        "type": "object"
+      },
+      "name": "replyToEvent"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Update a confirmed message when its transport supports edits.",
+      "inputSchema": {
+        "$defs": {
+          "AttachmentKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video",
+              "other"
+            ],
+            "type": "string"
+          },
+          "Block": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/Field"
+                    },
+                    "type": "array"
+                  },
+                  "image": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "card"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "buttons"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "multi": {
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "prompt",
+                  "options",
+                  "multi",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/FormField"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "form"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "fields",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "caption": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "$ref": "#/$defs/AttachmentKind"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "attachment"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "kind",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "enum": [
+                      "link"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ChoiceOption": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "style": {
+                "$ref": "#/$defs/OptionStyle"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "EventArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_ref"
+            ],
+            "type": "object"
+          },
+          "Field": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "FormField": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/FormFieldKind"
+              },
+              "label": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "required"
+            ],
+            "type": "object"
+          },
+          "FormFieldKind": {
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "number"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "date"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "MessageRef": {
+            "type": "string"
+          },
+          "NativeAttachment": {
+            "additionalProperties": false,
+            "properties": {
+              "caption": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "filename": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/NativeMediaKind"
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/NativeMediaSource"
+              }
+            },
+            "required": [
+              "kind",
+              "source"
+            ],
+            "type": "object"
+          },
+          "NativeMediaKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video"
+            ],
+            "type": "string"
+          },
+          "NativeMediaSource": {
+            "oneOf": [
+              {
+                "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "url"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "base64"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "data",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "OptionStyle": {
+            "enum": [
+              "default",
+              "primary",
+              "danger"
+            ],
+            "type": "string"
+          },
+          "OutboundMessage": {
+            "additionalProperties": false,
+            "properties": {
+              "blocks": {
+                "items": {
+                  "$ref": "#/$defs/Block"
+                },
+                "type": "array"
+              },
+              "native_attachments": {
+                "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+                "items": {
+                  "$ref": "#/$defs/NativeAttachment"
+                },
+                "type": "array"
+              },
+              "reply_to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/MessageRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "thread_reply": {
+                "description": "Request the verified source thread; never fall back when unavailable.",
+                "type": "boolean"
+              },
+              "whatsapp_template": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/WhatsappTemplate",
+                    "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "ReplyArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpdateArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              },
+              "message_ref": {
+                "$ref": "#/$defs/MessageRef"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplate": {
+            "additionalProperties": false,
+            "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+            "properties": {
+              "components": {
+                "items": {
+                  "$ref": "#/$defs/WhatsappTemplateComponent"
+                },
+                "type": "array"
+              },
+              "language": {
+                "$ref": "#/$defs/WhatsappTemplateLanguage"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "language"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateButtonType": {
+            "enum": [
+              "url"
+            ],
+            "type": "string"
+          },
+          "WhatsappTemplateComponent": {
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "oneOf": [
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "header"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "body"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "index": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "sub_type": {
+                    "$ref": "#/$defs/WhatsappTemplateButtonType"
+                  },
+                  "type": {
+                    "enum": [
+                      "button"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub_type",
+                  "index",
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateLanguage": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateParameter": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/$defs/OutboundMessage"
+          },
+          "message_ref": {
+            "$ref": "#/$defs/MessageRef"
+          }
+        },
+        "required": [
+          "event_ref",
+          "message_ref",
+          "message"
+        ],
+        "type": "object"
+      },
+      "name": "updateMessage"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Send a typing indicator when supported.",
+      "inputSchema": {
+        "$defs": {
+          "AttachmentKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video",
+              "other"
+            ],
+            "type": "string"
+          },
+          "Block": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/Field"
+                    },
+                    "type": "array"
+                  },
+                  "image": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "card"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "buttons"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "multi": {
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "prompt",
+                  "options",
+                  "multi",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/FormField"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "form"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "fields",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "caption": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "$ref": "#/$defs/AttachmentKind"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "attachment"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "kind",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "enum": [
+                      "link"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ChoiceOption": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "style": {
+                "$ref": "#/$defs/OptionStyle"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "EventArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_ref"
+            ],
+            "type": "object"
+          },
+          "Field": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "FormField": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/FormFieldKind"
+              },
+              "label": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "required"
+            ],
+            "type": "object"
+          },
+          "FormFieldKind": {
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "number"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "date"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "MessageRef": {
+            "type": "string"
+          },
+          "NativeAttachment": {
+            "additionalProperties": false,
+            "properties": {
+              "caption": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "filename": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/NativeMediaKind"
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/NativeMediaSource"
+              }
+            },
+            "required": [
+              "kind",
+              "source"
+            ],
+            "type": "object"
+          },
+          "NativeMediaKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video"
+            ],
+            "type": "string"
+          },
+          "NativeMediaSource": {
+            "oneOf": [
+              {
+                "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "url"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "base64"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "data",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "OptionStyle": {
+            "enum": [
+              "default",
+              "primary",
+              "danger"
+            ],
+            "type": "string"
+          },
+          "OutboundMessage": {
+            "additionalProperties": false,
+            "properties": {
+              "blocks": {
+                "items": {
+                  "$ref": "#/$defs/Block"
+                },
+                "type": "array"
+              },
+              "native_attachments": {
+                "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+                "items": {
+                  "$ref": "#/$defs/NativeAttachment"
+                },
+                "type": "array"
+              },
+              "reply_to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/MessageRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "thread_reply": {
+                "description": "Request the verified source thread; never fall back when unavailable.",
+                "type": "boolean"
+              },
+              "whatsapp_template": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/WhatsappTemplate",
+                    "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "ReplyArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpdateArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              },
+              "message_ref": {
+                "$ref": "#/$defs/MessageRef"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplate": {
+            "additionalProperties": false,
+            "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+            "properties": {
+              "components": {
+                "items": {
+                  "$ref": "#/$defs/WhatsappTemplateComponent"
+                },
+                "type": "array"
+              },
+              "language": {
+                "$ref": "#/$defs/WhatsappTemplateLanguage"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "language"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateButtonType": {
+            "enum": [
+              "url"
+            ],
+            "type": "string"
+          },
+          "WhatsappTemplateComponent": {
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "oneOf": [
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "header"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "body"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "index": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "sub_type": {
+                    "$ref": "#/$defs/WhatsappTemplateButtonType"
+                  },
+                  "type": {
+                    "enum": [
+                      "button"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub_type",
+                  "index",
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateLanguage": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateParameter": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_ref"
+        ],
+        "type": "object"
+      },
+      "name": "sendTyping"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the event's public activity and available reply capabilities.",
+      "inputSchema": {
+        "$defs": {
+          "AttachmentKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video",
+              "other"
+            ],
+            "type": "string"
+          },
+          "Block": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/Field"
+                    },
+                    "type": "array"
+                  },
+                  "image": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "card"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "buttons"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "multi": {
+                    "type": "boolean"
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "prompt",
+                  "options",
+                  "multi",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "fields": {
+                    "items": {
+                      "$ref": "#/$defs/FormField"
+                    },
+                    "type": "array"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "form"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "fields",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "caption": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "$ref": "#/$defs/AttachmentKind"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "attachment"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "kind",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "label": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "enum": [
+                      "link"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ChoiceOption": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "style": {
+                "$ref": "#/$defs/OptionStyle"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "EventArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_ref"
+            ],
+            "type": "object"
+          },
+          "Field": {
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "value"
+            ],
+            "type": "object"
+          },
+          "FormField": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/FormFieldKind"
+              },
+              "label": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "required"
+            ],
+            "type": "object"
+          },
+          "FormFieldKind": {
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "number"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/ChoiceOption"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "choice"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "options",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "date"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "MessageRef": {
+            "type": "string"
+          },
+          "NativeAttachment": {
+            "additionalProperties": false,
+            "properties": {
+              "caption": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "filename": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/NativeMediaKind"
+              },
+              "mime_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source": {
+                "$ref": "#/$defs/NativeMediaSource"
+              }
+            },
+            "required": [
+              "kind",
+              "source"
+            ],
+            "type": "object"
+          },
+          "NativeMediaKind": {
+            "enum": [
+              "image",
+              "file",
+              "audio",
+              "video"
+            ],
+            "type": "string"
+          },
+          "NativeMediaSource": {
+            "oneOf": [
+              {
+                "description": "NyxID fetches a public HTTPS URL with its bounded, pinned-address policy.",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "url"
+                    ],
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "description": "Standard padded base64, with at most 64 KiB decoded across the request.",
+                "properties": {
+                  "data": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "base64"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "data",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "OptionStyle": {
+            "enum": [
+              "default",
+              "primary",
+              "danger"
+            ],
+            "type": "string"
+          },
+          "OutboundMessage": {
+            "additionalProperties": false,
+            "properties": {
+              "blocks": {
+                "items": {
+                  "$ref": "#/$defs/Block"
+                },
+                "type": "array"
+              },
+              "native_attachments": {
+                "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
+                "items": {
+                  "$ref": "#/$defs/NativeAttachment"
+                },
+                "type": "array"
+              },
+              "reply_to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/MessageRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "thread_reply": {
+                "description": "Request the verified source thread; never fall back when unavailable.",
+                "type": "boolean"
+              },
+              "whatsapp_template": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/WhatsappTemplate",
+                    "description": "Approved WhatsApp template; exclusive of text, blocks, media and reply targets."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "ReplyArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpdateArguments": {
+            "additionalProperties": false,
+            "properties": {
+              "event_ref": {
+                "type": "string"
+              },
+              "message": {
+                "$ref": "#/$defs/OutboundMessage"
+              },
+              "message_ref": {
+                "$ref": "#/$defs/MessageRef"
+              }
+            },
+            "required": [
+              "event_ref",
+              "message_ref",
+              "message"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplate": {
+            "additionalProperties": false,
+            "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
+            "properties": {
+              "components": {
+                "items": {
+                  "$ref": "#/$defs/WhatsappTemplateComponent"
+                },
+                "type": "array"
+              },
+              "language": {
+                "$ref": "#/$defs/WhatsappTemplateLanguage"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "language"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateButtonType": {
+            "enum": [
+              "url"
+            ],
+            "type": "string"
+          },
+          "WhatsappTemplateComponent": {
+            "description": "Bounded positional parameters for approved Cloud API templates.\nURL buttons substitute a suffix in an already-approved URL, not a new route.",
+            "oneOf": [
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "header"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "body"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "index": {
+                    "type": "string"
+                  },
+                  "parameters": {
+                    "items": {
+                      "$ref": "#/$defs/WhatsappTemplateParameter"
+                    },
+                    "type": "array"
+                  },
+                  "sub_type": {
+                    "$ref": "#/$defs/WhatsappTemplateButtonType"
+                  },
+                  "type": {
+                    "enum": [
+                      "button"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub_type",
+                  "index",
+                  "parameters",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WhatsappTemplateCurrency": {
+            "additionalProperties": false,
+            "properties": {
+              "amount_1000": {
+                "description": "Nonnegative amount multiplied by 1000, bounded to exact JSON safe integers.",
+                "format": "int64",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "code": {
+                "description": "Three uppercase ISO 4217 letters; Meta validates the currency itself.",
+                "maxLength": 3,
+                "minLength": 3,
+                "pattern": "^[A-Z]{3}$",
+                "type": "string"
+              },
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value",
+              "code",
+              "amount_1000"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDateTime": {
+            "additionalProperties": false,
+            "description": "Explicit date/time label. This CMA contract accepts the fallback string only.",
+            "properties": {
+              "fallback_value": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "fallback_value"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateDocument": {
+            "additionalProperties": false,
+            "description": "Header document reference, with an optional displayed filename.",
+            "properties": {
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateLanguage": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "description": "Two- or three-letter language, optionally followed by an uppercase region.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          },
+          "WhatsappTemplateMedia": {
+            "additionalProperties": false,
+            "description": "A Meta media ID or HTTPS link, exactly one. Meta verifies media ownership/type.",
+            "properties": {
+              "id": {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "^[0-9]+$",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "link": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "WhatsappTemplateParameter": {
+            "oneOf": [
+              {
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "text"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "currency": {
+                    "$ref": "#/$defs/WhatsappTemplateCurrency"
+                  },
+                  "type": {
+                    "enum": [
+                      "currency"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "date_time": {
+                    "$ref": "#/$defs/WhatsappTemplateDateTime"
+                  },
+                  "type": {
+                    "enum": [
+                      "date_time"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "date_time",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  },
+                  "type": {
+                    "enum": [
+                      "image"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "image",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "video"
+                    ],
+                    "type": "string"
+                  },
+                  "video": {
+                    "$ref": "#/$defs/WhatsappTemplateMedia"
+                  }
+                },
+                "required": [
+                  "video",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "document": {
+                    "$ref": "#/$defs/WhatsappTemplateDocument"
+                  },
+                  "type": {
+                    "enum": [
+                      "document"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "document",
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_ref"
+        ],
+        "type": "object"
+      },
+      "name": "readEventContext"
+    }
+  ]
+}

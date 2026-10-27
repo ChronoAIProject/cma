@@ -1,0 +1,497 @@
+//! Fenced delivery of one already authenticated provider replay frame.
+//! Projection chooses the effect; observing a frame never implicitly sends.
+use super::{
+    custom_delivery::{effect_for, CustomFrame},
+    delivery_gate::{CancelSend, DeliveryGate, SEND_WINDOW},
+    delivery_state::{DeliveryCheckpoint, DeliveryStatus},
+    dispatcher::{admission_error, current_target},
+    storage,
+    tool_reply_gate::{CancelReply, ReplyGate},
+    tool_reply_store::{Admission, Kind, ReplyStore},
+    Authority, CustomCheckpoint, ExecutionError, FrozenTurn, Journal, Lease, Phase,
+    RoutedToolReplies, ToolReplyStatus,
+};
+use crate::{
+    delivery::{
+        durable::{receipt_for, DeliveryCoordinator},
+        intents::{DeliveryOutcome, IntentReceipt},
+    },
+    ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, StoredTarget},
+    providers::{parse_event, RecoveryEvent, ResponsesEvent, SseFrame},
+};
+use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::ReplyAddress};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "effect", content = "message")]
+pub enum ReplayEffect {
+    NoEffect,
+    Reply(OutboundMessage),
+    Custom(crate::delivery::local_stream::CustomStreamEffect),
+}
+pub enum FrameDelivery {
+    Settled {
+        cursor: u64,
+        receipt: Option<IntentReceipt>,
+    },
+    /// No automatic resend or advance is safe; requires explicit reconciliation.
+    Unknown,
+}
+pub struct RoutedDelivery {
+    pub(super) plans: PlanStore,
+    pub(super) journal: Journal,
+    pub(super) authority: Arc<dyn Authority>,
+    pub(super) coordinator: DeliveryCoordinator,
+}
+impl RoutedDelivery {
+    pub fn new(
+        plans: PlanStore,
+        journal: Journal,
+        authority: Arc<dyn Authority>,
+        coordinator: DeliveryCoordinator,
+    ) -> Self {
+        Self {
+            plans,
+            journal,
+            authority,
+            coordinator,
+        }
+    }
+
+    pub fn tool_replies(&self) -> RoutedToolReplies {
+        RoutedToolReplies::new(
+            self.plans.clone(),
+            self.journal.clone(),
+            self.authority.clone(),
+            self.coordinator.clone(),
+        )
+    }
+
+    pub async fn tool_reply_status(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+        lease: &Lease,
+        body: &FrozenTurn,
+    ) -> Result<ToolReplyStatus, ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        if lease.state.id != target.id
+            || lease.state.root != plan.admission_id
+            || lease.state.owner != plan.identity.owner
+            || lease.state.request_hash != plan.request_hash
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        self.journal.guard(lease).await?;
+        body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        current_target(self.authority.as_ref(), &plan, target).await?;
+        let status = ReplyStore(self.journal.clone())
+            .status(&plan, target)
+            .await?;
+        self.journal.guard(lease).await?;
+        Ok(status)
+    }
+
+    /// Intent is sealed and CAS-confirmed before enqueue; its actual outcome is
+    /// sealed before cursor advancement. An abandoned intent becomes Unknown.
+    /// Reusing a settled receipt never sends the same frame twice.
+    pub async fn deliver_frame(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+        lease: &mut Lease,
+        frame: &RecoveryEvent,
+        effect: ReplayEffect,
+    ) -> Result<FrameDelivery, ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        if lease.state.id != target.id
+            || lease.state.root != plan.admission_id
+            || lease.state.owner != plan.identity.owner
+            || lease.state.request_hash != plan.request_hash
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        self.journal.guard(lease).await?;
+        let current = current_target(self.authority.as_ref(), &plan, target).await?;
+        let body = self.journal.body(lease).await?;
+        let Phase::Accepted {
+            response_id,
+            durable_cursor,
+        } = &lease.state.phase
+        else {
+            return Err(ExecutionError::Invalid);
+        };
+        if response_id != &frame.response_id
+            || frame.raw["sequence_number"].as_u64() != Some(frame.sequence_number)
+            || frame
+                .raw
+                .get("response_id")
+                .is_some_and(|id| id.as_str() != Some(response_id.as_str()))
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        let frame_hash = bounded_hash(&frame.raw)?;
+        if parse_event(&SseFrame {
+            event: None,
+            id: Some(frame.sequence_number.to_string()),
+            data: frame.raw.to_string(),
+            retry: None,
+        })
+        .ok()
+        .as_ref()
+            != Some(&frame.event)
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        let effect_hash = bounded_hash(&effect)?;
+        let produced = matches!(frame.event, ResponsesEvent::OutputTextDone { .. })
+            || (matches!(frame.event, ResponsesEvent::Completed { .. })
+                && matches!(
+                    &effect,
+                    ReplayEffect::Reply(_)
+                        | ReplayEffect::Custom(
+                            crate::delivery::local_stream::CustomStreamEffect::Completed {
+                                final_text: Some(_)
+                            }
+                        )
+                ));
+        if produced {
+            self.journal
+                .observe(
+                    &plan.identity,
+                    crate::activity::Change::state(
+                        target.launch.consumer.as_str(),
+                        crate::activity::ConsumerState::Produced,
+                        Some(frame.response_id.clone()),
+                    ),
+                )
+                .await;
+        }
+        let terminal_state = match frame.event {
+            ResponsesEvent::Completed { .. } => Some(crate::activity::ConsumerState::Completed),
+            ResponsesEvent::Failed { .. } | ResponsesEvent::Incomplete { .. } => {
+                Some(crate::activity::ConsumerState::Failed)
+            }
+            _ => None,
+        };
+        if let Some(state) = terminal_state {
+            self.journal
+                .observe(
+                    &plan.identity,
+                    crate::activity::Change::state(
+                        target.launch.consumer.as_str(),
+                        state,
+                        Some(frame.response_id.clone()),
+                    ),
+                )
+                .await;
+        }
+        let custom_effect = effect_for(&body, frame, &effect)?;
+        if custom_effect.is_some() && !self.coordinator.supports_custom_stream() {
+            return Err(ExecutionError::Unsupported);
+        }
+        let checkpoint = DeliveryCheckpoint {
+            response_id: response_id.clone(),
+            cursor: frame.sequence_number,
+            frame_hash,
+            effect_hash,
+            status: DeliveryStatus::Intent,
+            custom: custom_effect.as_ref().map(|effect| {
+                CustomCheckpoint::new(
+                    &super::model::delivery_event(&plan, target),
+                    &body,
+                    effect.webhook(),
+                )
+            }),
+            terminal: matches!(
+                frame.event,
+                ResponsesEvent::Completed { .. }
+                    | ResponsesEvent::Failed { .. }
+                    | ResponsesEvent::Incomplete { .. }
+            ),
+        };
+        if let Some(previous) = &lease.state.delivery {
+            if previous.cursor == checkpoint.cursor {
+                if previous.response_id != checkpoint.response_id
+                    || previous.frame_hash != checkpoint.frame_hash
+                    || previous.effect_hash != checkpoint.effect_hash
+                    || previous.terminal != checkpoint.terminal
+                {
+                    return Err(ExecutionError::Invalid);
+                }
+                match &previous.status {
+                    DeliveryStatus::Settled { receipt } if previous.status.settled() => {
+                        let receipt = receipt.clone();
+                        if checkpoint.terminal && !self.close(&plan, target).await? {
+                            return Ok(FrameDelivery::Unknown);
+                        }
+                        self.journal
+                            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+                            .await?;
+                        return Ok(FrameDelivery::Settled {
+                            cursor: frame.sequence_number,
+                            receipt,
+                        });
+                    }
+                    DeliveryStatus::Intent => {
+                        if let Some(effect) = &custom_effect {
+                            body.validate(
+                                &plan,
+                                target,
+                                &self.journal.keys,
+                                (self.journal.clock)(),
+                            )?;
+                            return self
+                                .deliver_custom(
+                                    lease,
+                                    CustomFrame {
+                                        plan: &plan,
+                                        target,
+                                        frame,
+                                        body: &body,
+                                        effect,
+                                    },
+                                    true,
+                                )
+                                .await;
+                        }
+                        self.record(lease, DeliveryStatus::Unknown).await?;
+                        return Ok(FrameDelivery::Unknown);
+                    }
+                    _ => return Ok(FrameDelivery::Unknown),
+                }
+            }
+            if !previous.status.settled() {
+                return Ok(FrameDelivery::Unknown);
+            }
+            if previous.terminal {
+                return Err(ExecutionError::Invalid);
+            }
+            if Some(previous.cursor) != *durable_cursor {
+                return Err(ExecutionError::Invalid);
+            }
+        }
+        if durable_cursor.map_or(Some(0), |cursor| cursor.checked_add(1))
+            != Some(frame.sequence_number)
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        if let Some(effect) = &custom_effect {
+            let mut next = lease.state.clone();
+            next.delivery = Some(checkpoint);
+            self.journal.commit(lease, next).await?;
+            return self
+                .deliver_custom(
+                    lease,
+                    CustomFrame {
+                        plan: &plan,
+                        target,
+                        frame,
+                        body: &body,
+                        effect,
+                    },
+                    false,
+                )
+                .await;
+        }
+        if let ReplayEffect::Reply(message) = &effect {
+            message.validate().map_err(|_| ExecutionError::Invalid)?;
+            if body
+                .delivery
+                .default_destination
+                .as_ref()
+                .is_some_and(|destination| !destination.authorized(&current))
+            {
+                return Err(ExecutionError::AuthorityChanged);
+            }
+        }
+        // This shared CAS reservation closes the race between projection's
+        // suppression lookup and a concurrently admitted tool reply.
+        let store = ReplyStore(self.journal.clone());
+        let mut automatic = None;
+        let mut suppressed = false;
+        let mut replayed = None;
+        let operation = storage::hash(&storage::bytes(&(
+            &target.id,
+            &checkpoint.response_id,
+            checkpoint.cursor,
+            &checkpoint.frame_hash,
+            &checkpoint.effect_hash,
+        ))?);
+        if matches!(effect, ReplayEffect::Reply(_)) {
+            match store
+                .admit(&plan, target, Kind::Automatic, operation.clone())
+                .await?
+            {
+                Admission::Claimed(claim) => automatic = Some(claim),
+                Admission::Replay(receipt) => replayed = Some(receipt),
+                Admission::Suppressed => suppressed = true,
+                Admission::Pending => return Err(ExecutionError::Busy),
+                Admission::Unknown => return Ok(FrameDelivery::Unknown),
+                Admission::Closed => return Err(ExecutionError::Invalid),
+            }
+        }
+        self.journal.guard(lease).await?;
+        let mut next = lease.state.clone();
+        next.delivery = Some(checkpoint);
+        self.journal.commit(lease, next).await?;
+        let receipt = match effect {
+            ReplayEffect::Custom(_) => return Err(ExecutionError::Corrupt),
+            ReplayEffect::NoEffect => None,
+            ReplayEffect::Reply(_) if suppressed => None,
+            ReplayEffect::Reply(_) if replayed.is_some() => replayed,
+            ReplayEffect::Reply(message) => {
+                let event = body
+                    .event_context
+                    .event_ref
+                    .open(&self.journal.keys, (self.journal.clock)())
+                    .map_err(|_| ExecutionError::Expired)?
+                    .payload;
+                // Ephemeral Sync waiters have no durable completion receipt.
+                if body.delivery.destination == ReplyChoice::Origin
+                    && matches!(event.reply, ReplyAddress::Sync { .. })
+                {
+                    Some(receipt_for(DeliveryOutcome::Unsupported))
+                } else {
+                    self.journal.renew(lease).await?;
+                    let gate = DeliveryGate::new(
+                        self.journal.clone(),
+                        lease,
+                        self.authority.clone(),
+                        plan.clone(),
+                        target.clone(),
+                        current.version,
+                        body.delivery.default_destination.clone(),
+                    );
+                    let cancel = CancelSend(gate.clone());
+                    let reply_gate = ReplyGate::automatic(
+                        store.clone(),
+                        automatic.as_ref().ok_or(ExecutionError::Corrupt)?,
+                        gate,
+                        event.expires_at,
+                    );
+                    let cancel_reply = CancelReply(reply_gate.clone());
+                    let send = async {
+                        match body.delivery.default_destination.clone() {
+                            Some(destination) => {
+                                self.coordinator
+                                    .reply_default(
+                                        current,
+                                        event,
+                                        message,
+                                        reply_gate,
+                                        destination,
+                                        operation,
+                                    )
+                                    .await
+                            }
+                            None => {
+                                self.coordinator
+                                    .reply(current, event, message, reply_gate)
+                                    .await
+                            }
+                        }
+                    };
+                    let result = tokio::time::timeout(SEND_WINDOW, send)
+                        .await
+                        .unwrap_or_else(|_| {
+                            receipt_for(DeliveryOutcome::Unknown {
+                                reason: "delivery_deadline".into(),
+                            })
+                        });
+                    drop(cancel_reply);
+                    drop(cancel);
+                    Some(result)
+                }
+            }
+        };
+        if let (Some(claim), Some(receipt)) = (&automatic, &receipt) {
+            store.finish(claim, receipt).await?;
+        }
+        if receipt.as_ref().is_some_and(|value| {
+            matches!(value.delivery, DeliveryOutcome::Unknown { .. })
+                || storage::bytes(value).map_or(true, |bytes| bytes.len() > 16 * 1024)
+        }) {
+            self.record(lease, DeliveryStatus::Unknown).await?;
+            return Ok(FrameDelivery::Unknown);
+        }
+        self.record(
+            lease,
+            DeliveryStatus::Settled {
+                receipt: receipt.clone(),
+            },
+        )
+        .await?;
+        if lease
+            .state
+            .delivery
+            .as_ref()
+            .is_some_and(|value| value.terminal)
+            && !self.close(&plan, target).await?
+        {
+            return Ok(FrameDelivery::Unknown);
+        }
+        self.journal
+            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+            .await?;
+        Ok(FrameDelivery::Settled {
+            cursor: frame.sequence_number,
+            receipt,
+        })
+    }
+
+    pub(super) async fn close(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<bool, ExecutionError> {
+        match ReplyStore(self.journal.clone()).close(plan, target).await? {
+            ToolReplyStatus::Pending => Err(ExecutionError::Busy),
+            ToolReplyStatus::Unknown => Ok(false),
+            ToolReplyStatus::None | ToolReplyStatus::Confirmed => Ok(true),
+        }
+    }
+
+    pub(super) async fn record(
+        &self,
+        lease: &mut Lease,
+        status: DeliveryStatus,
+    ) -> Result<(), ExecutionError> {
+        self.journal.guard(lease).await?;
+        let mut next = lease.state.clone();
+        next.delivery
+            .as_mut()
+            .ok_or(ExecutionError::Corrupt)?
+            .status = status;
+        self.journal.commit(lease, next).await
+    }
+}
+fn bounded_hash(value: &impl Serialize) -> Result<String, ExecutionError> {
+    let bytes = storage::bytes(value)?;
+    if bytes.len() > 256 * 1024 {
+        return Err(ExecutionError::Invalid);
+    }
+    Ok(storage::hash(&bytes))
+}

@@ -31,6 +31,12 @@ impl RuntimeStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStatus {
+    /// Runtime supports descriptor-confined management of the complete persistent home.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_filesystem: bool,
+    /// Exact owner uploads can be published under the complete persistent home.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_attachment_upload: bool,
     /// Absent on retained supervisors that predate the additive operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_skill_install: bool,
@@ -92,6 +98,7 @@ mod compatibility_tests {
             "restore_pending": false, "agent_processes": 0
         });
         let status: RuntimeStatus = serde_json::from_value(original.clone()).unwrap();
+        assert!(!status.agent_filesystem);
         assert!(!status.agent_model_catalog);
         assert!(!status.agent_skill_install);
         assert_eq!(serde_json::to_value(status).unwrap(), original);

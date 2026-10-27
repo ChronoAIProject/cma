@@ -72,6 +72,16 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            native_discord_writes_enabled: false,
+            native_discord_thread_history_enabled: false,
+            native_discord: Default::default(),
+            native_bot_mentions_writes_enabled: false,
+            thread_contract_writes_enabled: false,
+            lark_resource_writes_enabled: false,
+            multi_consumer_writes_enabled: false,
+            dynamic_sources_writes_enabled: false,
+            relay_raw_verification_writes_enabled: false,
+        outbound_messages_writes_enabled: false,
             listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(),
             providers: cmaeg::providers::ProviderRegistry::parse(&json!([{
                 "slug":"cma_codex","base_url":server.base,"kind":"responses_http","max_inflight":8,
@@ -80,7 +90,7 @@ impl ConsumerGateway {
             }]).to_string()).unwrap(),
             provider_connect_timeout: Duration::from_secs(2), provider_request_timeout: Duration::from_secs(5),
             provider_max_inflight: 8, cma_service_account: None,
-            management: cmaeg::ManagementConfig { public_url: PUBLIC.into(), master_keys: keys.clone(),
+            management: cmaeg::ManagementConfig { public_url: PUBLIC.into(), public_api_url: PUBLIC.into(), advertise_public_api_url: true, master_keys: keys.clone(),
                 cma_base_url: server.base.clone(), cma_service_token: Secret::new("fixture-service"),
                 nyxid_base_url: server.base.clone(), tools_nyxid_slug: "cmaeg".into() },
             media: Default::default(), stt: Default::default(), transformer: Default::default(), console: Default::default(), routing: Default::default(),
@@ -100,12 +110,29 @@ impl ConsumerGateway {
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
+            discord_thread_history: None,
+            complete_replies_enabled: false,
+            routed_replies: None,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
+            lark_cards_enabled: false,
+            whatsapp_templates_enabled: false,
+            whatsapp_interactions_enabled: false,
+            discord_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            native_media_enabled: false,
+            relay_text_edits_enabled: false,
             resolver: state.resolver.clone(),
             keys,
             providers,
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: cmaeg::turns::TurnTracker::new(state.readiness.clone()),
             public_origin: PUBLIC.into(),
+            public_api_url: PUBLIC.into(),
+            advertise_public_api_url: true,
             media: None,
             downloads: Default::default(),
         };
@@ -160,6 +187,7 @@ fn ready_connection() -> Connection {
         fingerprint: "fixture-plan".into(),
         origin: Origin {
             event: EventRefPayload {
+                telegram_admission: None,
                 v: 1,
                 consumer: None,
                 lineage: None,

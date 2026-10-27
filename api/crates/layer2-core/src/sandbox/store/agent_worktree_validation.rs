@@ -9,6 +9,22 @@ pub(super) fn validate_worktree_delta(
     kind: PublicationKind,
     step: AgentWorkStep,
 ) -> Result<(), SandboxStoreError> {
+    if kind == PublicationKind::Advance && step == AgentWorkStep::WaitForWorkspace {
+        let versioned = mutation
+            .worktree
+            .as_ref()
+            .ok_or(SandboxStoreError::Conflict)?;
+        let commit = &versioned.worktree.base_commit;
+        if !current.base_commit.is_empty()
+            || !matches!(commit.len(), 40 | 64)
+            || !commit.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut original = current.clone();
+        original.base_commit.clone_from(commit);
+        return validate_versioned_worktree(&original, versioned, WorktreeStatus::Creating);
+    }
     let expected_status = match (kind, step, current.status) {
         (PublicationKind::Ready, AgentWorkStep::PublishReady, WorktreeStatus::Creating) => {
             Some(WorktreeStatus::Ready)

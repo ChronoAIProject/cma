@@ -236,6 +236,13 @@ export class LocalAgentV2 {
     } else if (request.method === 'GET') {
       this.reads.push(`${path}${url.search}`);
       if (this.queued.handle('GET', path, response)) return;
+      if (path === `/api/v2/agents/${agent}/queued-inputs`)
+        return this.json(response, {
+          object: 'cma.agent.queued_inputs',
+          agent_id: agent,
+          data: [],
+          next_after: null,
+        });
       if (path === '/api/v2/ui/transport')
         return this.json(response, {
           object: 'cma.ui.transport',
@@ -292,6 +299,20 @@ export class LocalAgentV2 {
         });
       if (path === '/api/v2/commands/cmd_control')
         return this.json(response, commandStatus(this.started, true));
+      if (path === '/api/v2/commands/cmd_1') {
+        const turn = this.items.find((item) => item.response_binding?.command_id === 'cmd_1');
+        const sequence = turn?.response_binding?.turn_sequence;
+        const completed = this.items.some(
+          (item) => item.kind.type === 'turn_completed' && item.kind.turn_sequence === sequence,
+        );
+        return this.json(response, {
+          ...commandStatus(this.started),
+          status: turn === undefined ? 'queued' : completed ? 'completed' : 'in_progress',
+          turn_sequence: sequence ?? null,
+          observed_cursor: turn === undefined ? null : this.items.length,
+          delivery: turn === undefined ? null : 'execution_observed',
+        });
+      }
     }
     this.errors.push(`Unexpected ${request.method} ${path}`);
     response.writeHead(404);

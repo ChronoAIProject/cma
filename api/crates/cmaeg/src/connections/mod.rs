@@ -1,5 +1,7 @@
 //! Gateway-owned platform setup, independent of every agent provider's workflow.
 pub(crate) mod binding;
+#[cfg(test)]
+mod capability_tests;
 mod completion;
 #[cfg(test)]
 mod consumer_tests;

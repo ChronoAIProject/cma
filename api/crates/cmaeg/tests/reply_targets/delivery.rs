@@ -164,3 +164,48 @@ async fn a_lost_final_receipt_leaves_a_durable_claim_that_cannot_dispatch_again(
     );
     assert_eq!(app.relay.requests.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn durable_target_preserves_thread_choice_and_original_message_after_restart() {
+    let mut app = App::new(vec![]).await;
+    if let cmaeg_core::channel::Source::NyxidRelay {
+        platform, bot_id, ..
+    } = &mut app.definition.sources[0]
+    {
+        *platform = cmaeg_core::channel::Platform::Lark;
+        *bot_id = Some("ou_bot".into());
+    }
+    app.definition.reply.thread_contract = Some(cmaeg_core::thread::ThreadContract {
+        version: 1,
+        follow_chat_ids: vec!["chat-alice".into()],
+    });
+    app.update().await;
+    let event = app
+        .event_with_thread("alice", "thread-original", true)
+        .await;
+    let target = app.target(&event).await;
+    app.restart().await;
+    let first = receipt(
+        app.send(&target, "thread-answer", "answer")
+            .json(&serde_json::json!({"text":"answer", "thread_reply":true}))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(first["delivery"]["outcome"], "confirmed");
+    app.restart().await;
+    let replay = receipt(
+        app.send(&target, "thread-answer", "answer")
+            .json(&serde_json::json!({"text":"answer", "thread_reply":true}))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(first, replay);
+    let requests = app.relay.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].body["thread_reply"], true);
+    assert_eq!(requests[0].body["message_id"], "thread-original");
+}

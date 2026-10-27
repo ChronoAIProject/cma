@@ -53,8 +53,13 @@
   font-size: 13px;
 }
 
+/*
+ * Replies name many identifiers, so inline code stays quiet: slightly smaller than
+ * the text around it and tight to it, rather than a chip that breaks every line.
+ */
 .agent-content :not(pre) > code {
-  padding: 2px 5px;
+  padding: 1px 4px;
+  font-size: 0.875em;
   background: var(--dsw-alias-markdown-inline-code);
   border-radius: 4px;
 }

@@ -27,12 +27,11 @@ impl NativeRuntimeProof {
     }
 }
 impl AgentSandboxClient {
-    pub(crate) async fn native_runtime_proof(
+    pub(super) fn native_runtime_home_origin<'a>(
         &self,
         runtime: &RuntimeHandle,
-        request: &ProviderSandboxRequest,
-        home: &HomeVolumeAttachment,
-    ) -> Result<NativeRuntimeProof> {
+        home: &'a HomeVolumeAttachment,
+    ) -> Result<&'a NativePoolHomeOrigin> {
         let (name, uid) = parse_handle(runtime)?;
         home.validate_for(&home.request.sandbox_id)?;
         if !home.request.policy.is_native_vct()
@@ -48,6 +47,53 @@ impl AgentSandboxClient {
         if origin.claim.sandbox_name.as_deref() != Some(name) || origin.sandbox_uid != uid {
             return Err(rejected("native runtime differs from its persisted home"));
         }
+        origin.validate_for(
+            &self.config.namespace,
+            &self.config.deployment,
+            &home.request,
+        )?;
+        Ok(origin)
+    }
+
+    pub(crate) async fn verify_native_runtime_policy(
+        &self,
+        runtime: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        // Validate the same persisted authority before any speculative policy I/O.
+        // The graph proof must still confirm this exact origin on live resources.
+        let origin = self.native_runtime_home_origin(runtime, home)?;
+        self.pools
+            .verify_explicit_template_policy(&origin.claim.request.pool)
+            .await
+    }
+
+    pub(crate) fn complete_native_runtime_policy(
+        &self,
+        home: &HomeVolumeAttachment,
+        member: &DynamicObject,
+        template_policy: Result<()>,
+    ) -> Result<()> {
+        let origin = home
+            .receipt
+            .native_authority
+            .as_deref()
+            .ok_or_else(|| rejected("native home authority missing"))?;
+        if self.pools.retained_upgrade_policy(member, origin)? {
+            Ok(())
+        } else {
+            template_policy
+        }
+    }
+
+    pub(crate) async fn native_runtime_proof(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<NativeRuntimeProof> {
+        let origin = self.native_runtime_home_origin(runtime, home)?;
+        let (name, _) = parse_handle(runtime)?;
         let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
         let (member, pods) = tokio::join!(
             self.pools.prove_native_home(home),
@@ -56,7 +102,7 @@ impl AgentSandboxClient {
         let member = member?;
         let desired = self
             .pools
-            .runtime_desired_for_home(origin, home, request, name)?;
+            .runtime_desired_for_member(origin, home, request, name, &member)?;
         self.matches(&member, &desired)?;
         let pod = self.pod_binding_from_page(&member, pods.map_err(api_error)?)?;
         Ok(NativeRuntimeProof {

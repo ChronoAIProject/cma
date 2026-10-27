@@ -20,12 +20,24 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         sandbox_id: &SandboxId,
         lease: &LifecycleLease,
+        expected_workspace: Option<&layer2_core::WorkspaceId>,
     ) -> Result<layer2_core::WorkspaceId, AgentLifecycleProvisioningError> {
         tokio::time::timeout(Duration::from_secs(180), async {
             let started = tokio::time::Instant::now();
             let mut sandbox_ready = false;
             let mut key_ready = false;
+            let fallback = tokio::sync::Notify::new();
+            let readiness = self
+                .native_prepared
+                .as_ref()
+                .map(|store| store.agent_parent_ready.as_ref())
+                .unwrap_or(&fallback);
             loop {
+                // Prepared Agents are admitted only after this exact parent wait.
+                // Register before authenticated reads; the hint supplies no state.
+                let changed = readiness.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
                 let sandbox = self
                     .sandbox
                     .read(caller, sandbox_id)
@@ -81,15 +93,17 @@ impl InlineAgentLifecycle {
                         .list(caller, sandbox_id, &Default::default())
                         .await
                         .map_err(workspace_error)?;
-                    if let Some(workspace) = page
-                        .items
-                        .into_iter()
-                        .find(|workspace| workspace.status == WorkspaceStatus::Ready)
-                    {
+                    if let Some(workspace) = page.items.into_iter().find(|workspace| {
+                        workspace.status == WorkspaceStatus::Ready
+                            && expected_workspace.is_none_or(|id| workspace.id == *id)
+                    }) {
                         return Ok(workspace.id);
                     }
                 }
-                tokio::time::sleep(worker::readiness_delay(started)).await;
+                tokio::select! {
+                    _ = &mut changed => {},
+                    _ = tokio::time::sleep(worker::readiness_delay(started)) => {},
+                }
             }
         })
         .await

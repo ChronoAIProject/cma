@@ -1,158 +1,211 @@
-.sign-in-landing {
+/*
+ * The signed-out landing — `docs/Web_Style.md` §20.
+ *
+ * One page that says what CMA is, offers one primary action, and explains the
+ * product in two short sections. Colour comes only from alias tokens.
+ */
+/* `main.` outranks the generic gate's centring, which loads later. */
+main.sign-in-landing {
   overflow-y: auto;
   justify-content: flex-start;
   padding: 0;
   transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
 }
-.sign-in-landing__topbar {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  width: min(1180px, calc(100% - 64px));
-  min-height: 56px;
-  margin-inline: auto;
-  padding-top: 18px;
-}
-.sign-in-landing__brandmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  color: var(--dsw-alias-label-primary);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-decoration: none;
-}
-.sign-in-landing__brandmark > span:first-child {
-  display: block;
-  width: 28px;
-  height: 28px;
-  color: var(--dsw-alias-label-primary);
-  opacity: 0.72;
-}
-.sign-in-landing__brandmark svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.sign-in-landing__brandmark:hover {
-  color: var(--dsw-alias-brand-text);
-}
-.sign-in-landing__tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  min-width: 0;
-}
-.sign-in-landing__tabs a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 12px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-  text-decoration: none;
-  border-radius: 8px;
-}
-.sign-in-landing__tabs a:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-button-ghost-active-fill);
-}
-.sign-in-landing__tabs a:focus-visible,
-.sign-in-landing__brandmark:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 .sign-in-landing--entering {
-  opacity: 0;
+  opacity: 0.4;
   pointer-events: none;
 }
-.sign-in-landing .sign-in-landing__brand {
-  width: min(100%, 560px);
-  padding-top: 0;
-  align-items: flex-start;
-}
-.sign-in-landing .sign-in-landing__brand h1 {
-  font-family: 'Shrikhand', var(--dsw-font-family);
-  font-weight: 700;
-  font-synthesis: weight;
-  font-size: clamp(18px, 4.8vw, 40px);
-  line-height: 1.2;
-  white-space: nowrap;
-}
 .sign-in-landing__layout {
-  display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(280px, 0.7fr);
-  gap: clamp(32px, 8vw, 120px);
-  align-items: center;
-  width: min(1180px, calc(100% - 64px));
-  min-height: calc(100dvh - 44px);
+  display: flex;
+  flex-direction: column;
+  gap: 80px;
+  box-sizing: border-box;
+  width: min(1200px, calc(100% - 48px));
   margin-inline: auto;
-  padding: 56px 0;
+  padding: 64px 0 80px;
 }
-.sign-in-landing__brand h1 {
-  text-align: left;
-}
-.sign-in-landing__services {
+.sign-in-landing__hero {
+  min-height: 480px;
+  animation: sign-in-landing-arrive var(--ds-transition-duration-slow) var(--ds-ease-in-out) both;
   display: grid;
-  gap: 14px;
-  align-content: center;
-  max-width: 420px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: center;
+}
+.sign-in-landing__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 20px;
+  min-width: 0;
 }
 .sign-in-landing__eyebrow {
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.sign-in-landing__services article {
-  padding: 16px 18px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-1);
-}
-.sign-in-landing__services h2 {
-  margin-bottom: 4px;
-  font-size: 16px;
-}
-.sign-in-landing__services p {
+  margin: 0;
   color: var(--dsw-alias-label-secondary);
   font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
 }
-@media (max-width: 760px) {
-  .sign-in-landing__topbar {
-    width: min(100% - 32px, 560px);
-    padding-top: 12px;
-  }
-  .sign-in-landing__tabs {
-    gap: 0;
-    overflow-x: auto;
-  }
-  .sign-in-landing__tabs a {
-    padding-inline: 8px;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-  .sign-in-landing__layout {
+.sign-in-landing__headline {
+  color: var(--dsw-alias-label-primary);
+  font-size: clamp(40px, 5.5vw, 72px);
+  font-weight: 500;
+  line-height: 1.04;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+.sign-in-landing__lede {
+  max-width: 560px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 18px;
+  line-height: 28px;
+}
+.sign-in-landing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 4px;
+}
+.sign-in-landing__actions > a {
+  text-decoration: none;
+}
+.sign-in-landing__note {
+  color: var(--dsw-alias-label-caption);
+  font-size: 13px;
+  line-height: 20px;
+}
+.sign-in-landing__alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 12px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-label-primary);
+}
+.sign-in-landing .sign-in-landing__brand {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+.sign-in-landing__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sign-in-landing__kicker {
+  color: var(--dsw-alias-brand-text);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 16px;
+}
+.sign-in-landing__section h2 {
+  max-width: 640px;
+  margin: 0 0 28px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 40px;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.sign-in-landing__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sign-in-landing__card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px 0 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.sign-in-landing__card--soon {
+  color: var(--dsw-alias-label-secondary);
+}
+.sign-in-landing__card h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+.sign-in-landing__card p {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 15px;
+  line-height: 24px;
+}
+.sign-in-landing__step {
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 20px;
+}
+.sign-in-landing__soon {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.sign-in-landing__open {
+  margin-top: auto;
+}
+@media (max-width: 900px) {
+  .sign-in-landing__hero {
     grid-template-columns: 1fr;
-    gap: 28px;
-    width: min(100% - 32px, 560px);
-    padding: 32px 0;
+    min-height: 0;
+    gap: 24px;
   }
   .sign-in-landing .sign-in-landing__brand {
-    align-items: center;
+    align-items: flex-start;
+    max-width: 280px;
   }
-  .sign-in-landing__brand h1 {
-    text-align: center;
+}
+@media (max-width: 760px) {
+  .sign-in-landing__layout {
+    gap: 56px;
+    width: min(100% - 32px, 560px);
+    padding: 40px 0 56px;
   }
-  .sign-in-landing__services {
-    max-width: none;
+  .sign-in-landing__grid {
+    grid-template-columns: 1fr;
+  }
+  .sign-in-landing__section h2 {
+    font-size: 24px;
+    line-height: 32px;
+  }
+}
+@keyframes sign-in-landing-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sign-in-landing {
+  main.sign-in-landing {
     transition: none;
+  }
+  .sign-in-landing__hero {
+    animation: none;
   }
 }

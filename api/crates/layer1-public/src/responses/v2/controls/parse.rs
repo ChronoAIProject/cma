@@ -10,7 +10,7 @@ use layer2_core::{
 use super::super::error;
 use super::shapes::{V2ResponseControlCommand, V2ResponseControlRequest};
 
-pub(super) fn parse(
+pub(in crate::responses::v2) fn parse(
     agent_id: String,
     response_id: String,
     headers: &HeaderMap,

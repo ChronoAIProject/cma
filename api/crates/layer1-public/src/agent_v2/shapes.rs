@@ -9,6 +9,9 @@ pub(super) struct EventItem {
     #[schema(value_type = Option<serde_json::Value>)]
     pub kind: Option<AgentEventKind>,
     pub response_binding: Option<ResponseBinding>,
+    /// Present only for verified steering input when Prefer: cma-message-bindings is requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_command_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -26,6 +29,16 @@ impl From<layer2_core::sandbox::AgentResponseBinding> for ResponseBinding {
             turn_sequence: value.turn_sequence,
         }
     }
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(super) struct EventHead {
+    pub object: &'static str,
+    pub schema_version: u16,
+    pub agent_id: String,
+    pub incarnation: String,
+    pub through_cursor: String,
+    pub active_turn: Option<EventItem>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]

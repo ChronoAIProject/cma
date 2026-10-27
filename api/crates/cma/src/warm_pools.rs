@@ -14,10 +14,20 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod current;
+mod retirement;
+mod startup;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
     #[serde(rename = "_id")]
     pub id: String,
+    #[serde(default)]
+    pub activated_at: Option<mongodb::bson::DateTime>,
+    #[serde(default)]
+    pub retiring: bool,
+    #[serde(default)]
+    pub retired: bool,
     pub document_schema_version: i64,
     pub revision: i64,
     pub actor: String,
@@ -56,6 +66,7 @@ impl PoolTarget {
             id: self.id.clone(),
             revision: self.revision as u64,
             image: self.plan.spec.image.uri.clone(),
+            config_sha256: self.plan.config_sha256.clone(),
             cpu_millis: self.plan.spec.cpu_millis,
             memory_mib: self.plan.spec.memory_mib,
             target_replicas: self.target_replicas,
@@ -72,6 +83,29 @@ impl PoolTarget {
 
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
+    async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn retirement_homes(
+        &self,
+        _target: &PoolTarget,
+        _image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn retirement_drain_homes(
+        &self,
+        _target: &PoolTarget,
+        _image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn remove_retired(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError>;
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError>;
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError>;
@@ -81,6 +115,9 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         body: &ResizeWarmPoolBody,
     ) -> Result<PoolTarget, WarmPoolError>;
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError>;
+    async fn claim_target(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn bind(
         &self,
         target: &PoolTarget,
@@ -111,12 +148,15 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
     }
 }
 
+const SYSTEM_ACTOR: &str = "cma-system";
+
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
     image: RuntimeImage,
     home: Option<HomeVolumePolicy>,
     default_capacity: layer3_adapter::SandboxCapacity,
+    default_target: u32,
 }
 
 impl NativeWarmPools {
@@ -126,6 +166,7 @@ impl NativeWarmPools {
         image: String,
         home: Option<HomeVolumePolicy>,
         default_capacity: layer3_adapter::SandboxCapacity,
+        default_target: u32,
     ) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -133,7 +174,47 @@ impl NativeWarmPools {
             image: deployment_image(image),
             home,
             default_capacity,
+            default_target,
         })
+    }
+
+    /// Persist the deployment-owned default target before the reconciler starts.
+    /// The target is keyed by the exact immutable plan, so a runtime image or
+    /// Pod-policy change creates a new pool identity and never mutates a claimed
+    /// pool. Provider resources are still created only by the normal reconciler.
+    pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
+        let provider = self
+            .adapter
+            .native_pools()
+            .ok_or(WarmPoolError::Unavailable)?;
+        let home = self.home.clone().ok_or(WarmPoolError::Unavailable)?;
+        let body = ConfigureWarmPoolBody {
+            cpu_millis: self.default_capacity.cpu_millis,
+            memory_mib: self.default_capacity.memory_mib,
+            target_replicas: self.default_target,
+        };
+        let plan = provider
+            .plan(&NativePoolSpec {
+                image: self.image.clone(),
+                cpu_millis: body.cpu_millis,
+                memory_mib: body.memory_mib,
+                home,
+            })
+            .map_err(|_| WarmPoolError::Invalid)?;
+        // An operator may already have configured this exact immutable plan
+        // under another idempotency key. Reuse that durable target instead of
+        // tripping the collection's unique plan index during startup.
+        if let Some(existing) = self
+            .store
+            .list()
+            .await?
+            .into_iter()
+            .find(|target| target.plan.config_sha256 == plan.config_sha256)
+        {
+            return self.store.activate(&existing.id).await;
+        }
+        let target = self.store.insert(default_target(plan, body)).await?;
+        self.store.activate(&target.id).await
     }
 
     pub fn spawn(
@@ -165,8 +246,40 @@ impl NativeWarmPools {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(false);
         };
-        reconcile_one(self.store.as_ref(), provider).await
+        let Some(target) = self.store.claim().await? else {
+            return Ok(false);
+        };
+        if target.retiring || !self.current_plan(&target)? {
+            return self.retire_claimed(provider, target).await;
+        }
+        reconcile_claimed(self.store.as_ref(), provider, target).await
     }
+
+    fn default_config_sha256(&self) -> Option<String> {
+        default_config_sha256(
+            self.adapter.native_pools(),
+            &self.image,
+            self.home.as_ref(),
+            &self.default_capacity,
+        )
+    }
+}
+
+fn default_config_sha256(
+    provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
+    image: &RuntimeImage,
+    home: Option<&HomeVolumePolicy>,
+    capacity: &layer3_adapter::SandboxCapacity,
+) -> Option<String> {
+    provider?
+        .plan(&NativePoolSpec {
+            image: image.clone(),
+            cpu_millis: capacity.cpu_millis,
+            memory_mib: capacity.memory_mib,
+            home: home?.clone(),
+        })
+        .ok()
+        .map(|plan| plan.config_sha256)
 }
 
 #[async_trait]
@@ -198,6 +311,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             default_image: self.image.uri.clone(),
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
+            default_config_sha256: self.default_config_sha256(),
             available,
         })
     }
@@ -236,6 +350,9 @@ impl WarmPoolAdministration for NativeWarmPools {
             .map_err(|_| WarmPoolError::Invalid)?;
         let target = PoolTarget {
             id,
+            activated_at: None,
+            retiring: false,
+            retired: false,
             document_schema_version: 1,
             revision: 1,
             actor: caller.subject.0.clone(),
@@ -266,6 +383,12 @@ impl WarmPoolAdministration for NativeWarmPools {
         {
             return Err(WarmPoolError::Invalid);
         }
+        if body.target_replicas > 0 {
+            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+            if !self.current_plan(&target)? {
+                return Err(WarmPoolError::Conflict);
+            }
+        }
         let target = self.store.resize(id, &body).await?;
         Ok(target.view(None, true))
     }
@@ -275,6 +398,28 @@ fn authorize(caller: &Caller) -> Result<(), WarmPoolError> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| WarmPoolError::Forbidden)
+}
+
+fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBody) -> PoolTarget {
+    let key = format!("system-default-v1-{}", plan.config_sha256);
+    PoolTarget {
+        id: target_id(SYSTEM_ACTOR, &key),
+        activated_at: None,
+        retiring: false,
+        retired: false,
+        document_schema_version: 1,
+        revision: 1,
+        actor: SYSTEM_ACTOR.into(),
+        target_replicas: requested.target_replicas,
+        requested,
+        plan,
+        binding: None,
+        applied_revision: 0,
+        error: None,
+        lease: None,
+        lease_until: mongodb::bson::DateTime::from_millis(0),
+        reconcile_after: mongodb::bson::DateTime::from_millis(0),
+    }
 }
 
 fn target_id(actor: &str, key: &str) -> String {
@@ -291,15 +436,27 @@ fn replay(target: PoolTarget, body: &ConfigureWarmPoolBody) -> Result<PoolTarget
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
+#[cfg(test)]
 async fn reconcile_one(
     store: &dyn PoolTargetStore,
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
 ) -> Result<bool, WarmPoolError> {
-    let Some(mut target) = store.claim().await? else {
+    let Some(target) = store.claim().await? else {
         return Ok(false);
     };
+    reconcile_claimed(store, provider, target).await
+}
+
+async fn reconcile_claimed(
+    store: &dyn PoolTargetStore,
+    provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
+    mut target: PoolTarget,
+) -> Result<bool, WarmPoolError> {
+    if target.retiring {
+        return Err(WarmPoolError::Conflict);
+    }
     let result = async {
         if target.binding.is_none() {
             // Zero capacity until the original pool/template UIDs have durable acknowledgement.

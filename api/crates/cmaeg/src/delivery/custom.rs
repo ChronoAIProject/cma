@@ -19,6 +19,7 @@ pub struct CustomDelivery {
     pub public_origin: String,
     pub waiters: Arc<SyncRegistry>,
     pub webhooks: WebhookClient,
+    pub activity: Arc<dyn crate::turns::observer::ActivityObserver>,
 }
 impl CustomDelivery {
     pub fn new(public_origin: String, waiters: Arc<SyncRegistry>) -> Self {
@@ -26,7 +27,15 @@ impl CustomDelivery {
             public_origin,
             waiters,
             webhooks: WebhookClient::default(),
+            activity: Arc::new(crate::turns::observer::NoopObserver),
         }
+    }
+    pub fn with_activity(
+        mut self,
+        activity: Arc<dyn crate::turns::observer::ActivityObserver>,
+    ) -> Self {
+        self.activity = activity;
+        self
     }
     pub async fn reply(
         &self,
@@ -47,6 +56,7 @@ impl CustomDelivery {
             };
         }
         let streamed = self.emit(event, "cmaeg.message", &data, false);
+        self.observe_local(event, streamed).await;
         let delivery = self
             .webhook(
                 gate,
@@ -63,7 +73,7 @@ impl CustomDelivery {
             delivery,
         }
     }
-    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) {
+    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) -> bool {
         let frame = match outcome {
             TurnOutcome::TextDelta { text } => Some((
                 "cmaeg.text.delta",
@@ -75,6 +85,9 @@ impl CustomDelivery {
                     event,
                     Some(text),
                     Some(&OutboundMessage {
+                        whatsapp_template: None,
+                        native_attachments: Vec::new(),
+                        thread_reply: false,
                         text: Some(text.clone()),
                         blocks: vec![],
                         reply_to: None,
@@ -94,7 +107,9 @@ impl CustomDelivery {
             }),
         };
         if let Some((name, data)) = frame {
-            self.emit(event, name, &data, outcome.terminal());
+            self.emit(event, name, &data, outcome.terminal())
+        } else {
+            false
         }
     }
     /// Deliver a terminal outcome to the result webhooks; `None` when the
@@ -177,6 +192,28 @@ impl CustomDelivery {
                     reason: "webhook_key_missing".into(),
                 },
             };
+            let step = if kind == "cmaeg.response.failed" {
+                crate::turns::observer::DeliveryStep::Failure
+            } else {
+                crate::turns::observer::DeliveryStep::Answer
+            };
+            self.activity
+                .checkpoint(
+                    &event.record_id,
+                    &event.event_id,
+                    crate::activity::facts::delivery(
+                        event.consumer.as_ref().map_or("default", |id| id.as_str()),
+                        step,
+                        &outcome,
+                        crate::turns::observer::Destination::Origin,
+                        &ReplyAddress::ResultWebhook {
+                            url: url.clone(),
+                            hmac_key_id: String::new(),
+                        },
+                        None,
+                    ),
+                )
+                .await;
             result = if attempted
                 && (!matches!(result, DeliveryOutcome::Confirmed { .. })
                     || !matches!(outcome, DeliveryOutcome::Confirmed { .. }))
@@ -190,6 +227,27 @@ impl CustomDelivery {
             attempted = true;
         }
         result
+    }
+    pub(crate) async fn observe_local(&self, event: &EventRefPayload, buffered: bool) {
+        if !matches!(event.reply, ReplyAddress::Sync { .. }) {
+            return;
+        }
+        let mut change = crate::activity::facts::delivery(
+            event.consumer.as_ref().map_or("default", |id| id.as_str()),
+            crate::turns::observer::DeliveryStep::Answer,
+            &DeliveryOutcome::Unknown {
+                reason: "local_stream".into(),
+            },
+            crate::turns::observer::Destination::Origin,
+            &event.reply,
+            None,
+        );
+        if let Some(delivery) = &mut change.delivery {
+            delivery.outcome = if buffered { "buffered" } else { "unavailable" }.into();
+        }
+        self.activity
+            .checkpoint(&event.record_id, &event.event_id, change)
+            .await;
     }
 }
 fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static str, Value)> {
@@ -222,7 +280,7 @@ mod tests {
     use cmaeg_core::{channel::ChannelDefinition, ids::ChannelId, seal::ChannelPointer};
     use futures_util::{future::BoxFuture, StreamExt};
 
-    fn channel(edit: impl FnOnce(&mut Value)) -> ResolvedChannel {
+    pub(super) fn channel(edit: impl FnOnce(&mut Value)) -> ResolvedChannel {
         let mut value: Value = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
@@ -244,8 +302,9 @@ mod tests {
         }
     }
 
-    fn event(channel: &ResolvedChannel, reply: ReplyAddress) -> EventRefPayload {
+    pub(super) fn event(channel: &ResolvedChannel, reply: ReplyAddress) -> EventRefPayload {
         EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: None,
             channel_id: channel.id.clone(),
@@ -260,8 +319,11 @@ mod tests {
         }
     }
 
-    fn message() -> OutboundMessage {
+    pub(super) fn message() -> OutboundMessage {
         OutboundMessage {
+            whatsapp_template: None,
+            native_attachments: Vec::new(),
+            thread_reply: false,
             text: Some("hello".into()),
             blocks: vec![],
             reply_to: None,
@@ -352,3 +414,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "custom_activity_tests.rs"]
+mod activity_tests;

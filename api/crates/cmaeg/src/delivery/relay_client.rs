@@ -1,4 +1,12 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+mod discord;
+mod initiated;
+mod media;
+pub use media::supported as native_media_supported;
+mod edit;
+mod lark;
+mod whatsapp;
+
 use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
 use cmaeg_core::{channel::Secret, seal::ReplyAddress};
@@ -12,6 +20,25 @@ use std::{sync::Arc, time::Duration};
 
 /// The largest relay receipt the client reads.
 const RECEIPT_MAX_BYTES: usize = 4096;
+/// Complete ordinary delivery's serialized request limit, including identifiers,
+/// metadata and JSON escaping. Automatic output is bounded at 256 KiB and sanitization plus JSON
+/// expands at most fourfold; tool requests arrive within 128 KiB. Two MiB
+/// accommodates both with envelope headroom, independently of platform limits.
+/// Low-level `send` and `send_rich` do not impose this limit.
+pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// NyxID sends a complete ordinary reply's parts sequentially. Leave room for
+/// queueing/pacing inside the existing 20 s routed delivery window.
+pub(crate) const COMPLETE_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const COMPLETE_REPLY_TOOL_TIMEOUT: Duration = Duration::from_secs(18);
+
+/// Serialized before a sender commits or claims a single-use credential.
+pub(super) struct PreparedReply {
+    body: Vec<u8>,
+    message_id: String,
+    thread_reply: bool,
+    native_media: bool,
+    complete_text: bool,
+}
 
 pub enum Credential<'a> {
     ReplyToken(&'a Secret),
@@ -85,7 +112,20 @@ pub struct RelayClient {
     transport: Arc<dyn RelayTransport>,
     endpoint: Url,
     timeout: Duration,
+    complete_replies: bool,
+    native_media: bool,
+    text_edits: bool,
+    native_discord_edits: bool,
+    native_discord_effects: bool,
+    lark_cards: bool,
+    whatsapp_templates: bool,
+    whatsapp_interactions: bool,
+    discord_interactions: bool,
+    discord_multiselect: bool,
+    consumer_interactions: bool,
+    telegram_effects: bool,
     pub telegram: crate::telegram::TelegramClient,
+    pub discord: crate::discord::DiscordRest,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
 #[derive(Deserialize)]
@@ -94,6 +134,76 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    /// Gate named-consumer cards until all readers support retained owner bindings.
+    pub fn with_consumer_interactions(mut self, enabled: bool) -> Self {
+        self.consumer_interactions = enabled;
+        self
+    }
+    pub(super) fn consumer_interactions_enabled(&self) -> bool {
+        self.consumer_interactions
+    }
+
+    /// Gate new WhatsApp controls until all readers support durable callbacks.
+    pub fn with_whatsapp_interactions(mut self, enabled: bool) -> Self {
+        self.whatsapp_interactions = enabled;
+        self
+    }
+    pub(super) fn whatsapp_interactions_enabled(&self) -> bool {
+        self.whatsapp_interactions
+    }
+
+    pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
+        self.telegram_effects = enabled;
+        self
+    }
+    pub(super) fn telegram_effects_enabled(&self) -> bool {
+        self.telegram_effects
+    }
+    /// Enable only after the deployed relay preserves approved template metadata.
+    pub fn with_whatsapp_templates(mut self, enabled: bool) -> Self {
+        self.whatsapp_templates = enabled;
+        self
+    }
+    pub(super) fn whatsapp_templates_enabled(&self) -> bool {
+        self.whatsapp_templates
+    }
+
+    /// Gate new card issuance until every reader understands retained Lark cards.
+    pub fn with_lark_cards(mut self, enabled: bool) -> Self {
+        self.lark_cards = enabled;
+        self
+    }
+    pub(super) fn lark_cards_enabled(&self) -> bool {
+        self.lark_cards
+    }
+    /// Issue enriched text references only after every gateway reader supports them.
+    /// Retained references remain editable when issuance is disabled again.
+    pub fn with_text_edits(mut self, enabled: bool) -> Self {
+        self.text_edits = enabled;
+        self
+    }
+    pub(super) fn text_edits_enabled(&self) -> bool {
+        self.text_edits
+    }
+    /// Attest that every deployed NyxID replica honors bounded native media replies.
+    pub fn with_native_media(mut self, enabled: bool) -> Self {
+        self.native_media = enabled;
+        self
+    }
+    pub(crate) fn native_media_enabled(&self) -> bool {
+        self.native_media
+    }
+    /// Select complete ordinary replies in the delivery engine. Enabling this
+    /// attests that NyxID splits ordinary/thread replies without truncation and
+    /// acknowledges only all-parts acceptance. Low-level sends keep their
+    /// existing payload behavior regardless of this setting.
+    pub fn with_complete_replies(mut self, enabled: bool) -> Self {
+        self.complete_replies = enabled;
+        self
+    }
+    pub(super) fn complete_replies(&self) -> bool {
+        self.complete_replies
+    }
     pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
         self.telegram = client;
         self
@@ -122,8 +232,21 @@ impl RelayClient {
             transport: Arc::new(HttpTransport::new(timeout)?),
             endpoint,
             timeout,
+            complete_replies: false,
+            native_media: false,
+            text_edits: false,
+            native_discord_edits: false,
+            native_discord_effects: false,
+            lark_cards: false,
+            whatsapp_templates: false,
+            whatsapp_interactions: false,
+            discord_interactions: false,
+            discord_multiselect: false,
+            consumer_interactions: false,
+            telegram_effects: false,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
+            discord: crate::discord::DiscordRest::new()?,
         })
     }
     pub async fn send(
@@ -141,54 +264,86 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> (DeliveryOutcome, Option<String>) {
-        let ReplyAddress::NyxidRelay { message_id, .. } = address else {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
             return (DeliveryOutcome::Unsupported, None);
         };
-        let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
-        if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
-            return (
-                DeliveryOutcome::Rejected {
-                    reason: "no_credential".into(),
-                },
-                None,
-            );
-        }
-        tokio::time::timeout(self.timeout, self.post(message_id, secret, text, markup))
-            .await
-            .unwrap_or_else(|_| (unknown("response_lost"), None))
+        let secret = match credential_secret(credential) {
+            Ok(secret) => secret,
+            Err(outcome) => return (outcome, None),
+        };
+        tokio::time::timeout(
+            self.timeout,
+            self.post(message_id, secret, text, markup, *thread_reply),
+        )
+        .await
+        .unwrap_or_else(|_| (unknown("response_lost"), None))
     }
-    pub async fn edit(
-        &self,
-        secret: &Secret,
-        destination: &crate::interactions::Destination,
+    pub(super) fn prepare(
+        address: &ReplyAddress,
         text: &str,
-        markup: &serde_json::Value,
-    ) -> DeliveryOutcome {
-        let Ok(endpoint) = self.endpoint.join("reply/update") else {
-            return DeliveryOutcome::Unsupported;
+        markup: Option<&serde_json::Value>,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
+            return Err(DeliveryOutcome::Unsupported);
         };
-        let Some(headers) = headers(secret) else {
-            return unknown("edit_unconfirmed");
-        };
-        let Ok(body) = serde_json::to_vec(
-            &serde_json::json!({"message_id":destination.platform_id,"outbound_message_id":destination.outbound_id,"reply":{"text":text,"metadata":{"reply_markup":markup}}}),
-        ) else {
-            return unknown("edit_unconfirmed");
-        };
-        match self
-            .transport
-            .post(endpoint, headers, body, self.timeout)
-            .await
-        {
-            Ok(reply) if reply.status.is_success() => DeliveryOutcome::Confirmed {
-                platform_message_id: Some(destination.platform_id.clone()),
-            },
-            Ok(reply) if reply.status == StatusCode::TOO_MANY_REQUESTS => {
-                DeliveryOutcome::RateLimited {
-                    retry_after: retry_after(&reply.headers),
-                }
+        let body = serialize_reply(message_id, text, markup, *thread_reply).map_err(|_| {
+            DeliveryOutcome::Rejected {
+                reason: "relay_request_invalid".into(),
             }
-            _ => unknown("edit_unconfirmed"),
+        })?;
+        if body.len() > REQUEST_MAX_BYTES {
+            return Err(DeliveryOutcome::Rejected {
+                reason: "relay_request_too_large".into(),
+            });
+        }
+        Ok(PreparedReply {
+            body,
+            message_id: message_id.clone(),
+            thread_reply: *thread_reply,
+            native_media: false,
+            complete_text: true,
+        })
+    }
+    pub(super) async fn send_prepared(
+        &self,
+        credential: Credential<'_>,
+        prepared: &PreparedReply,
+    ) -> (DeliveryOutcome, Option<String>) {
+        let secret = match credential_secret(credential) {
+            Ok(secret) => secret,
+            Err(outcome) => return (outcome, None),
+        };
+        let timeout = if prepared.native_media {
+            Duration::from_secs(60)
+        } else if self.complete_replies && prepared.complete_text {
+            COMPLETE_REPLY_TIMEOUT
+        } else {
+            self.timeout
+        };
+        let result = tokio::time::timeout(timeout, self.post_prepared(secret, prepared, timeout))
+            .await
+            .unwrap_or_else(|_| (unknown("response_lost"), None));
+        if prepared.native_media
+            && matches!(
+                result.0,
+                DeliveryOutcome::Confirmed {
+                    platform_message_id: None
+                }
+            )
+        {
+            (unknown("receipt_invalid"), None)
+        } else {
+            result
         }
     }
     async fn post(
@@ -197,20 +352,49 @@ impl RelayClient {
         secret: &Secret,
         text: &str,
         markup: Option<&serde_json::Value>,
+        thread_reply: bool,
     ) -> (DeliveryOutcome, Option<String>) {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
         };
-        let Ok(body) = serde_json::to_vec(
-            &serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}}),
-        ) else {
+        let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
             return (unknown("response_lost"), None);
         };
-        let reply = match self
-            .transport
-            .post(self.endpoint.clone(), headers, body, self.timeout)
+        self.post_serialized(message_id, headers, body, thread_reply, self.timeout)
             .await
-        {
+    }
+    async fn post_prepared(
+        &self,
+        secret: &Secret,
+        prepared: &PreparedReply,
+        timeout: Duration,
+    ) -> (DeliveryOutcome, Option<String>) {
+        let Some(headers) = headers(secret) else {
+            return (unknown("response_lost"), None);
+        };
+        self.post_serialized(
+            &prepared.message_id,
+            headers,
+            prepared.body.clone(),
+            prepared.thread_reply,
+            timeout,
+        )
+        .await
+    }
+    async fn post_serialized(
+        &self,
+        message_id: &str,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        thread_reply: bool,
+        timeout: Duration,
+    ) -> (DeliveryOutcome, Option<String>) {
+        let mut endpoint = self.endpoint.clone();
+        if thread_reply {
+            // Old NyxID replicas must fail before sending, never ignore the flag.
+            endpoint.set_path("/api/v1/channel-relay/thread-reply");
+        }
+        let reply = match self.transport.post(endpoint, headers, body, timeout).await {
             Ok(reply) => reply,
             Err(_) => return (unknown("response_lost"), None),
         };
@@ -249,6 +433,27 @@ impl RelayClient {
             Some(receipt.message_id),
         )
     }
+}
+fn credential_secret(credential: Credential<'_>) -> Result<&Secret, DeliveryOutcome> {
+    let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
+    if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
+        return Err(DeliveryOutcome::Rejected {
+            reason: "no_credential".into(),
+        });
+    }
+    Ok(secret)
+}
+fn serialize_reply(
+    message_id: &str,
+    text: &str,
+    markup: Option<&serde_json::Value>,
+    thread_reply: bool,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
+    if thread_reply {
+        body["thread_reply"] = true.into();
+    }
+    serde_json::to_vec(&body)
 }
 /// The bearer and JSON headers reqwest's `bearer_auth` and `json` set, with the
 /// credential marked sensitive. `None` when the credential is not a header value.

@@ -34,6 +34,7 @@ const MAX_MESSAGE_ID_BYTES: usize = 512;
 pub struct NyxidSource {
     http: reqwest::Client,
     base: Url,
+    resolver: Option<crate::channels::resolver::ChannelResolver>,
 }
 
 impl NyxidSource {
@@ -53,7 +54,17 @@ impl NyxidSource {
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|_| invalid())?;
-        Ok(Self { http, base })
+        Ok(Self {
+            http,
+            base,
+            resolver: None,
+        })
+    }
+
+    /// Embedded resources require a fresh authority read before every fetch.
+    pub fn with_resolver(mut self, resolver: crate::channels::resolver::ChannelResolver) -> Self {
+        self.resolver = Some(resolver);
+        self
     }
 
     /// The successful response and the deadline its body must meet.
@@ -61,6 +72,27 @@ impl NyxidSource {
         &self,
         request: &FetchRequest<'_>,
     ) -> Result<(reqwest::Response, Instant), FetchError> {
+        if let Some(locator @ AttachmentSource::LarkResource { .. }) = request.locator {
+            let resolver = self.resolver.as_ref().ok_or(FetchError::NotRetrievable)?;
+            let current = super::lark::refresh(
+                resolver,
+                request.channel,
+                request.event,
+                &request.activity.source,
+                locator,
+                request.deadline,
+            )
+            .await?;
+            return super::lark::response(
+                &self.http,
+                &self.base,
+                &FetchRequest {
+                    channel: &current,
+                    ..*request
+                },
+            )
+            .await;
+        }
         let ReplyAddress::NyxidRelay {
             message_id,
             reply_token,
@@ -165,7 +197,7 @@ fn refused(status: StatusCode) -> bool {
 
 /// NyxID's status, as a fixed classification. Redirects are never followed,
 /// so a 3xx is a refusal.
-fn classify(status: StatusCode) -> Result<(), FetchError> {
+pub(super) fn classify(status: StatusCode) -> Result<(), FetchError> {
     match status.as_u16() {
         200..=299 => Ok(()),
         404 => Err(FetchError::NotFound),

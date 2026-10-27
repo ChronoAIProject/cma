@@ -31,7 +31,13 @@ pub fn router(service: ConnectionService) -> Router {
 }
 #[derive(Serialize, ToSchema)]
 pub struct CapabilityView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_features: Vec<String>,
+    /// Native connection setup workflows; separate from NyxID relay ingestion.
     pub platforms: Vec<PlatformCapability>,
+    /// Additive relay authoring discovery; older gateways omit this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_authoring: Option<super::relay_capabilities::RelayAuthoringCapabilities>,
 }
 #[derive(Serialize, ToSchema)]
 pub struct PlatformCapability {
@@ -41,9 +47,15 @@ pub struct PlatformCapability {
     pub optional_capabilities: Vec<String>,
 }
 #[utoipa::path(get,path="/v1/channel-capabilities",operation_id="getChannelCapabilities",tag="connections",security(("creatorBearer"=[])),responses((status=200,body=CapabilityView)))]
-pub async fn capabilities(_creator: Creator) -> Response {
+pub async fn capabilities(State(service): State<ConnectionService>, _creator: Creator) -> Response {
     no_store(
         Json(CapabilityView {
+            source_features: if service.management.native_bot_mentions_writes_enabled {
+                vec!["native_bot_mentions_v1".into()]
+            } else {
+                Vec::new()
+            },
+            relay_authoring: Some(super::relay_capabilities::view(&service.management)),
             platforms: vec![PlatformCapability {
                 id: "telegram".into(),
                 label: "Telegram".into(),

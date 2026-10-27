@@ -1,4 +1,5 @@
 //! Stateless MCP streamable HTTP using JSON responses and the shared tools service.
+mod message_effects;
 pub mod results;
 pub mod tools;
 use crate::{
@@ -62,7 +63,16 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
         let mut values = request.headers().get_all(name).iter();
         let value = values.next();
         if values.next().is_some()
-            || value.is_some_and(|value| value.to_str().ok() != Some(expected))
+            || value.is_some_and(|value| {
+                value.to_str().ok() != Some(expected)
+                    && !(name == "origin"
+                        && reqwest::Url::parse(&state.public_api_url)
+                            .ok()
+                            .is_some_and(|url| {
+                                value.to_str().ok()
+                                    == Some(url.origin().ascii_serialization().as_str())
+                            }))
+            })
         {
             return problem(
                 if name == "origin" {
@@ -153,7 +163,10 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
             ))
         }
         "ping" => Ok(ToolOutput::Envelope(json!({}))),
-        "tools/list" => Ok(ToolOutput::Envelope(tools::list(state.media.is_some()))),
+        "tools/list" => Ok(ToolOutput::Envelope(message_effects::list(
+            state.media.is_some(),
+            state.telegram_effects_issuance_enabled || state.discord_effects_issuance_enabled,
+        ))),
         "tools/call" => {
             let call: Call = match serde_json::from_value(rpc.params) {
                 Ok(call) => call,

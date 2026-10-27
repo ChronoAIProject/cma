@@ -92,6 +92,8 @@ test('LOCAL shared Sandbox commands recover uncertain admission and clear on acc
   const composer = page.getByRole('textbox', { name: 'Message' });
   await composer.fill('Keep this personal draft');
   const originalComposer = await composer.elementHandle();
+  // Scope sits behind the navigation Filter button.
+  await page.getByRole('button', { name: /^Filter/ }).click();
   await page.getByRole('button', { name: 'Navigation scope', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Research', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');

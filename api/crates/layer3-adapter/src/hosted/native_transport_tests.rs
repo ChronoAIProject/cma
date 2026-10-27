@@ -48,6 +48,7 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    reject_next_upgrade: AtomicBool,
     fault: AtomicUsize,
     pod_reads: AtomicUsize,
     opened: AtomicUsize,
@@ -125,6 +126,7 @@ impl Fixture {
                 service_account: "default".into(),
                 image_pull_secrets: vec![],
                 template_network_policy: None,
+                template_fs_group_change_policy: None,
                 control_key: "fixture".repeat(8),
             },
             "fixture",
@@ -256,11 +258,13 @@ async fn api_request(
             );
         }
         state.opened.fetch_add(1, Ordering::SeqCst);
-        if matches!(mode, Mode::Forbidden | Mode::Throttled) {
-            let status = if matches!(mode, Mode::Forbidden) {
-                403
-            } else {
+        if matches!(mode, Mode::Forbidden | Mode::Throttled)
+            || state.reject_next_upgrade.swap(false, Ordering::SeqCst)
+        {
+            let status = if matches!(mode, Mode::Throttled) {
                 429
+            } else {
+                403
             };
             let body = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":ERROR_SECRET,"code":status}).to_string();
             let _ = socket.write_all(format!("HTTP/1.1 {status} Rejected\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await;
@@ -525,6 +529,25 @@ async fn serve_runtime(
                     .await;
                 continue;
             }
+            7 => {
+                let mut response: ResponseFrame =
+                    serde_json::from_str(&persistent_response(&request)).unwrap();
+                let ResponseFrame::OpenAgent(ref mut receipt) = response else {
+                    panic!("invalid Open receipt fixture requires an actual Open");
+                };
+                receipt.authority_fence += 1;
+                let body = serde_json::to_string(&response).unwrap();
+                let _ = stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+                continue;
+            }
             _ => {}
         }
         match mode {
@@ -617,6 +640,17 @@ async fn serve_runtime(
 fn persistent_response(request: &str) -> String {
     let (_, body) = request.split_once("\r\n\r\n").unwrap();
     let response = match serde_json::from_str::<RequestFrame>(body).unwrap() {
+        RequestFrame::OpenAgent(request) => {
+            let launch = request.request;
+            ResponseFrame::OpenAgent(FencedReceipt::new(request.authority_fence, AgentOpenReceipt {
+                operation_id: launch.operation_id,
+                request_sha256: launch.request_sha256,
+                agent_id: launch.agent_id,
+                cwd: launch.cwd,
+                home: launch.home,
+                conversation_id: None,
+            }))
+        },
         RequestFrame::Install(request) => ResponseFrame::Install(crate::InstallReceipt {
             operation_id: request.operation_id,
             request_sha256: request.request_sha256,
@@ -632,6 +666,8 @@ fn persistent_response(request: &str) -> String {
     serde_json::to_string(&response).unwrap()
 }
 
+#[path = "native_open_overlap_tests.rs"]
+mod open_overlap_tests;
 #[path = "native_http_reuse_tests.rs"]
 mod reuse_tests;
 

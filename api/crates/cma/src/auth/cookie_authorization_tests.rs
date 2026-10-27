@@ -20,12 +20,16 @@ mod actor_link_tests;
 mod bearer_availability_tests;
 #[path = "cookie_authorization_tests/bots_tests.rs"]
 mod bots_tests;
+#[path = "cookie_authorization_tests/browser_rejection_tests.rs"]
+mod browser_rejection_tests;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
 mod deferred_command_tests;
 #[path = "cookie_authorization_tests/personal_owner_tests.rs"]
 mod personal_owner_tests;
+#[path = "cookie_authorization_tests/provider_overlap_tests.rs"]
+mod provider_overlap_tests;
 #[path = "cookie_authorization_tests/resource_command_tests.rs"]
 mod resource_command_tests;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]
@@ -64,6 +68,7 @@ struct ProviderControl {
     exchange: RwLock<Reply>,
     organization_token: RwLock<String>,
     organization_requests: AtomicUsize,
+    exchange_requests: AtomicUsize,
     requests: AtomicUsize,
 }
 
@@ -105,6 +110,7 @@ async fn organization(State(control): State<Arc<ProviderControl>>, headers: Head
 }
 
 async fn exchange(State(control): State<Arc<ProviderControl>>) -> Response {
+    control.exchange_requests.fetch_add(1, Ordering::SeqCst);
     respond(&control, &control.exchange).await
 }
 
@@ -145,6 +151,7 @@ impl Fixture {
             }))),
             organization_token: RwLock::new("must-not-leak-access-token".into()),
             organization_requests: AtomicUsize::new(0),
+            exchange_requests: AtomicUsize::new(0),
             requests: AtomicUsize::new(0),
         });
         let app = Router::new()
@@ -519,7 +526,9 @@ async fn provider_deadline_covers_discovery_userinfo_and_introspection_together(
     let state = fixture.seed().await;
     fixture.control.discovery.write().await.delay = Duration::from_millis(80);
     fixture.control.userinfo.write().await.delay = Duration::from_millis(80);
-    fixture.control.introspection.write().await.delay = Duration::from_millis(80);
+    // Discovery remains serial, followed by concurrent provider reads. Their total
+    // must still be bounded by the same per-caller deadline.
+    fixture.control.introspection.write().await.delay = Duration::from_millis(160);
     assert_eq!(PROVIDER_VERIFICATION_TIMEOUT, Duration::from_secs(15));
     assert_unavailable(
         request_with_timeout(

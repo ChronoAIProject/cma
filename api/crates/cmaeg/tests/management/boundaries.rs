@@ -262,11 +262,16 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "createChannel",
             "deleteChannel",
             "getChannel",
+            "getChannelActivity",
             "listChannels",
             "recoverChannel",
             "rekeyChannel",
+            "streamChannelActivity",
             "testChannel",
-            "updateChannel"
+            "testChannelConsumer",
+            "testChannelSource",
+            "updateChannel",
+            "updateChannelRouting"
         ]
     );
     stop.send(()).unwrap();

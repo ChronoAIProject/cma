@@ -73,6 +73,34 @@ fn audio(duration: Value) -> Envelope {
     keyed("audio", json!({ "duration": duration }), "audio", json!({}))
 }
 
+/// NyxID d102570afaab's Lark adapter emits both `media` and `video` as video
+/// attachments with a file resource URL; its deployed blob also matches main.
+fn video(platform: &str) -> Envelope {
+    let mut envelope = Envelope::on(platform);
+    envelope.lark_message()["message_type"] = "video".into();
+    envelope.lark_message()["content"] = json!({"file_key": FILE_KEY,
+        "image_key": "img_v3_cover", "file_name": "clip.mp4", "file_size": 51200,
+        "duration": 2500})
+    .to_string()
+    .into();
+    let host = if platform == "feishu" {
+        "open.feishu.cn"
+    } else {
+        "open.larksuite.com"
+    };
+    let item = attachment(
+        0,
+        "video",
+        &format!(
+            "https://{host}/open-apis/im/v1/messages/om_message/resources/{FILE_KEY}?type=file"
+        ),
+        json!({"file_key": FILE_KEY, "platform_message_id": "om_message",
+            "filename": "clip.mp4", "size_bytes": 51200}),
+    );
+    envelope.payload["content"] = json!({"type": "video", "text": null, "attachments": [item]});
+    envelope
+}
+
 fn sticker() -> Envelope {
     lark(
         "sticker",
@@ -202,6 +230,37 @@ async fn lark_file_audio_media_admitted() {
             "filename": "clip.mp4", "duration_seconds": 3, "source": {"type": "nyxid_relay", "index": 0}})
     );
     assert!(rendered(&fixture).contains("\n[0] video · 0:03 · "));
+}
+
+#[tokio::test]
+async fn lark_and_feishu_video_matches_deployed_nyxid_shape() {
+    for platform in ["lark", "feishu"] {
+        let fixture = Fixture::on_with_media(platform, |_| {}, Default::default()).await;
+        accept(&fixture, &video(platform), platform).await;
+        let (text, attachments) = last(&fixture);
+        assert_eq!(text, "");
+        assert_eq!(
+            serde_json::to_value(attachments).unwrap(),
+            json!([{
+                "reference": format!("lark:{FILE_KEY}"), "kind": "video", "variant": "media",
+                "filename": "clip.mp4", "size_bytes": 51200, "duration_seconds": 3,
+                "source": {"type": "nyxid_relay", "index": 0}
+            }])
+        );
+        let mut mismatch = video(platform);
+        mismatch.payload["content"]["type"] = "file".into();
+        refusal(&fixture, &mismatch, "content_unsupported").await;
+        assert_eq!(fixture.recorder.requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn lark_and_feishu_video_stays_refused_without_media_gate() {
+    for platform in ["lark", "feishu"] {
+        let fixture = Fixture::on(platform, |_| {}, Default::default()).await;
+        refusal(&fixture, &video(platform), "attachment_unsupported").await;
+        assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]

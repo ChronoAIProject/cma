@@ -128,6 +128,7 @@ mod tests {
             version: 1,
         };
         let event = EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: None,
             channel_id: channel.id.clone(),
@@ -146,6 +147,9 @@ mod tests {
             channel: Arc::new(channel),
             event,
             message: OutboundMessage {
+                whatsapp_template: None,
+                native_attachments: Vec::new(),
+                thread_reply: false,
                 text: Some(text.into()),
                 blocks: vec![],
                 reply_to: None,

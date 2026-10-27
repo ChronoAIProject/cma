@@ -9,6 +9,7 @@ mod model;
 mod profile;
 mod profile_input;
 mod profiles;
+mod readiness;
 mod recovery;
 mod rotation;
 mod service;

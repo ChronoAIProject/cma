@@ -127,7 +127,12 @@ impl SandboxControlStore for InMemorySandboxStore {
             .map_err(|_| SandboxControlError::Conflict)?;
         let timestamp = crate::now_rfc3339();
         let at = timestamp.as_str();
-        let plan = plan_sandbox_control(record, &snapshot.lineage.sandbox, at)?;
+        let plan = plan_sandbox_control(
+            record,
+            &snapshot.lineage.sandbox,
+            at,
+            self.managed_runtime_version(),
+        )?;
         let mut candidate = state.clone();
         let mut next = record.clone();
         next.revision = 2;

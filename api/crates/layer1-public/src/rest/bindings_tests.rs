@@ -12,6 +12,8 @@ use layer2_core::{Authorization, Capability, CoreError, SandboxId, ServiceId, Su
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
+mod readiness;
+pub(super) use readiness::create_backing_resources;
 
 struct Registry;
 #[async_trait::async_trait]
@@ -50,6 +52,12 @@ pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
     app_with_tools(None)
 }
 fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>) {
+    app_with_tools_alias(endpoint, None).unwrap()
+}
+fn app_with_tools_alias(
+    endpoint: Option<&str>,
+    alias: Option<&str>,
+) -> Result<(Router, Arc<InMemorySandboxStore>), String> {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
@@ -67,7 +75,7 @@ fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>)
             layer2_core::RuntimeCapabilities::new([layer2_core::RuntimeCapability::Conversation]),
         ),
     };
-    (
+    Ok((
         route_service(
             BindingService::new(
                 store.clone(),
@@ -86,14 +94,22 @@ fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>)
                 },
             ),
             endpoint,
-        ),
+            alias,
+        )?,
         store,
-    )
+    ))
 }
-fn route_service(service: Arc<BindingService>, endpoint: Option<&str>) -> Router {
-    match endpoint {
-        Some(endpoint) => super::binding_router_with_native_tools(service, endpoint).unwrap(),
-        None => binding_router(service),
+fn route_service(
+    service: Arc<BindingService>,
+    endpoint: Option<&str>,
+    alias: Option<&str>,
+) -> Result<Router, String> {
+    match (endpoint, alias) {
+        (Some(endpoint), Some(alias)) => {
+            super::binding_router_with_native_tools_alias(service, endpoint, alias)
+        }
+        (Some(endpoint), None) => super::binding_router_with_native_tools(service, endpoint),
+        (None, _) => Ok(binding_router(service)),
     }
 }
 pub(super) fn request(
@@ -197,6 +213,7 @@ async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retireme
     binding
         .advance_revision(layer2_core::now_rfc3339())
         .unwrap();
+    readiness::create_backing_resources(&store, &binding).await;
     store.save_binding(Some(revision), binding).await.unwrap();
     let conversation = format!("{path}/conversations/conversation_one");
     let created = app
@@ -286,6 +303,83 @@ async fn native_tools_accept_only_the_configured_destination_and_retain_it_on_re
 }
 
 #[tokio::test]
+async fn native_tools_alias_keeps_binding_identity_across_both_advertisement_phases() {
+    let legacy = "https://gateway.example/mcp";
+    let canonical = "https://bot.example/event-gateway/mcp";
+    for first_url in [legacy, canonical] {
+        let (app, store) = app_with_tools_alias(Some(legacy), Some(canonical)).unwrap();
+        let path = "/api/v1/cmaeg/bindings/domain-binding";
+        let mut input = body();
+        let mut retained = None;
+        for advertised in [first_url, canonical, legacy] {
+            input["tools"]["native_mcp_url"] = json!(advertised);
+            let response = app
+                .clone()
+                .oneshot(request("PUT", path, Some(input.clone()), Some(authority())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let value = json_body(response).await;
+            if let Some(first) = &retained {
+                assert_eq!(&value, first);
+            } else {
+                retained = Some(value);
+            }
+            let binding = store.binding("domain-binding").await.unwrap().unwrap();
+            assert_eq!(binding.tool_endpoint.as_deref(), Some(legacy));
+        }
+        for foreign in [
+            "https://foreign.example/event-gateway/mcp",
+            "https://bot.example/mcp",
+            "https://bot.example/event-gateway/mcp/",
+            "https://bot.example/event-gateway/mcp?redirect=true",
+            "https://bot.example/event-gateway/mcp#fragment",
+            "https://bot.example/event-gateway/mcp-extra",
+            "https://bot.example.evil.invalid/event-gateway/mcp",
+        ] {
+            input["tools"]["native_mcp_url"] = json!(foreign);
+            let response = app
+                .clone()
+                .oneshot(request("PUT", path, Some(input.clone()), Some(authority())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        let read = app
+            .clone()
+            .oneshot(request("GET", path, None, Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(Some(json_body(read).await), retained);
+        let deleted = app
+            .oneshot(request("DELETE", path, None, Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        let binding = store.binding("domain-binding").await.unwrap().unwrap();
+        assert_eq!(binding.tool_endpoint.as_deref(), Some(legacy));
+        assert_eq!(binding.state, BindingState::Retired);
+    }
+}
+
+#[test]
+fn native_tools_alias_validates_full_configured_urls_and_same_endpoint_fallback() {
+    let endpoint = "https://gateway.example/mcp";
+    assert!(app_with_tools_alias(Some(endpoint), Some(endpoint)).is_ok());
+    for invalid in [
+        "https://bot.example/event-gateway/mcp?query=true",
+        "https://bot.example/event-gateway/mcp#fragment",
+        "https://user@bot.example/event-gateway/mcp",
+        "https://bot.example:0/event-gateway/mcp",
+        "https://bot.example/event-gateway/../mcp",
+        "http://bot.example/event-gateway/mcp",
+    ] {
+        assert!(app_with_tools_alias(Some(endpoint), Some(invalid)).is_err());
+        assert!(app_with_tools_alias(Some(invalid), Some(endpoint)).is_err());
+    }
+}
+
+#[tokio::test]
 async fn source_user_transport_lifecycle_never_reserves_or_retires_an_agent() {
     let (app, store) = app();
     let path = "/api/v1/cmaeg/bindings/binding-users";
@@ -313,6 +407,7 @@ async fn source_user_transport_lifecycle_never_reserves_or_retires_an_agent() {
         .advance_revision(layer2_core::now_rfc3339())
         .unwrap();
     let generation = binding.generation;
+    readiness::create_backing_resources(&store, &binding).await;
     store.save_binding(Some(revision), binding).await.unwrap();
     for transport in ["chat_one", "chat_two", "cma_user_untrusted_alias"] {
         let target = format!("{path}/conversations/{transport}");

@@ -22,6 +22,7 @@ pub enum SandboxLaunchCommandKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLaunchCommand {
+    pub managed_runtime_version: Option<String>,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
     pub launch_id: String,
@@ -37,6 +38,7 @@ impl SandboxLaunchCommand {
         requested_at: String,
     ) -> Self {
         Self {
+            managed_runtime_version: None,
             sandbox_id,
             owner,
             launch_id,
@@ -53,6 +55,7 @@ impl SandboxLaunchCommand {
         reused: bool,
     ) -> Self {
         Self {
+            managed_runtime_version: None,
             sandbox_id,
             owner,
             launch_id,
@@ -99,6 +102,8 @@ where
         &self,
         command: SandboxLaunchCommand,
     ) -> Result<SandboxLaunchCommandResult, SandboxStoreError> {
+        let mut command = command;
+        command.managed_runtime_version = self.managed_runtime_version().map(str::to_owned);
         validate_command(&command)?;
         for _ in 0..COMMAND_CAS_ATTEMPTS {
             let current = self
@@ -281,8 +286,9 @@ fn apply_revive(
     let expected_revision = current.revision;
     let mut sandbox = current.clone();
     if sandbox
-        .begin_revive(
+        .begin_revive_with_managed_runtime(
             SandboxReviveCause::TriggerLaunch,
+            command.managed_runtime_version.as_deref(),
             command.requested_at.clone(),
         )
         .is_err()

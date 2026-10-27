@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
@@ -31,6 +31,7 @@ describe('the retained application shell', () => {
   });
 
   it('shows the authenticated empty state and account control', async () => {
+    window.history.replaceState(null, '', '/agent-manager');
     render(
       <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
         <App />
@@ -38,6 +39,35 @@ describe('the retained application shell', () => {
     );
     expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /account menu/i })).toBeInTheDocument();
+  });
+
+  it('replaces authenticated home with Agent Manager without painting the landing', async () => {
+    const provider = createMockAuthProvider({ initiallyAuthenticated: true });
+    const signIn = vi.spyOn(provider, 'signIn');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    const push = vi.spyOn(window.history, 'pushState');
+    const paintedLanding: boolean[] = [];
+    const observer = new MutationObserver(() => {
+      paintedLanding.push(document.querySelector('.sign-in-landing') !== null);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    render(
+      <AuthContextProvider provider={provider}>
+        <App />
+      </AuthContextProvider>,
+    );
+    expect(await screen.findByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Get Started' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide navigation' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(window.location.pathname).toBe('/agent-manager');
+    expect(replace).toHaveBeenCalledWith(null, '', '/agent-manager');
+    expect(push).not.toHaveBeenCalled();
+    expect(signIn).not.toHaveBeenCalled();
+    observer.disconnect();
+    expect(paintedLanding).not.toContain(true);
   });
 
   it('offers sign in to an anonymous visitor', async () => {
@@ -48,18 +78,61 @@ describe('the retained application shell', () => {
     );
     expect(await screen.findByRole('button', { name: 'Get Started' })).toBeEnabled();
     expect(screen.getByRole('heading', { name: 'ChronoAI Managed Agent' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
-    const services = screen.getByRole('navigation', { name: 'CMA services' });
-    expect(within(services).getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
-    for (const name of ['Agent Manager', 'Image Manager', 'Event Gateway']) {
-      expect(within(services).getByRole('link', { name })).toHaveAttribute('href');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Show navigation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
+    const services = screen.getByRole('menu', { name: 'CMA services' });
+    for (const name of ['Agent Manager', 'Event Gateway']) {
+      expect(within(services).getByRole('menuitemradio', { name })).toHaveAttribute('href');
     }
-    await act(async () => {
-      fireEvent.click(within(services).getByRole('link', { name: 'Image Manager' }));
-    });
-    expect(within(services).getByRole('link', { name: 'Image Manager' })).toHaveAttribute(
-      'aria-current',
-      'page',
+    expect(within(services).getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
     );
+  });
+
+  it('continues a shared Agent link after sign-in without sending its bearer fragment to OAuth', async () => {
+    const secret = 'ab'.repeat(32);
+    window.history.replaceState(null, '', `/agent-manager/share/share-one#${secret}`);
+    const provider = createMockAuthProvider();
+    const signIn = vi
+      .spyOn(provider, 'signIn')
+      .mockImplementation(() => new Promise<void>(() => undefined));
+    render(
+      <AuthContextProvider provider={provider}>
+        <App />
+      </AuthContextProvider>,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
+    await waitFor(() =>
+      expect(signIn).toHaveBeenCalledWith('/agent-manager/share/share-one', undefined),
+    );
+    expect(window.location.hash).toBe('');
+    expect(sessionStorage.getItem('cma:agent-share:share-one')).toContain(secret);
+    sessionStorage.removeItem('cma:agent-share:share-one');
+  });
+
+  it('explains an unreachable service in plain words and offers Reload', async () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    const reload = vi.fn();
+    vi.stubGlobal('location', { ...window.location, reload, pathname: '/agent-manager' });
+    render(
+      <AuthContextProvider
+        provider={createMockAuthProvider({ failCurrent: 'identity check failed with 503' })}
+      >
+        <App />
+      </AuthContextProvider>,
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'CMA could not reach its service' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('It may be starting up. Reload to try again.')).toBeInTheDocument();
+    // The control plane's own sentence stays as the detail for a report.
+    expect(screen.getByText('identity check failed with 503')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 });

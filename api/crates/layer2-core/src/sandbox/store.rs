@@ -16,6 +16,10 @@ pub use service_traits::*;
 
 mod agent;
 pub use agent::AgentStore;
+mod agent_log;
+pub use agent_log::AgentLogStore;
+mod workspace_worker;
+pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
 mod agent_control;
 mod background_checkpoint;
@@ -48,10 +52,12 @@ pub use agent_admission::{
 };
 mod agent_conversation;
 mod agent_message_checkpoint;
+mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_sign_in;
 pub use agent_lifecycle::{
@@ -61,13 +67,21 @@ pub use agent_lifecycle::{
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
+mod agent_work_prepared_open_ready;
+mod agent_work_prepared_pair;
+pub use agent_work_prepared_open_ready::{
+    validate_prepared_agent_open_ready, PreparedAgentOpenContext,
+};
+mod agent_work_identity;
 mod agent_work_transition_validation;
 mod agent_work_validation;
 mod agent_worktree_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
+pub use agent_work_prepared_pair::is_prepared_agent_replay_pair;
 pub use agent_work_validation::{
     retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
+    validate_agent_workspace_binding,
 };
 mod sandbox_admission;
 pub use sandbox_admission::{
@@ -178,6 +192,11 @@ pub enum SandboxStoreError {
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
+    fn managed_runtime_version(&self) -> Option<&str> {
+        None
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError>;
     async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError>;
     async fn save_sandbox(
@@ -257,23 +276,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
     ) -> Result<Workspace, SandboxStoreError>;
 }
 
-/// Durable workspace lifecycle discovery and lease fencing.
-#[async_trait]
-pub trait WorkspaceWorkerStore: Send + Sync {
-    async fn due_workspace_work(
-        &self,
-        now: &str,
-        limit: u16,
-    ) -> Result<Vec<WorkspaceId>, SandboxStoreError>;
-    async fn claim_workspace_work(
-        &self,
-        id: &WorkspaceId,
-        holder: &str,
-        now: String,
-        lease_expires_at: String,
-    ) -> Result<Option<Workspace>, SandboxStoreError>;
-}
-
 #[async_trait]
 pub trait WorktreeStore: Send + Sync {
     async fn create_worktree(&self, worktree: Worktree) -> Result<(), SandboxStoreError>;
@@ -309,6 +311,16 @@ pub trait SandboxEventStore: Send + Sync {
 /// Durable lifecycle work discovery, lease fencing and terminal purge.
 #[async_trait]
 pub trait SandboxWorkerStore: Send + Sync {
+    /// Completed installation attached to this exact ownership and runtime.
+    /// The worker must match the current request digest and inspect the live
+    /// process before advancing; this proof never authorizes runtime dispatch.
+    async fn completed_installation_digest(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,
@@ -327,42 +339,6 @@ pub trait SandboxWorkerStore: Send + Sync {
         expected_revision: u64,
         now: &str,
     ) -> Result<(), SandboxStoreError>;
-}
-
-#[async_trait]
-pub trait AgentLogStore: Send + Sync {
-    async fn append_agent_log(
-        &self,
-        agent_id: &AgentId,
-        appended_at: String,
-        kind: AgentLogKind,
-    ) -> Result<AgentLogEntry, SandboxStoreError>;
-    async fn agent_log(
-        &self,
-        agent_id: &AgentId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
-
-    /// Read the exact prefix needed for a captured Agent projection.
-    async fn agent_log_prefix(
-        &self,
-        agent_id: &AgentId,
-        through_seq: u64,
-    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        let mut entries = Vec::new();
-        let mut after = 0;
-        while after < through_seq {
-            let limit = (through_seq - after).min(u64::from(MAX_PAGE_SIZE)) as u16;
-            let page = self.agent_log(agent_id, after, limit).await?;
-            if page.len() != usize::from(limit) {
-                return Err(SandboxStoreError::SequenceConflict);
-            }
-            after += u64::from(limit);
-            entries.extend(page);
-        }
-        Ok(entries)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -397,6 +373,7 @@ pub trait SandboxTransactionStore: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
+    managed_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
 }
@@ -420,6 +397,7 @@ struct State {
     sandbox_control_keys: HashMap<(String, String), crate::ids::SandboxCommandId>,
     agent_commands: HashMap<crate::ids::AgentCommandId, super::agent_io::AdmittedAgentCommand>,
     targeted_controls: HashMap<crate::ids::AgentCommandId, super::agent_io::TargetedControlBinding>,
+    queued_input_edits: HashMap<crate::ids::AgentCommandId, super::agent_io::QueuedInputBinding>,
     queued_cancellations:
         HashMap<crate::ids::AgentCommandId, super::agent_io::QueuedCancellationBinding>,
     command_authorization_audits:

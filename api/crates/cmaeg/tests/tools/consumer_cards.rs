@@ -134,7 +134,7 @@ async fn a_click_the_gate_refuses_leaves_the_card_unconsumed() {
         })
         .await;
     assert!(matches!(refused, Err(Error::Denied)));
-    // Today's production gate admits only default cards.
+    // A caller may impose an additional admission restriction.
     let production = cards.click(&prepared, &|consumer| consumer.is_none()).await;
     assert!(matches!(production, Err(Error::Denied)));
     let (stored, refused_version) = cards.store.load(id).await.unwrap();
@@ -166,6 +166,8 @@ async fn a_replacement_keeps_its_consumer_and_refuses_a_reference_for_another() 
     let channel = cards.channel().await;
     let message: OutboundMessage = serde_json::from_value(json!({"text": "Done"})).unwrap();
     let foreign = MessageRefPayload {
+        discord_message: None,
+        telegram_effect: None,
         consumer: None,
         ..payload.clone()
     };

@@ -14,8 +14,8 @@ import './StateDot.css';
  * tell you whether it is still true.
  */
 
-/** What the dot says. */
-export type StateDotState = 'done' | 'warning' | 'ongoing' | 'error';
+/** What the dot says. `neutral` is settled and usable, and claims nothing more. */
+export type StateDotState = 'done' | 'neutral' | 'warning' | 'ongoing' | 'error';
 
 interface StateDotProps {
   readonly state: StateDotState;

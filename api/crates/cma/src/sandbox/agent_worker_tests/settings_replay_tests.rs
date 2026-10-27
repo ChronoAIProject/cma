@@ -11,6 +11,7 @@ async fn settings_survive_reattachment_with_original_profile_and_open_receipt() 
         model: "gpt-6".into(),
         reasoning_effort: ThinkingEffort::XHigh,
         permission_mode: layer2_core::profiles::PermissionLevel::Guarded,
+        system_prompt: None,
     };
     let caller = Caller::new(
         ready.owner.clone(),

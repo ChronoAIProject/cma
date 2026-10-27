@@ -30,6 +30,8 @@ fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {
         sandbox_id: sandbox.id.clone(),
         expected_revision: sandbox.revision,
         expected_runtime: sandbox.runtime.clone(),
+        retain_runtime: false,
+        interruption_cause: Default::default(),
         observed_at: OBSERVED.into(),
     }
 }
@@ -192,6 +194,7 @@ async fn runtime_loss_recovers_checkpoint_agents_preserves_history_and_stops_new
             state: AgentOperationDelivery::DispatchFenced,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },

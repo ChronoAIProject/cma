@@ -6,8 +6,10 @@ use std::{
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
+pub(super) mod message_feedback;
 mod models;
 mod settings;
+mod shared_settings;
 mod skills;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
@@ -160,6 +162,7 @@ impl AgentHistoryExporter for TestHistoryExporter {
 #[test]
 fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
     let usage = serde_json::to_value(AgentUsageView {
+        current_turn: None,
         agent_id: "agt_shape".into(),
         through_seq: 0,
         input_tokens: 0,
@@ -365,6 +368,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![ServiceId::new("api-github")],
             key_generation: 0,
             delivered: false,
@@ -448,6 +452,9 @@ pub(crate) fn seeded_agent(
         capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
@@ -863,6 +870,7 @@ async fn control_routes_require_operation_keys_before_runtime_resolution() {
         working.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin".into()),
             },
@@ -951,6 +959,7 @@ async fn approval_events_transcript_usage_and_resources_are_public_safe() {
         waiting.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("private-origin-key".into()),
             },

@@ -87,6 +87,7 @@ fn lineage() -> Lineage {
 
 fn base(keys: &MasterKeyRing, event_id: String, reply: ReplyAddress) -> EventRefPayload {
     EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some("f".repeat(64)),
         channel_id: channel_id(keys),
@@ -106,6 +107,7 @@ fn relay(keys: &MasterKeyRing) -> EventRefPayload {
         keys,
         "wamid.HBgLMTU1NTAwMDExMTEVAgASGCA2RkQ3MEY4QjY3RkE0RDY2".into(),
         ReplyAddress::NyxidRelay {
+            thread_reply: false,
             message_id: "wamid.HBgLMTU1NTAwMDExMTEVAgASGCA2RkQ3MEY4QjY3RkE0RDY2".into(),
             route_id: "5b3f0c6e-1c1d-4d39-9a8e-2f5b6c7d8e9f".into(),
             platform: Platform::Whatsapp,
@@ -131,6 +133,7 @@ fn lengths(payload: EventRefPayload, keys: &MasterKeyRing) -> (usize, usize) {
     payload.validate().unwrap();
     let legacy = EventRef::seal(&payload, keys).unwrap().as_str().len();
     let bound = EventRefPayload {
+        telegram_admission: None,
         consumer: Some(ConsumerId::parse("csm_ffffffffffff").unwrap()),
         lineage: Some(lineage()),
         ..payload

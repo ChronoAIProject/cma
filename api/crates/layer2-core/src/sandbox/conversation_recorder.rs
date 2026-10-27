@@ -21,6 +21,10 @@ const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 #[path = "conversation_checkpoint.rs"]
 mod checkpoint;
 
+#[path = "conversation_output.rs"]
+mod output;
+use output::output_replayed;
+
 #[path = "conversation_live.rs"]
 pub(super) mod live;
 
@@ -122,6 +126,25 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         ))
     }
 
+    async fn record_reopen_update(
+        &self,
+        id: &AgentId,
+        guard: &super::store::AgentReopenGuard,
+        assembly: &mut AgentMessageAssembly,
+        update: ConversationUpdate,
+        appended_at: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        self.record_with_reopen(
+            id,
+            guard.runtime_generation,
+            assembly,
+            update,
+            appended_at,
+            Some(guard),
+        )
+        .await
+    }
+
     async fn record_update(
         &self,
         id: &AgentId,
@@ -129,6 +152,21 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         assembly: &mut AgentMessageAssembly,
         update: ConversationUpdate,
         appended_at: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        self.record_with_reopen(id, runtime_generation, assembly, update, appended_at, None)
+            .await
+    }
+}
+
+impl DurableAgentUpdateRecorder {
+    async fn record_with_reopen(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        assembly: &mut AgentMessageAssembly,
+        update: ConversationUpdate,
+        appended_at: String,
+        guard: Option<&super::store::AgentReopenGuard>,
     ) -> Result<AgentUpdateOutcome, AgentConversationError> {
         if runtime_generation == 0 {
             return Err(AgentConversationError::StaleGeneration);
@@ -169,10 +207,16 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             uuid::Uuid::new_v4().to_string()
         };
         for _ in 0..MAX_CONVERSATION_COMMIT_RETRIES {
-            let current = AgentStore::get_agent(self.store.as_ref(), id)
+            let persisted = AgentStore::get_agent(self.store.as_ref(), id)
                 .await
                 .map_err(store_error)?
                 .ok_or(AgentConversationError::NotFound)?;
+            let current = match guard {
+                Some(guard) => guard
+                    .project(&persisted)
+                    .map_err(|_| AgentConversationError::StaleGeneration)?,
+                None => persisted.clone(),
+            };
             if current.conversation.runtime_generation != Some(runtime_generation) {
                 return Err(AgentConversationError::StaleGeneration);
             }
@@ -181,6 +225,13 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 .agent_message_checkpoint(id)
                 .await
                 .map_err(store_error)?;
+            if guard.is_none()
+                && previous
+                    .as_ref()
+                    .is_some_and(|checkpoint| checkpoint.runtime_generation > runtime_generation)
+            {
+                return Err(AgentConversationError::StaleGeneration);
+            }
             let recorded = previous
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
@@ -210,7 +261,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     let refreshed = AgentStore::get_agent(self.store.as_ref(), id)
                         .await
                         .map_err(store_error)?;
-                    if refreshed.as_ref() != Some(&current) {
+                    if refreshed.as_ref() != Some(&persisted) {
                         continue;
                     }
                     return Err(error);
@@ -224,19 +275,27 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     .and_then(|checkpoint| checkpoint.reanchored(&current))
                 {
                     match self
-                        .store
-                        .commit_agent_message_update(
-                            current.clone(),
-                            previous.clone(),
-                            reanchored,
-                            None,
-                        )
+                        .commit_output(persisted.clone(), previous.clone(), reanchored, None, guard)
                         .await
                     {
                         Ok(_) => {}
                         Err(SandboxStoreError::Conflict) => continue,
                         Err(error) => return Err(store_error(error)),
                     }
+                }
+                if guard.is_some() {
+                    let checkpoint = previous
+                        .clone()
+                        .ok_or(AgentConversationError::StaleGeneration)?;
+                    self.commit_output(
+                        persisted.clone(),
+                        previous.clone(),
+                        checkpoint,
+                        None,
+                        guard,
+                    )
+                    .await
+                    .map_err(store_error)?;
                 }
                 *assembly = recovered;
                 return Ok(AgentUpdateOutcome::quiet());
@@ -246,19 +305,24 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     // An exact receipt retry must also persist a verified repair.
                     // Otherwise a later control write still sees the obsolete anchor.
                     match self
-                        .store
-                        .commit_agent_message_update(
-                            current.clone(),
-                            previous.clone(),
-                            reanchored,
-                            None,
-                        )
+                        .commit_output(persisted.clone(), previous.clone(), reanchored, None, guard)
                         .await
                     {
                         Ok(_) => {}
                         Err(SandboxStoreError::Conflict) => continue,
                         Err(error) => return Err(store_error(error)),
                     }
+                }
+                if guard.is_some() {
+                    self.commit_output(
+                        persisted.clone(),
+                        previous.clone(),
+                        recorded.clone(),
+                        None,
+                        guard,
+                    )
+                    .await
+                    .map_err(store_error)?;
                 }
                 *assembly = recovered;
                 return Ok(recorded.outcome.clone());
@@ -351,6 +415,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             };
             checkpoint.validate().map_err(store_error)?;
             let mutation = (!logs.is_empty()).then(|| AgentConversationMutation {
+                settings_fence: None,
                 command_claim: None,
                 execution_fence: None,
                 trigger_execution_fence: None,
@@ -363,8 +428,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 agent_logs: logs,
             });
             match self
-                .store
-                .commit_agent_message_update(current.clone(), previous, checkpoint, mutation)
+                .commit_output(persisted.clone(), previous, checkpoint, mutation, guard)
                 .await
             {
                 Ok(outcome) => {
@@ -397,51 +461,12 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
     }
 }
 
-fn output_replayed(
-    source: &layer3_adapter::RuntimeOutputSource,
-    current: &super::Agent,
-    previous: Option<&AgentMessageCheckpoint>,
-) -> Result<bool, AgentConversationError> {
-    let invalid = || {
-        AgentConversationError::Corrupt(
-            "runtime output receipt is not contiguous with its conversation".into(),
-        )
-    };
-    if current.conversation.conversation_id.as_deref() != Some(&source.native_conversation_id)
-        || uuid::Uuid::parse_str(&source.stream_id).is_err()
-        || source.cursor == 0
-        || source.payload_sha256.len() != 64
-        || !source
-            .payload_sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(invalid());
-    }
-    let previous = previous
-        .filter(|checkpoint| {
-            checkpoint.native_conversation_id == source.native_conversation_id
-                && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
-        })
-        .and_then(|checkpoint| checkpoint.output.as_ref());
-    match previous {
-        Some(previous) if previous.stream_id != source.stream_id => Err(invalid()),
-        Some(previous)
-            if source.cursor == previous.cursor
-                && source.payload_sha256 != previous.payload_sha256 =>
-        {
-            Err(invalid())
-        }
-        Some(previous) if source.cursor <= previous.cursor => Ok(true),
-        Some(previous) if previous.cursor.checked_add(1) == Some(source.cursor) => Ok(false),
-        None if source.cursor == 1 => Ok(false),
-        _ => Err(invalid()),
-    }
-}
-
 fn store_error(error: SandboxStoreError) -> AgentConversationError {
     match error {
         SandboxStoreError::NotFound => AgentConversationError::NotFound,
+        SandboxStoreError::InvalidTransaction(detail) => {
+            AgentConversationError::InvalidState(detail)
+        }
         SandboxStoreError::AgentLogCapacityExceeded => AgentConversationError::CapacityExceeded,
         SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
         other => AgentConversationError::Unavailable(other.to_string()),

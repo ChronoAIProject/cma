@@ -195,12 +195,17 @@ impl AgentService {
             .map_err(|capability| AgentServiceError::CapabilityUnsupported { capability })?;
         validate_title(request.title.as_deref())?;
         let workspace = self.owned_workspace(caller, workspace_id).await?;
-        if workspace.status != WorkspaceStatus::Ready || workspace.resolved_commit.is_none() {
+        let sandbox = self.parent_sandbox(caller, &workspace).await?;
+        let bootstrap = matches!(&request.origin, AgentOrigin::Lifecycle { operation_id }
+            if sandbox.accepts_lifecycle_bootstrap(operation_id))
+            && super::lifecycle_bootstrap::bootstrap_workspace(&sandbox, &workspace);
+        if !bootstrap
+            && (workspace.status != WorkspaceStatus::Ready || workspace.resolved_commit.is_none())
+        {
             return Err(AgentServiceError::WorkspaceNotReady);
         }
-        let sandbox = self.parent_sandbox(caller, &workspace).await?;
         self.connections.check_sandbox(&sandbox).await?;
-        if !sandbox.accepts_creation_admission() {
+        if !bootstrap && !sandbox.accepts_creation_admission() {
             return Err(AgentServiceError::SandboxNotReady);
         }
         let revision = if frozen_profile {
@@ -219,7 +224,11 @@ impl AgentService {
         };
         let first_message = request
             .first_message
-            .map(|text| FirstMessageRecord::new(creation_key.clone(), text, now.clone()))
+            .map(|text| {
+                let mut record = FirstMessageRecord::new(creation_key.clone(), text, now.clone())?;
+                record.purpose = Some(attribution.first_message_purpose);
+                Ok::<_, super::SandboxModelError>(record)
+            })
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {

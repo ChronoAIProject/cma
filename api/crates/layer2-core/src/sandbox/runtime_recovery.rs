@@ -39,6 +39,7 @@ impl Sandbox {
     pub(crate) fn recover_runtime_loss(
         &mut self,
         recovered_agents: &[Agent],
+        retain_runtime: bool,
         at: String,
     ) -> Result<(), SandboxModelError> {
         self.validate()?;
@@ -62,6 +63,12 @@ impl Sandbox {
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
         if self.lifecycle.home.is_some() && self.credential.current.is_some() {
+            if retain_runtime {
+                // Preserve storage-owning provider authority after process loss.
+                // Its worker must quiesce the old incarnation before replacement.
+                next.lifecycle.suspended_runtime =
+                    Some(Box::new(self.runtime.clone().ok_or_else(invalid_recovery)?));
+            }
             next.recover_retained_home(self, recovered_agents, &at)?;
             next.updated_at = at;
             next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
@@ -161,6 +168,9 @@ impl Sandbox {
                 ..
             }) => {
                 let identity = SandboxRotationIdentity::capture(self, agents)?;
+                let resume_pause = previous
+                    .retained_home_recovery()
+                    .and_then(|source| source.resume_pause.clone());
                 self.lifecycle.start_image_rotation(
                     &self.id,
                     at.into(),
@@ -180,6 +190,9 @@ impl Sandbox {
                         .latest
                         .as_ref()
                         .map(|checkpoint| checkpoint.epoch);
+                }
+                if let Some(source) = &mut self.lifecycle.home_recovery {
+                    source.resume_pause = resume_pause;
                 }
             }
             _ => {

@@ -30,6 +30,47 @@ pub struct AgentAdmission {
 }
 
 impl AgentAdmission {
+    pub fn admits_bootstrap(
+        &self,
+        workspace: &Workspace,
+        parent: &crate::sandbox::Sandbox,
+    ) -> bool {
+        matches!(&self.origin, AgentOrigin::Lifecycle { operation_id }
+            if parent.accepts_lifecycle_bootstrap(operation_id))
+            && self.binding.is_none()
+            && self.owner == parent.owner
+            && self.workspace_id == workspace.id
+            && crate::sandbox::lifecycle_bootstrap::bootstrap_workspace(parent, workspace)
+    }
+
+    pub fn record_parent_admission(
+        &self,
+        parent: &mut crate::sandbox::Sandbox,
+        workspace: &Workspace,
+        cause: crate::sandbox::SandboxReviveCause,
+        managed_runtime_version: Option<&str>,
+    ) -> Result<Option<crate::sandbox::SandboxEventKind>, SandboxStoreError> {
+        if self.admits_bootstrap(workspace, parent) {
+            parent.revision = parent
+                .revision
+                .checked_add(1)
+                .ok_or(SandboxStoreError::Conflict)?;
+            parent.updated_at.clone_from(&self.event_at);
+            parent.last_activity_at.clone_from(&self.event_at);
+            parent
+                .validate()
+                .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))?;
+            Ok(None)
+        } else {
+            parent
+                .record_creation_admission_with_managed_runtime(
+                    cause,
+                    managed_runtime_version,
+                    self.event_at.clone(),
+                )
+                .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))
+        }
+    }
     /// A pre-created profile session without user activity is a fresh session
     /// for the Trigger, including when the Trigger requests a new conversation.
     pub fn claims_unused_prepared_agent(&self, agent: &Agent) -> bool {
@@ -93,12 +134,13 @@ impl AgentAdmission {
             return Ok(None);
         }
         let request = self.first_message.as_ref().expect("checked first prompt");
-        let record = FirstMessageRecord::new(
+        let mut record = FirstMessageRecord::new(
             agent.creation_key.clone(),
             request.text.clone(),
             self.event_at.clone(),
         )
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        record.purpose = request.purpose;
         if agent.status != AgentStatus::Starting {
             if agent.work.lease.is_some() || agent.work.step != AgentWorkStep::None {
                 return Err(SandboxStoreError::Conflict);
@@ -125,6 +167,24 @@ impl AgentAdmission {
     }
 
     pub fn materialize(&self, workspace: &Workspace) -> Result<AgentCreation, SandboxStoreError> {
+        self.materialize_with_parent_wait(workspace, false)
+    }
+
+    /// Keep a fresh bootstrap reservation effect-free even if its Workspace
+    /// finished just before the parent publishes Active.
+    pub fn materialize_for_parent(
+        &self,
+        workspace: &Workspace,
+        parent: &crate::sandbox::Sandbox,
+    ) -> Result<AgentCreation, SandboxStoreError> {
+        self.materialize_with_parent_wait(workspace, self.admits_bootstrap(workspace, parent))
+    }
+
+    fn materialize_with_parent_wait(
+        &self,
+        workspace: &Workspace,
+        wait_for_parent: bool,
+    ) -> Result<AgentCreation, SandboxStoreError> {
         if let AgentOrigin::Lifecycle { operation_id } = &self.origin {
             let digest = content_digest(&self.origin)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -167,10 +227,18 @@ impl AgentAdmission {
         }
         let number = workspace.next_worktree_number;
         let name = format!("wt-{number}");
-        let base_commit = workspace
-            .resolved_commit
-            .clone()
-            .ok_or(SandboxStoreError::WorkspaceNotReady)?;
+        let pending = wait_for_parent
+            || (workspace.status == crate::sandbox::WorkspaceStatus::Preparing
+                && matches!(self.origin, AgentOrigin::Lifecycle { .. }));
+        let base_commit = if pending {
+            // Explicit WaitForWorkspace state: this is absence of a base, never a Git revision.
+            String::new()
+        } else {
+            workspace
+                .resolved_commit
+                .clone()
+                .ok_or(SandboxStoreError::WorkspaceNotReady)?
+        };
         let worktree = Worktree {
             id: self.worktree_id.clone(),
             workspace_id: workspace.id.clone(),
@@ -196,6 +264,9 @@ impl AgentAdmission {
             capabilities: self.capabilities.clone(),
             status: AgentStatus::Starting,
             conversation: ConversationState {
+                preferences: Default::default(),
+                managed_guidance_revision: 0,
+                observations: Default::default(),
                 settings: None,
                 conversation_id: None,
                 runtime_generation: None,
@@ -205,7 +276,14 @@ impl AgentAdmission {
                 operation: None,
                 queued_messages: Vec::new(),
             },
-            work: AgentWorkState::new(AgentWorkStep::AddWorktree, self.event_at.clone()),
+            work: AgentWorkState::new(
+                if pending {
+                    AgentWorkStep::WaitForWorkspace
+                } else {
+                    AgentWorkStep::AddWorktree
+                },
+                self.event_at.clone(),
+            ),
             failure: None,
             title: self.title.clone(),
             created_at: self.event_at.clone(),

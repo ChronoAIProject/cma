@@ -60,3 +60,27 @@ pub(super) fn models(
         Arc::new(crate::projections::AdapterAgentModelSupport(adapter)),
     ))
 }
+
+/// Compose explicit file publication and owner uploads to the retained home.
+pub(super) fn agent_files(
+    store: Arc<dyn layer2_core::sandbox::agent_artifacts::AgentArtifactStore>,
+    access: Arc<layer2_core::resource_access::ResourceAccessService>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Router {
+    let filesystem_adapter = adapter.clone();
+    layer1_public::rest::agent_attachments_router(
+        layer2_core::sandbox::agent_attachments::AgentAttachmentService::new(
+            access.clone(),
+            adapter,
+        ),
+    )
+    .merge(layer1_public::rest::agent_filesystem_router(
+        layer2_core::sandbox::agent_filesystem::AgentFileService::new(
+            access.clone(),
+            filesystem_adapter,
+        ),
+    ))
+    .merge(layer1_public::rest::agent_artifacts_router(
+        layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(store, access),
+    ))
+}

@@ -1,0 +1,25 @@
+.agent-lifecycle-followup__progress {
+  width: min(100%, 748px);
+  padding: 14px 24px 0;
+  margin: 0 auto;
+}
+
+.agent-lifecycle-followup__progress > section {
+  gap: 10px;
+}
+
+.agent-lifecycle-followup__progress > section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.agent-lifecycle-followup__progress > section > p {
+  margin: 0;
+  font-size: 12px;
+}
+
+@media (max-width: 48rem) {
+  .agent-lifecycle-followup__progress {
+    padding-inline: 16px;
+  }
+}

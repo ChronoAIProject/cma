@@ -18,6 +18,7 @@ fn event_projection_keeps_exact_cursor_without_internal_execution_authority() {
             runtime_locator: Some("private-locator".into()),
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 42,
             origin_key: Some("private-origin".into()),
         },

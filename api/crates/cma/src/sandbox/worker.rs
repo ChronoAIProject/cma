@@ -17,7 +17,9 @@ use layer2_core::sandbox::SandboxPolicy;
 
 mod execute;
 mod home;
+mod initial_runtime;
 mod lifecycle;
+mod provision_timing;
 mod provisioning;
 mod retained_retirement;
 mod retirement;
@@ -44,6 +46,12 @@ pub(crate) enum SandboxDependencyError {
 
 #[async_trait::async_trait]
 pub(crate) trait ProfileWorkspaceProvisioner: Send + Sync {
+    /// The durable workspace worker validates current parent and runtime
+    /// authority itself. Other provisioners retain the caller's adoption check.
+    fn requires_runtime_adoption(&self) -> bool {
+        true
+    }
+
     async fn create_profile_workspace(
         &self,
         sandbox: &Sandbox,
@@ -184,10 +192,19 @@ impl SandboxWorker {
             return Ok(false);
         };
         let claim_ms = claiming.elapsed().as_millis() as u64;
+        self.run_claimed(sandbox, now, claim_ms).await
+    }
+
+    async fn run_claimed(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+        claim_ms: u64,
+    ) -> Result<bool, SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let result = Box::pin(self.execute(sandbox.clone(), now)).await;
         tracing::info!(
-            sandbox_id = %id,
+            sandbox_id = %sandbox.id,
             step = ?sandbox.work.step,
             lifecycle_phase = ?scheduling::phase(&sandbox),
             claim_ms,
@@ -218,27 +235,41 @@ impl SandboxWorker {
         if claimed.work.step != SandboxWorkStep::RunLifecycleOperation {
             return Ok(false);
         }
-        let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
-            return Ok(false);
-        };
-        if current.work.lease != claimed.work.lease
-            || current.work.step != claimed.work.step
-            || current.lifecycle.operation != claimed.lifecycle.operation
-            || current.runtime != claimed.runtime
-            || current.credential != claimed.credential
-            || current.status != claimed.status
-        {
-            return Ok(false);
+        let started = tokio::time::Instant::now();
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(50 << (attempt - 1))).await;
+            }
+            let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
+                return Ok(false);
+            };
+            if current.work.lease != claimed.work.lease
+                || current.work.step != claimed.work.step
+                || current.lifecycle.operation != claimed.lifecycle.operation
+                || current.runtime != claimed.runtime
+                || current.credential != claimed.credential
+                || current.status != claimed.status
+            {
+                return Ok(false);
+            }
+            match self
+                .handle_lifecycle_failure(
+                    current,
+                    support::WorkerFailure::retryable(
+                        "lifecycle publication conflicted with concurrent metadata changes",
+                    ),
+                    now + started.elapsed(),
+                )
+                .await
+            {
+                Ok(()) => return Ok(true),
+                // Retry publication can contend too. Re-read all guards before
+                // releasing the same lease; an unknown commit never loops here.
+                Err(SandboxStoreError::Conflict) => {}
+                Err(error) => return Err(error),
+            }
         }
-        self.handle_lifecycle_failure(
-            current,
-            support::WorkerFailure::retryable(
-                "lifecycle publication conflicted with concurrent metadata changes",
-            ),
-            now,
-        )
-        .await?;
-        Ok(true)
+        Err(SandboxStoreError::Conflict)
     }
 
     async fn run_scheduled(
@@ -268,6 +299,15 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn run_claimed_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        self.run_claimed(sandbox, now, 0).await
     }
 
     #[cfg(test)]

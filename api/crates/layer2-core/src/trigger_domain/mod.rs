@@ -157,6 +157,8 @@ pub struct Trigger {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retired_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
 }
 
 impl Trigger {
@@ -181,6 +183,7 @@ impl Trigger {
             created_at: now.clone(),
             updated_at: now,
             retired_at: None,
+            archived_at: None,
         };
         trigger.validate()?;
         Ok(trigger)
@@ -239,6 +242,17 @@ impl Trigger {
                 Err(TriggerError::new("trigger_not_published", "availability"))
             }
         }
+    }
+
+    /// Remove the owner's definition while retaining admitted Launch authority.
+    pub fn archive(&mut self, archived_at: String) -> Result<(), TriggerError> {
+        require_time(&archived_at, "archived_at")?;
+        if self.archived_at.is_none() {
+            self.retire(archived_at.clone())?;
+            self.updated_at = archived_at.clone();
+            self.archived_at = Some(archived_at);
+        }
+        Ok(())
     }
 
     pub fn add_placement(&mut self, placement: Placement) -> Result<(), TriggerError> {
@@ -339,6 +353,12 @@ impl Trigger {
         require_time(&self.updated_at, "updated_at")?;
         if let Some(retired_at) = &self.retired_at {
             require_time(retired_at, "retired_at")?;
+        }
+        if let Some(archived_at) = &self.archived_at {
+            require_time(archived_at, "archived_at")?;
+            if self.availability != TriggerAvailability::Retired {
+                return Err(TriggerError::new("invalid_trigger_state", "archived_at"));
+            }
         }
         if self.draft_version == 0 {
             return Err(TriggerError::new("invalid_draft_version", "draft_version"));
@@ -449,3 +469,6 @@ mod launch_worker_control_tests;
 
 #[cfg(test)]
 mod launch_service_tests;
+
+#[cfg(test)]
+mod archive_tests;

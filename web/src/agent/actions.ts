@@ -1,9 +1,24 @@
-import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+  type RefObject,
+} from 'react';
 import type { CmaWebClient, CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
 import type { AgentV2Session } from './transport/client';
+import type { MessageAcceptance } from './controllerTypes';
+import { ApiError } from '@chronoai/cma-sdk';
 import { submitV2Control, recoverV2Control } from './transport/controls';
+import {
+  submitV2Interruption,
+  recoverV2Interruption,
+  InterruptionNotSubmittedError,
+} from './transport/interruption';
 
 interface Options {
   readonly agentId?: string;
@@ -25,7 +40,11 @@ interface Options {
   readonly reload: () => void;
   readonly errorMessage: (error: unknown) => string;
   readonly onIdentityChange: (error: unknown) => boolean;
-  readonly options: { readonly onHierarchyChange?: () => void; readonly onDeleted?: () => void };
+  readonly options: {
+    readonly viewerId?: string;
+    readonly onHierarchyChange?: () => void;
+    readonly onDeleted?: () => void;
+  };
 }
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
@@ -54,20 +73,47 @@ export function useAgentActions({
   onIdentityChange,
   options,
 }: Options) {
+  const context = useMemo(
+    () => ({
+      agentId,
+      client,
+      viewerId: options.viewerId,
+      allowed: inputAvailability.allowed,
+    }),
+    [agentId, client, options.viewerId, inputAvailability.allowed],
+  );
+  const currentContext = useRef<typeof context | undefined>(undefined);
+  useLayoutEffect(() => {
+    currentContext.current = context;
+    return () => {
+      currentContext.current = undefined;
+    };
+  }, [context]);
   const run = useCallback(
     async (
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
-      onAccepted?: () => void,
+      onAccepted?: (receipt?: MessageAcceptance) => void,
+      onReceiptObserved?: (receipt: MessageAcceptance) => void,
+      onRefused?: () => void,
+      mode: 'send' | 'steer' | 'interrupt' = 'send',
+      onOrdinaryInput?: () => void,
     ) => {
       if (
+        currentContext.current !== context ||
         agentId === undefined ||
         actionAbortRef.current !== undefined ||
-        historyIncomplete ||
+        (historyIncomplete && typeof approval !== 'string') ||
         !inputAvailability.allowed
       )
         return;
       const current = stateRef.current;
+      if (current.status !== 'ready' || current.detail.id !== agentId) return;
       const session = current.status === 'ready' ? current.v2 : undefined;
+      if (
+        current.detail.status === 'starting' &&
+        (session === undefined || typeof approval !== 'string')
+      )
+        return;
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
@@ -78,6 +124,20 @@ export function useAgentActions({
       let accepted = false;
       try {
         if (session !== undefined) {
+          const sendInput = (text: string) =>
+            session.send(
+              text,
+              (receipt) => {
+                if (controller.signal.aborted || currentContext.current !== context) return;
+                accepted = true;
+                onAccepted?.(receipt);
+              },
+              controller.signal,
+              (receipt) => {
+                if (!controller.signal.aborted && currentContext.current === context)
+                  onReceiptObserved?.(receipt);
+              },
+            );
           if (approving) {
             const scope = `agent:${agentId}:approval:${approval.id}:${approval.decision}`;
             await submitV2Control(
@@ -88,15 +148,47 @@ export function useAgentActions({
               controller.signal,
             );
             keys.settle(scope);
-          } else
-            await session.send(
+          } else if (mode === 'interrupt') {
+            const result = await submitV2Interruption(
+              session,
+              current.conversation.responseBinding,
               approval,
-              () => {
-                accepted = true;
-                onAccepted?.();
-              },
+              runId(),
               controller.signal,
             );
+            if (result === undefined) {
+              if (controller.signal.aborted || currentContext.current !== context) return;
+              onOrdinaryInput?.();
+              await sendInput(approval);
+              return;
+            }
+            if (!controller.signal.aborted && currentContext.current === context) {
+              const receipt = {
+                commandId: result.response.receipt.command_id,
+                responseId: result.response.receipt.response_id!,
+              };
+              accepted = true;
+              onReceiptObserved?.(receipt);
+              onAccepted?.(receipt);
+            }
+          } else if (mode === 'steer' && current.conversation.responseBinding !== undefined) {
+            const result = await submitV2Control(
+              session,
+              current.conversation.responseBinding,
+              { type: 'steer', text: approval },
+              runId(),
+              controller.signal,
+            );
+            if (!controller.signal.aborted && currentContext.current === context) {
+              const receipt = {
+                commandId: result.control.receipt.command_id,
+                responseId: result.target.response_id,
+              };
+              accepted = true;
+              onReceiptObserved?.(receipt);
+              onAccepted?.(receipt);
+            }
+          } else await sendInput(approval);
           return;
         }
         await client.runAgent(
@@ -121,13 +213,34 @@ export function useAgentActions({
               if (controller.signal.aborted || event.threadId !== agentId) return;
               if (!accepted && event.type !== 'RUN_ERROR') {
                 accepted = true;
-                onAccepted?.();
+                onAccepted?.({ runId: event.runId });
               }
               applyLive(event);
             },
           },
         );
       } catch (error: unknown) {
+        if (
+          !controller.signal.aborted &&
+          currentContext.current === context &&
+          session !== undefined &&
+          !approving &&
+          !accepted &&
+          (error instanceof InterruptionNotSubmittedError ||
+            (error instanceof ApiError &&
+              ((error.status === 422 &&
+                [
+                  'invalid_response_input',
+                  'invalid_control_request',
+                  'invalid_interrupt_request',
+                  ...(mode === 'interrupt' ? ['capability_unsupported'] : []),
+                ].includes(error.code ?? '')) ||
+                (error.status === 409 &&
+                  ['response_control_not_admitted', 'response_interrupt_not_admitted'].includes(
+                    error.code ?? '',
+                  )))))
+        )
+          onRefused?.();
         if (!controller.signal.aborted && !onIdentityChange(error))
           setActionError(errorMessage(error));
       } finally {
@@ -144,6 +257,7 @@ export function useAgentActions({
       agentId,
       applyLive,
       client,
+      context,
       historyIncomplete,
       inputAvailability.allowed,
       keys,
@@ -166,7 +280,7 @@ export function useAgentActions({
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (historyIncomplete) return;
+      if (currentContext.current !== context || historyIncomplete) return;
       if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbortRef.current !== undefined && !mayPreemptSend)) {
         return;
@@ -213,6 +327,7 @@ export function useAgentActions({
     },
     [
       activeTurn,
+      context,
       agentId,
       historyIncomplete,
       keys,
@@ -232,7 +347,15 @@ export function useAgentActions({
   );
 
   const recoverPending = async () => {
+    if (currentContext.current !== context) return;
     if (v2 === undefined || actionAbortRef.current !== undefined || historyIncomplete) return;
+    const current = stateRef.current;
+    if (
+      current.status === 'ready' &&
+      current.detail.status === 'starting' &&
+      !inputAvailability.allowed
+    )
+      return;
     const controller = new AbortController();
     actionAbortRef.current = controller;
     actionKindRef.current = 'send';
@@ -241,6 +364,7 @@ export function useAgentActions({
     try {
       await v2.recover(() => {}, controller.signal);
       await recoverV2Control(v2, controller.signal);
+      await recoverV2Interruption(v2, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted && !onIdentityChange(error))
         setActionError(errorMessage(error));

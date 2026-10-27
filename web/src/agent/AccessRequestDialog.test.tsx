@@ -16,6 +16,12 @@ const request: AgentAccessRequest = {
 };
 beforeEach(() => {
   sessionStorage.clear();
+  vi.spyOn(connectionClient, 'check').mockResolvedValue({
+    owner: 'owner',
+    ready: true,
+    checked_at: '2026-10-15T00:00:00Z',
+    services: [],
+  });
   catalog.listServices.mockResolvedValue([
     { id: 'api-github', name: 'GitHub' },
     { id: 'storage', name: 'Storage' },
@@ -36,6 +42,47 @@ function show() {
     />,
   );
 }
+it('explains that approval updates access without restarting active Agents', async () => {
+  show();
+  await screen.findByText(/Approving updates service access without restarting/);
+  expect(screen.queryByText(/briefly pauses and resumes/)).not.toBeInTheDocument();
+});
+it('retains an approved request while paused without claiming runtime verification or repeating approval', async () => {
+  vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'applying' }]);
+  const decide = vi.spyOn(accessRequests, 'decide');
+  const view = render(
+    <AgentAccessRequests
+      agentId="agent-one"
+      owner="owner"
+      granted={['chrono-llm-public', 'ornn-api']}
+      sandboxStatus="paused"
+      enabled
+    />,
+  );
+  await screen.findByText(/The Sandbox is paused. Your approval is saved/);
+  expect(screen.queryByText(/Verifying the updated Agent key/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  view.rerender(
+    <AgentAccessRequests
+      agentId="agent-one"
+      owner="owner"
+      granted={['chrono-llm-public', 'ornn-api']}
+      sandboxStatus="active"
+      enabled
+    />,
+  );
+  await screen.findByText(/Verifying the updated Agent key/);
+  expect(decide).not.toHaveBeenCalled();
+});
+it('explains how to recover a failed update without exposing its internal error code', async () => {
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    { ...request, status: 'failed', error: 'access_update_cannot_continue' },
+  ]);
+  show();
+  await screen.findByRole('alert');
+  expect(screen.getByText(/Ask the Agent to create a new access request/)).toBeVisible();
+  expect(screen.queryByText('access_update_cannot_continue')).not.toBeInTheDocument();
+});
 it('opens only a durable request, keeps required scopes fixed, and submits only on explicit approval', async () => {
   const decide = vi
     .spyOn(accessRequests, 'decide')
@@ -50,7 +97,7 @@ it('opens only a durable request, keeps required scopes fixed, and submits only 
   }
   await userEvent.click(await screen.findByRole('checkbox', { name: 'Storage' }));
   vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'applying' }]);
-  await userEvent.click(screen.getByRole('button', { name: 'Approve and connect' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
   await screen.findByText(/Verifying the updated Agent key/);
   expect(decide).toHaveBeenCalledWith(
     'agent-one',
@@ -68,7 +115,7 @@ it('retains the exact approval after a lost response and locks edits during reco
     .mockResolvedValue({ ...request, status: 'applying' });
   const first = show();
   await screen.findByRole('dialog');
-  await userEvent.click(screen.getByRole('button', { name: 'Approve and connect' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
   await screen.findByText('Lost approval response');
   first.unmount();
   show();
@@ -103,12 +150,15 @@ it('does not treat successful OAuth verification as runtime access completion', 
 });
 it('leaves a dismissed request pending and permits reopening without approval', async () => {
   const decide = vi.spyOn(accessRequests, 'decide');
+  const user = userEvent.setup();
   show();
-  await screen.findByRole('dialog');
-  fireEvent.keyDown(document, { key: 'Escape' });
+  await screen.findByRole('dialog', { name: 'Agent key access' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   await screen.findByRole('button', { name: 'Review access request' });
   expect(decide).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole('button', { name: 'Review access request' }));
+  await user.click(screen.getByRole('button', { name: 'Review access request' }));
   expect(screen.getByRole('dialog', { name: 'Agent key access' })).toBeVisible();
 });
 it('never displays another Agent’s access request', async () => {
@@ -130,13 +180,13 @@ it('refuses oversized additive approval before saving an unchangeable decision',
   ]);
   show();
   await screen.findByRole('dialog');
-  await userEvent.click(screen.getByRole('button', { name: 'Approve and connect' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
   await screen.findByText(
     'Choose up to 32 services. Existing Sandbox access must remain included.',
   );
   expect(decide).not.toHaveBeenCalled();
   expect(sessionStorage.length).toBe(0);
-  expect(screen.getByRole('button', { name: 'Approve and connect' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
 });
 it('rejects invalid service projections and approval bodies before network effects', async () => {
   vi.mocked(accessRequests.list).mockRestore();
@@ -187,7 +237,7 @@ it('replays an uncertain denial as the original denial after reload', async () =
   expect(decide.mock.calls[1]?.slice(0, 5)).toEqual(decide.mock.calls[0]?.slice(0, 5));
 });
 
-it('recovers a revoked service while applying and waits for durable success after the popup closes', async () => {
+it('lets the owner review expired connections without repeating catalog checks during hot application', async () => {
   vi.useFakeTimers();
   const target = { type: 'agent_access_request' as const, id: request.id };
   vi.mocked(accessRequests.list).mockResolvedValue([
@@ -233,6 +283,9 @@ it('recovers a revoked service while applying and waits for durable success afte
   await act(() => vi.advanceTimersByTimeAsync(2000));
   ready = false;
   await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(connectionClient.check).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Review service connections' }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
   expect(screen.getByRole('dialog', { name: 'Connect Agent services' })).toBeVisible();
   expect(screen.getByText('Connection needed')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
@@ -256,4 +309,70 @@ it('recovers a revoked service while applying and waits for durable success afte
   vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'succeeded' }]);
   await act(() => vi.advanceTimersByTimeAsync(2000));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('pauses hidden access-request reads and resumes without overlapping an unfinished read', async () => {
+  vi.useFakeTimers();
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  let resolveRead: (value: AgentAccessRequest[]) => void = () => {};
+  vi.mocked(accessRequests.list)
+    .mockImplementationOnce(
+      () =>
+        new Promise<AgentAccessRequest[]>((resolve) => {
+          resolveRead = resolve;
+        }),
+    )
+    .mockResolvedValue([]);
+  const { unmount } = show();
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).not.toHaveBeenCalled();
+  hidden.mockReturnValue(false);
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(true);
+  await act(async () => {
+    resolveRead([]);
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(false);
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  expect(accessRequests.list).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(3);
+  unmount();
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(3);
+});
+
+it('requires service connection readiness before the final approval and does not grant on preflight', async () => {
+  vi.mocked(connectionClient.check).mockResolvedValue({
+    owner: 'owner',
+    ready: false,
+    checked_at: '2026-10-15T00:00:00Z',
+    services: [],
+  });
+  const decide = vi.spyOn(accessRequests, 'decide');
+  show();
+  await screen.findByRole('button', { name: 'Connect services' });
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(decide).not.toHaveBeenCalled();
+  expect(connectionClient.check).toHaveBeenCalledWith(
+    {
+      type: 'agent_service_access',
+      id: 'agent-one',
+      services: ['api-github', 'chrono-llm-public', 'ornn-api'],
+    },
+    undefined,
+    expect.any(AbortSignal),
+  );
 });

@@ -34,6 +34,10 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
 pub async fn record() -> Value {
+    record_with(false).await
+}
+
+async fn record_with(complete_replies: bool) -> Value {
     let provider = FakeProvider::start(Default::default()).await;
     let backend = FakeCma::start(false).await;
     let keys = keys();
@@ -68,12 +72,13 @@ pub async fn record() -> Value {
         keys.clone(),
         providers,
     ));
-    let mut recording = Recording::start_with(
+    let mut recording = Recording::start_with_relay(
         FakeHttp::platforms(),
         Hooks::answering([]),
         DeliveryConfig::default(),
         Some(store.clone()),
         false,
+        |relay| relay.with_complete_replies(complete_replies),
     );
     let buttons = json!({"text":"Choose","blocks":[{"type":"buttons","id":"choice","options":[{"id":"first","label":"First"},{"id":"second","label":"Second"}]}]});
     let card = recording
@@ -105,6 +110,9 @@ pub async fn record() -> Value {
         .await
         .unwrap();
     let reference = card.message_ref.unwrap().open(&keys).unwrap().payload;
+    if complete_replies {
+        assert_long_refusals(&recording, &relay, &relay_event, &reference).await;
+    }
     recording
         .update(
             &relay,
@@ -127,21 +135,17 @@ pub async fn seed(
     activity: &Activity,
     event: &EventRefPayload,
 ) {
+    let consumer = channel.consumer(event.consumer.as_ref()).unwrap();
     let mut stream = providers
         .start_turn(
-            &channel.definition.provider.slug,
+            &consumer.provider.slug,
             TurnRequest {
                 timing: None,
                 conversation_id: event.conversation_id.clone(),
                 input: vec![],
                 metadata: Default::default(),
                 idempotency_key: IdempotencyKey::from_event(&activity.event_id),
-                agent_key: channel
-                    .definition
-                    .secrets
-                    .provider_credential
-                    .clone()
-                    .unwrap(),
+                agent_key: consumer.credential.unwrap().clone(),
                 event_context: Some(EventContextSnapshot {
                     schema_version: 1,
                     channel_id: channel.id.clone(),
@@ -155,4 +159,54 @@ pub async fn seed(
         .unwrap();
     (&mut stream.accepted).await.unwrap();
     while stream.events.recv().await.is_some() {}
+}
+
+#[tokio::test]
+async fn complete_mode_preserves_interactive_replies_and_edits() {
+    let legacy = record().await;
+    let complete = record_with(true).await;
+    assert_eq!(complete, legacy);
+}
+
+async fn assert_long_refusals(
+    recording: &Recording,
+    channel: &Arc<ResolvedChannel>,
+    event: &EventRefPayload,
+    reference: &cmaeg_core::seal::MessageRefPayload,
+) {
+    use cmaeg::delivery::intents::DeliveryCommand;
+    use tokio::sync::oneshot;
+    let message: cmaeg_core::message::OutboundMessage = serde_json::from_value(json!({"text":"🦀".repeat(2001),"blocks":[{"type":"buttons","id":"large","options":[{"id":"one","label":"One"}]}]})).unwrap();
+    let calls = recording.http.sent().len();
+    for update in [false, true] {
+        let (receipt, received) = oneshot::channel();
+        let command = if update {
+            DeliveryCommand::Update {
+                trace: tracing::Span::none(),
+                channel: channel.clone(),
+                message_ref: reference.clone(),
+                message: message.clone(),
+                receipt,
+            }
+        } else {
+            DeliveryCommand::Reply {
+                trace: tracing::Span::none(),
+                channel: channel.clone(),
+                event: event.clone(),
+                message: message.clone(),
+                source: ReplySource::Tool,
+                receipt,
+            }
+        };
+        recording.commands.send(command).await.unwrap();
+        let receipt = received.await.unwrap();
+        assert_eq!(
+            receipt.delivery,
+            DeliveryOutcome::Rejected {
+                reason: "interactive_message_must_fit_one_part".into()
+            }
+        );
+        assert!(receipt.message_ref.is_none());
+        assert_eq!(recording.http.sent().len(), calls);
+    }
 }

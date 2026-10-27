@@ -112,6 +112,11 @@ const FORMS: [Form; 3] = [
             field("bot_id", "Bot id", Input::Text),
             field("trust_normalized", "Trust normalized events", Input::Check),
             field(
+                "verify_raw_event",
+                "Verify Discord/WhatsApp events",
+                Input::Check,
+            ),
+            field(
                 "channel_key",
                 "Channel key (shared by relays)",
                 Input::Secret,

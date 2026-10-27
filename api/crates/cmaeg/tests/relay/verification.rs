@@ -3,6 +3,47 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
+async fn signed_claims_remain_valid_when_the_clock_crosses_a_second_boundary() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    for (aud, kind, ttl, reply) in [
+        ("channel-relay/callback", "relay_callback", 300, false),
+        ("channel-relay/reply", "relay_reply", 1800, true),
+    ] {
+        let mut envelope = Envelope::new();
+        let mut tick = now();
+        let standard = claims_with_clock(aud, kind, ttl, || {
+            let sampled = tick;
+            tick += 1;
+            sampled
+        });
+        let claims = if reply {
+            &mut envelope.reply
+        } else {
+            &mut envelope.callback
+        };
+        claims
+            .as_object_mut()
+            .unwrap()
+            .extend(standard.as_object().unwrap().clone());
+        let response = fixture.send(&envelope).await;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(status, 202, "{body}");
+        assert_eq!(body["status"], "accepted", "{body}");
+
+        // Sampling the expiry a second later would exceed the real verifier's
+        // maximum lifetime. Keep that invalid control explicitly rejected.
+        let claims = if reply {
+            &mut envelope.reply
+        } else {
+            &mut envelope.callback
+        };
+        claims["exp"] = (claims["iat"].as_i64().unwrap() + ttl + 1).into();
+        problem(fixture.send(&envelope).await, 401, "token_time").await;
+    }
+}
+
+#[tokio::test]
 async fn rejects_each_callback_claim_binding_and_time_boundary() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     let cases: Vec<(&str, Value, &str)> = vec![

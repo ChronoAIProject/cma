@@ -63,33 +63,40 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
-        Self::build("telegram", text, None, None).await
+        Self::build("telegram", text, None, None, false).await
     }
     /// A group message on `platform` carrying the envelope's default text.
     pub async fn on(platform: &str) -> Self {
-        Self::build(platform, "hello", None, None).await
+        Self::build(platform, "hello", None, None, false).await
+    }
+    pub async fn on_private(platform: &str) -> Self {
+        Self::build(platform, "hello", None, None, true).await
     }
     /// A message carrying `setup`'s attachments, with a media service over
     /// its fakes. `event_ref` is the media event's reference.
     pub async fn with_media(setup: MediaSetup) -> Self {
-        Self::build("telegram", "hello", Some(setup), None).await
+        Self::build("telegram", "hello", Some(setup), None, false).await
     }
     /// A message whose stored activity carries `routing`, bound into its
     /// event_ref's digest as routed ingress binds it.
     pub async fn routed(routing: ActivityRouting) -> Self {
-        Self::build("telegram", "hello", None, Some(routing)).await
+        Self::build("telegram", "hello", None, Some(routing), false).await
     }
     async fn build(
         platform: &str,
         text: &str,
         media: Option<MediaSetup>,
         routing: Option<ActivityRouting>,
+        private: bool,
     ) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
         let edit = media.as_ref().map(|setup| setup.edit);
         let fixture = Fixture::on(
             platform,
             |value| {
+                if platform == "whatsapp" {
+                    value["sources"][0]["verify_raw_event"] = true.into();
+                }
                 value["secrets"]["agent_key_hash"] =
                     format!("sha256:{:x}", Sha256::digest(key.as_bytes())).into();
                 value["secrets"]["provider_credential"] = key.clone().into();
@@ -101,7 +108,14 @@ impl App {
         )
         .await;
         let mut envelope = Envelope::on(platform);
-        envelope.group();
+        if platform == "whatsapp" {
+            envelope.payload["conversation"]["platform_id"] = "7".into();
+            envelope.payload["raw_platform_data"] =
+                json!({"id":"wamid.initial","from":"7","type":"text","text":{"body":"hello"}});
+        }
+        if !private {
+            envelope.group();
+        }
         if platform == "telegram" {
             envelope.payload["content"]["text"] = text.into();
             envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
@@ -122,11 +136,14 @@ impl App {
             .payload;
         let message_ref = MessageRef::seal(
             &MessageRefPayload {
+                discord_message: None,
+                telegram_effect: None,
                 channel_id: fixture.id.clone(),
                 event_id: payload.event_id.clone(),
                 platform_message_id: "platform-1".into(),
                 route_id: "route-1".into(),
                 interaction_record_id: None,
+                relay_message: None,
                 consumer: None,
             },
             &fixture.state.master_keys,
@@ -195,12 +212,29 @@ impl App {
         );
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
+            discord_thread_history: None,
+            complete_replies_enabled: false,
+            whatsapp_templates_enabled: false,
+            discord_interactions_enabled: false,
+            whatsapp_interactions_enabled: false,
+            consumer_interactions_enabled: false,
+            telegram_effects_issuance_enabled: false,
+            telegram_effects: None,
+            native_media_enabled: false,
+            native_discord_edits_enabled: false,
+            discord_effects_issuance_enabled: false,
+            discord_effects: None,
+            relay_text_edits_enabled: false,
+            lark_cards_enabled: false,
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
             delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
+            routed_replies: None,
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
+            public_api_url: "https://gateway.example".into(),
+            advertise_public_api_url: true,
             media: media.clone(),
             downloads,
         };

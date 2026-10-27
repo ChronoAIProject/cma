@@ -434,6 +434,7 @@ impl TestApp {
                     source: Default::default(),
                     reaches: revision.content.credential_services(&[]),
                     service_grants: Vec::new(),
+                    service_scope: None,
                     key_generation: 0,
                     delivered: false,
                     current: None,
@@ -530,6 +531,9 @@ impl TestApp {
             capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
             status: AgentStatus::Ready,
             conversation: ConversationState {
+                preferences: Default::default(),
+                managed_guidance_revision: 0,
+                observations: Default::default(),
                 settings: None,
                 conversation_id: Some("conversation".into()),
                 runtime_generation: Some(1),

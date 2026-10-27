@@ -33,9 +33,10 @@ impl BindingComposition {
         gateway: Option<&crate::config::GatewayConfig>,
     ) -> Result<Router, String> {
         let routes = match gateway {
-            Some(gateway) => rest::binding_router_with_native_tools(
+            Some(gateway) => rest::binding_router_with_native_tools_alias(
                 self.service.clone(),
                 &format!("{}/mcp", gateway.public_url.trim_end_matches('/')),
+                &format!("{}/mcp", gateway.public_api_url.trim_end_matches('/')),
             )?,
             None => rest::binding_router(self.service.clone()),
         };
@@ -79,7 +80,8 @@ pub(super) fn resource_access(
         )
         .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
             stores.sandbox_model.clone(),
-        )),
+        ))
+        .with_directory(layer2_core::UserDirectory::new(stores.users.clone())),
     )
 }
 

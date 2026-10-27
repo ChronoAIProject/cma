@@ -4,7 +4,8 @@ use crate::providers::{OutputItem, ResponsesEvent};
 use std::collections::{BTreeMap, BTreeSet};
 const MAX_TEXT: usize = 256 * 1024;
 const MAX_ITEMS: usize = 256;
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Projection {
     text: BTreeMap<String, String>,
     order: Vec<String>,
@@ -14,6 +15,27 @@ pub(super) struct Projection {
     finished: BTreeSet<String>,
 }
 impl Projection {
+    pub(super) fn validate(&self) -> bool {
+        self.text.len() <= MAX_ITEMS
+            && self.tools.len() <= MAX_ITEMS
+            && self.text.values().map(String::len).sum::<usize>() <= MAX_TEXT
+            && self.order.len() == self.text.len()
+            && self.order.iter().collect::<BTreeSet<_>>().len() == self.text.len()
+            && self.order.iter().all(|id| self.text.contains_key(id))
+            && self.committed.iter().all(|id| self.text.contains_key(id))
+            && self
+                .started
+                .iter()
+                .chain(&self.finished)
+                .all(|id| self.tools.contains_key(id))
+            && self
+                .text
+                .keys()
+                .chain(self.tools.keys())
+                .all(|id| id.len() <= 512)
+            && self.tools.values().all(|name| name.len() <= 512)
+    }
+
     pub fn event(&mut self, event: ResponsesEvent) -> Result<Option<TurnOutcome>, &'static str> {
         let outcome = match event {
             ResponsesEvent::OutputTextDelta { item_id, delta } => {

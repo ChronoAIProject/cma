@@ -3,6 +3,56 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
+it('allows a v2 Starting message with the normal composer and retains its draft until acceptance', async () => {
+  let accept: (() => void) | undefined;
+  const onSend = vi.fn((_content: string, onAccepted: () => void) => {
+    accept = onAccepted;
+  });
+  render(
+    <Composer
+      status="starting"
+      queueWhileStarting
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={onSend}
+      onStop={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  expect(field).toBeEnabled();
+  expect(field).toHaveAttribute('placeholder', 'Message Agent');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  await user.type(field, 'Follow the setup');
+  await user.click(screen.getByRole('button', { name: 'Send message' }));
+  expect(onSend).toHaveBeenCalledExactlyOnceWith('Follow the setup', expect.any(Function));
+  expect(field).toHaveValue('Follow the setup');
+  await act(async () => accept?.());
+  expect(field).toHaveValue('');
+});
+
+it('keeps Starting input disabled unless durable queuing is explicitly enabled', async () => {
+  const onSend = vi.fn();
+  render(
+    <Composer
+      status="starting"
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={onSend}
+      onStop={vi.fn()}
+    />,
+  );
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  expect(field).toBeDisabled();
+  expect(field).toHaveAttribute('placeholder', 'Message Agent');
+  expect(screen.queryByText('Agent is starting.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(onSend).not.toHaveBeenCalled();
+});
+
 function editableComposer() {
   const onSend = vi.fn();
   render(
@@ -237,4 +287,58 @@ it('replaces Send with Stop while an Agent response is running', async () => {
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeDisabled();
   await actor.click(screen.getByRole('button', { name: 'Stop response' }));
   expect(onStop).toHaveBeenCalledOnce();
+});
+
+it('keeps every control inside the box and offers steering only while a turn runs', async () => {
+  const actor = userEvent.setup();
+  const onSteeringModeChange = vi.fn();
+  const draw = (running: boolean) => (
+    <Composer
+      status={running ? 'working' : 'ready'}
+      running={running}
+      queueWhileRunning
+      showUsage
+      steeringMode="queue"
+      onSteeringModeChange={onSteeringModeChange}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      uploadAttachment={vi.fn()}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />
+  );
+  const { rerender } = render(draw(false));
+  const box = screen.getByRole('textbox', { name: 'Message' }).parentElement!;
+  expect(box).toHaveClass('agent-composer__box');
+  for (const name of ['Attach files', 'Context usage', 'Send message'])
+    expect(box).toContainElement(screen.getByRole('button', { name }));
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+  rerender(draw(true));
+  const steering = screen.getByRole('button', { name: 'Steering mode: Queue' });
+  expect(box).toContainElement(steering);
+  expect(box).toContainElement(screen.getByRole('button', { name: 'Queue message' }));
+  expect(box).toContainElement(screen.getByRole('button', { name: 'Stop response' }));
+  await actor.click(steering);
+  await actor.click(screen.getByRole('menuitemradio', { name: /Interrupt/ }));
+  expect(onSteeringModeChange).toHaveBeenCalledExactlyOnceWith('interrupt');
+  rerender(draw(false));
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+});
+
+it('does not offer steering to a tab that cannot queue behind a running turn', () => {
+  render(
+    <Composer
+      status="working"
+      running
+      steeringMode="queue"
+      onSteeringModeChange={vi.fn()}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
 });

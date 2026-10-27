@@ -184,6 +184,15 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     let records = Arc::new(RecordClient::new(backend, "service-fixture").unwrap());
     let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":backend,"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
     ToolsState {
+        discord_thread_history: None,
+        complete_replies_enabled: false,
+        routed_replies: None,
+        telegram_effects_issuance_enabled: false,
+        telegram_effects: None,
+        native_discord_edits_enabled: false,
+        discord_effects_issuance_enabled: false,
+        discord_effects: None,
+        lark_cards_enabled: false,
         resolver: ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default()),
         keys,
         providers: Arc::new(
@@ -195,6 +204,14 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         )),
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
+        public_api_url: "https://gateway.example".into(),
+        advertise_public_api_url: true,
+        whatsapp_templates_enabled: false,
+        whatsapp_interactions_enabled: false,
+        discord_interactions_enabled: false,
+        consumer_interactions_enabled: false,
+        native_media_enabled: false,
+        relay_text_edits_enabled: false,
         media: None,
         downloads: Default::default(),
     }
@@ -287,6 +304,7 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     let conversation = ConversationId::derive(&keys, &channel, 1, &partition);
     let expiry = mongodb::bson::DateTime::now().timestamp_millis() / 1000 + 1800;
     let payload = EventRefPayload {
+        telegram_admission: None,
         v: 1,
         activity_sha256: Some(activity_digest(&activity)),
         channel_id: channel.clone(),

@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
@@ -18,6 +19,7 @@ import {
 afterEach(() => window.history.replaceState({}, '', '/'));
 
 it('retires the profile-driven Sandbox creation entry from the Agent Manager home', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
       <CmaClientProvider client={agentClient()} creation={creationClient()}>
@@ -54,6 +56,7 @@ it('keeps Marketplace profile revisions read-only while creation moves to Agent 
 });
 
 it('does not offer Sandbox creation without its distinct capability', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
   render(
     <AuthContextProvider
       provider={createMockAuthProvider({
@@ -69,4 +72,30 @@ it('does not offer Sandbox creation without its distinct capability', async () =
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
+it('creates the Agent in the Workspace whose row opened New agent', async () => {
+  window.history.replaceState({}, '', '/agent-manager');
+  const createAgentLifecycle = vi.fn().mockRejectedValue(new Error('Lost create response'));
+  render(
+    <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
+      <CmaClientProvider client={agentClient({ createAgentLifecycle })} creation={creationClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  const actor = userEvent.setup();
+  await actor.click(await screen.findByRole('button', { name: 'Sandboxes' }));
+  await actor.click(
+    await screen.findByRole('button', { name: 'Options for /workspaces/chrono-bot' }),
+  );
+  await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
+  const dialog = await screen.findByRole('dialog', { name: 'New agent' });
+  expect(within(dialog).getByText('Start an Agent in the selected workspace.')).toBeInTheDocument();
+  await actor.click(within(dialog).getByRole('button', { name: 'Create agent' }));
+  await waitFor(() => expect(createAgentLifecycle).toHaveBeenCalledOnce());
+  expect(createAgentLifecycle.mock.calls[0]?.[0]).toEqual({
+    name: 'New agent',
+    workspace_id: 'wsp_1',
+  });
+});
+
 import './test/connectedAccounts';

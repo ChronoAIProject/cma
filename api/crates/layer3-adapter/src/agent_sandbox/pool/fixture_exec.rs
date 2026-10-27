@@ -51,6 +51,14 @@ pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fi
     let fail = {
         let mut state = state.lock().unwrap();
         state.assignments.push(request);
+        for (path, pointer, value) in std::mem::take(&mut state.exec_mutations) {
+            *state
+                .rows
+                .get_mut(&path)
+                .unwrap()
+                .pointer_mut(&pointer)
+                .unwrap() = value;
+        }
         state.fail_exec
     };
     let mut stdout = vec![1];

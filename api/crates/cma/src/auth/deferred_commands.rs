@@ -35,6 +35,23 @@ impl AgentCommandAdmissionAuthority for AuthState {
         credential: &str,
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        if matches!(
+            context.credential_source,
+            layer2_core::resource_access::CredentialSource::IdentityProxy { .. }
+        ) {
+            return tokio::time::timeout(
+                VERIFICATION_TIMEOUT,
+                self.proxy_command_authority(context, credential),
+            )
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?;
+        }
+        if matches!(
+            context.credential_source,
+            layer2_core::resource_access::CredentialSource::RequestBoundRead { .. }
+        ) {
+            return Err(CommandAuthorizationError::Revoked);
+        }
         if context.credential_source == layer2_core::resource_access::CredentialSource::Binding {
             return tokio::time::timeout(
                 VERIFICATION_TIMEOUT,
@@ -192,6 +209,9 @@ impl AgentCommandAuthorizer for AuthState {
             }
             let state = self.retained_command_state(envelope).await?;
             let request = self.verify_command_custody(&state).await?;
+            if !request.authorization.allows(Capability::UseOwnSandboxes) {
+                return Err(CommandAuthorizationError::Revoked);
+            }
             self.require_command_custody(&state).await?;
             Ok(Caller::new(request.subject, request.authorization))
         })

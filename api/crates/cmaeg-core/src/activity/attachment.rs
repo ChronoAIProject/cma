@@ -85,8 +85,23 @@ pub enum AttachmentKind {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum AttachmentSource {
+    /// Exact native Discord message attachment; resolved with current bot custody.
+    Discord {
+        channel_id: String,
+        message_id: String,
+        attachment_id: String,
+    },
     /// Position of the attachment in the NyxID relay callback.
     NyxidRelay { index: u8 },
+    /// Authenticated embedded Lark/Feishu resource, bound to its source authority revision.
+    LarkResource {
+        message_id: String,
+        resource_key: String,
+        resource_kind: crate::channel::LarkResourceKind,
+        binding: crate::channel::LarkResourceBinding,
+        bot_id: String,
+        source_revision: String,
+    },
     /// Telegram Bot API file identifiers of a natively received message.
     Telegram {
         file_id: String,
@@ -103,6 +118,8 @@ pub enum AttachmentSource {
 impl fmt::Debug for AttachmentSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::LarkResource { .. } => formatter.write_str("LarkResource([REDACTED])"),
+            Self::Discord { .. } => formatter.write_str("Discord([REDACTED])"),
             Self::NyxidRelay { index } => formatter
                 .debug_struct("NyxidRelay")
                 .field("index", index)
@@ -306,6 +323,36 @@ fn require_dimension(value: u32, pointer: &str) -> Result<(), ValidationError> {
 /// relay activity can never direct a fetch at a URL or a Telegram file.
 fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(), String> {
     match (locator, source) {
+        (
+            AttachmentSource::LarkResource {
+                message_id,
+                resource_key,
+                resource_kind,
+                binding,
+                bot_id,
+                source_revision,
+                ..
+            },
+            SourceKind::NyxidRelay { platform, .. },
+        ) => {
+            use crate::channel::lark_resources::{lark_resource_service, safe_id};
+            if lark_resource_service(*platform).is_none()
+                || !message_id.starts_with("om_")
+                || !safe_id(message_id, 128)
+                || !safe_id(resource_key, 1024)
+                || !match resource_kind {
+                    crate::channel::LarkResourceKind::Image => resource_key.starts_with("img_"),
+                    crate::channel::LarkResourceKind::File => resource_key.starts_with("file_"),
+                }
+                || !bot_id.starts_with("ou_")
+                || !safe_id(bot_id, 128)
+                || binding.validate("/binding").is_err()
+                || source_revision.len() != 64
+                || !source_revision.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return Err("invalid Lark resource identity".into());
+            }
+        }
         (AttachmentSource::NyxidRelay { index }, SourceKind::NyxidRelay { .. }) => {
             if *index > MAX_NYXID_INDEX {
                 return Err(format!("relay index must be at most {MAX_NYXID_INDEX}"));
@@ -320,6 +367,21 @@ fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(
         ) => {
             if !telegram_ids_valid(file_id, file_unique_id) {
                 return Err("Telegram file identifiers must match [A-Za-z0-9_-]".into());
+            }
+        }
+        (
+            AttachmentSource::Discord {
+                channel_id,
+                message_id,
+                attachment_id,
+            },
+            SourceKind::Discord { .. },
+        ) => {
+            if ![channel_id, message_id, attachment_id]
+                .into_iter()
+                .all(|id| crate::channel::discord::valid_id(id))
+            {
+                return Err("invalid Discord attachment identity".into());
             }
         }
         (AttachmentSource::Url { url }, SourceKind::Custom) => {

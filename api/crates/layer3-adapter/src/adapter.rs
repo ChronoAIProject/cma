@@ -97,6 +97,18 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Explicitly replace only the image of an idle, suspended native runtime.
+    /// The successor pins its image and retains the original provider and home.
+    async fn upgrade_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _next: &RuntimeProvisionRequest,
+    ) -> Result<RuntimeHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "native runtime upgrades are unavailable".into(),
+        ))
+    }
+
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
         &self,
@@ -139,6 +151,14 @@ pub trait SandboxAdapter: Send + Sync {
         Err(crate::AdapterError::Unsupported(
             "generation-specific provisioning is not supported".into(),
         ))
+    }
+
+    /// Optional exact termination evidence. Queried only after runtime loss is confirmed.
+    async fn runtime_termination(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        Ok(None)
     }
 
     /// Observe the complete provider inventory or refuse the whole result.
@@ -191,6 +211,60 @@ pub trait SandboxAdapter: Send + Sync {
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "observed runtime reclamation is not supported".into(),
+        ))
+    }
+
+    /// Publish an exact owner upload within the retained home, never an arbitrary path.
+    async fn upload_agent_attachment(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentAttachmentRequest,
+        _content: Vec<u8>,
+    ) -> Result<crate::AgentAttachmentReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "agent attachments are unavailable on this runtime".into(),
+        ))
+    }
+
+    /// List one directory in the retained runtime home. Paths are relative to
+    /// that home and are validated by the runtime supervisor.
+    async fn list_agent_files(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileListRequest,
+    ) -> Result<crate::AgentFileListReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn read_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileReadRequest,
+    ) -> Result<crate::AgentFileReadReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn write_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileWriteRequest,
+    ) -> Result<crate::AgentFileWriteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
+        ))
+    }
+
+    async fn delete_agent_file(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::AgentFileDeleteRequest,
+    ) -> Result<crate::AgentFileDeleteReceipt> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime filesystem access is unavailable".into(),
         ))
     }
 

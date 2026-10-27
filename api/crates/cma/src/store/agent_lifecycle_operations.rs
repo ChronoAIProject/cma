@@ -46,11 +46,21 @@ pub(crate) struct LifecycleInput {
     /// Replaying an admitted operation must preserve its original profile and setup.
     #[serde(default)]
     pub behavior: LifecycleBehavior,
+    /// Exact managed instructions for new immutable profiles; absent in old operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_agent_instructions: Option<String>,
+    /// Exact setup message captured at admission; absent records retain the old builder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_message: Option<String>,
     pub request: AgentLifecycleCreateRequest,
     pub resolved_image: Option<String>,
     /// New admissions pin deployment capacity; legacy records used policy minima.
     #[serde(default)]
     pub capacity: Option<layer3_adapter::SandboxCapacity>,
+    /// Initial inactivity policy for the operation's new private Sandbox Profile.
+    /// Retained admissions without this field preserve their original idle policy.
+    #[serde(default)]
+    pub sandbox_availability: layer2_core::profiles::SandboxProfileAvailability,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
     /// Original authenticated actor; old records retain unknown attribution.

@@ -142,6 +142,7 @@ fn begin_turn(
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 2;
     AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,
@@ -153,6 +154,7 @@ fn begin_turn(
         appended_at: NOW.into(),
         agent_logs: vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: None,
             },
@@ -185,6 +187,7 @@ fn begin_first_message(
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 4;
     AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,
@@ -200,6 +203,7 @@ fn begin_first_message(
                 recovery_generation: 0,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: Some("conversation".into()),
             },

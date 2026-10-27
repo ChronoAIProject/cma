@@ -24,6 +24,7 @@ use crate::{
 
 use super::*;
 
+mod archive;
 mod credential_prerequisite;
 mod initiation;
 mod input_protocol;
@@ -1890,6 +1891,7 @@ fn sandbox(profiles: &ResolvedTriggerProfiles, status: SandboxStatus) -> Sandbox
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: profiles.sandbox.content.nyxid_services.clone(),
             key_generation: 0,
             delivered: false,
@@ -1948,6 +1950,9 @@ fn agent(profiles: &ResolvedTriggerProfiles, trigger_id: &TriggerId, status: Age
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: Some("conversation".into()),
             runtime_generation: Some(1),

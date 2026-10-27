@@ -4,6 +4,8 @@ mod keys;
 mod lark_media;
 #[path = "relay/lark_post.rs"]
 mod lark_post;
+#[path = "relay/lark_resources.rs"]
+mod lark_resources;
 #[path = "relay/multi_relay.rs"]
 mod multi_relay;
 #[path = "relay/normalization.rs"]
@@ -22,6 +24,8 @@ mod telegram_media;
 mod transport;
 #[path = "relay/verification.rs"]
 mod verification;
+#[path = "relay/verified_platforms.rs"]
+mod verified_platforms;
 
 #[path = "fake_nyxid_reply.rs"]
 pub mod fake_nyxid_reply;
@@ -34,3 +38,6 @@ mod runner_process;
 
 #[path = "relay/managed_creation.rs"]
 mod managed_creation;
+
+#[path = "relay/thread_follow.rs"]
+mod thread_follow;

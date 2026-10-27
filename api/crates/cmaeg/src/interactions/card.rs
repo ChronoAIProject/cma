@@ -1,5 +1,7 @@
 //! Interaction card records, their click and destination facts, and callback decoding.
 use cmaeg_core::{
+    activity::ConversationKind,
+    channel::Platform,
     ids::{ChannelId, ConsumerId, EventId, MessageRef},
     message::OutboundMessage,
 };
@@ -28,6 +30,45 @@ pub struct Card {
     /// names a consumer is sealed under kind `ic`, never `in`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumer: Option<ConsumerId>,
+    /// Absent for default and historical cards. New named cards keep the exact
+    /// serving identity and original conversation through retries and restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_owner: Option<super::owner::CallbackOwner>,
+    /// Absent on all legacy/Telegram records. New issuance is rollout-gated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lark: Option<LarkIdentity>,
+    /// New WhatsApp records retain the exact control kind. Legacy bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<WhatsappKind>,
+    /// Native Discord identity is absent from every historical card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord: Option<super::discord::Identity>,
+}
+impl Card {
+    pub(crate) fn consumed_at(&self) -> Option<&str> {
+        self.consumed
+            .as_ref()
+            .map(|click| click.occurred_at.as_str())
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WhatsappKind {
+    Button,
+    List,
+}
+impl WhatsappKind {
+    pub(super) fn prefix(self) -> &'static str {
+        match self {
+            Self::Button => "cw1b:",
+            Self::List => "cw1l:",
+        }
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LarkIdentity {
+    pub platform: Platform,
+    pub conversation: ConversationKind,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Destination {
@@ -39,6 +80,10 @@ pub struct Click {
     pub(super) event_id: String,
     pub(super) callback_id: String,
     pub(super) action: usize,
+    /// Canonical opaque option indices for one native Discord whole-set choice.
+    /// Absent on historical clicks, buttons, single-selects and other transports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) selection: Option<Vec<usize>>,
     pub(super) occurred_at: String,
 }
 pub struct PreparedCard {
@@ -60,16 +105,30 @@ pub(super) struct Action {
 pub(super) fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
-pub(super) fn decode(value: &str) -> Result<(String, usize), Error> {
+pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error> {
     if value.len() > 64 {
         return Err(Error::Denied);
     }
     let mut parts = value.split(':');
-    if parts.next() != Some("ce1") {
+    let kind = parts.next();
+    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l" | "cd1")) {
         return Err(Error::Denied);
     }
     let id =
         uuid::Uuid::parse_str(parts.next().ok_or(Error::Denied)?).map_err(|_| Error::Denied)?;
+    let revision = if kind != Some("ce1") {
+        Some(
+            parts
+                .next()
+                .ok_or(Error::Denied)?
+                .parse::<u64>()
+                .ok()
+                .filter(|v| *v > 0)
+                .ok_or(Error::Denied)?,
+        )
+    } else {
+        None
+    };
     let index = parts
         .next()
         .ok_or(Error::Denied)?
@@ -78,5 +137,5 @@ pub(super) fn decode(value: &str) -> Result<(String, usize), Error> {
     if id.get_version_num() != 4 || parts.next().is_some() {
         return Err(Error::Denied);
     }
-    Ok((id.to_string(), index))
+    Ok((id.to_string(), index, revision))
 }

@@ -28,8 +28,28 @@ pub(super) fn validate_relay_identity(
     bot_username: Option<&str>,
     bot_id: Option<&str>,
     trust_normalized: bool,
+    verify_raw_event: bool,
     pointer: &str,
 ) -> Result<(), ValidationError> {
+    if verify_raw_event
+        && (trust_normalized || !matches!(platform, Platform::Discord | Platform::Whatsapp))
+    {
+        return Err(ValidationError::new(
+            format!("{pointer}/verify_raw_event"),
+            "requires Discord or WhatsApp without trust_normalized",
+        ));
+    }
+    if verify_raw_event
+        && platform == Platform::Discord
+        && bot_id.is_some_and(|id| {
+            id.is_empty() || id.len() > 32 || !id.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        return Err(ValidationError::new(
+            format!("{pointer}/bot_id"),
+            "verified Discord requires a numeric receiving bot ID",
+        ));
+    }
     if let Some(username) = bot_username {
         let (valid, message) = match platform {
             Platform::Telegram => (

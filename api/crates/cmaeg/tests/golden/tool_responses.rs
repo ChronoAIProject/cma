@@ -4,7 +4,8 @@
 //! context with `readEventContext` and attests it with `verifyEventContext`
 //! under the channel's agent key. Both bodies are compared, byte for byte,
 //! with the responses recorded before tool calls were bound to consumers, so
-//! a legacy event never gains a `consumer` key or a changed capability.
+//! a legacy event never gains a `consumer` key. Native Telegram explicitly
+//! asserts and strips only its additive native-media capability before comparison.
 //!
 //! Updating these fixtures is a reviewed contract change; see `fixture.rs`.
 use super::{
@@ -79,8 +80,30 @@ async fn pin(app: &GoldenApp, name: &str) {
         assert!(!body.contains("\"consumer\""), "{name}: {body}");
         assert!(!body.contains("\"routing\""), "{name}: {body}");
     }
-    assert_golden(&format!("tools/{name}_read.json"), &normalize(&read));
-    assert_golden(&format!("tools/{name}_verify.json"), &normalize(&verify));
+    let retained = |body: String| {
+        if name != "native_telegram" {
+            return body;
+        }
+        let value: Value = serde_json::from_str(&body).unwrap();
+        let capability = &value["capabilities"]["native_media"];
+        assert_eq!(
+            capability,
+            &json!({"kinds":["image","file","audio","video"],"sources":["url","base64"],"max_attachments":4,"max_inline_bytes":65536})
+        );
+        // Remove only the reviewed additive field; keep all historical response bytes pinned.
+        // Value serialization sorts object keys, while the wire follows struct order.
+        let expected = ",\"native_media\":{\"kinds\":[\"image\",\"file\",\"audio\",\"video\"],\"sources\":[\"url\",\"base64\"],\"max_attachments\":4,\"max_inline_bytes\":65536}";
+        assert_eq!(body.matches(expected).count(), 1);
+        body.replacen(expected, "", 1)
+    };
+    assert_golden(
+        &format!("tools/{name}_read.json"),
+        &normalize(&retained(read)),
+    );
+    assert_golden(
+        &format!("tools/{name}_verify.json"),
+        &normalize(&retained(verify)),
+    );
 }
 
 #[tokio::test]
@@ -102,7 +125,7 @@ async fn legacy_relay_context_responses_keep_their_bytes() {
 }
 
 #[tokio::test]
-async fn legacy_native_telegram_context_responses_keep_their_bytes() {
+async fn native_telegram_context_adds_only_reviewed_media_capability() {
     let mut app = GoldenApp::start().await;
     let channel = app
         .create(

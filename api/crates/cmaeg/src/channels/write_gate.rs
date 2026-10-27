@@ -12,23 +12,38 @@
 //! sees the write, so a refused write reports exactly the error it got
 //! before readers widened and never touches the provider.
 use cmaeg_core::{
-    channel::{ChannelDefinition, Extensions, PartitionRule, RoutingPolicy, Secret, Source},
+    channel::{
+        ChannelDefinition, Extensions, PartitionRule, Platform, RoutingPolicy, Secret, Source,
+    },
     ids::ConsumerId,
     ValidationError,
 };
 
 /// The refusal of a legacy-valid write that still introduces a source extension.
 pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";
+/// Refusal of new or changed raw-event verification sources.
+pub const RELAY_RAW_VERIFICATION_DISABLED: &str = "relay_raw_verification_writes_disabled";
 /// The refusal of a write that introduces or modifies routing.
 pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 
-/// Flags that admit writes of new stored shapes. All false until the flags exist.
+/// Flags that admit writes of new stored shapes. Default off until explicitly enabled.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
+    /// Admits explicit native bot mention opt-ins after all readers support them.
+    pub native_bot_mentions: bool,
+    /// Admits verified native thread contracts after every reader supports them.
+    pub thread_contract: bool,
     /// Admits routing to several consumers; wired by #998.
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
     pub dynamic_sources: bool,
+    /// Admits Discord/WhatsApp raw verification without enabling dynamic topology.
+    pub relay_raw_verification: bool,
+    /// Exact proxy bindings are admitted only after compatible readers deploy.
+    pub lark_resources: bool,
+    /// Admits native Discord sources and credential revisions after reader rollout.
+    pub native_discord: bool,
+    pub discord_thread_history: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -50,6 +65,100 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                lark_resources: Some(_),
+                ..
+            }
+        ) && !flags.lark_resources
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/lark_resources"),
+            "lark_resource_writes_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Discord {
+                thread_history: true,
+                ..
+            }
+        ) && !flags.discord_thread_history
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/thread_history"),
+            "discord_thread_history_disabled",
+        ));
+    }
+    if next.reply.thread_contract.is_some()
+        && !flags.thread_contract
+        && !current.is_some_and(|old| old.reply.thread_contract == next.reply.thread_contract)
+    {
+        return Err(ValidationError::new(
+            "/reply/thread_contract",
+            "thread_contract_writes_disabled",
+        ));
+    }
+    let bot_sources = |d: &ChannelDefinition| {
+        d.sources
+            .iter()
+            .filter(|s| s.native_bot_mentions())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let bots = bot_sources(next);
+    if !bots.is_empty()
+        && !flags.native_bot_mentions
+        && !current.is_some_and(|old| bot_sources(old) == bots)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_bot_mentions_writes_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::NyxidRelay {
+                verify_raw_event: true,
+                ..
+            }
+        )
+    }) {
+        if !flags.relay_raw_verification
+            && !current.is_some_and(|old| SourceExtension::of(old) == SourceExtension::of(next))
+        {
+            return Err(ValidationError::new(
+                format!("/sources/{index}/verify_raw_event"),
+                RELAY_RAW_VERIFICATION_DISABLED,
+            ));
+        }
+    }
+    let discord = |d: &ChannelDefinition| {
+        (
+            d.sources
+                .iter()
+                .filter(|s| matches!(s, Source::Discord { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            d.secrets.discord_bot_token.clone(),
+        )
+    };
+    let next_discord = discord(next);
+    if (!next_discord.0.is_empty() || next_discord.1.is_some())
+        && !flags.native_discord
+        && !current.is_some_and(|old| discord(old) == next_discord)
+    {
+        return Err(ValidationError::new(
+            "/sources",
+            "native_discord_writes_disabled",
+        ));
+    }
     let extensions = Extensions::of(next);
     if extensions.legacy_compatible() {
         return Ok(());
@@ -58,7 +167,7 @@ pub(crate) fn check(
         current.is_some_and(|current| carries_through(current, next, Extension::Sources));
     let carried_routing =
         current.is_some_and(|current| carries_through(current, next, Extension::Routing));
-    let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
+    let sources = !dynamic_sources(next) || flags.dynamic_sources || carried_sources;
     let routing = !extensions.routing || flags.multi_consumer || carried_routing;
     if sources && routing {
         if carried_sources || carried_routing {
@@ -73,7 +182,7 @@ pub(crate) fn check(
     let error = if !sources {
         match next.validate_legacy() {
             Err(error) => error,
-            // Only `custom_key` makes a legacy-valid definition extended.
+            // This optional partition shape is independent from raw verification.
             Ok(()) => ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED),
         }
     } else if next.routing.is_some() {
@@ -91,6 +200,37 @@ pub(crate) fn check(
     Err(error)
 }
 
+fn dynamic_sources(definition: &ChannelDefinition) -> bool {
+    let mut legacy = definition.clone();
+    legacy
+        .sources
+        .retain(|s| !matches!(s, Source::Discord { .. }));
+    if legacy.sources.is_empty() && !definition.sources.is_empty() {
+        return definition.partition.custom_key.is_some();
+    }
+    legacy.validate_legacy_sources_and_partition().is_err()
+        || definition.partition.custom_key.is_some()
+}
+fn without_relay_verification(sources: &[Source]) -> Vec<Source> {
+    sources
+        .iter()
+        .cloned()
+        .map(|mut source| {
+            if let Source::NyxidRelay {
+                platform: Platform::Discord | Platform::Whatsapp,
+                verify_raw_event,
+                trust_normalized,
+                ..
+            } = &mut source
+            {
+                *verify_raw_event = false;
+                *trust_normalized = false;
+            }
+            source
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 enum Extension {
     Sources,
@@ -106,7 +246,20 @@ fn carries_through(
     let extensions = Extensions::of(current);
     match extension {
         Extension::Sources => {
-            extensions.sources && SourceExtension::of(current) == SourceExtension::of(next)
+            if !dynamic_sources(current) {
+                return false;
+            }
+            // A raw-only opt-in can preserve an existing broader source topology;
+            // its separate gate above still checks exact records when disabled.
+            let old_sources = without_relay_verification(&current.sources);
+            let new_sources = without_relay_verification(&next.sources);
+            SourceExtension {
+                sources: &old_sources,
+                ..SourceExtension::of(current)
+            } == SourceExtension {
+                sources: &new_sources,
+                ..SourceExtension::of(next)
+            }
         }
         Extension::Routing => {
             extensions.routing && RoutingExtension::of(current) == RoutingExtension::of(next)
@@ -141,6 +294,7 @@ struct SourceExtension<'a> {
     partition: &'a PartitionRule,
     channel_key: Option<&'a Secret>,
     telegram_bot_token: Option<&'a Secret>,
+    discord_bot_token: Option<&'a Secret>,
     telegram_webhook_secret: Option<&'a Secret>,
     hmac_secrets: &'a [(String, Secret)],
 }
@@ -153,6 +307,7 @@ impl<'a> SourceExtension<'a> {
             partition: &definition.partition,
             channel_key: secrets.channel_key.as_ref(),
             telegram_bot_token: secrets.telegram_bot_token.as_ref(),
+            discord_bot_token: secrets.discord_bot_token.as_ref(),
             telegram_webhook_secret: secrets.telegram_webhook_secret.as_ref(),
             hmac_secrets: &secrets.hmac_secrets,
         }
@@ -162,3 +317,7 @@ impl<'a> SourceExtension<'a> {
 #[cfg(test)]
 #[path = "write_gate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "raw_verification_tests.rs"]
+mod raw_verification_tests;

@@ -14,11 +14,14 @@ use super::{durability::majority_collection, schema};
 use crate::warm_pools::{PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod retirement;
+
 const MAX_TARGETS: i64 = 1000;
 
 pub(crate) struct MongoNativeWarmPools {
     targets: Collection<PoolTarget>,
     deployment: String,
+    database: Database,
 }
 
 impl MongoNativeWarmPools {
@@ -36,6 +39,7 @@ impl MongoNativeWarmPools {
         Ok(Self {
             targets,
             deployment: deployment.into(),
+            database: database.clone(),
         })
     }
 
@@ -59,7 +63,7 @@ impl MongoNativeWarmPools {
 fn fence(target: &PoolTarget) -> Document {
     doc! {"_id":&target.id,"revision":target.revision,"lease":target.lease.clone(),
     "lease_until":{"$gt":DateTime::now()},"plan.deployment":&target.plan.deployment,
-    "document_schema_version":1_i64}
+    "document_schema_version":1_i64,"retired":{"$ne":true}}
 }
 
 fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -67,6 +71,8 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         || target.revision < 1
         || target.applied_revision < 0
         || target.applied_revision > target.revision
+        || (target.retired && !target.retiring)
+        || (target.retiring && target.target_replicas != 0)
         || target.target_replicas > 1000
         || target.plan.spec.validate().is_err()
         || target.binding.as_ref().is_some_and(|binding| {
@@ -82,10 +88,37 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
 
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
+    async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
+        retirement::activate(self, id).await
+    }
+    async fn retirement_homes(
+        &self,
+        target: &PoolTarget,
+        image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        retirement::homes(self, target, image).await
+    }
+    async fn retirement_drain_homes(
+        &self,
+        target: &PoolTarget,
+        image: &str,
+    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+        retirement::drain_homes(self, target, image).await
+    }
+    async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
+        retirement::begin(self, target).await
+    }
+    async fn remove_retired(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        retirement::remove(self, target).await
+    }
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError> {
         let rows: Vec<_> = self
             .targets
-            .find(self.scope())
+            .find({
+                let mut scope = self.scope();
+                scope.insert("retired", doc! {"$ne":true});
+                scope
+            })
             .sort(doc! {"_id":1})
             .limit(MAX_TARGETS + 1)
             .await
@@ -141,7 +174,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
         body: &ResizeWarmPoolBody,
     ) -> Result<PoolTarget, WarmPoolError> {
         let mut filter = self.scope();
-        filter.extend(doc! {"_id":id,"revision":body.expected_revision as i64,"lease_until":{"$lte":DateTime::now()}});
+        filter.extend(doc! {"_id":id,"revision":body.expected_revision as i64,"retiring":{"$ne":true},"retired":{"$ne":true},"lease_until":{"$lte":DateTime::now()}});
         let update = doc! {"$set":{"target_replicas":i64::from(body.target_replicas),
         "error":mongodb::bson::Bson::Null,"reconcile_after":DateTime::from_millis(0)},"$inc":{"revision":1_i64}};
         let updated = self
@@ -163,13 +196,11 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
-        let now = DateTime::now();
-        let mut filter = self.scope();
-        filter.extend(doc! {"lease_until":{"$lte":now},"reconcile_after":{"$lte":now}});
-        self.targets.find_one_and_update(filter, doc! {"$set":{
-            "lease":uuid::Uuid::new_v4().to_string(),"lease_until":DateTime::from_millis(now.timestamp_millis()+60_000)}})
-            .sort(doc! {"reconcile_after":1,"_id":1}).return_document(ReturnDocument::After)
-            .await.map_err(|_| WarmPoolError::Unavailable)?.map(validate).transpose()
+        self.claim_matching(None).await
+    }
+
+    async fn claim_target(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.claim_matching(Some(id)).await
     }
 
     async fn bind(
@@ -208,5 +239,23 @@ impl PoolTargetStore for MongoNativeWarmPools {
                 .await,
         )
         .await
+    }
+}
+
+impl MongoNativeWarmPools {
+    async fn claim_matching(&self, id: Option<&str>) -> Result<Option<PoolTarget>, WarmPoolError> {
+        let now = DateTime::now();
+        let mut filter = self.scope();
+        filter.extend(
+            doc! {"retired":{"$ne":true},"lease_until":{"$lte":now},"reconcile_after":{"$lte":now}},
+        );
+        if let Some(id) = id {
+            filter.insert("_id", id);
+            filter.insert("retiring", doc! {"$ne":true});
+        }
+        self.targets.find_one_and_update(filter, doc! {"$set":{
+            "lease":uuid::Uuid::new_v4().to_string(),"lease_until":DateTime::from_millis(now.timestamp_millis()+60_000)}})
+            .sort(doc! {"reconcile_after":1,"_id":1}).return_document(ReturnDocument::After)
+            .await.map_err(|_| WarmPoolError::Unavailable)?.map(validate).transpose()
     }
 }

@@ -10,6 +10,9 @@ use super::*;
 #[path = "command_admission_result_tests.rs"]
 mod admission_results;
 
+#[path = "command_bootstrap_race_tests.rs"]
+mod bootstrap_races;
+
 #[path = "command_status_fence_tests.rs"]
 mod status_fences;
 
@@ -21,6 +24,9 @@ mod targeted_controls;
 
 #[path = "queued_cancellation_tests.rs"]
 mod queued_cancellations;
+
+#[path = "command_model_tests.rs"]
+mod models;
 
 fn context(subject: &str) -> CallerContext {
     CallerContext {

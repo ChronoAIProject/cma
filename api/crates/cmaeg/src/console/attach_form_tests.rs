@@ -38,6 +38,7 @@ fn a_telegram_form_becomes_a_telegram_source_with_its_secrets() {
     assert_eq!(
         admission,
         AdmissionPolicy::Scoped {
+            bot_messages: Default::default(),
             senders: IdentityAdmission::Allowlist(vec!["a".into(), "b".into(), "c".into()]),
             chats: IdentityAdmission::Open,
             groups: GroupAdmission::Mention,

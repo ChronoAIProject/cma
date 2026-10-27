@@ -1,6 +1,134 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
+test('LOCAL composer settings and message feedback remain usable across screen sizes and reload', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  const votes = new Map<string, 'up' | 'down'>();
+  await page.route('**/api/v1/agents/agt_contract/message-feedback*', (route) =>
+    route.fulfill({
+      json: {
+        items: [...votes].map(([message_id, vote]) => ({ message_id, vote })),
+        next: null,
+      },
+    }),
+  );
+  await page.route('**/api/v1/agents/agt_contract/messages/*/feedback', (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2)!);
+    const { vote } = route.request().postDataJSON() as { vote: 'up' | 'down' | null };
+    if (vote === null) votes.delete(id);
+    else votes.set(id, vote);
+    return route.fulfill({ json: { message_id: id, vote } });
+  });
+  await page.route('**/api/v1/agents/agt_contract/models', (route) =>
+    route.fulfill({ json: { models: [{ id: 'gpt-6', label: 'GPT-6', available: true }] } }),
+  );
+  await page.route('**/api/v1/agents/agt_contract/transcript', (route) =>
+    route.fulfill({
+      json: {
+        agent_id: 'agt_contract',
+        through_seq: 4,
+        turns: [
+          {
+            turn_sequence: 1,
+            started_at: '2026-10-20T16:30:00Z',
+            owner_message: 'Review the implementation.',
+            agent_messages: ['The implementation preserves the original Agent conversation.'],
+            messages: [
+              {
+                sequence: 2,
+                role: 'user',
+                content: 'Review the implementation.',
+                appended_at: '2026-10-20T16:30:00Z',
+              },
+              {
+                sequence: 3,
+                role: 'assistant',
+                content: 'The implementation preserves the original Agent conversation.',
+                appended_at: '2026-10-20T16:31:00Z',
+              },
+            ],
+            outcome: { type: 'completed', at: '2026-10-20T16:31:01Z' },
+          },
+        ],
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/agents/agt_contract');
+  const composer = page.getByRole('form', { name: 'Message Agent' });
+  await expect(composer.getByRole('button', { name: /^Model and reasoning effort/ })).toHaveText(
+    'GPT-6 High',
+  );
+  const reply = page.getByRole('article', { name: 'Chrono Agent' });
+  await expect(reply.getByText('21 Oct 2026, 00:31 SGT')).toBeVisible();
+  await page.getByRole('textbox', { name: 'Message' }).fill('Preserve my unsent draft');
+  const actions = reply.getByRole('group', { name: 'Message actions' });
+  await expect
+    .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
+    .toBe('0');
+  await reply.hover();
+  await expect
+    .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
+    .toBe('1');
+  await reply.getByRole('button', { name: 'Upvote message' }).click();
+  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await reply.getByRole('button', { name: 'Downvote message' }).click();
+  await expect(reply.getByRole('button', { name: 'Upvote message' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(
+      composer.getByRole('button', { name: 'Permission mode', exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        composer.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.left >= 0 && bounds.right <= innerWidth && bounds.width > 0;
+        }),
+      )
+      .toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+    expect(await composer.evaluate((form) => form.scrollWidth <= form.clientWidth + 1)).toBe(true);
+    await expect(page.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      'Preserve my unsent draft',
+    );
+    await page.screenshot({
+      path: info.outputPath(`composer-feedback-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await actions.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
+    '0s',
+  );
+  await page.reload();
+  await expect(reply.getByRole('button', { name: 'Downvote message' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 async function capture(page: Page, info: TestInfo, state: string) {
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
@@ -64,9 +192,13 @@ for (const target of ['new', 'contextual'] as const) {
     );
     const open = async () => {
       await page.goto('/sandboxes/sbx_route');
-      if (target === 'contextual')
-        await page.getByRole('button', { name: 'New agent in this Sandbox' }).click();
-      else {
+      if (target === 'contextual') {
+        await page
+          .locator('.sandbox-page')
+          .getByRole('button', { name: 'More actions', exact: true })
+          .click();
+        await page.getByRole('menuitem', { name: 'New agent', exact: true }).click();
+      } else {
         await page
           .locator('.sidebar')
           .getByRole('button', { name: 'New agent', exact: true })
@@ -77,6 +209,8 @@ for (const target of ['new', 'contextual'] as const) {
     await open();
     const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
     await expect(dialog.getByLabel('GitHub repository (optional)')).toBeVisible();
+    await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
+    await expect(dialog.getByText('Where it works', { exact: true })).toHaveCount(0);
     expect(await dialog.locator('input').count()).toBe(1);
     await dialog.getByLabel('GitHub repository (optional)').fill('https://github.com/org/research');
     await capture(page, info, `${target}-creation`);
@@ -148,7 +282,7 @@ test('LOCAL access approval survives reload and OAuth readiness still waits for 
     dialog.getByRole('checkbox', { name: 'ornn-api Required', exact: true }),
   ).toBeChecked();
   await capture(page, info, 'access-request');
-  await dialog.getByRole('button', { name: 'Approve and connect' }).click();
+  await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(dialog.getByRole('button', { name: 'Retry access decision' })).toBeVisible();
   await page.reload();
   await dialog.getByRole('button', { name: 'Retry access decision' }).click();
@@ -170,7 +304,7 @@ test('LOCAL access approval survives reload and OAuth readiness still waits for 
   expect(boundary.errors).toEqual([]);
 });
 
-test('LOCAL Agent detail settings apply only after a confirmed runtime response and replay an uncertain command', async ({
+test('LOCAL composer settings apply only after a confirmed runtime response and replay an uncertain command', async ({
   page,
   baseURL,
 }) => {
@@ -201,16 +335,29 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
     });
   });
   await page.goto('/agents/agt_contract');
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
-  const details = page.getByRole('complementary', { name: 'Agent details' });
-  await expect(details.getByLabel('Model', { exact: true })).toHaveText('GPT-6');
-  await details.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Medium', exact: true }).click();
+  const details = page.getByRole('form', { name: 'Message Agent' });
+  const chip = details.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  const effort = card.getByRole('slider', { name: 'Reasoning effort' });
+  await expect(effort).toBeFocused();
+  await effort.press('ArrowLeft');
+  await expect(effort).toHaveAttribute('aria-valuetext', 'Medium');
+  await effort.press('Escape');
+  await expect(card).toHaveCount(0);
+  await expect(chip).toHaveText('GPT-6 Medium');
   await details.getByRole('button', { name: 'Permission mode', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Guarded', exact: true }).click();
   await details.getByRole('button', { name: 'Apply settings', exact: true }).click();
   await expect(details.getByRole('button', { name: 'Retry settings update' })).toBeEnabled();
-  await expect(details.getByLabel('Model', { exact: true })).toBeDisabled();
+  await expect(
+    details.getByRole('button', { name: 'Permission mode', exact: true }),
+  ).toBeDisabled();
+  await chip.click();
+  await expect(card.getByRole('button', { name: 'Model', exact: true })).toBeDisabled();
+  await expect(effort).toHaveAttribute('aria-disabled', 'true');
+  await effort.press('Escape');
   await expect(details.getByText('Settings applied to this Agent.')).toHaveCount(0);
   await details.getByRole('button', { name: 'Retry settings update' }).click();
   await expect(details.getByText('Settings applied to this Agent.')).toBeVisible();
@@ -227,7 +374,7 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
   expect(boundary.errors).toEqual([]);
 });
 
-test('LOCAL Details uses model and skill catalogs in bounded responsive containers and confirms stop progress', async ({
+test('LOCAL composer and Details use model and skill catalogs in responsive containers and confirms stop progress', async ({
   page,
   baseURL,
 }, info) => {
@@ -287,35 +434,51 @@ test('LOCAL Details uses model and skill catalogs in bounded responsive containe
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
-  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  await page.getByRole('button', { name: 'More Agent actions' }).click();
+  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
   const details = page.getByRole('complementary', { name: 'Agent details' });
-  await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveText('GPT-6');
-  await details.getByRole('button', { name: 'Model', exact: true }).click();
+  const composer = page.getByRole('form', { name: 'Message Agent' });
+  await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
+  const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  await card.getByRole('button', { name: 'Model', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Fast model', exact: true }).click();
-  await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveText(
-    'Fast model',
-  );
+  await expect(card.getByRole('button', { name: 'Model', exact: true })).toHaveText('Fast model');
+  await expect(chip).toHaveText('Fast model High');
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
+  // Service access is read-only in Details; the Sandbox's Access tab edits it.
   await expect(details.getByRole('list', { name: 'Services' }).getByRole('listitem')).toHaveCount(
-    108,
+    3,
   );
+  await expect(details.getByRole('link', { name: 'Manage on Sandbox' })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_route?tab=access',
+  );
+  // The catalogue is management detail behind a closed disclosure.
+  await expect(details.getByRole('button', { name: 'Install Skill 0', exact: true })).toBeHidden();
+  await details.getByText('Add skills', { exact: true }).click();
   await expect(
     details.getByRole('list', { name: 'Available Ornn skills' }).getByRole('listitem'),
   ).toHaveCount(20);
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(details).toBeVisible();
-    await details.getByRole('button', { name: 'Model', exact: true }).scrollIntoViewIfNeeded();
-    for (const name of ['Services', 'Available Ornn skills']) {
-      const list = details.getByRole('list', { name, exact: true });
-      expect(
-        await list.evaluate(
-          (el) =>
-            el.clientHeight <= 320 &&
-            el.scrollHeight > el.clientHeight &&
-            el.scrollWidth <= el.clientWidth + 1,
-        ),
-      ).toBe(true);
-    }
+    await details.getByRole('heading', { name: 'Details', exact: true }).scrollIntoViewIfNeeded();
+    // The panel is the one scroll region; the catalogue grows inside it.
+    const list = details.getByRole('list', { name: 'Available Ornn skills', exact: true });
+    expect(
+      await list.evaluate(
+        (el) => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1,
+      ),
+    ).toBe(true);
+    expect(
+      await details
+        .locator('.agent-details__scroll')
+        .evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
     expect(await details.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.screenshot({
       path: info.outputPath(`details-catalogs-${width}.png`),

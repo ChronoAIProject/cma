@@ -12,6 +12,9 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 pub const CMAEG_NON_HUMAN_PROVIDERS: &str = "CMAEG_NON_HUMAN_PROVIDERS";
+pub const CMAEG_ROUTED_CHANNEL_RECORDS: &str = "CMAEG_ROUTED_CHANNEL_RECORDS";
+pub const CMAEG_ROUTED_RECOVERY_ENABLED: &str = "CMAEG_ROUTED_RECOVERY_ENABLED";
+pub const CMAEG_ROUTED_ADMISSION_ENABLED: &str = "CMAEG_ROUTED_ADMISSION_ENABLED";
 
 /// The one provider whose agents are known to answer custom events and
 /// hand-offs.
@@ -24,6 +27,12 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 /// registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutingConfig {
+    /// Keep enabled while any durably admitted target still needs recovery.
+    pub recovery_enabled: bool,
+    /// Pauses new routed admissions without abandoning accepted work or retries.
+    pub admission_enabled: bool,
+    /// Explicit rollout selection; an empty set preserves all legacy ingress.
+    pub execution_records: BTreeSet<String>,
     /// Provider slugs whose agents answer non-human actors (custom events,
     /// hand-offs) by default. A consumer's `non_human` field overrides this
     /// per consumer.
@@ -42,9 +51,61 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
             )))
         }
     };
-    Ok(RoutingConfig {
+    let config = RoutingConfig {
+        recovery_enabled: write_flag(CMAEG_ROUTED_RECOVERY_ENABLED)?,
+        admission_enabled: write_flag(CMAEG_ROUTED_ADMISSION_ENABLED)?,
+        execution_records: execution_records(
+            env::var(CMAEG_ROUTED_CHANNEL_RECORDS)
+                .map(Some)
+                .or_else(|error| match error {
+                    env::VarError::NotPresent => Ok(None),
+                    _ => Err(ConfigError::Routing(format!(
+                        "{CMAEG_ROUTED_CHANNEL_RECORDS} must be valid UTF-8"
+                    ))),
+                })?
+                .as_deref(),
+        )?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
-    })
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+impl RoutingConfig {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        if !self.recovery_enabled && (self.admission_enabled || !self.execution_records.is_empty())
+        {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_RECOVERY_ENABLED} must be enabled before selecting records or admitting routed events"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn execution_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
+    let mut records = BTreeSet::new();
+    for value in value.unwrap_or_default().split(',').map(str::trim) {
+        if value.is_empty() {
+            continue;
+        }
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || cmaeg_core::ids::RecordId::new(value).is_err()
+        {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_CHANNEL_RECORDS} must contain explicit record IDs"
+            )));
+        }
+        records.insert(value.to_owned());
+        if records.len() > 64 {
+            return Err(ConfigError::Routing(format!(
+                "{CMAEG_ROUTED_CHANNEL_RECORDS} allows at most 64 records"
+            )));
+        }
+    }
+    Ok(records)
 }
 
 /// Read the non-human provider set.
@@ -102,10 +163,59 @@ fn default_set(registry: &ProviderRegistry) -> BTreeSet<String> {
     }
 }
 
+/// Reader-first authoring gate; an unset value never enables a new stored shape.
+pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
+    match std::env::var(name).as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => Err(super::ConfigError::InvalidManagement {
+            detail: format!("{name} must be true or false"),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn admission_requires_recovery_but_recovery_can_continue_after_admission_stops() {
+        let mut config = RoutingConfig::default();
+        assert!(config.validate().is_ok());
+        config.admission_enabled = true;
+        assert!(config.validate().is_err());
+        config.admission_enabled = false;
+        config.execution_records.insert("retained-channel".into());
+        assert!(config.validate().is_err());
+        config.recovery_enabled = true;
+        assert!(config.validate().is_ok());
+        config.admission_enabled = true;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn execution_selection_defaults_off_and_rejects_broad_or_invalid_selection() {
+        assert!(execution_records(None).unwrap().is_empty());
+        assert!(execution_records(Some(" , ")).unwrap().is_empty());
+        let record = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(
+            execution_records(Some(&format!(" {record},{record} "))).unwrap(),
+            BTreeSet::from([record.to_owned()])
+        );
+        assert!(execution_records(Some("*")).is_err());
+        assert!(execution_records(Some("invalid/record")).is_err());
+        let records = (0..65)
+            .map(|n| format!("11111111-1111-4111-8111-{n:012}"))
+            .collect::<Vec<_>>();
+        assert!(execution_records(Some(&records.join(","))).is_err());
+        assert_eq!(
+            execution_records(Some(&records[..64].join(",")))
+                .unwrap()
+                .len(),
+            64
+        );
+    }
 
     fn registry(slugs: &[&str]) -> ProviderRegistry {
         let entries: Vec<_> = slugs

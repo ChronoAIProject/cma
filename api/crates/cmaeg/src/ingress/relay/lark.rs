@@ -25,6 +25,7 @@ const INVALID: VerificationError = VerificationError("lark_event_invalid");
 pub fn observe(
     payload: &CallbackPayload,
     bot_id: Option<&str>,
+    allow_bots: bool,
     media_enabled: bool,
 ) -> Result<Observation, VerificationError> {
     let Some(raw) = payload
@@ -34,6 +35,9 @@ pub fn observe(
     else {
         return Ok(Observation::Refused(Refusal::UnknownSender));
     };
+    if raw.pointer("/header/event_type").and_then(Value::as_str) == Some("card.action.trigger") {
+        return super::lark_callback::observe(payload, raw);
+    }
     if raw.pointer("/header/event_type").and_then(Value::as_str) != Some(MESSAGE_EVENT) {
         return Ok(Observation::Refused(Refusal::SystemEvent));
     }
@@ -47,13 +51,16 @@ pub fn observe(
         return Err(VerificationError("lark_identity_mismatch"));
     }
     identifier(message.get("message_id"))?.ok_or(INVALID)?;
-    match sender.get("sender_type").and_then(Value::as_str) {
-        Some("user") => {}
+    let actor = match sender.get("sender_type").and_then(Value::as_str) {
+        Some("user") => ActorKind::Human,
+        Some("app") if allow_bots => ActorKind::Bot,
         Some("app") => return Ok(Observation::Refused(Refusal::BotSender)),
         _ => return Ok(Observation::Refused(Refusal::UnknownSender)),
-    }
+    };
     // A human sender is always bound to the open_id NyxID reports for it.
-    if open_id.is_none() {
+    if open_id.is_none()
+        || (actor == ActorKind::Bot && !open_id.is_some_and(|id| id.starts_with("ou_")))
+    {
         return Err(VerificationError("lark_identity_mismatch"));
     }
     // A post resolves its mentions while it is flattened, but a malformed list
@@ -74,11 +81,14 @@ pub fn observe(
         _ => return Ok(Observation::Refused(Refusal::SystemEvent)),
     };
     let mentions = mentions?;
-    let mentioned = match bot_id {
-        Some(bot_id) => mentions
-            .iter()
-            .any(|mention| mention.pointer("/id/open_id").and_then(Value::as_str) == Some(bot_id)),
-        None => !mentions.is_empty(),
+    let mentioned = if bot_id.is_some() {
+        Some(crate::ingress::native_mentions::lark(message, bot_id).bot)
+    } else if actor == ActorKind::Human {
+        // Preserve legacy human-only sources. Bot opt-in validation requires
+        // a pinned open_id and can never use this compatibility path.
+        Some(!mentions.is_empty())
+    } else {
+        None
     };
     // The parent's author is not in the event, so a reply is not evidence either way.
     let replied_to_bot = match identifier(message.get("parent_id"))? {
@@ -86,13 +96,14 @@ pub fn observe(
         None => Some(false),
     };
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: None,
         conversation,
         thread_id: identifier(message.get("thread_id"))?.map(str::to_owned),
-        mentioned: Some(mentioned),
+        mentioned,
         replied_to_bot,
-        actor: ActorKind::Human,
+        actor,
         text: content.text,
         attachments: content.attachments,
         album_id: None,
@@ -118,7 +129,7 @@ fn content(
 ) -> Result<Content, Refusal> {
     match message.get("message_type").and_then(Value::as_str) {
         Some("text") => text(payload, message).map(|()| Content::default()),
-        Some(message_type @ ("image" | "file" | "audio" | "media")) if media_enabled => {
+        Some(message_type @ ("image" | "file" | "audio" | "media" | "video")) if media_enabled => {
             let attachments = media(payload, message, message_type)?;
             Ok(Content {
                 text: None,
@@ -127,7 +138,7 @@ fn content(
         }
         Some("post") if media_enabled => post(payload, message, mentions, bot_id),
         // NyxID offers no download for a sticker, so it stays refused with media on.
-        Some("image" | "file" | "audio" | "media" | "sticker") => {
+        Some("image" | "file" | "audio" | "media" | "video" | "sticker") => {
             Err(Refusal::AttachmentUnsupported)
         }
         _ => Err(Refusal::ContentUnsupported),
@@ -157,7 +168,7 @@ fn text(payload: &CallbackPayload, message: &Value) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// An image, file, audio or media message. NyxID lists the message's one
+/// An image, file, audio, media or video message. NyxID lists the message's one
 /// resource as an envelope attachment, so the presence refusal for text does
 /// not apply; its `content.type` must agree and it carries no text.
 fn media(
@@ -231,4 +242,53 @@ fn identifier(value: Option<&Value>) -> Result<Option<&str>, VerificationError> 
         }
         Some(_) => Err(INVALID),
     }
+}
+
+/// Called only after `observe` authenticated and correlated the raw message.
+/// Missing ancestry remains unresolved; a parent is not assumed to be a root.
+pub(crate) fn thread_facts(
+    payload: &CallbackPayload,
+    bot_id: &str,
+) -> Result<Option<cmaeg_core::thread::ThreadFacts>, VerificationError> {
+    use cmaeg_core::thread::{ThreadAddress, ThreadFacts, ThreadKind};
+    let message = payload
+        .raw_platform_data
+        .as_ref()
+        .and_then(|raw| raw.pointer("/event/message"))
+        .ok_or(INVALID)?;
+    if message["chat_type"] != "group"
+        || payload
+            .raw_platform_data
+            .as_ref()
+            .and_then(|raw| raw.pointer("/event/sender/sender_type"))
+            .and_then(Value::as_str)
+            != Some("user")
+    {
+        return Ok(None);
+    }
+    let message_id = identifier(message.get("message_id"))?
+        .ok_or(INVALID)?
+        .to_owned();
+    let parent = identifier(message.get("parent_id"))?.map(str::to_owned);
+    let native = identifier(message.get("thread_id"))?.map(str::to_owned);
+    let root = identifier(message.get("root_id"))?
+        .map(str::to_owned)
+        .or_else(|| (parent.is_none() && native.is_none()).then(|| message_id.clone()));
+    let mentions = crate::ingress::native_mentions::lark(message, Some(bot_id));
+    Ok(Some(ThreadFacts {
+        version: 1,
+        kind: ThreadKind::Native,
+        chat_id: payload.conversation.platform_id.clone(),
+        message_id,
+        root_id: root,
+        native_thread_id: native,
+        parent_message_id: parent,
+        sender_kind: ActorKind::Human,
+        address: if mentions.bot {
+            ThreadAddress::Mention
+        } else {
+            ThreadAddress::NotAddressed
+        },
+        mentions_others: mentions.other && !mentions.bot && !mentions.everyone,
+    }))
 }

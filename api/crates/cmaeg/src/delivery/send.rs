@@ -12,7 +12,7 @@ use crate::{
     turns::observer::{default_consumer, ActivityObserver, DeliveryStep, Destination},
 };
 use cmaeg_core::{
-    channel::{ChannelDefinition, Platform, Source},
+    channel::Platform,
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{EventRefPayload, MasterKeyRing, MessageRefPayload, ReplyAddress},
@@ -47,16 +47,63 @@ pub(super) struct Sender {
     pub observer: Arc<dyn ActivityObserver>,
 }
 impl Sender {
-    /// Report a legacy delivery: the default consumer, to the event's origin.
-    pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
+    /// Report the consumer bound to this event reference, at its origin.
+    pub async fn observe(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+    ) {
+        self.observe_at(event, step, outcome, Destination::Origin, None)
+            .await;
+    }
+    pub async fn observe_at(
+        &self,
+        event: &EventRefPayload,
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+        destination: Destination,
+        default: Option<&super::destination::DefaultDestination>,
+    ) {
         self.observer.delivered(
             &event.record_id,
             &event.event_id,
-            default_consumer(),
+            event
+                .consumer
+                .as_ref()
+                .unwrap_or_else(|| default_consumer()),
             step,
             outcome,
-            Destination::Origin,
+            destination,
         );
+        if default.is_none()
+            && matches!(
+                event.reply,
+                ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
+            )
+        {
+            // Custom delivery reports its actual local queue and each webhook
+            // leg separately; the compatibility aggregate is not another send.
+            return;
+        }
+        self.observer
+            .checkpoint(
+                &event.record_id,
+                &event.event_id,
+                crate::activity::facts::delivery(
+                    event
+                        .consumer
+                        .as_ref()
+                        .unwrap_or_else(|| default_consumer())
+                        .as_str(),
+                    step,
+                    outcome,
+                    destination,
+                    &event.reply,
+                    default,
+                ),
+            )
+            .await;
     }
 
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(
@@ -73,6 +120,7 @@ impl Sender {
             match &event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
                 ReplyAddress::Telegram { .. } => "telegram",
+                ReplyAddress::Discord { .. } => "discord",
                 _ => "custom",
             },
         );
@@ -86,6 +134,61 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if matches!(event.reply, ReplyAddress::Discord { .. }) {
+            return self.discord_reply(ctx, event, message).await;
+        }
+        if !message.native_attachments.is_empty()
+            && matches!(event.reply, ReplyAddress::Telegram { .. })
+        {
+            return self.native_media_reply(ctx, event, message).await;
+        }
+        if message.whatsapp_template.is_some() {
+            if !self.relay.whatsapp_templates_enabled()
+                || message.validate().is_err()
+                || !matches!(
+                    event.reply,
+                    ReplyAddress::NyxidRelay {
+                        platform: Platform::Whatsapp,
+                        ..
+                    }
+                )
+            {
+                return (unsupported(), SendEffects::default());
+            }
+            return self.complete_reply(ctx, event, message, false).await;
+        }
+        if !message.native_attachments.is_empty()
+            && (!self.relay.native_media_enabled()
+                || !matches!(
+                    event.reply,
+                    ReplyAddress::NyxidRelay {
+                        platform: Platform::Telegram
+                            | Platform::Lark
+                            | Platform::Feishu
+                            | Platform::Discord
+                            | Platform::Whatsapp,
+                        ..
+                    }
+                )
+                || crate::interactions::has_controls(message))
+        {
+            return (unsupported(), SendEffects::default());
+        }
+        if message.thread_reply
+            && !matches!(
+                event.reply,
+                ReplyAddress::NyxidRelay {
+                    thread_reply: true,
+                    ..
+                }
+            )
+        {
+            let mut result = unsupported();
+            result.delivery = DeliveryOutcome::Rejected {
+                reason: "thread_target_unavailable".into(),
+            };
+            return (result, SendEffects::default());
+        }
         if matches!(event.reply, ReplyAddress::Telegram { .. }) {
             return self.native_reply(ctx, event, message).await;
         }
@@ -96,11 +199,29 @@ impl Sender {
                 .await;
             return (result, SendEffects::default());
         };
-        // Native controls and their updates are proven only for Telegram; every
-        // other platform receives text through NyxID's generic relay reply.
+        let native_controls = (self.relay.lark_cards_enabled()
+            && crate::interactions::lark::supported(*platform)
+            && crate::interactions::lark::requested(message))
+            || (*platform == Platform::Whatsapp
+                && self.relay.whatsapp_interactions_enabled()
+                && crate::interactions::whatsapp::requested(message));
+        if native_controls {
+            match self.relay_control_context(ctx, event).await {
+                Ok(Some(context)) => {
+                    return self
+                        .interactive_reply(ctx, event, message, Some(context))
+                        .await;
+                }
+                Ok(None) => {} // Preserve legacy text for contexts without native controls.
+                Err(_) => return (unsupported(), SendEffects::default()),
+            }
+        }
         let interactive = *platform == Platform::Telegram && self.relay.interactions.is_some();
         if interactive && crate::interactions::has_controls(message) {
-            return self.interactive_reply(ctx, event, message).await;
+            return self.interactive_reply(ctx, event, message, None).await;
+        }
+        if self.relay.complete_replies() || !message.native_attachments.is_empty() {
+            return self.complete_reply(ctx, event, message, interactive).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.
         let mut first_send_done = ctx.first_send_done;
@@ -133,6 +254,10 @@ impl Sender {
                 return (result, SendEffects { first_send_done });
             }
         };
+        let mut address = event.reply.clone();
+        if let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut address {
+            *thread_reply = message.thread_reply;
+        }
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
@@ -176,7 +301,10 @@ impl Sender {
                 break;
             };
             first_send_done = true;
-            let mut outcome = self.relay.send(&event.reply, credential, &part.text).await;
+            let (mut outcome, mut outbound) = self
+                .relay
+                .send_rich(&address, credential, &part.text, None)
+                .await;
             drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
@@ -189,15 +317,18 @@ impl Sender {
                     }
                 };
                 // The single-use credential is never presented twice, even after a 429.
-                outcome = match ctx.channel.definition.secrets.channel_key.as_ref() {
+                (outcome, outbound) = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
                         self.relay
-                            .send(&event.reply, Credential::ChannelKey(key), &part.text)
+                            .send_rich(&address, Credential::ChannelKey(key), &part.text, None)
                             .await
                     }
-                    None => DeliveryOutcome::Rejected {
-                        reason: "no_credential".into(),
-                    },
+                    None => (
+                        DeliveryOutcome::Rejected {
+                            reason: "no_credential".into(),
+                        },
+                        None,
+                    ),
                 };
                 drop(retry);
                 if let DeliveryOutcome::RateLimited { retry_after } = outcome {
@@ -219,11 +350,23 @@ impl Sender {
                     first_platform_id = Some(id.clone());
                     result.message_ref = MessageRef::seal(
                         &MessageRefPayload {
+                            discord_message: None,
+                            telegram_effect: None,
                             channel_id: event.channel_id.clone(),
                             event_id: event.event_id.clone(),
                             platform_message_id: id.clone(),
                             route_id: route_id.clone(),
                             interaction_record_id: None,
+                            relay_message: (self.relay.text_edits_enabled() && parts.len() == 1)
+                                .then(|| {
+                                    super::edit::destination(
+                                        *platform,
+                                        message,
+                                        &part.text,
+                                        outbound.clone(),
+                                    )
+                                })
+                                .flatten(),
                             consumer: event.consumer.clone(),
                         },
                         &self.keys,
@@ -249,7 +392,7 @@ impl Sender {
         }
         (result, SendEffects { first_send_done })
     }
-    fn claim_token(&self, token: &str, expires: i64) -> bool {
+    pub(super) fn claim_token(&self, token: &str, expires: i64) -> bool {
         let digest = Sha256::digest(token.as_bytes()).into();
         let mut consumed = self.consumed.lock().unwrap();
         consumed.retain(|_, expiry| *expiry > now());
@@ -276,213 +419,5 @@ pub(super) fn unsupported() -> IntentReceipt {
             blocks: vec![],
         },
         delivery: DeliveryOutcome::Unsupported,
-    }
-}
-
-/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
-/// prepare cards, so the route's own relay must be a Telegram one. The message
-/// reference carries the relay route its card was sent on (`route_id`, copied
-/// from the sealed reply address when the card was bound), so no reply address
-/// is needed. With at most one relay the channel-level check is kept verbatim;
-/// the two agree on every legacy definition, whose only relay is the route's.
-fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
-    let relays = definition
-        .sources
-        .iter()
-        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
-        .count();
-    if relays > 1 {
-        matches!(
-            definition.relay_source_for_route(route_id),
-            Some(Source::NyxidRelay {
-                platform: Platform::Telegram,
-                ..
-            })
-        )
-    } else {
-        definition.relay_platform() == Some(Platform::Telegram)
-    }
-}
-
-impl Sender {
-    async fn interactive_reply(
-        &self,
-        ctx: &SendContext<'_>,
-        event: &EventRefPayload,
-        message: &OutboundMessage,
-    ) -> (IntentReceipt, SendEffects) {
-        let mut effects = SendEffects {
-            first_send_done: ctx.first_send_done,
-        };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
-        let rejected = |reason: &str| IntentReceipt {
-            message_ref: None,
-            rendering: rendering.clone(),
-            delivery: DeliveryOutcome::Rejected {
-                reason: reason.into(),
-            },
-        };
-        if parts.len() != 1 {
-            return (rejected("interactive_message_must_fit_one_part"), effects);
-        }
-        let Some(key) = ctx.channel.definition.secrets.channel_key.as_ref() else {
-            return (rejected("no_channel_credential"), effects);
-        };
-        let Some(store) = &self.relay.interactions else {
-            return (rejected("interactions_unavailable"), effects);
-        };
-        let cmaeg_core::seal::ReplyAddress::NyxidRelay { route_id, .. } = &event.reply else {
-            return (unsupported(), effects);
-        };
-        let _ticket = match ctx.gate.enter_route(route_id).await {
-            Ok(ticket) => ticket,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        // Commit point (Amendment R3 §R3.1): the durable card write is this
-        // send's first side effect.
-        if !ctx.gate.commit() {
-            return (refused(rendering, expired()), effects);
-        }
-        let mut prepared = match store.prepare(ctx.channel, event, message).await {
-            Ok(p) => p,
-            Err(_) => return (rejected("interaction_state_unavailable"), effects),
-        };
-        let Some(_slot) = self.pacing.acquire(route_id).await else {
-            return (rejected("pacing_capacity"), effects);
-        };
-        let _permit = match ctx.gate.attempt().await {
-            Ok(permit) => permit,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        effects.first_send_done = true;
-        let (delivery, outbound) = self
-            .relay
-            .send_rich(
-                &event.reply,
-                Credential::ChannelKey(key),
-                &parts[0].text,
-                Some(&prepared.markup),
-            )
-            .await;
-        let mut result = IntentReceipt {
-            message_ref: None,
-            rendering,
-            delivery,
-        };
-        if let (
-            DeliveryOutcome::Confirmed {
-                platform_message_id: Some(platform_id),
-            },
-            Some(outbound_id),
-        ) = (&result.delivery, outbound)
-        {
-            match store
-                .bind(
-                    &mut prepared,
-                    crate::interactions::Destination {
-                        outbound_id,
-                        platform_id: platform_id.clone(),
-                    },
-                )
-                .await
-            {
-                Ok(reference) => result.message_ref = Some(reference),
-                Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
-            }
-        }
-        (result, effects)
-    }
-    pub async fn update(
-        &self,
-        ctx: &SendContext<'_>,
-        reference: &MessageRefPayload,
-        message: &OutboundMessage,
-    ) -> (IntentReceipt, SendEffects) {
-        // A replacement answers no event, so it never marks a first send.
-        let effects = SendEffects::default();
-        let channel = ctx.channel;
-        if reference.route_id.starts_with("telegram:")
-            && channel
-                .definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-        {
-            return self.native_update(ctx, reference, message).await;
-        }
-        let Some(store) = &self.relay.interactions else {
-            return (unsupported(), effects);
-        };
-        if reference.interaction_record_id.is_none()
-            || !replaces_telegram_cards(&channel.definition, &reference.route_id)
-        {
-            return (unsupported(), effects);
-        }
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
-        if parts.len() != 1 {
-            return (
-                IntentReceipt {
-                    message_ref: None,
-                    rendering,
-                    delivery: DeliveryOutcome::Rejected {
-                        reason: "interactive_message_must_fit_one_part".into(),
-                    },
-                },
-                effects,
-            );
-        }
-        let Some(key) = channel.definition.secrets.channel_key.as_ref() else {
-            return (unsupported(), effects);
-        };
-        let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
-            Ok(ticket) => ticket,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        // Commit point (Amendment R3 §R3.1): fencing the old card is this
-        // send's first side effect.
-        if !ctx.gate.commit() {
-            return (refused(rendering, expired()), effects);
-        }
-        let mut prepared = match store.replacement(channel, reference, message).await {
-            Ok(p) => p,
-            Err(_) => {
-                return (
-                    IntentReceipt {
-                        message_ref: None,
-                        rendering,
-                        delivery: DeliveryOutcome::Rejected {
-                            reason: "interaction_expired_or_invalid".into(),
-                        },
-                    },
-                    effects,
-                )
-            }
-        };
-        let Some(destination) = prepared.card.destination.clone() else {
-            return (unsupported(), effects);
-        };
-        let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
-            return (unsupported(), effects);
-        };
-        let _permit = match ctx.gate.attempt().await {
-            Ok(permit) => permit,
-            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
-        };
-        let delivery = self
-            .relay
-            .edit(key, &destination, &parts[0].text, &prepared.markup)
-            .await;
-        let mut result = IntentReceipt {
-            message_ref: None,
-            rendering,
-            delivery,
-        };
-        if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
-            match store.bind(&mut prepared, destination).await {
-                Ok(reference) => result.message_ref = Some(reference),
-                Err(_) => result.delivery = unknown("interaction_receipt_unconfirmed"),
-            }
-        }
-        (result, effects)
     }
 }

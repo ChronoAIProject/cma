@@ -1,4 +1,5 @@
 .agent-surface {
+  container: agent-conversation / inline-size;
   flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -8,53 +9,6 @@
   min-height: 0;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-base);
-}
-
-.agent-header {
-  grid-row: 1;
-  padding: 16px 20px 14px;
-  background: var(--dsw-alias-bg-base);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.agent-header__lineage {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  margin-bottom: 5px;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.agent-header__lineage a {
-  color: var(--dsw-alias-label-secondary);
-  text-decoration: none;
-}
-
-.agent-header__lineage a:hover {
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.agent-header__title,
-.agent-header__title > div,
-.agent-header__status {
-  display: flex;
-  align-items: center;
-}
-
-.agent-header__source {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-}
-
-.agent-header__source a {
-  color: var(--dsw-alias-state-business-primary);
 }
 
 .agent-quick-messages {
@@ -108,49 +62,27 @@
   }
 }
 
-.agent-header__title {
-  gap: 16px;
-  justify-content: space-between;
-}
-
-.agent-header__title > div {
-  gap: 10px;
-  min-width: 0;
-}
-
-.agent-header h1 {
-  overflow: hidden;
-  font-size: 20px;
-  line-height: 26px;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-header__status {
-  gap: 6px;
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-}
-
 .agent-surface__conversation {
   grid-row: 3;
   min-height: 0;
   overflow-y: auto;
 }
 
+/*
+ * One centred reading axis of at most 768px, shared with the composer, so a reply
+ * keeps a comfortable measure on any screen. Pixels, not rem: the text-size
+ * preference scales the text, not the measure.
+ */
 .agent-surface__conversation > section {
-  width: min(100%, 748px);
-  padding: 24px;
+  width: 100%;
+  padding: 24px max(24px, calc((100% - 768px) / 2));
   margin: 0 auto;
 }
 
 .message-stream {
   width: 100%;
-  max-width: var(--read-column);
   min-height: 100%;
-  padding: 28px 24px 40px;
+  padding: 28px max(24px, calc((100% - 768px) / 2)) 40px;
   margin: 0 auto;
 }
 
@@ -161,18 +93,74 @@
 }
 
 .message {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
   max-width: 100%;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .message--user {
+  grid-template-columns: minmax(0, 1fr) 32px;
+}
+
+.message__body {
+  min-width: 0;
+}
+
+.message__avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  color: var(--dsw-alias-avatar-label);
+  background: var(--dsw-alias-avatar-bg);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.message__avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A continuation keeps the column so its text aligns, but draws nothing in it. */
+.message__avatar[data-continued] {
+  visibility: hidden;
+}
+
+/* The Agent's mark takes the brand ink on a layer circle, so it follows both appearances. */
+.message__avatar[data-agent] {
+  color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.message__avatar svg {
+  display: block;
+}
+
+.message--user > .message__avatar {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.message--user > .message__body {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
 }
 
-.message--user > p {
-  max-width: min(525px, 82%);
+.message--user .message__body > p {
+  max-width: min(525px, 100%);
   padding: 10px 16px;
   margin-left: auto;
   background: var(--dsw-specific-bubble);
@@ -185,20 +173,20 @@
 
 .message__role {
   display: block;
-  margin-bottom: 8px;
+  max-width: 100%;
+  margin-bottom: 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.message__usage,
+.message__delivery {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;
   line-height: 18px;
-}
-
-.approval__eyebrow {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
 }
 
 .message p,
@@ -213,7 +201,7 @@
   line-height: 24px;
 }
 
-.message[data-streaming] > p::after {
+.message[data-streaming] .message__body > p::after {
   display: inline-block;
   width: 5px;
   height: 14px;
@@ -231,6 +219,19 @@
 }
 
 .message-stream__recovery,
+.agent-surface__alerts {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 20px 0;
+}
+
+.agent-surface__alerts:empty {
+  display: none;
+}
+
 .agent-action-error {
   display: flex;
   gap: 10px;
@@ -294,8 +295,7 @@
   border-radius: 7px;
 }
 
-.agent-event summary,
-.agent-event--tool {
+.agent-event summary {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -307,93 +307,18 @@
   cursor: pointer;
 }
 
-.agent-event summary > span,
-.agent-event--tool span {
+.agent-event summary > span {
   margin-left: auto;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
 }
 
-.agent-event > p,
-.agent-event--tool p {
+.agent-event > p {
   padding: 0 12px 12px;
   color: var(--dsw-alias-label-secondary);
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 19px;
-}
-
-.agent-event--tool > svg {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.agent-event.agent-event--tool {
-  align-items: flex-start;
-  padding: 12px;
-  margin: 0 0 16px;
-  border-radius: 8px;
-}
-
-.agent-event--tool > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 4px 8px;
-  align-items: start;
-  flex: 1;
-  min-width: 0;
-}
-
-.agent-event--tool strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool span {
-  margin-left: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.agent-event--tool p {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
-.approval {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  margin: 16px 0;
-  padding: 14px;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-state-warn-secondary);
-  border-radius: 8px;
-}
-
-.approval h2 {
-  font-size: 15px;
-  line-height: 20px;
-}
-
-.approval p {
-  margin-top: 3px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-}
-
-.approval__actions {
-  display: flex;
-  flex: none;
-  gap: 4px;
-}
-
-.approval__decision {
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: capitalize;
 }
 
 .message-stream__usage {
@@ -404,88 +329,6 @@
   text-align: center;
 }
 
-.agent-composer {
-  grid-row: 4;
-  padding: 10px max(16px, calc((100% - var(--read-column)) / 2 + 20px)) 16px;
-  background: var(--dsw-alias-bg-base);
-}
-
-.agent-composer__notice {
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-  background: var(--dsw-alias-bg-layer-2);
-  border-left: 2px solid var(--dsw-alias-state-warn-primary);
-  border-radius: 6px;
-}
-
-.agent-composer__form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
-  gap: 8px;
-  align-items: center;
-}
-
-.agent-composer__form--queue {
-  grid-template-columns: minmax(0, 1fr) 40px 40px;
-}
-
-.agent-composer__capsule {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  padding: 10px 0 0;
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
-  border-radius: 22px;
-  box-shadow: var(--dsw-shadow-lv2);
-}
-
-.agent-composer__capsule:focus-within {
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
-.agent-composer textarea {
-  width: 100%;
-  min-height: 24px;
-  max-height: 336px;
-  padding: 4px 12px 0 16px;
-  overflow-y: auto;
-  resize: none;
-  color: var(--dsw-alias-label-primary);
-  caret-color: var(--dsw-alias-state-business-primary);
-  font-family: var(--dsw-font-family);
-  font-size: 16px;
-  line-height: 24px;
-  background: transparent;
-  border: 0;
-}
-
-.agent-composer textarea:focus-visible {
-  box-shadow: none;
-}
-
-.agent-composer textarea::placeholder {
-  color: var(--dsw-alias-label-caption);
-}
-
-.agent-composer .agent-composer__submit {
-  align-self: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-}
-
-.agent-composer__submit--stop {
-  background: var(--dsw-alias-label-primary);
-}
-
-.agent-composer__row {
-  padding-bottom: 10px;
-}
-
 .agent-loading {
   grid-row: 3;
   display: flex;
@@ -493,11 +336,6 @@
   gap: 16px;
   width: min(100% - 48px, 720px);
   margin: 64px auto;
-}
-
-.agent-loading__row {
-  height: 70px;
-  border-radius: 7px;
 }
 
 .agent-surface--error {
@@ -521,63 +359,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .message[data-streaming] > p::after {
+  .message[data-streaming] .message__body > p::after {
     animation: none;
   }
 }
 
 @media (max-width: 30rem) {
-  .agent-header {
-    padding-inline: 14px;
-  }
-
-  .agent-header__title > div {
-    display: block;
-  }
-
-  .agent-header__status {
-    margin-top: 2px;
-  }
-
   .message-stream {
     padding: 20px 14px 32px;
   }
 
   .message {
     max-width: 96%;
-  }
-
-  .approval {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .approval__actions .button {
-    flex: 1;
-    min-height: 44px;
-  }
-
-  .agent-composer {
-    padding: 8px 10px 10px;
-  }
-
-  .agent-composer__form {
-    grid-template-columns: minmax(0, 1fr) 44px;
-  }
-
-  .agent-composer__form--queue {
-    grid-template-columns: minmax(0, 1fr) 44px 44px;
-  }
-
-  .agent-composer .agent-composer__submit {
-    position: relative;
-    justify-self: center;
-  }
-
-  .agent-composer__submit::after {
-    position: absolute;
-    inset: -5px;
-    content: '';
   }
 }
 .agent-channel-pending__message {
@@ -591,4 +384,106 @@
   margin: 6px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.message--queued .message__body {
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 8px;
+}
+/* Conversation text follows the same inherited preference as the rest of CMA. */
+.message-stream {
+  font-size: var(--text-ui);
+  line-height: 1.5;
+}
+
+/* Use the space left by the sidebar, not only the browser viewport. */
+@container agent-conversation (max-width: 48rem) {
+  .agent-surface__conversation > section,
+  .message-stream {
+    padding-inline: 24px;
+  }
+}
+
+@container agent-conversation (max-width: 30rem) {
+  .agent-surface__conversation > section,
+  .message-stream {
+    padding-inline: 14px;
+  }
+}
+
+.message-footer {
+  max-width: 100%;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+.message-footer__row,
+.message-footer__actions,
+.message-footer__error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.message-footer__row {
+  column-gap: 8px;
+}
+.message__timestamp {
+  font-variant-numeric: tabular-nums;
+}
+.message-footer__actions {
+  flex-wrap: nowrap;
+  pointer-events: none;
+}
+/*
+ * At rest a message shows only its content; its time, usage and actions arrive
+ * with the reader's attention. Opacity rather than display, so nothing shifts.
+ */
+.message__timestamp,
+.message__usage,
+.message-footer__actions {
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.message:hover :is(.message__timestamp, .message__usage, .message-footer__actions),
+.message:focus-within :is(.message__timestamp, .message__usage, .message-footer__actions),
+.message-footer[data-voted] .message-footer__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Compact keys: the footer is reserved under every message, so its height is the rhythm. */
+.message-footer__actions .button {
+  width: 28px;
+  height: 28px;
+}
+.message-footer__actions .button[aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+.message--user .message-footer__row {
+  justify-content: flex-end;
+}
+.message-footer__error {
+  margin-top: 4px;
+}
+@media (hover: none) {
+  .message__timestamp,
+  .message__usage,
+  .message-footer__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (pointer: coarse) {
+  .message-footer__actions .button {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message__timestamp,
+  .message__usage,
+  .message-footer__actions {
+    transition: none;
+  }
 }

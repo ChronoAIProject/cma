@@ -1,11 +1,37 @@
 import type { AgentLifecycleOperationEvent, AgentLifecycleOperationView } from '../api/client';
+import type { StateDotState } from '../ui/StateDot';
 
 export const agentProvisioningSteps = [
   { phase: 'sandbox_ready', label: 'Sandbox' },
-  { phase: 'workspace_runtime', label: 'Workspace provisioning' },
-  { phase: 'key_scope_ready', label: 'Key permissions' },
+  { phase: 'workspace_runtime', label: 'Workspace' },
+  { phase: 'key_scope_ready', label: 'Service access' },
   { phase: 'agent_startup', label: 'Agent startup' },
 ] as const;
+
+export type ProvisioningStepState =
+  | 'Waiting'
+  | 'Queued'
+  | 'In progress'
+  | 'Ready'
+  | 'Waiting for connection'
+  | 'Needs attention'
+  | 'Not reported';
+
+/** The dot reinforces the state word; a step nobody has reported stays neutral. */
+export function provisioningStepDot(state: ProvisioningStepState): StateDotState {
+  switch (state) {
+    case 'Ready':
+      return 'done';
+    case 'In progress':
+      return 'ongoing';
+    case 'Waiting for connection':
+      return 'warning';
+    case 'Needs attention':
+      return 'error';
+    default:
+      return 'neutral';
+  }
+}
 
 export function orderedProvisioningEvents(operation?: AgentLifecycleOperationView) {
   return [...(operation?.events ?? [])].sort((left, right) => left.sequence - right.sequence);
@@ -15,7 +41,7 @@ export function provisioningStepState(
   phase: string,
   events: readonly AgentLifecycleOperationEvent[],
   operation?: AgentLifecycleOperationView,
-) {
+): ProvisioningStepState {
   const latest = events.filter((event) => event.phase === phase).at(-1);
   if (
     latest?.status === 'ready' ||

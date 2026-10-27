@@ -1,6 +1,8 @@
 use super::*;
 use layer3_adapter::ConversationInputSender;
 
+#[path = "targeted_control_budget_tests.rs"]
+mod budget;
 #[path = "targeted_control_commit_tests.rs"]
 mod commit;
 #[path = "targeted_control_public_tests.rs"]

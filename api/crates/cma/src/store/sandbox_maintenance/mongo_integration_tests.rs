@@ -32,6 +32,10 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 
 #[path = "availability_integration_tests.rs"]
 mod availability;
+#[path = "restored_connection_integration_tests.rs"]
+mod restored_connection_integration_tests;
+#[path = "runtime_update_integration_tests.rs"]
+mod runtime_update_integration_tests;
 
 pub(in crate::store) async fn database() -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -83,6 +87,9 @@ pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
         ]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
@@ -344,7 +351,10 @@ async fn maintenance_rotation_captures_live_identity_and_replays_only_exact_targ
         .await
         .unwrap()
         .unwrap();
-    assert!(!terminal_row.contains_key("sandbox_maintenance_fence"));
+    assert_eq!(
+        terminal_row.get_i64("sandbox_maintenance_fence").unwrap(),
+        1
+    );
     client.database(&name).drop().await.unwrap();
 }
 
@@ -533,6 +543,7 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
     working.conversation.last_seq = 3;
     store
         .commit_agent_conversation(AgentConversationMutation {
+            settings_fence: None,
             command_claim: None,
             execution_fence: None,
             trigger_execution_fence: None,
@@ -546,6 +557,7 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
             appended_at: LATER.into(),
             agent_logs: vec![
                 AgentLogKind::TurnStarted {
+                    model: None,
                     turn_sequence: 2,
                     origin_key: None,
                 },

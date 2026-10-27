@@ -1,5 +1,5 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
-mod receipts;
+pub(super) mod receipts;
 use super::{
     context,
     state::{owner, validate},
@@ -138,6 +138,16 @@ impl ToolsState {
         };
         // Recheck after durable admission; rotation/deletion during the store call must refuse dispatch.
         let channel = self.authorize_target(caller, &target).await?;
+        if let Some(routed) = &self.routed_replies {
+            if let Some(result) = routed
+                .reply(caller, &channel, &target.event, message.clone(), true)
+                .await
+                .map_err(super::routed_reply_error)?
+            {
+                store.finish(claim, &result).await?;
+                return Ok(result);
+            }
+        }
         let (receipt, received) = oneshot::channel();
         let result = self
             .deliver(
@@ -213,6 +223,7 @@ impl ToolsState {
 }
 fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
     let valid = match reply {
+        ReplyAddress::Discord { bot_id, .. } => crate::discord::rest::token(channel, bot_id).is_some(),
         ReplyAddress::NyxidRelay { route_id, platform, .. } => channel.definition.secrets.channel_key.is_some()
             && channel.definition.sources.iter().any(|s| matches!(s, Source::NyxidRelay { route_ids, platform: current, .. } if current==platform && route_ids.contains(route_id))),
         ReplyAddress::Telegram { bot_id, .. } => channel.definition.secrets.telegram_bot_token.is_some()

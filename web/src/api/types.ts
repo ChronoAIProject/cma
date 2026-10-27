@@ -59,6 +59,11 @@ export interface SandboxLifecycleEligibility {
 export interface SandboxLifecycle {
   readonly pause: SandboxLifecycleEligibility;
   readonly revive: SandboxLifecycleEligibility;
+  readonly interruption?: {
+    readonly cause: 'out_of_memory' | 'runtime_restarted' | 'runtime_unavailable';
+    readonly detectedAt: string;
+    readonly memoryLimitMib: number;
+  };
   readonly checkpoint?: {
     readonly phase: 'capture' | 'resume_writers';
     readonly startedAt: string;
@@ -91,6 +96,7 @@ export interface SandboxSummary {
   readonly name: string;
   readonly status: SandboxStatus;
   readonly lifecycle?: SandboxLifecycle;
+  readonly runtimeUpdate?: SandboxRuntimeUpdate;
   readonly profile: ProfileReference;
   readonly lastActivityAt: string;
   readonly createdAt: string;
@@ -98,6 +104,22 @@ export interface SandboxSummary {
   readonly workspaceCount: number;
   readonly worktreeCount: number;
   readonly agentCount: number;
+}
+
+export interface SandboxRuntimeUpdate {
+  readonly currentVersion: string | null;
+  readonly latestVersion: string;
+  readonly updateAvailable: boolean;
+  readonly state: 'up_to_date' | 'available' | 'queued' | 'updating' | 'failed';
+  readonly canUpdate: boolean;
+  readonly blockedReason?: string;
+  readonly targetVersion?: string;
+  readonly requestedAt?: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly failure?: { readonly code: string; readonly message: string };
+  readonly schedule: { readonly timezone: 'Asia/Singapore'; readonly localTime: '02:00' };
+  readonly preservesHome: boolean;
 }
 
 export interface WorkspaceSummary {
@@ -111,6 +133,8 @@ export interface WorkspaceSummary {
 }
 
 export interface SandboxDetail extends SandboxSummary {
+  readonly agentProvider?: SandboxProfileSettings['agentProvider'];
+  readonly modelAccess?: SandboxProfileSettings['modelAccess'];
   readonly nyxidServices?: readonly string[];
   readonly limits: {
     readonly maxWorkspaces: number;
@@ -139,7 +163,16 @@ export interface Worktree {
   readonly agentId?: string;
 }
 
+export interface AgentRuntimeMetadata {
+  readonly workingDirectory?: string;
+  readonly description?: string;
+  readonly descriptionSource?: 'provider_title' | 'prompt_preview';
+  /** Positive server proof that this preview came from automatic setup. */
+  readonly descriptionIsSetupPreview?: boolean;
+}
 export interface AgentSummary {
+  readonly ownerTitle?: string;
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly worktreeId: string;
   readonly workspaceId: string;
@@ -188,11 +221,21 @@ export interface FirstMessageState {
   readonly queuedAt: string;
   readonly completedAt?: string;
   readonly failedAt?: string;
+  readonly purpose?: 'setup' | 'task';
+  readonly turnSequence?: number;
 }
 
 export interface AgentDetail {
+  readonly ownerTitle?: string;
+  readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;
   readonly status: AgentStatus;
+  /** Current server proof of the lifecycle-owned bootstrap lineage. */
+  readonly bootstrap?: {
+    readonly operationId: string;
+    readonly sandboxId: string;
+    readonly workspaceId: string;
+  };
   readonly profile: AgentProfileSummary;
   readonly worktree: Worktree;
   readonly workspace: {
@@ -252,6 +295,11 @@ export interface AgentEvent {
 }
 
 export interface AgentUsage {
+  readonly currentTurn?: {
+    readonly turnSequence: number;
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+  };
   readonly agentId: string;
   readonly throughSeq: number;
   readonly inputTokens: number;

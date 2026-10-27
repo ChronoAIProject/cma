@@ -30,6 +30,11 @@ interface TreeRowProps {
   readonly expanded?: boolean;
   readonly dimmed?: boolean;
   readonly reviving?: boolean;
+  /**
+   * `line` draws the label and its facts on one row and leaves the facts and
+   * the menu key to hover, focus and the current row (`docs/Web_Style.md` §10).
+   */
+  readonly layout?: 'stacked' | 'line';
   readonly actions?: readonly TreeRowAction[];
   readonly onNavigate: (route: AppRoute) => void;
   readonly onToggle?: () => void;
@@ -48,6 +53,7 @@ export function TreeRow({
   expanded,
   dimmed = false,
   reviving = false,
+  layout = 'stacked',
   actions = [],
   onNavigate,
   onToggle,
@@ -69,7 +75,9 @@ export function TreeRow({
         {icon}
       </span>
       <span className="tree-row__content">
-        <span className="tree-row__name">{label}</span>
+        <span className="tree-row__name" title={label}>
+          {label}
+        </span>
         {meta === undefined ? null : <span className="tree-row__meta">{meta}</span>}
       </span>
     </>
@@ -88,6 +96,7 @@ export function TreeRow({
       data-dimmed={dimmed ? '' : undefined}
       data-reviving={reviving ? '' : undefined}
       data-level={level}
+      data-layout={layout}
     >
       {onToggle === undefined ? (
         <span className="tree-row__disclosure" />

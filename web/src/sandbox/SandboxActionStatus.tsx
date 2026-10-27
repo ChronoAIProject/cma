@@ -10,6 +10,7 @@ export interface SandboxActionRequest {
   readonly action: Extract<TreeAction, { kind: 'pause_sandbox' | 'revive_sandbox' }>;
   readonly key: string;
   readonly phase: 'submitting' | 'accepted' | 'uncertain' | 'complete' | 'failed';
+  readonly hidden?: boolean;
 }
 
 export function SandboxActionStatus({
@@ -56,6 +57,10 @@ export function SandboxActionStatus({
           ) {
             finished = true;
             settled.current(true);
+          } else if (sandbox.runtimeUpdate?.state === 'failed') {
+            finished = true;
+            setError('A runtime update needs attention. Open Sandbox details to retry it.');
+            settled.current(false);
           } else if (['failed', 'retiring', 'retired'].includes(sandbox.status)) {
             finished = true;
             setError(
@@ -90,14 +95,23 @@ export function SandboxActionStatus({
       document.removeEventListener('visibilitychange', poll);
     };
   }, [client, request.key, request.phase, resume, sandboxId]);
+  // Hiding the notice only changes presentation; confirmed state is still
+  // observed so the target's controls can unlock without a page reload.
+  if (request.hidden && request.phase !== 'failed' && error === undefined) return null;
   const action = resume ? 'Resume' : 'Pause';
+  const progressLink =
+    onNavigate === undefined ? null : (
+      <Button onClick={() => onNavigate({ kind: 'sandbox', sandboxId })}>
+        View Sandbox progress
+      </Button>
+    );
   return (
     <section className="console__navigation-status" aria-label="Sandbox request">
       <p role="status">
         {request.phase === 'submitting'
           ? `Submitting ${action.toLowerCase()} request…`
           : request.phase === 'accepted'
-            ? `${action} request accepted. Waiting for the Sandbox to ${resume ? 'resume' : 'pause'}.`
+            ? `${action} request accepted.`
             : request.phase === 'complete'
               ? `Sandbox ${resume ? 'resumed' : 'paused'}.`
               : request.phase === 'uncertain'
@@ -105,14 +119,16 @@ export function SandboxActionStatus({
                 : 'Sandbox request needs attention.'}
       </p>
       {error === undefined ? null : <p role="alert">{error}</p>}
-      {onNavigate === undefined ? null : (
-        <Button onClick={() => onNavigate({ kind: 'sandbox', sandboxId })}>
-          View Sandbox progress
-        </Button>
+      {request.phase === 'accepted' ? (
+        <details>
+          <summary>Operation progress</summary>
+          <p>Waiting for the Sandbox to {resume ? 'resume' : 'pause'}.</p>
+          {progressLink}
+        </details>
+      ) : (
+        progressLink
       )}
-      {request.phase === 'complete' || request.phase === 'failed' ? (
-        <Button onClick={onClose}>Dismiss status</Button>
-      ) : null}
+      {request.phase !== 'submitting' ? <Button onClick={onClose}>Dismiss status</Button> : null}
     </section>
   );
 }

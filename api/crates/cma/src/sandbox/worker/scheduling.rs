@@ -2,10 +2,18 @@
 use layer2_core::sandbox::{Sandbox, SandboxLifecycleOperation, SandboxStatus, SandboxWorkStep};
 
 pub(super) fn can_follow(sandbox: &Sandbox) -> bool {
-    (matches!(
-        sandbox.status,
-        SandboxStatus::Provisioning | SandboxStatus::Installing
-    ) && sandbox.runtime.is_some())
+    (sandbox.status == SandboxStatus::CredentialRotating
+        && matches!(
+            sandbox.work.step,
+            SandboxWorkStep::MintRotatedCredential
+                | SandboxWorkStep::DeliverRotatedCredential
+                | SandboxWorkStep::RevokeRotatedCredential
+                | SandboxWorkStep::FinishCredentialRotation
+        ))
+        || (matches!(
+            sandbox.status,
+            SandboxStatus::Provisioning | SandboxStatus::Installing
+        ) && sandbox.runtime.is_some())
         || (sandbox.work.step == SandboxWorkStep::RunLifecycleOperation
             && sandbox.lifecycle.operation.is_some())
         || (sandbox.status == SandboxStatus::Retiring

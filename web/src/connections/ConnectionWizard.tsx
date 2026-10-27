@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LandingCharacter } from '../landing/LandingCharacter';
+import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import {
@@ -24,6 +24,17 @@ interface WizardProps {
   readonly presentation?: 'inline' | 'dialog';
   readonly dialogTitle?: string;
   readonly client?: ConnectionClient;
+}
+
+/**
+ * A connection's name as the person reads it.
+ *
+ * The subscription row's recorded name carries the agent provider's product
+ * name, which CMA copy never shows; the person signs in to ChatGPT, so that is
+ * what the row says.
+ */
+function connectionName(row: { readonly service: string; readonly display_name: string }) {
+  return row.service === subscriptionService ? 'Your ChatGPT subscription' : row.display_name;
 }
 
 export function ConnectionWizard(props: WizardProps) {
@@ -233,7 +244,7 @@ function ConnectionSequence({
             setRunning(false);
             persist(undefined);
             setError(
-              'This sign-in did not finish. Connect again to retry. For Codex subscription sign-in, enable device-code login in your ChatGPT security settings if prompted.',
+              'This sign-in did not finish. Connect again to retry. For ChatGPT subscription sign-in, enable device-code login in your ChatGPT security settings if prompted.',
             );
           }
         }
@@ -308,7 +319,7 @@ function ConnectionSequence({
     >
       <p>
         Connect the accounts this sandbox needs. CMA verifies each connection automatically, then
-        continues opening your session.
+        continues opening your Sandbox.
       </p>
       {report === undefined ? (
         <p role="status">Checking your connections…</p>
@@ -319,16 +330,22 @@ function ConnectionSequence({
           </p>
           {(['nyxid', 'codex'] as const).map((kind) => (
             <div className="connection-wizard__group" key={kind}>
-              <h3>{kind === 'nyxid' ? 'NyxID services' : 'Codex provider'}</h3>
+              <h3>{kind === 'nyxid' ? 'NyxID services' : 'Model subscription'}</h3>
               {report.services
                 .filter((row) => row.kind === kind)
                 .map((row) => (
                   <div className="connection-wizard__row" key={row.service}>
-                    <LandingCharacter
-                      compact
-                      state={row.state === 'satisfied' ? 'completed' : 'pending'}
+                    <StateDot
+                      size={10}
+                      state={
+                        row.state === 'satisfied'
+                          ? 'done'
+                          : row.service === handoff?.service_id
+                            ? 'ongoing'
+                            : 'warning'
+                      }
                     />
-                    <span>{row.display_name}</span>
+                    <span>{connectionName(row)}</span>
                     <small>
                       {row.state === 'satisfied'
                         ? 'Connected'
@@ -349,7 +366,7 @@ function ConnectionSequence({
         <div className="connection-wizard__handoff">
           {handoff.user_code === undefined ? null : (
             <>
-              <p>Sign in with your Codex subscription using this one-time code:</p>
+              <p>Sign in to your ChatGPT subscription using this one-time code:</p>
               <strong className="connection-wizard__code">{handoff.user_code}</strong>
               <p>
                 Enter it on the OpenAI page. Your subscription stays connected to your CMA account.
@@ -378,9 +395,9 @@ function ConnectionSequence({
               : handoff !== undefined
                 ? 'Open sign-in window'
                 : forceSubscription
-                  ? 'Re-login with Codex subscription'
+                  ? 'Sign in to your ChatGPT subscription again'
                   : missing.length === 1 && missing[0]?.service === subscriptionService
-                    ? 'Sign in with Codex subscription'
+                    ? 'Sign in to your ChatGPT subscription'
                     : 'Connect all'}
           </Button>
         )}

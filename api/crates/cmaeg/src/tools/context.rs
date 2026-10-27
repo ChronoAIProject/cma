@@ -14,6 +14,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
+    /// Explicitly requested current text context of the original native thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<super::ThreadHistory>,
     pub event_id: EventId,
     pub channel_id: cmaeg_core::ids::ChannelId,
     pub provider_binding_id: cmaeg_core::ids::BindingId,
@@ -48,6 +51,15 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// A fixed 20-message prior window is available on explicit request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<bool>,
+    /// New exact-message effects; absent until compatible readers are deployed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_effects: Option<super::MessageEffectsCapabilities>,
+    /// Approved WhatsApp template replies only; no callbacks or initiated sends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_templates: Option<bool>,
     pub edit: bool,
     pub typing: bool,
     pub buttons: String,
@@ -58,6 +70,38 @@ pub struct Capabilities {
     /// inbound media is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbound_media: Option<InboundMediaCapabilities>,
+    /// Explicit native attachments; relay sources require deployment attestation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_media: Option<NativeMediaCapabilities>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct NativeMediaCapabilities {
+    pub kinds: Vec<String>,
+    pub sources: Vec<String>,
+    pub max_attachments: usize,
+    pub max_inline_bytes: usize,
+}
+
+impl NativeMediaCapabilities {
+    fn for_source(source: &SourceKind, enabled: bool) -> Option<Self> {
+        let supported = match source {
+            SourceKind::Discord { .. } | SourceKind::Telegram { .. } => true,
+            SourceKind::NyxidRelay { platform, .. } => {
+                enabled && crate::delivery::relay_client::native_media_supported(*platform)
+            }
+            _ => false,
+        };
+        if !supported {
+            return None;
+        }
+        Some(Self {
+            kinds: ["image", "file", "audio", "video"].map(String::from).into(),
+            sources: ["url", "base64"].map(String::from).into(),
+            max_attachments: cmaeg_core::message::MAX_NATIVE_ATTACHMENTS,
+            max_inline_bytes: cmaeg_core::message::MAX_NATIVE_INLINE_BYTES,
+        })
+    }
 }
 impl Capabilities {
     pub fn custom() -> Self {
@@ -69,6 +113,16 @@ impl Capabilities {
             attachments: "reference".into(),
             max_text_chars: 32768,
             inbound_media: None,
+            native_media: None,
+            whatsapp_templates: None,
+            message_effects: None,
+            thread_history: None,
+        }
+    }
+    pub fn native_discord() -> Self {
+        Self {
+            max_text_chars: 2000,
+            ..Self::plain_text()
         }
     }
     pub fn native_telegram() -> Self {
@@ -86,6 +140,10 @@ impl Capabilities {
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
+            native_media: None,
+            whatsapp_templates: None,
+            message_effects: None,
+            thread_history: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -99,14 +157,33 @@ impl Capabilities {
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
+            native_media: None,
+            whatsapp_templates: None,
+            message_effects: None,
+            thread_history: None,
         }
     }
-    /// Interactive controls and updates are proven only for Telegram.
+    /// Legacy capabilities before ordinary relay text-edit issuance is enabled.
     pub fn relay(platform: Platform) -> Self {
         match platform {
             Platform::Telegram => Self::telegram(),
             _ => Self::plain_text(),
         }
+    }
+    /// The reader rollout enables bounded ordinary text edits, not native controls.
+    pub fn relay_with_text_edits(platform: Platform, enabled: bool) -> Self {
+        let mut capabilities = Self::relay(platform);
+        if enabled {
+            match platform {
+                Platform::Lark | Platform::Feishu => capabilities.edit = true,
+                Platform::Discord => {
+                    capabilities.edit = true;
+                    capabilities.max_text_chars = 2000;
+                }
+                _ => {}
+            }
+        }
+        capabilities
     }
 }
 /// The event's context as `matched`, the calling consumer, sees it: read
@@ -127,6 +204,7 @@ pub(super) async fn read(
         activity,
         activity_verified,
         inbound_media,
+        state,
     ))
 }
 
@@ -211,15 +289,84 @@ pub(super) fn project(
     activity: Activity,
     activity_verified: bool,
     inbound_media: Option<InboundMediaCapabilities>,
+    state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        thread_history: (state.discord_thread_history.is_some()
+            && super::thread_history::eligible(channel, event, &activity))
+        .then_some(true),
+        message_effects: (state.telegram_effects_issuance_enabled
+            || state.discord_effects_issuance_enabled)
+            .then(|| {
+                super::MessageEffectsCapabilities::new(
+                    activity_verified
+                        && ((state.telegram_effects_issuance_enabled
+                            && state.telegram_effects.is_some()
+                            && super::message_effects::authority::event_supported(
+                                channel, event, &activity,
+                            ))
+                            || (state.discord_effects_issuance_enabled
+                                && state.discord_effects.is_some()
+                                && super::message_effects::discord::event_supported(
+                                    channel, event, &activity,
+                                ))),
+                    None,
+                )
+            }),
+        whatsapp_templates: (state.whatsapp_templates_enabled
+            && matches!(
+                event.reply,
+                cmaeg_core::seal::ReplyAddress::NyxidRelay {
+                    platform: Platform::Whatsapp,
+                    ..
+                }
+            ))
+        .then_some(true),
+        native_media: NativeMediaCapabilities::for_source(
+            &activity.source,
+            state.native_media_enabled,
+        ),
         inbound_media,
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),
-            SourceKind::NyxidRelay { platform, .. } => Capabilities::relay(platform),
+            SourceKind::Discord { .. } => Capabilities {
+                edit: state.native_discord_edits_enabled,
+                ..Capabilities::native_discord()
+            },
+            SourceKind::NyxidRelay { platform, .. } => {
+                Capabilities::relay_with_text_edits(platform, state.relay_text_edits_enabled)
+            }
         }
     };
+    let consumer_controls = event.consumer.is_none()
+        || (state.consumer_interactions_enabled
+            && activity_verified
+            && crate::interactions::owner::eligible(channel, event, &activity));
+    crate::interactions::lark::project(
+        &mut capabilities,
+        &activity,
+        event,
+        activity_verified,
+        state.lark_cards_enabled && consumer_controls,
+    );
+    if state.whatsapp_interactions_enabled
+        && consumer_controls
+        && activity_verified
+        && crate::interactions::whatsapp::eligible(channel, event, &activity)
+    {
+        capabilities.buttons = "native_interactive".into();
+    }
+    if state.discord_interactions_enabled
+        && consumer_controls
+        && activity_verified
+        && crate::interactions::discord::eligible(channel, event, &activity)
+    {
+        capabilities.buttons = "native_components".into();
+    }
+    if !consumer_controls && !matches!(activity.source, SourceKind::Custom) {
+        capabilities.buttons = "numbered_text".into();
+    }
     // A hand-off's actor is the publishing consumer, so no human click could
     // ever match a card prepared from it; its controls are refused, and the
     // projection says so up front so agents can plan around it.
@@ -228,6 +375,7 @@ pub(super) fn project(
         capabilities.cards = "none".into();
     }
     ContextResponse {
+        thread_history: None,
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),
         provider_binding_id: consumer.provider.binding_id.clone(),
@@ -273,70 +421,5 @@ pub(super) fn unavailable() -> Problem {
     )
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::channels::routing_fixture;
-    use cmaeg_core::{ids::ChannelId, seal::ChannelPointer};
-
-    fn resolved(value: serde_json::Value) -> ResolvedChannel {
-        let definition = routing_fixture::definition(value);
-        ResolvedChannel {
-            id: ChannelId::new("cmaeg1.ch.context-fixture").unwrap(),
-            pointer: ChannelPointer {
-                v: 1,
-                record_id: definition.record_id.clone(),
-                record_url: "https://cma.example/api/v1/gateway/channel-records/record-1".into(),
-            },
-            definition,
-            agent_key_hash: [7; 32],
-            consumer_keys: Vec::new(),
-            loaded_at: std::time::Instant::now(),
-            version: 1,
-        }
-    }
-
-    fn id(value: &str) -> ConsumerId {
-        ConsumerId::parse(value).unwrap()
-    }
-
-    #[test]
-    fn a_routed_channel_summarizes_the_calling_consumer() {
-        let channel = resolved(routing_fixture::routed());
-        let summarize = |consumer: &ConsumerId| {
-            summary(&channel, &consumer_view(&channel, consumer).unwrap()).unwrap()
-        };
-        let lead = summarize(&ConsumerId::default_consumer());
-        assert_eq!(
-            (lead.id.as_str(), lead.name.as_str(), lead.label.as_str()),
-            ("default", "lead", "lead")
-        );
-        let reviewer = summarize(&id(routing_fixture::REVIEWER));
-        assert_eq!(
-            (
-                reviewer.id.as_str(),
-                reviewer.name.as_str(),
-                reviewer.label.as_str()
-            ),
-            (routing_fixture::REVIEWER, "reviewer", "reviewer")
-        );
-    }
-
-    #[test]
-    fn an_unrouted_channel_has_no_summary() {
-        let mut value = routing_fixture::routed();
-        value.as_object_mut().unwrap().remove("routing");
-        let channel = resolved(value);
-        let default = consumer_view(&channel, &ConsumerId::default_consumer()).unwrap();
-        assert_eq!(summary(&channel, &default), None);
-    }
-
-    #[test]
-    fn a_removed_consumer_is_answered_as_an_expired_reference() {
-        let channel = resolved(routing_fixture::routed());
-        let removed = consumer_view(&channel, &id("csm_0000000000ff")).unwrap_err();
-        assert_eq!(
-            (removed.code, removed.status, removed.detail.as_deref()),
-            (ProblemCode::EventRefExpired, 410, Some("consumer_removed"))
-        );
-    }
-}
+#[path = "context_tests.rs"]
+mod tests;

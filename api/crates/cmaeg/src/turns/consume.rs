@@ -18,6 +18,7 @@ pub(super) async fn consume(
     turn: Arc<LaunchRequest>,
     provider: &str,
     delivery: &dyn DeliverySink,
+    activity: &dyn super::observer::ActivityObserver,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
@@ -33,10 +34,21 @@ pub(super) async fn consume(
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id}).await?;
+                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}).await?;
             }
             event = stream.events.recv() => {
                 let Some(event) = event else {return Err("stream_lost");};
+                if let crate::providers::ResponsesEvent::Created {
+                    response_id, native_agent_id: Some(agent_id), ..
+                } = &event {
+                    let mut change = crate::activity::Change::state(
+                        turn.consumer.as_ref().map_or("default", |id| id.as_str()),
+                        crate::activity::ConsumerState::Accepted, Some(response_id.clone()),
+                    );
+                    change.agent_id = Some(agent_id.clone());
+                    activity.checkpoint(&turn.channel.definition.record_id,
+                        &turn.activity.event_id, change).await;
+                }
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();

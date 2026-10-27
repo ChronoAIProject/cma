@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
-    channel::{Secret, Source},
+    channel::{ChannelDefinition, Platform, Secret, Source},
     ids::MessageRef,
     message::OutboundMessage,
     seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
@@ -55,7 +55,11 @@ impl Sender {
                 return (receipt, effects);
             }
         };
+        let effect_issued_at = time::OffsetDateTime::now_utc().unix_timestamp();
         let controls = crate::interactions::has_controls(message);
+        if controls && event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
+            return (unsupported(), effects);
+        }
         let mut prepared = if controls {
             if parts.len() != 1 {
                 receipt.delivery = DeliveryOutcome::Rejected {
@@ -166,11 +170,14 @@ impl Sender {
                     } else if receipt.message_ref.is_none() {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
+                                discord_message: None,
+                                telegram_effect: None,
                                 channel_id: event.channel_id.clone(),
                                 event_id: event.event_id.clone(),
                                 platform_message_id: platform_id,
                                 route_id: route.clone(),
                                 interaction_record_id: None,
+                                relay_message: None,
                                 consumer: event.consumer.clone(),
                             },
                             &self.keys,
@@ -188,6 +195,19 @@ impl Sender {
             receipt.delivery = DeliveryOutcome::Unknown {
                 reason: "partial_delivery".into(),
             };
+        }
+        if confirmed == parts.len() && self.relay.telegram_effects_enabled() {
+            if let Some(reference) = &receipt.message_ref {
+                if let Some(enriched) = crate::tools::message_effects::authority::enrich(
+                    reference,
+                    event,
+                    ctx.channel,
+                    &self.keys,
+                    effect_issued_at,
+                ) {
+                    receipt.message_ref = Some(enriched);
+                }
+            }
         }
         (receipt, effects)
     }
@@ -324,6 +344,17 @@ impl Sender {
                 receipt.message_ref = MessageRef::seal(reference, &self.keys).ok();
             }
         }
+        if let (Some(authority), Some(updated)) = (&reference.telegram_effect, &receipt.message_ref)
+        {
+            if let Ok(mut opened) = updated.open(&self.keys) {
+                if opened.payload.platform_message_id == reference.platform_message_id
+                    && opened.payload.route_id == reference.route_id
+                {
+                    opened.payload.telegram_effect = Some(authority.clone());
+                    receipt.message_ref = MessageRef::seal(&opened.payload, &self.keys).ok();
+                }
+            }
+        }
         (receipt, effects)
     }
     pub(super) async fn typing(
@@ -354,7 +385,7 @@ impl Sender {
         TypingReceipt { outcome }
     }
 }
-fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
+pub(super) fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
     channel
         .definition
         .sources
@@ -363,7 +394,7 @@ fn token<'a>(channel: &'a ResolvedChannel, bot_id: &str) -> Option<&'a Secret> {
         .then_some(())?;
     channel.definition.secrets.telegram_bot_token.as_ref()
 }
-fn outcome(error: Error) -> DeliveryOutcome {
+pub(super) fn outcome(error: Error) -> DeliveryOutcome {
     match error {
         Error::Rejected => DeliveryOutcome::Rejected {
             reason: "telegram_rejected".into(),
@@ -372,5 +403,30 @@ fn outcome(error: Error) -> DeliveryOutcome {
         Error::Unconfirmed => DeliveryOutcome::Unknown {
             reason: "telegram_response_unconfirmed".into(),
         },
+    }
+}
+
+/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
+/// prepare cards, so the route's own relay must be a Telegram one. The message
+/// reference carries the relay route its card was sent on (`route_id`, copied
+/// from the sealed reply address when the card was bound), so no reply address
+/// is needed. With at most one relay the channel-level check is kept verbatim;
+/// the two agree on every legacy definition, whose only relay is the route's.
+pub(super) fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
+    let relays = definition
+        .sources
+        .iter()
+        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
+        .count();
+    if relays > 1 {
+        matches!(
+            definition.relay_source_for_route(route_id),
+            Some(Source::NyxidRelay {
+                platform: Platform::Telegram,
+                ..
+            })
+        )
+    } else {
+        definition.relay_platform() == Some(Platform::Telegram)
     }
 }

@@ -49,23 +49,63 @@ impl AgentSandboxClient {
         previous: &ProviderSandboxRequest,
         next: &ProviderSandboxRequest,
     ) -> Result<()> {
+        self.resume_inner(runtime, previous, next, None).await
+    }
+
+    pub(crate) async fn resume_with_home(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.resume_inner(
+            runtime,
+            previous,
+            next,
+            home.request.policy.is_native_vct().then_some(home),
+        )
+        .await
+    }
+
+    async fn resume_inner(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: Option<&crate::HomeVolumeAttachment>,
+    ) -> Result<()> {
+        let mut timing = resume_timing::ResumeTiming::new();
         validate_successor(previous, next)?;
         let (name, _) = parse_handle(runtime)?;
-        let mut before = self.desired_at(previous, name).await?;
+        timing.completed("local_guard");
+        let (mut before, desired) = if let Some(home) = home {
+            self.native_resume_desired(runtime, previous, next, home)
+                .await?
+        } else {
+            (
+                self.desired_at(previous, name).await?,
+                self.desired_at(next, name).await?,
+            )
+        };
         before.data["spec"]["operatingMode"] = json!("Suspended");
-        let desired = self.desired_at(next, name).await?;
-        self.verify_explicit_runtime_policy(&desired).await?;
+        timing.completed("generation_proof_render");
         let actual = self
             .get(runtime)
             .await?
             .ok_or_else(|| unavailable("Suspended Sandbox is absent"))?;
+        if home.is_none() {
+            self.verify_explicit_runtime_policy(&actual).await?;
+        }
         // A lost acknowledgement may leave the admitted next generation Running.
         // This does not authorize another generation or another creation.
         if self.matches(&actual, &desired).is_ok() {
+            timing.completed("already_resumed");
             return Ok(());
         }
         self.matches(&actual, &before)?;
         self.wait_suspended(runtime, &before).await?;
+        timing.completed("wait_suspended");
         let actual = self
             .get(runtime)
             .await?
@@ -87,7 +127,48 @@ impl AgentSandboxClient {
         if updated.uid() != actual.uid() {
             return Err(rejected("Sandbox UID changed during resume"));
         }
-        self.matches(&updated, &desired)
+        self.matches(&updated, &desired)?;
+        timing.completed("generation_patch");
+        Ok(())
+    }
+
+    async fn native_resume_desired(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<(DynamicObject, DynamicObject)> {
+        let (name, _) = parse_handle(runtime)?;
+        // Keep the generic request guard before resource I/O, as desired_at does.
+        model::desired_at(&self.config, previous, &self.control_token(name), name)?;
+        let origin = self.native_runtime_home_origin(runtime, home)?;
+        // Both generations retain this persisted attachment. Acquire its complete
+        // Claim/Sandbox/PVC authority once, then render without additional reads.
+        // This proof is local to this call; suspension and final CAS still reread.
+        let graph = self.pools.prove_native_home(home);
+        let policy = self.verify_native_runtime_policy(runtime, home);
+        tokio::pin!(graph, policy);
+        // Consume graph errors first. A proven retained upgrade must not wait
+        // for retired definitions, even when their speculative reads stall.
+        let (member, policy_result) = tokio::select! {
+            member = &mut graph => (member?, None),
+            result = &mut policy => (graph.await?, Some(result)),
+        };
+        if !self.pools.retained_upgrade_policy(&member, origin)? {
+            match policy_result {
+                Some(result) => result?,
+                None => policy.await?,
+            }
+        }
+        let before = self
+            .pools
+            .runtime_desired_for_member(origin, home, previous, name, &member)?;
+        model::desired_at(&self.config, next, &self.control_token(name), name)?;
+        let desired = self
+            .pools
+            .runtime_desired_for_member(origin, home, next, name, &member)?;
+        Ok((before, desired))
     }
 
     /// Observation is also used after restart, without requiring a live runtime HTTP endpoint.
@@ -102,9 +183,14 @@ impl AgentSandboxClient {
         self.wait_suspended(runtime, &desired).await
     }
 
-    async fn wait_suspended(&self, runtime: &RuntimeHandle, desired: &DynamicObject) -> Result<()> {
+    pub(super) async fn wait_suspended(
+        &self,
+        runtime: &RuntimeHandle,
+        desired: &DynamicObject,
+    ) -> Result<()> {
         let (name, uid) = parse_handle(runtime)?;
         tokio::time::timeout(Duration::from_secs(120), async {
+            let started = tokio::time::Instant::now();
             loop {
                 let actual = self
                     .get(runtime)
@@ -137,7 +223,7 @@ impl AgentSandboxClient {
                 }) {
                     return Ok(());
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(super::observation::refresh_delay(started.elapsed())).await;
             }
         })
         .await
@@ -145,7 +231,7 @@ impl AgentSandboxClient {
     }
 }
 
-fn validate_successor(
+pub(super) fn validate_successor(
     previous: &ProviderSandboxRequest,
     next: &ProviderSandboxRequest,
 ) -> Result<()> {

@@ -489,6 +489,7 @@ fn sandbox() -> Sandbox {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: Vec::new(),
             key_generation: 0,
             delivered: false,
@@ -537,6 +538,9 @@ fn live_agent(sandbox: &Sandbox, index: usize) -> Agent {
         capabilities: RuntimeCapabilities::default(),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: Some(format!("conversation-{index}")),
             runtime_generation: Some(3),

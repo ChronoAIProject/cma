@@ -1,47 +1,160 @@
+/*
+ * Skills in the Agent details panel — `docs/Web_Style.md`, Agent details
+ * panel. Nothing here scrolls on its own: the panel is the one scroll region.
+ */
 .agent-skills {
   display: grid;
-  gap: 10px;
-  margin-top: 24px;
+  gap: 8px;
   min-width: 0;
 }
-.agent-skills > h2 {
-  margin: 0;
+/* The section's grid gap spaces its rows; the panel's paragraph margin would double it. */
+.agent-skills[aria-label] > h2,
+.agent-skills[aria-label] > p {
+  margin-bottom: 0;
 }
-.agent-skills__list {
+.agent-skills__installed,
+.agent-skills__entries {
   display: grid;
-  gap: 0;
   min-width: 0;
-  max-height: 320px;
-  overflow: auto;
-  padding: 0 10px;
-  margin: 0;
+  padding: 0;
   list-style: none;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  scrollbar-gutter: stable;
 }
-.agent-skills__list:empty {
-  display: none;
+.agent-skills__installed {
+  gap: 4px;
 }
-.agent-skills__list > li {
-  display: grid;
-  gap: 6px;
-  padding: 12px 0;
+.agent-skills__installed > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+.agent-skills__installed strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 400;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-skills__installed span {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.agent-skills__installed p {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
-.agent-skills__list > li + li {
-  border-top: 1px solid var(--dsw-alias-border-l1);
+.agent-skills__failure {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 0;
 }
-.agent-skills__list p,
-.agent-skills__list span {
-  font-size: 12px;
+.agent-skills__failure p {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+/* Styled as the panel's quiet link, with a chevron after it so it stays flush. */
+.agent-skills__add > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: 4px;
   color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  list-style: none;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.agent-skills__add > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-skills__add > summary:hover {
+  text-decoration: underline;
+}
+.agent-skills__add > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-skills__add > summary > span {
+  display: inline-flex;
+  transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.agent-skills__add[open] > summary > span {
+  transform: rotate(90deg);
+}
+.agent-skills__catalog {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 12px;
+}
+.agent-skills__catalog > label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.agent-skills__catalog > p {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.agent-skills__entries {
+  gap: 12px;
+  padding-top: 4px;
+}
+.agent-skills__entries:empty {
+  display: none;
+}
+.agent-skills__entries > li {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.agent-skills__entries > li > strong,
+.agent-skills__entries > li > p {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-skills__entries > li > strong {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.agent-skills__entries > li > p {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 .agent-skills__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
   min-width: 0;
+  margin-top: 4px;
+}
+.agent-skills__actions > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.agent-skills__actions .button {
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-skills__add > summary > span {
+    transition: none;
+  }
 }

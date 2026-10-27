@@ -18,6 +18,8 @@ pub mod resolver;
 #[cfg(test)]
 #[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub(crate) mod routing_fixture;
+pub mod routing_update;
+pub mod source_check;
 pub(crate) mod state;
 mod test_turn;
 pub mod write_gate;
@@ -26,3 +28,5 @@ pub use definition::{
     ChannelCreateRequest, ChannelUpdateRequest, CredentialPatch, CredentialsRequest,
     HmacSecretRequest, ProviderRequest, SourceRequest,
 };
+
+mod native_discord;

@@ -1,7 +1,7 @@
 use layer2_core::sandbox::Sandbox;
 use layer3_adapter::{
-    AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest,
-    SandboxAdapter, SandboxSpec,
+    AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeInspection, RuntimeStatus,
+    RuntimeStatusRequest, SandboxAdapter, SandboxSpec,
 };
 
 use super::runtime_mapping::sandbox_spec;
@@ -17,7 +17,12 @@ pub(crate) fn native_pause_teardown(sandbox: &Sandbox) -> bool {
             Some(layer2_core::sandbox::SandboxLifecycleOperation::Pause {
                 phase: layer2_core::sandbox::SandboxPausePhase::TeardownRuntime,
                 ..
-            })
+            }) | Some(
+                layer2_core::sandbox::SandboxLifecycleOperation::ImageRotation {
+                    phase: layer2_core::sandbox::SandboxImageRotationPhase::TeardownRuntime,
+                    ..
+                }
+            )
         )
 }
 
@@ -31,6 +36,9 @@ pub(crate) fn retained_runtime_request(
         .filter(|generation| *generation > 0)
         .ok_or_else(|| AdapterError::Rejected("retained runtime generation is absent".into()))?;
     let mut spec = sandbox_spec(sandbox, deployment);
+    if spec.runtime_image.is_some() {
+        spec.runtime_image = Some(binding.runtime_version.clone());
+    }
     if sandbox.lifecycle.suspended_runtime.as_deref() == Some(binding) {
         // Grants are append-only and reserve a credential generation above the
         // previous authority. While this binding is suspended, managed custody
@@ -46,22 +54,34 @@ pub(crate) fn retained_runtime_request(
             .ok_or_else(|| {
                 AdapterError::Rejected("suspended runtime credential scope is absent".into())
             })?;
-        spec.reaches = sandbox
-            .credential
-            .reaches
-            .iter()
-            .chain(
-                sandbox
-                    .credential
-                    .service_grants
-                    .iter()
-                    .filter(|grant| grant.credential_generation_floor < current.generation)
-                    .flat_map(|grant| &grant.services),
-            )
-            .map(ToString::to_string)
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        spec.reaches = if sandbox.credential.service_scope.is_some() {
+            // Hot credential revisions retain the startup environment separately.
+            // Credential custody now describes the current key, not the old Pod
+            // template, so a credential generation cannot reconstruct that template.
+            sandbox
+                .credential
+                .runtime_reaches(binding)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        } else {
+            sandbox
+                .credential
+                .reaches
+                .iter()
+                .chain(
+                    sandbox
+                        .credential
+                        .service_grants
+                        .iter()
+                        .filter(|grant| grant.credential_generation_floor < current.generation)
+                        .flat_map(|grant| &grant.services),
+                )
+                .map(ToString::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
     } else if sandbox.runtime.as_ref() != Some(binding) {
         return Err(AdapterError::Rejected(
             "retained runtime binding is not current or suspended".into(),
@@ -111,8 +131,18 @@ pub(crate) async fn adopt_bound_runtime(
         .inspect_runtime(&request)
         .await?
         .ok_or_else(runtime_absent)?;
-    let observed = inspected.observation;
-    if observed.handle != handle
+    validate_bound_inspection(sandbox, generation, &inspected)?;
+    Ok(handle)
+}
+
+pub(crate) fn validate_bound_inspection(
+    sandbox: &Sandbox,
+    generation: u64,
+    inspected: &RuntimeInspection,
+) -> layer3_adapter::Result<()> {
+    let binding = sandbox.runtime.as_ref().ok_or_else(runtime_absent)?;
+    let observed = &inspected.observation;
+    if observed.handle.as_str() != binding.runtime_id
         || observed.sandbox_id != sandbox.id.as_str()
         || observed.generation != generation
         || !observed.lifecycle.is_running()
@@ -124,9 +154,10 @@ pub(crate) async fn adopt_bound_runtime(
     if sandbox.lifecycle.home.is_some() {
         let status = inspected
             .status
+            .as_ref()
             .ok_or_else(|| AdapterError::Rejected("runtime process status missing".into()))?;
         if !sandbox
-            .runtime_process_matches(&status)
+            .runtime_process_matches(status)
             .map_err(|_| AdapterError::Rejected("runtime process identity is invalid".into()))?
         {
             return Err(AdapterError::Unavailable(
@@ -134,7 +165,7 @@ pub(crate) async fn adopt_bound_runtime(
             ));
         }
     }
-    Ok(handle)
+    Ok(())
 }
 
 /// Persist this process identity with the first binding, before installation or credentials.

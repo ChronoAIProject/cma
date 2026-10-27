@@ -3,8 +3,12 @@ use crate::sandbox::reconciliation::SandboxReconciler;
 use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 use layer2_core::sandbox::{AgentStatus, SandboxLifecycleOperation, SandboxRevivePhase};
 mod backend;
+mod recovery_tests;
+mod retirement_tests;
+mod runtime_update_tests;
 mod scheduling_tests;
 mod service_access;
+mod status_reuse_tests;
 use backend::NativeBackend;
 
 struct Fixture {
@@ -23,13 +27,32 @@ impl Fixture {
             backend,
         }
     }
+    async fn native() -> Self {
+        let mut fixture = Self::new().await;
+        fixture.backend.pools = Some(super::native_pool_tests::pools(&fixture.harness, &[]));
+        fixture
+    }
+    fn home_policy(&self) -> layer3_adapter::HomeVolumePolicy {
+        if self.backend.pools.is_some() {
+            layer3_adapter::HomeVolumePolicy {
+                mode: layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2,
+                storage_class: "storage".into(),
+                capacity_gib: 64,
+                template_name: String::new(),
+                template_generation: String::new(),
+            }
+        } else {
+            home_tests::home_policy()
+        }
+    }
     fn adapter(&self, image: &str) -> Arc<dyn SandboxAdapter> {
         let mut config = CodexSandboxSpec::default();
         config.deployment.image.uri = image.into();
-        Arc::new(
-            CodexAdapter::with_backend(self.backend.clone(), config)
-                .with_home_volumes(self.homes.clone()),
-        )
+        let homes: Arc<dyn layer3_adapter::HomeVolumeStore> = match &self.backend.pools {
+            Some(pool) => pool.clone(),
+            None => self.homes.clone(),
+        };
+        Arc::new(CodexAdapter::with_backend(self.backend.clone(), config).with_home_volumes(homes))
     }
     async fn step(&self, sandbox: &SandboxId, now: SystemTime, image: &str) {
         let adapter = self.adapter(image);
@@ -44,7 +67,7 @@ impl Fixture {
         .unwrap();
         let mut config =
             SandboxWorkerConfig::new("restarted", "test", image, self.harness.policy.clone())
-                .with_home_policy(Some(home_tests::home_policy()));
+                .with_home_policy(Some(self.home_policy()));
         config.retry_delay = Duration::from_secs(5);
         let worker = SandboxWorker::new(
             SandboxWorkerDependencies {

@@ -10,11 +10,32 @@ impl SandboxTransactionStore for MongoSandboxStore {
                 && matches!(sandbox.work.step,
                     layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation
                     | layer2_core::sandbox::SandboxWorkStep::StopAgents));
+        let parent_ready = match &transaction {
+            SandboxTransaction::SaveSandboxAndAppend { sandbox, event, .. } => {
+                sandbox.status == layer2_core::sandbox::SandboxStatus::Active
+                    && sandbox.credential.delivered
+                    && matches!(event, SandboxEventKind::StatusChanged { from, to }
+                        if *from != layer2_core::sandbox::SandboxStatus::Active
+                            && *to == layer2_core::sandbox::SandboxStatus::Active)
+            }
+            SandboxTransaction::SaveWorkspaceAndAppend {
+                workspace, event, ..
+            } => {
+                workspace.status == WorkspaceStatus::Ready
+                    && matches!(event, SandboxEventKind::WorkspaceReady { .. })
+            }
+            _ => false,
+        };
         self.commit_aggregate_transaction(transaction).await?;
         // The successful return includes positively reconciled ambiguous commits.
         // A hint grants no authority; discovery and claims still use durable state.
         if wake {
             self.sandbox_admitted.notify_one();
+        }
+        if parent_ready {
+            self.agent_admitted.notify_one();
+            self.agent_parent_ready.notify_waiters();
+            self.access_admitted.notify_one();
         }
         Ok(())
     }

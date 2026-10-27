@@ -21,16 +21,18 @@ pub(crate) fn launch_request(
     channel: Arc<ResolvedChannel>,
     platform: Platform,
     verified: VerifiedCallback,
-    facts: RelayFacts,
+    mut facts: RelayFacts,
     keys: &MasterKeyRing,
     received_at: Instant,
     now: i64,
 ) -> Result<Built, &'static str> {
+    super::lark_resources::bind(&channel, platform, &verified.payload, &mut facts);
     let payload = verified.payload;
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
         format!(
-            "telegram-callback:{:x}",
+            "{}-callback:{:x}",
+            platform.as_str(),
             Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
         )
     } else {
@@ -62,7 +64,9 @@ pub(crate) fn launch_request(
             album_id: facts.album_id,
         },
     };
+    let thread_reply = facts.thread.is_some();
     let activity = Activity {
+        thread: facts.thread.map(|thread| *thread),
         schema_version: 1,
         event_id: event_id.clone(),
         kind,
@@ -97,6 +101,7 @@ pub(crate) fn launch_request(
     );
     let event_ref = EventRef::seal(
         &EventRefPayload {
+            telegram_admission: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
@@ -106,6 +111,7 @@ pub(crate) fn launch_request(
             conversation_id: conversation_id.clone(),
             expires_at: verified.reply_expires_at.min(now.saturating_add(1800)),
             reply: ReplyAddress::NyxidRelay {
+                thread_reply,
                 message_id: payload.message_id,
                 route_id: payload.conversation.id,
                 platform,

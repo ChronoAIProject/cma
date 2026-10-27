@@ -1,7 +1,7 @@
 //! Platform-neutral facts observed from an authenticated relay callback.
 use super::{
-    generic, lark, payload::CallbackPayload, telegram, telegram_media::MediaIngress,
-    VerificationError,
+    discord, generic, lark, payload::CallbackPayload, telegram, telegram_media::MediaIngress,
+    whatsapp, VerificationError,
 };
 use crate::ingress::admission::Refusal;
 use cmaeg_core::{
@@ -19,6 +19,7 @@ pub struct CallbackFacts {
 /// Facts a platform observer vouches for. `None` means the platform supplied no
 /// evidence, which admission treats differently from a verified `Some(false)`.
 pub struct RelayFacts {
+    pub thread: Option<Box<cmaeg_core::thread::ThreadFacts>>,
     pub callback: Option<CallbackFacts>,
     pub event: Option<Box<CloudEvent>>,
     pub conversation: ConversationKind,
@@ -70,6 +71,8 @@ pub fn observe(
         bot_username,
         bot_id,
         trust_normalized,
+        verify_raw_event,
+        admission,
         ..
     } = source
     else {
@@ -79,11 +82,20 @@ pub fn observe(
         Platform::Telegram => telegram::observe(
             payload,
             bot_username.as_deref(),
+            bot_id.as_deref(),
+            admission.native_bot_mentions(),
             MediaIngress::relay(media_enabled),
         ),
-        Platform::Lark | Platform::Feishu => {
-            lark::observe(payload, bot_id.as_deref(), media_enabled)
+        Platform::Lark | Platform::Feishu => lark::observe(
+            payload,
+            bot_id.as_deref(),
+            admission.native_bot_mentions(),
+            media_enabled,
+        ),
+        Platform::Discord if *verify_raw_event => {
+            discord::observe(payload, bot_id.as_deref(), media_enabled)
         }
+        Platform::Whatsapp if *verify_raw_event => whatsapp::observe(payload, media_enabled),
         Platform::Discord | Platform::Slack | Platform::Whatsapp if *trust_normalized => {
             generic::observe(payload)
         }

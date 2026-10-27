@@ -2,6 +2,8 @@
 
 mod config;
 mod connections;
+mod construction;
+mod filesystem;
 mod home;
 mod hosted_runtime;
 use hosted_runtime::CodexRuntime;
@@ -46,65 +48,68 @@ pub struct CodexAdapter {
     hosted: HostedAdapter,
 }
 
-impl CodexAdapter {
-    pub fn new(backend: Arc<dyn HostedBackend>, spec: CodexSandboxSpec) -> Self {
-        let runtime = Arc::new(CodexRuntime {
-            config: spec.config,
-        });
-        Self {
-            hosted: HostedAdapter::new(backend, runtime, spec.deployment),
-        }
-    }
-
-    pub fn with_backend<B>(backend: B, spec: CodexSandboxSpec) -> Self
-    where
-        B: HostedBackend + 'static,
-    {
-        Self::new(Arc::new(backend), spec)
-    }
-
-    /// Build the adapter and retain an inspectable hosted test double.
-    pub fn in_memory(spec: CodexSandboxSpec) -> (Self, InMemoryHostedBackend) {
-        let backend = InMemoryHostedBackend::default();
-        (Self::with_backend(backend.clone(), spec), backend)
-    }
-
-    pub fn hosted(&self) -> &HostedAdapter {
-        &self.hosted
-    }
-
-    pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
-        self.hosted = self.hosted.with_home_volumes(store);
-        self
-    }
-
-    pub fn with_provider_tools(
-        mut self,
-        source: std::sync::Arc<dyn crate::hosted::HostedProviderToolSource>,
-    ) -> Self {
-        self.hosted = self.hosted.with_provider_tools(source);
-        self
-    }
-
-    pub fn with_access_tools(
-        mut self,
-        source: Arc<dyn crate::hosted::HostedAccessToolSource>,
-    ) -> Self {
-        self.hosted = self.hosted.with_access_tools(source);
-        self
-    }
-
-    pub fn with_channel_tools(
-        mut self,
-        source: Arc<dyn crate::hosted::HostedChannelToolSource>,
-    ) -> Self {
-        self.hosted = self.hosted.with_channel_tools(source);
-        self
-    }
-}
-
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    async fn list_agent_files(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileListRequest,
+    ) -> crate::Result<crate::AgentFileListReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.list_agent_files(handle, &request).await
+    }
+    async fn read_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileReadRequest,
+    ) -> crate::Result<crate::AgentFileReadReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.read_agent_file(handle, &request).await
+    }
+    async fn write_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileWriteRequest,
+    ) -> crate::Result<crate::AgentFileWriteReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.write_agent_file(handle, &request).await
+    }
+    async fn delete_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentFileDeleteRequest,
+    ) -> crate::Result<crate::AgentFileDeleteReceipt> {
+        let mut request = request.clone();
+        filesystem::protect_provider_credentials(
+            request.owner_access,
+            &mut request.protected_paths,
+        );
+        self.hosted.delete_agent_file(handle, &request).await
+    }
+
+    async fn upload_agent_attachment(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::AgentAttachmentRequest,
+        content: Vec<u8>,
+    ) -> crate::Result<crate::AgentAttachmentReceipt> {
+        self.hosted
+            .upload_agent_attachment(handle, request, content)
+            .await
+    }
+
     async fn reserve_home_request(
         &self,
         runtime: &RuntimeProvisionRequest,
@@ -166,6 +171,13 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<RuntimeHandle> {
         self.hosted.resume_runtime(request, next).await
     }
+    async fn upgrade_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        next: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.hosted.upgrade_runtime(request, next).await
+    }
 
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
         self.hosted.runtime_status(handle).await
@@ -194,6 +206,13 @@ impl SandboxAdapter for CodexAdapter {
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeFinalityReceipt> {
         self.hosted.finalize_runtime(original, operation_id).await
+    }
+
+    async fn runtime_termination(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<Option<crate::RuntimeTermination>> {
+        self.hosted.runtime_termination(handle).await
     }
 
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
@@ -472,3 +491,9 @@ impl SandboxAdapter for CodexAdapter {
 #[cfg(test)]
 #[path = "golden_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod attachments_tests;
+
+#[cfg(test)]
+mod termination_tests;

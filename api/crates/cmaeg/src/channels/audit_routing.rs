@@ -248,6 +248,8 @@ fn classify(
 /// The extension names an operator sees, in a fixed order.
 fn names(extensions: Extensions) -> Vec<&'static str> {
     [
+        (extensions.native_bot_mentions, "native_bot_mentions"),
+        (extensions.thread_contract, "thread_contract"),
         (extensions.routing, "routing"),
         (extensions.sources, "sources"),
     ]

@@ -35,6 +35,7 @@ async fn messages_tools_and_final_snapshots_project_once_in_order() {
         fixture.terminal().await,
         vec![
             TurnOutcome::Accepted {
+                thread_reply: false,
                 response_id: "response-1".into()
             },
             TurnOutcome::TextDelta {
@@ -91,6 +92,68 @@ async fn incomplete_failed_and_oversized_outputs_remain_explicit() {
         ));
         let outcomes = fixture.terminal().await;
         assert_eq!(outcomes.last().unwrap().kind(), kind);
+        fixture.fake.close().await;
+    }
+}
+
+#[tokio::test]
+async fn legacy_turn_activity_preserves_provider_native_identity_without_extra_requests() {
+    use cmaeg::{activity::Change, turns::observer::ActivityObserver};
+    use cmaeg_core::ids::{EventId, RecordId};
+    use futures_util::future::BoxFuture;
+    use std::sync::{Arc, Mutex};
+    #[derive(Default)]
+    struct Observed(Mutex<Vec<Change>>);
+    impl ActivityObserver for Observed {
+        fn checkpoint<'a>(
+            &'a self,
+            _: &'a RecordId,
+            _: &'a EventId,
+            change: Change,
+        ) -> BoxFuture<'a, ()> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(change);
+            })
+        }
+    }
+    for native in [Some("agt_provider_native"), None] {
+        let observed = Arc::new(Observed::default());
+        let mut fixture = Fixture::new(FakeProviderConfig {
+            frames: Some(vec![
+                json!({"type":"response.created","response":{"id":"r","conversation":{"id":native}}}),
+                json!({"type":"response.completed","response":{"output":[]}}),
+            ]),
+            ..Default::default()
+        }, Default::default(), 4).await;
+        fixture.runner = fixture.runner.with_activity(observed.clone());
+        let request = fixture.request("native-identity");
+        let alias = request.conversation_id.to_string();
+        assert_ne!(native, Some(alias.as_str()));
+        assert!(matches!(
+            fixture.runner.launch(request).await,
+            LaunchOutcome::Accepted { .. }
+        ));
+        assert_eq!(fixture.terminal().await.last().unwrap().kind(), "completed");
+        let identities = observed
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|change| change.agent_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            identities,
+            native.into_iter().map(str::to_owned).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fixture
+                .fake
+                .log()
+                .iter()
+                .map(|request| request.method.as_str())
+                .collect::<Vec<_>>(),
+            ["POST"]
+        );
         fixture.fake.close().await;
     }
 }

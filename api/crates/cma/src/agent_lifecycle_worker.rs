@@ -88,6 +88,11 @@ impl InlineAgentLifecycle {
         let attempts = record.attempts;
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
+        let first_message = validation::admitted_first_message(&record.input);
+        let request = guidance::provisioning_request(
+            &record.input.request,
+            record.input.managed_agent_instructions.as_deref(),
+        );
         let caller = Caller::new(
             SubjectId::new(record.owner),
             Authorization::new(record.input.capabilities),
@@ -96,10 +101,12 @@ impl InlineAgentLifecycle {
             &caller,
             ProvisionInput {
                 behavior: record.input.behavior,
-                request: record.input.request,
+                first_message,
+                request,
                 runtime_image: record.input.resolved_image,
                 capacity,
                 limits,
+                sandbox_availability: record.input.sandbox_availability,
                 key: record.key,
                 lease: lease.clone(),
                 existing_sandbox_id: record.sandbox_id,

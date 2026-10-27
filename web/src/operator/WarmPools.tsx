@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WarmPoolList, WarmPoolView } from '@chronoai/cma-sdk';
+import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
+import { SkeletonRows } from '../ui/Skeleton';
+import { Table } from '../ui/Table';
 import { IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
-import { WarmPoolCard } from './WarmPoolCard';
 import { WarmPoolCreate } from './WarmPoolCreate';
+import { WarmPoolRow, warmPoolColumns } from './WarmPoolRow';
 import './WarmPools.css';
 
 export function WarmPools({ client }: { readonly client: OperatorClient }) {
@@ -55,6 +58,15 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
           },
     );
   };
+  const current = data?.items.filter((pool) => pool.image === data.default_image) ?? [];
+  const previous = data?.items.filter((pool) => pool.image !== data.default_image) ?? [];
+  const previousNeedsAttention = previous.some(
+    (pool) =>
+      pool.target_replicas > 0 ||
+      (pool.ready_replicas ?? 0) > 0 ||
+      !pool.observed ||
+      pool.error !== null,
+  );
   return (
     <section className="warm-pools" aria-label="Warm pools">
       <header className="warm-pool-header">
@@ -76,15 +88,20 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
         </Button>
       </header>
       <FailureNotice failure={failure} />
-      {busy ? <p role="status">Loading warm pools…</p> : null}
+      {/* A refresh keeps the tables in place; only a first read reserves their rows. */}
+      {busy && data === undefined ? <SkeletonRows label="Loading warm pools" /> : null}
       {data ? (
         <>
           {!data.available ? (
-            <p className="notice notice--quiet" role="status">
+            <Alert tone="info">
               Warm pool capacity is currently unavailable. Saved targets will be applied when the
               runtime service is ready.
-            </p>
+            </Alert>
           ) : null}
+          <div className="warm-pool-image">
+            <span>Current runtime image</span>
+            <code>{data.default_image || 'No runtime image configured'}</code>
+          </div>
           <WarmPoolCreate
             client={client}
             image={data.default_image}
@@ -92,16 +109,64 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
             memoryMib={data.default_memory_mib}
             onChanged={changed}
           />
-          {data.items.length === 0 ? (
-            <p className="operator-empty">
-              No warm pools configured. New Agents can start without reserved capacity.
-            </p>
-          ) : null}
           <div className="warm-pool-list">
-            {data.items.map((pool) => (
-              <WarmPoolCard key={pool.id} client={client} pool={pool} onChanged={changed} />
-            ))}
+            <p className="operator-notice">
+              Set a target to 0 to disable spare capacity. Agents that have already claimed a
+              Sandbox keep running.
+            </p>
+            <Table
+              label="Current runtime pools"
+              columns={warmPoolColumns(false)}
+              actions="Actions"
+              empty="No warm pools configured for the current runtime. New Agents can start without reserved capacity."
+            >
+              {current.map((pool) => (
+                <WarmPoolRow
+                  key={pool.id}
+                  client={client}
+                  pool={pool}
+                  currentDefault={
+                    !!data.default_config_sha256 &&
+                    pool.config_sha256 === data.default_config_sha256
+                  }
+                  onChanged={changed}
+                />
+              ))}
+            </Table>
           </div>
+          {previousNeedsAttention ? (
+            <Alert tone="warning">
+              Previous runtime pools still have spare capacity or need attention. Review them below;
+              disable any remaining targets. Claimed Sandboxes keep running.
+            </Alert>
+          ) : null}
+          {previous.length > 0 ? (
+            <details className="warm-pool-create" open={previousNeedsAttention}>
+              <summary>Previous runtime pools ({previous.length})</summary>
+              <div className="warm-pool-list">
+                <p className="operator-notice">
+                  Previous runtime images are no longer prewarmed. Only disabling is available for a
+                  previous runtime; claimed Sandboxes keep running. These records remain available
+                  for capacity and cleanup checks.
+                </p>
+                <Table
+                  label="Previous runtime pools"
+                  columns={warmPoolColumns(true)}
+                  actions="Actions"
+                >
+                  {previous.map((pool) => (
+                    <WarmPoolRow
+                      key={pool.id}
+                      client={client}
+                      pool={pool}
+                      previousRuntime
+                      onChanged={changed}
+                    />
+                  ))}
+                </Table>
+              </div>
+            </details>
+          ) : null}
         </>
       ) : null}
     </section>

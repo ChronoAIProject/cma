@@ -125,7 +125,7 @@ impl ProviderHostedControlTransport {
         }
     }
 
-    async fn native_http_once(
+    pub(super) async fn native_http_once(
         &self,
         endpoint: &RuntimeEndpoint,
         method: http::Method,

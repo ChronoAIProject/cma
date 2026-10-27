@@ -14,12 +14,12 @@ use serde::Deserialize;
 use super::{error as response_error, ResponsesV2State};
 use crate::AuthenticatedResourceCaller;
 
-mod error;
+pub(super) mod error;
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod inspection_tests;
-mod parse;
+pub(super) mod parse;
 pub(super) mod shapes;
 #[cfg(test)]
 mod tests;

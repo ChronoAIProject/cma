@@ -11,19 +11,49 @@ pub type ResponseObject = Value;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResponsesEvent {
-    Created { response_id: String },
+    Created {
+        response_id: String,
+        thread_reply: bool,
+        native_agent_id: Option<String>,
+    },
     InProgress,
-    OutputItemAdded { index: usize, item: OutputItem },
-    OutputTextDelta { item_id: String, delta: String },
-    OutputTextDone { item_id: String, text: String },
-    OutputItemDone { index: usize, item: OutputItem },
-    McpCallInProgress { item_id: String },
-    McpCallCompleted { item_id: String },
-    McpCallFailed { item_id: String },
-    Completed { response: ResponseObject },
-    Failed { error: ResponseError },
-    Incomplete { reason: String },
-    Unknown { r#type: String },
+    OutputItemAdded {
+        index: usize,
+        item: OutputItem,
+    },
+    OutputTextDelta {
+        item_id: String,
+        delta: String,
+    },
+    OutputTextDone {
+        item_id: String,
+        text: String,
+    },
+    OutputItemDone {
+        index: usize,
+        item: OutputItem,
+    },
+    McpCallInProgress {
+        item_id: String,
+    },
+    McpCallCompleted {
+        item_id: String,
+    },
+    McpCallFailed {
+        item_id: String,
+    },
+    Completed {
+        response: ResponseObject,
+    },
+    Failed {
+        error: ResponseError,
+    },
+    Incomplete {
+        reason: String,
+    },
+    Unknown {
+        r#type: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +119,25 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(object)?,
+            native_agent_id: value
+                .pointer("/response/conversation/id")
+                .and_then(Value::as_str)
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 256
+                        && id.trim() == *id
+                        && !id.chars().any(char::is_control)
+                })
+                .map(str::to_owned),
+            thread_reply: value
+                .pointer("/response/thread_reply")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        ResponsesEventError::Malformed("invalid native thread reply choice".into())
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false),
         }),
         "response.in_progress" => Ok(ResponsesEvent::InProgress),
         "response.output_item.added" => Ok(ResponsesEvent::OutputItemAdded {
@@ -289,13 +338,59 @@ mod tests {
                 r#"{"type":"response.created","response":{"id":"resp_1"}}"#
             )),
             Ok(ResponsesEvent::Created {
-                response_id: "resp_1".into()
+                response_id: "resp_1".into(),
+                native_agent_id: None,
+                thread_reply: false
             })
         );
         assert_eq!(
             parse_event(&frame(r#"{"type":"response.future"}"#)),
             Ok(ResponsesEvent::Unknown {
                 r#type: "response.future".into()
+            })
+        );
+    }
+
+    #[test]
+    fn native_agent_identity_is_optional_bounded_provider_evidence() {
+        for (value, expected) in [
+            (
+                serde_json::json!("agt_native_provider"),
+                Some("agt_native_provider"),
+            ),
+            (Value::Null, None),
+            (serde_json::json!(""), None),
+            (serde_json::json!(" "), None),
+            (serde_json::json!("x".repeat(257)), None),
+            (serde_json::json!("agent\nheader"), None),
+            (serde_json::json!(42), None),
+        ] {
+            let raw = serde_json::json!({"type":"response.created","response":{
+                "id":"resp_native","conversation":{"id":value}}});
+            let ResponsesEvent::Created {
+                native_agent_id, ..
+            } = parse_event(&frame(&raw.to_string())).unwrap()
+            else {
+                panic!("created")
+            };
+            assert_eq!(native_agent_id.as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn native_thread_choice_is_opt_in_on_provider_acceptance() {
+        assert!(parse_event(&frame(
+            r#"{"type":"response.created","response":{"id":"resp_thread","thread_reply":"true"}}"#
+        ))
+        .is_err());
+        assert_eq!(
+            parse_event(&frame(
+                r#"{"type":"response.created","response":{"id":"resp_thread","thread_reply":true}}"#
+            )),
+            Ok(ResponsesEvent::Created {
+                response_id: "resp_thread".into(),
+                native_agent_id: None,
+                thread_reply: true
             })
         );
     }

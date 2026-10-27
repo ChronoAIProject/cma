@@ -28,6 +28,7 @@ pub(crate) async fn approved_fixture() -> (
         .request_agent_access(
             requester,
             AgentAccessProposal {
+                retry_of: None,
                 request_key: "access-request-fixture".into(),
                 services: vec!["github".into()],
                 reason: "Read owner repository".into(),

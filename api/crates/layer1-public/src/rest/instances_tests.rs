@@ -45,6 +45,10 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
+#[path = "sandbox_provider_view_tests.rs"]
+mod provider_view_tests;
+#[path = "sandbox_runtime_update_tests.rs"]
+pub(super) mod runtime_update_tests;
 #[path = "sandbox_service_access_tests.rs"]
 mod service_access_tests;
 type OperationKey = (String, String, String);
@@ -315,6 +319,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: vec![],
             key_generation: 0,
             delivered: false,
@@ -415,6 +420,9 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: None,
             runtime_generation: None,

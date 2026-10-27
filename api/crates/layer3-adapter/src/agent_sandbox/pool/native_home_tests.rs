@@ -6,12 +6,18 @@ use serde_json::json;
 
 #[path = "native_admission_tests.rs"]
 mod admission_tests;
+#[path = "native_adoption_read_tests.rs"]
+mod adoption_read_tests;
 #[path = "native_full_home_tests.rs"]
 mod full_home_tests;
 #[path = "native_home_read_tests.rs"]
 mod read_tests;
 #[path = "native_home_ready_tests.rs"]
 mod ready_tests;
+#[path = "native_resume_read_tests.rs"]
+mod resume_read_tests;
+#[path = "native_runtime_render_read_tests.rs"]
+mod runtime_render_read_tests;
 
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();

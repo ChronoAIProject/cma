@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
-import { sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface NavigationSandbox {
   readonly sandbox: SandboxDetail;
@@ -17,6 +16,8 @@ export type NavigationState =
       readonly refreshError?: string;
     }
   | { readonly status: 'error'; readonly message: string };
+
+const REFRESH_INTERVAL_MS = 15_000;
 
 async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
   const items: SandboxSummary[] = [];
@@ -75,40 +76,58 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = false;
-    const poll = () => {
-      if (controller.signal.aborted || inFlight || document.hidden) return;
+    let pending: AbortController | undefined;
+    let refreshAfter = 0;
+    const schedule = () => {
       clearTimeout(timer);
-      inFlight = true;
-      void loadNavigation(client, controller.signal)
+      if (!controller.signal.aborted && !document.hidden)
+        timer = setTimeout(poll, Math.max(0, refreshAfter - Date.now()));
+    };
+    const poll = () => {
+      if (controller.signal.aborted || pending || document.hidden) return;
+      if (Date.now() < refreshAfter) {
+        schedule();
+        return;
+      }
+      clearTimeout(timer);
+      const request = new AbortController();
+      pending = request;
+      const signal = AbortSignal.any([controller.signal, request.signal]);
+      void loadNavigation(client, signal)
         .then((items) => {
-          if (controller.signal.aborted) return;
+          if (signal.aborted) return;
           setState({ status: 'ready', items });
-          timer = setTimeout(
-            poll,
-            Math.min(5000, ...items.map(({ sandbox }) => sandboxRefreshDelay(sandbox))),
-          );
         })
         .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (signal.aborted) return;
           const denied = error instanceof ApiError && [401, 403, 404].includes(error.status);
           setState((current) =>
             current.status === 'ready' && !denied
               ? { ...current, refreshError: 'Sandbox status could not be refreshed. Reconnecting.' }
               : { status: 'error', message: messageOf(error) },
           );
-          timer = setTimeout(poll, 5000);
         })
         .finally(() => {
-          inFlight = false;
+          pending = undefined;
+          // Focus changes and one Sandbox transition must not fan out another
+          // whole-tree read. Active Agent and lifecycle views poll separately;
+          // explicit mutations still refresh immediately through revision.
+          refreshAfter = Date.now() + REFRESH_INTERVAL_MS;
+          schedule();
         });
     };
-    document.addEventListener('visibilitychange', poll);
+    const visibilityChanged = () => {
+      clearTimeout(timer);
+      if (document.hidden) pending?.abort();
+      else poll();
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
     poll();
     return () => {
       controller.abort();
+      pending?.abort();
       clearTimeout(timer);
-      document.removeEventListener('visibilitychange', poll);
+      document.removeEventListener('visibilitychange', visibilityChanged);
     };
   }, [client, revision]);
 

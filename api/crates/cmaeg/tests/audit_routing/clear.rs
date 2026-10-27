@@ -284,3 +284,56 @@ async fn a_record_listed_under_another_owner_is_neither_unbound_nor_rewritten() 
     provider.close().await;
     cma.close().await;
 }
+
+#[tokio::test]
+async fn verified_relay_sources_block_rollback_without_downgrading_trust_or_unbinding() {
+    for platform in ["discord", "whatsapp"] {
+        for routed in [false, true] {
+            let cma = FakeCma::start(false).await;
+            let provider = provider(&[]).await;
+            let mut value = if routed {
+                routed_to_default()
+            } else {
+                legacy()
+            };
+            value["sources"] = json!([super::routing_fixture::relay(
+                platform,
+                super::routing_fixture::ROUTE
+            )]);
+            value["sources"][0]["verify_raw_event"] = true.into();
+            value["partition"] = json!({"version":1,"key":"conversation"});
+            value["reply"]["sinks"] = json!([{"type":"source"}]);
+            let (original, _) = seed(&cma, &key_ring(), value, false);
+            let (before, version) = stored(&cma, &key_ring(), &original.record_id);
+            assert!(serde_json::from_slice::<previous_schema::ChannelDefinition>(&before).is_err());
+            let report = audit_routing(
+                &records(&cma),
+                &key_ring(),
+                Some(&providers(&provider)),
+                &non_human(),
+                RoutingAuditMode::Report,
+            )
+            .await
+            .unwrap();
+            assert_eq!(report.remaining, 1);
+            assert!(report.findings[0].extensions.contains(&"sources"));
+            for override_widening in [false, true] {
+                let report = clear(&cma, &provider, override_widening).await;
+                assert_eq!(
+                    (report.cleared, report.blocked(), report.remaining),
+                    (0, 1, 1)
+                );
+                assert_eq!(report.findings[0].action, RoutingAuditAction::Blocked);
+                assert_eq!(report.findings[0].reason, Some("sources_need_owner"));
+                assert!(!report.complete());
+                assert_eq!(
+                    stored(&cma, &key_ring(), &original.record_id),
+                    (before.clone(), version)
+                );
+                assert!(provider.requests().is_empty());
+            }
+            provider.close().await;
+            cma.close().await;
+        }
+    }
+}

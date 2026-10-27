@@ -56,11 +56,15 @@ mod channel_usage;
 mod command_audit;
 mod command_revival;
 mod events;
+mod interrupting_messages;
 mod provenance;
 mod provenance_inventory;
 mod queued_cancellations;
 #[cfg(test)]
 mod queued_cancellations_tests;
+mod queued_inputs;
+#[cfg(test)]
+mod queued_inputs_tests;
 use events::{append_sandbox_event, bounded_events};
 #[cfg(test)]
 mod launch_command_tests;
@@ -83,12 +87,19 @@ mod sandbox_controls;
 mod targeted_controls;
 #[cfg(test)]
 mod targeted_controls_tests;
+mod transactions;
 mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
+    fn managed_runtime_version(&self) -> Option<&str> {
+        self.managed_runtime_version.as_deref()
+    }
+
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
-        if !sandbox.credential.service_grants.is_empty() {
+        if !sandbox.credential.service_grants.is_empty()
+            || sandbox.credential.service_scope.is_some()
+        {
             return Err(SandboxStoreError::InvalidTransaction(
                 "service access requires an existing sandbox and an atomic grant",
             ));
@@ -406,95 +417,9 @@ impl AgentLogStore for InMemorySandboxStore {
     }
 }
 
-#[async_trait]
-impl SandboxTransactionStore for InMemorySandboxStore {
-    async fn commit(&self, transaction: SandboxTransaction) -> Result<(), SandboxStoreError> {
-        let mut state = self.lock();
-        let mut candidate = state.clone();
-        match transaction {
-            SandboxTransaction::CreateWorktreeAndAgent {
-                worktree,
-                agent,
-                event_at,
-                event,
-            } => {
-                if agent.worktree_id != worktree.id || agent.sandbox_id != worktree.sandbox_id {
-                    return Err(SandboxStoreError::InvalidTransaction("lineage mismatch"));
-                }
-                let sandbox_id = worktree.sandbox_id.clone();
-                let worktree_id = worktree.id.clone();
-                let agent_id = agent.id.clone();
-                create_record!(candidate, worktrees, worktree_id, *worktree)?;
-                create_record!(candidate, agents, agent_id, *agent)?;
-                append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
-            }
-            SandboxTransaction::SaveSandboxAndAppend {
-                command_revival,
-                expected_revision,
-                sandbox,
-                event_at,
-                event,
-            } => {
-                if let Some(proof) = &command_revival {
-                    command_revival::validate(&mut candidate, proof, &sandbox, &event_at, &event)?;
-                }
-                let id = sandbox.id.clone();
-                if candidate.sandboxes.get(&id).is_some_and(|current| {
-                    current.owner != sandbox.owner
-                        || current
-                            .validate_service_access_transaction(&sandbox, &event, &event_at)
-                            .is_err()
-                        || crate::sandbox::ProvisioningExecution::validate_successor(
-                            current.work.execution,
-                            sandbox.work.execution,
-                        )
-                        .is_err()
-                        || current
-                            .validate_checkpoint_capture_successor(&sandbox)
-                            .is_err()
-                        || current.origin != sandbox.origin
-                        || current
-                            .validate_runtime_generation_successor(&sandbox)
-                            .is_err()
-                }) {
-                    return Err(SandboxStoreError::Conflict);
-                }
-                save_record!(
-                    candidate,
-                    sandboxes,
-                    id.clone(),
-                    expected_revision,
-                    *sandbox
-                )?;
-                append_sandbox_event(&mut candidate, &id, event_at, event)?;
-                if let Some(proof) = command_revival {
-                    proof
-                        .require_current()
-                        .map_err(|_| SandboxStoreError::Conflict)?;
-                }
-            }
-            SandboxTransaction::SaveWorkspaceAndAppend {
-                expected_revision,
-                workspace,
-                event_at,
-                event,
-            } => {
-                let id = workspace.id.clone();
-                let sandbox_id = workspace.sandbox_id.clone();
-                if candidate.workspaces.get(&id).is_some_and(|current| {
-                    crate::sandbox::ProvisioningExecution::validate_successor(
-                        current.work.execution,
-                        workspace.work.execution,
-                    )
-                    .is_err()
-                }) {
-                    return Err(SandboxStoreError::Conflict);
-                }
-                save_record!(candidate, workspaces, id, expected_revision, *workspace)?;
-                append_sandbox_event(&mut candidate, &sandbox_id, event_at, event)?;
-            }
-        }
-        *state = candidate;
-        Ok(())
+impl InMemorySandboxStore {
+    pub fn with_managed_runtime_version(mut self, version: String) -> Self {
+        self.managed_runtime_version = Some(version);
+        self
     }
 }

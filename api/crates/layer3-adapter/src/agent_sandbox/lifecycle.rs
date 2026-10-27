@@ -78,7 +78,13 @@ impl AgentSandboxClient {
                 return Err(rejected("native Sandbox UID differs from its adopted home"));
             }
         }
-        if actual.name_any() != desired.name_any()
+        if actual
+            .annotations()
+            .get(super::pool::runtime_upgrade::UPGRADE_ANNOTATION)
+            != desired
+                .annotations()
+                .get(super::pool::runtime_upgrade::UPGRADE_ANNOTATION)
+            || actual.name_any() != desired.name_any()
             || actual.metadata.deletion_timestamp.is_some()
             || desired
                 .annotations()
@@ -144,11 +150,13 @@ impl AgentSandboxClient {
         timeout: Duration,
     ) -> Result<super::PodBinding> {
         tokio::time::timeout(timeout, async {
+            let started = tokio::time::Instant::now();
             loop {
                 match self.pod_binding(runtime).await {
                     Ok(binding) => return Ok(binding),
                     Err(crate::AdapterError::Unavailable(_)) => {
-                        tokio::time::sleep(Duration::from_millis(500)).await
+                        tokio::time::sleep(super::observation::refresh_delay(started.elapsed()))
+                            .await
                     }
                     Err(error) => return Err(error),
                 }
@@ -318,6 +326,7 @@ impl AgentSandboxClient {
     async fn wait_absent(&self, runtime: &RuntimeHandle) -> Result<(String, String)> {
         let (name, uid) = parse_handle(runtime)?;
         tokio::time::timeout(Duration::from_secs(120), async {
+            let started = tokio::time::Instant::now();
             loop {
                 let objects = self
                     .sandboxes
@@ -371,7 +380,7 @@ impl AgentSandboxClient {
                             .ok_or_else(|| unavailable("missing Pod list version"))?,
                     ));
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(super::observation::refresh_delay(started.elapsed())).await;
             }
         })
         .await

@@ -15,10 +15,13 @@ struct Row {
 #[derive(Clone, Default)]
 pub(super) struct NativeBackend {
     inner: InMemoryHostedBackend,
+    pub pools: Option<Arc<super::super::native_pool_tests::Pools>>,
     row: Arc<tokio::sync::Mutex<Option<Row>>>,
     pub lose_suspend: Arc<AtomicBool>,
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
+    pub reject_credential: Arc<AtomicBool>,
+    pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub calls: ActionLog,
 }
 
@@ -39,6 +42,14 @@ impl NativeBackend {
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
     }
+    pub async fn restart_process(&self) {
+        let rows = self.row.lock().await;
+        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
+        self.inner.restart_persistent_process(pod).await.unwrap();
+    }
+    pub async fn lose_object(&self) {
+        self.row.lock().await.take();
+    }
     async fn pod(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<RuntimeHandle> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;
@@ -52,6 +63,46 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn reserve_home_request(
+        &self,
+        _: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeRequest,
+    ) -> layer3_adapter::Result<layer3_adapter::HomeVolumeRequest> {
+        let mut home = home.clone();
+        if let Some(pools) = &self.pools {
+            home.scope = layer3_adapter::HomeVolumeStore::allocation_scope(pools.as_ref());
+        }
+        Ok(home)
+    }
+    fn native_pools(&self) -> Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl> {
+        self.pools
+            .as_deref()
+            .map(|pool| pool as &dyn layer3_adapter::agent_sandbox::NativePoolControl)
+    }
+    async fn select_native_pool(
+        &self,
+        _: &ProviderSandboxRequest,
+        _: &layer3_adapter::RuntimeImage,
+        home: &layer3_adapter::HomeVolumeRequest,
+    ) -> layer3_adapter::Result<Option<layer3_adapter::agent_sandbox::NativePoolBinding>> {
+        Ok(self
+            .pools
+            .as_ref()
+            .map(|_| super::super::native_pool_tests::Pools::binding(home)))
+    }
+    async fn upgrade_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+    ) -> layer3_adapter::Result<()> {
+        assert!(home.request.policy.is_native_vct());
+        assert_ne!(previous.image.uri, next.image.uri);
+        self.calls.push("upgrade");
+        self.resume(handle, previous, next).await
+    }
+
     async fn provision(
         &self,
         request: ProviderSandboxRequest,
@@ -176,7 +227,23 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
-        self.inner.exchange(&self.pod(handle).await?, request).await
+        if matches!(request, RequestFrame::Credential(_))
+            && self.reject_credential.load(Ordering::SeqCst)
+        {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "fixture credential delivery rejected".into(),
+            ));
+        }
+        let mut response = self
+            .inner
+            .exchange(&self.pod(handle).await?, request)
+            .await?;
+        if let ResponseFrame::RuntimeStatus(status) = &mut response {
+            if let Some(replacement) = self.status_override.lock().unwrap().as_ref() {
+                *status = replacement.clone();
+            }
+        }
+        Ok(response)
     }
     async fn open_agent(
         &self,

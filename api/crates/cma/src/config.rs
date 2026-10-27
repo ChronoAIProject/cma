@@ -21,7 +21,9 @@ mod features;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
+mod documents;
 pub(crate) use bot_father::BotFatherConfig;
+pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 
@@ -141,6 +143,8 @@ pub struct Config {
     pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
+    pub nyxid_proxy_issuer: Option<String>,
+    pub nyxid_proxy_jwks_url: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -154,10 +158,12 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub default_profiles: DefaultProfileConfig,
+    pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
     pub bot_father: Option<BotFatherConfig>,
+    pub document_storage: Option<DocumentStorageConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -181,6 +187,10 @@ impl std::fmt::Debug for Config {
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
             .field("default_profiles", &self.default_profiles)
+            .field(
+                "agent_manager_sandbox_capacity",
+                &self.agent_manager_sandbox_capacity,
+            )
             .field("auth_mode", &self.auth_mode)
             .field("features", &self.features)
             .finish()
@@ -279,6 +289,7 @@ impl Config {
                 .expect("the validated day count fits in seconds"),
         );
         let default_profiles = DefaultProfileConfig::from_lookup(&mut lookup)?;
+        let agent_manager_sandbox_capacity = profiles::agent_manager_capacity(&mut lookup)?;
 
         let (auth_mode, nyxid_public_url) =
             match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
@@ -320,6 +331,8 @@ impl Config {
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
+            nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
+            nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
             cors_origins,
             rate_limits,
             trusted_proxies,
@@ -336,10 +349,12 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             default_profiles,
+            agent_manager_sandbox_capacity,
             auth_mode,
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
+            document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,
         })
     }
 

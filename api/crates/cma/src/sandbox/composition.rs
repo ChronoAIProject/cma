@@ -41,6 +41,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -76,7 +77,8 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
-        .with_profile_agents(Arc::clone(&dependencies.agents));
+        .with_profile_agents(Arc::clone(&dependencies.agents))
+        .with_runtime_version(config.runtime_version.clone());
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
@@ -113,7 +115,9 @@ impl SandboxLifecycleComposition {
             AgentWorkerConfig::new(
                 format!("{}:agent", config.holder),
                 config.deployment_id.clone(),
-            ),
+            )
+            .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_managed_documents(config.managed_documents_enabled),
         );
         let sandbox_worker = SandboxWorker::new(
             SandboxWorkerDependencies {

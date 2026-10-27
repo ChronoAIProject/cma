@@ -1,5 +1,6 @@
 use utoipa::OpenApi;
 pub mod agent_delegations;
+mod agent_manager;
 mod identity;
 mod projections;
 use self::projections::{
@@ -53,12 +54,23 @@ use super::trigger_openapi_shapes::*;
         super::bots::enable,
         super::bots::rotate,
         super::bots::delete,
+        super::agent_attachments::upload,
+        super::agent_filesystem::list,
+        super::agent_filesystem::read,
+        super::agent_filesystem::download,
+        super::agent_filesystem::write,
+        super::agent_filesystem::remove,
         super::agent_artifacts::publish,
         super::agent_artifacts::list,
         super::agent_artifacts::read,
         super::agent_artifacts::download,
         super::conformance,
         super::organizations::list,
+        super::agent_share_links::list,
+        super::agent_share_links::create,
+        super::agent_share_links::revoke,
+        super::agent_share_links::redeem,
+        super::agent_share_links::recipients,
         super::resource_access::effective,
         super::resource_access::list,
         super::resource_access::read,
@@ -137,9 +149,14 @@ use super::trigger_openapi_shapes::*;
         super::agent_access_requests::list,
         super::agent_access_requests::approve,
         super::agent_access_requests::deny,
+        super::agent_access_requests::scope::replace,
         super::agent_models::list,
         super::agent_skills::read,
         super::agent_skills::install,
+        super::message_feedback::list,
+        super::message_feedback::set,
+        super::agent_preferences::read,
+        super::agent_preferences::update,
         super::agent_settings::read,
         super::agent_settings::update,
         super::agent_source::read,
@@ -163,6 +180,7 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::remove,
         super::sandboxes::pause,
         super::sandboxes::revive,
+        super::sandbox_runtime_update::update,
         super::sandbox_commands::create,
         super::sandbox_commands::read,
         super::sandbox_service_access::grant,
@@ -182,6 +200,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
         super::admin::sandboxes::retire,
+        super::admin::runtime_update::update,
         super::admin::profiles::list,
         super::admin::profiles::retire,
         super::admin::triggers::pause,
@@ -201,6 +220,13 @@ use super::trigger_openapi_shapes::*;
         super::agent_access_requests::AgentAccessConnectionTarget,
         super::agent_access_requests::ApproveAgentAccessRequest,
         super::agent_access_requests::DenyAgentAccessRequest,
+        super::agent_access_requests::scope::ReplaceAgentServiceAccess,
+        super::agent_attachments::AgentAttachmentView,
+        super::agent_filesystem::WriteFileRequest,
+        super::agent_filesystem::FileEntryView,
+        super::agent_filesystem::FileListView,
+        super::agent_filesystem::FileReadView,
+        super::agent_filesystem::FileMutationView,
         super::agent_artifacts::AgentArtifactView,
         super::agent_artifacts::AgentArtifactPageView,
         super::agent_artifacts::PublishAgentArtifactRequest,
@@ -360,6 +386,7 @@ use super::trigger_openapi_shapes::*;
         AgentListItemView,
         AgentPageView,
         AgentView,
+        AgentBootstrapView,
         AccessibleAgentView,
         AccessibleAgentPageView,
         AccessibleAgentListItemView,
@@ -373,6 +400,8 @@ use super::trigger_openapi_shapes::*;
         AgentTranscriptMessageView,
         AgentTranscriptRoleView,
         AgentUsageView,
+        super::agent_observation_shapes::AgentRuntimeMetadataView,
+        super::agent_observation_shapes::AgentTurnUsageView,
         AgentResourcesView,
         ProfileReferenceView,
         CreateSandboxRequest,
@@ -388,6 +417,7 @@ use super::trigger_openapi_shapes::*;
         FailureView,
         SandboxLimitsView,
         super::instances_openapi_shapes::SandboxLifecycleView,
+        super::instances_openapi_shapes::SandboxInterruptionView,
         super::instances_openapi_shapes::SandboxLifecycleEligibilityView,
         super::instances_openapi_shapes::SandboxCheckpointView,
         super::instances_openapi_shapes::SandboxBackgroundSaveView,
@@ -458,11 +488,13 @@ use super::trigger_openapi_shapes::*;
 struct ApiDoc;
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
+    document.merge(super::documents::document());
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
     document.merge(crate::agent_v2::document());
     identity::secure_operations(&mut document);
     document
 }
+pub use agent_manager::document as agent_manager_document;
 #[cfg(test)]
 mod tests;

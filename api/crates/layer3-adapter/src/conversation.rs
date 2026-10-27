@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::conversation_channel::{
     ConversationChannel, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    ConversationSettingsSupport,
 };
 pub use agent_client_protocol_schema::v1::{
     AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, MessageId,
@@ -61,6 +62,17 @@ pub enum ConversationInput {
         model: String,
         reasoning_effort: crate::ReasoningEffort,
         permission: crate::PermissionLevel,
+        system_prompt: Option<String>,
+    },
+    RefreshContext {
+        operation_sequence: u64,
+        readiness_receipt: String,
+        previous_guidance: Vec<String>,
+        working_directory: Option<String>,
+        guidance: String,
+        model: String,
+        reasoning_effort: crate::ReasoningEffort,
+        permission: crate::PermissionLevel,
     },
     Prompt(Vec<ContentBlock>),
     RecoverablePrompt {
@@ -111,6 +123,8 @@ pub enum ConversationUpdate {
     },
     WithoutPromptEvidence(Box<ConversationUpdate>),
     Said(SessionUpdate),
+    Metadata(crate::ConversationMetadata),
+    Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
     TurnEnded(PromptResponse),
     Lost {
@@ -153,7 +167,11 @@ impl ConversationUpdate {
             )),
             Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
             Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
-            Self::Said(_) | Self::Lost { .. } | Self::SignInRequired { .. } => None,
+            Self::Said(_)
+            | Self::Metadata(_)
+            | Self::Usage(_)
+            | Self::Lost { .. }
+            | Self::SignInRequired { .. } => None,
         }
     }
 }

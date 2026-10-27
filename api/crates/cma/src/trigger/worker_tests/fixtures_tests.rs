@@ -1048,6 +1048,7 @@ pub(super) fn sandbox_resource(
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: Vec::new(),
+            service_scope: None,
             reaches: Vec::new(),
             key_generation: 0,
             delivered: false,
@@ -1134,6 +1135,9 @@ pub(super) fn agent_resource(
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            preferences: Default::default(),
+            managed_guidance_revision: 0,
+            observations: Default::default(),
             settings: None,
             conversation_id: was_ready.then(|| format!("conversation-{}", id.as_str())),
             runtime_generation: was_ready.then_some(1),

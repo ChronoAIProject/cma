@@ -15,14 +15,22 @@ import type {
   SandboxDetail,
   SandboxEvent,
   SandboxSummary,
+  SandboxRuntimeUpdate,
   SandboxProfileSettings,
   WorkspaceDetail,
 } from './types';
-import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
+import type {
+  AccessibleAgentSource,
+  AgentAttachment,
+  AgentProvenance,
+  AgentResources,
+} from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from '../resources/client';
 import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
+import type { AgentFilesClient } from './agentFiles';
+import type { DocumentsClient } from './documents';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -78,11 +86,30 @@ export interface AgentModelOption {
   readonly available: boolean;
 }
 
+export interface AgentPreferencesView {
+  readonly title?: string;
+  readonly system_prompt: string;
+  readonly prompt_pending: boolean;
+  readonly prompt_supported: boolean;
+  readonly revision: number;
+}
+export interface UpdateAgentPreferences {
+  readonly expected_revision: number;
+  readonly title?: string;
+  readonly system_prompt?: string;
+}
+
 export interface AgentSettingsView {
   readonly pending?: boolean;
   readonly model: string;
   readonly reasoning_effort: 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
   readonly permission_mode: 'guarded' | 'autonomous';
+}
+
+export type MessageVote = 'up' | 'down' | null;
+export interface MessageFeedback {
+  readonly message_id: string;
+  readonly vote: MessageVote;
 }
 
 export interface AgentLifecycleCreateReceipt {
@@ -135,6 +162,28 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly documents?: DocumentsClient;
+  readonly files?: AgentFilesClient;
+  readonly readMessageFeedback?: (
+    agentId: string,
+    options?: ReadOptions,
+  ) => Promise<readonly MessageFeedback[]>;
+  readonly setMessageFeedback?: (
+    agentId: string,
+    messageId: string,
+    vote: MessageVote,
+    options?: ReadOptions,
+  ) => Promise<MessageFeedback>;
+  readonly updateSandboxRuntime?: (
+    id: string,
+    targetVersion: string,
+    options: CommandOptions,
+  ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
+  readonly uploadAgentAttachment?: (
+    id: string,
+    file: File,
+    options: CommandOptions,
+  ) => Promise<AgentAttachment>;
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
@@ -156,6 +205,15 @@ export interface CmaWebClient {
     id: string,
     options?: ReadOptions,
   ) => Promise<readonly AgentModelOption[]>;
+  readonly readAgentPreferences?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly updateAgentPreferences?: (
+    id: string,
+    preferences: UpdateAgentPreferences,
+    options: CommandOptions,
+  ) => Promise<AgentPreferencesView>;
   readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
   readonly updateAgentSettings?: (
     id: string,

@@ -61,6 +61,7 @@ impl AgentSandboxPools {
         original.config.service_account = plan.pod_policy.service_account.clone();
         original.config.image_pull_secrets = plan.pod_policy.image_pull_secrets.clone();
         original.config.template_network_policy = plan.pod_policy.template_network_policy.clone();
+        original.config.template_fs_group_change_policy = plan.pod_policy.fs_group_change_policy;
         if plan.namespace != self.config.namespace
             || plan.deployment != self.config.deployment
             || original.plan(&plan.spec)? != *plan
@@ -103,19 +104,8 @@ impl AgentSandboxPools {
                 memory_mib: quantity("memory", "Mi")?,
                 home: home.policy.clone(),
             };
-            let policy = NativePoolPodPolicy::from(&self.config);
-            if let Some(pool) = self
-                .inventory()
-                .await?
-                .into_iter()
-                .find(|pool| pool.binding.spec == spec && pool.binding.pod_policy == policy)
-            {
-                return Ok(Some(pool.binding));
-            }
-            // A zero-sized pool is the controller's cold-creation template. The
-            // claim controller falls back to createSandbox when no warm member exists.
             return self
-                .ensure_cold_pool(&spec)
+                .exact_native_pool(&spec)
                 .await
                 .map(|pool| Some(pool.binding));
         }
@@ -133,11 +123,38 @@ impl AgentSandboxPools {
                 && pool.observed
         });
         if let Some(pool) = selected {
-            self.verify_seed(&home.policy).await?;
+            self.verify_binding(&pool.binding).await?;
             Ok(Some(pool.binding))
         } else {
             Ok(None)
         }
+    }
+
+    /// New native reservations know their complete immutable configuration.
+    /// Read that exact pair in one wave; historical pools remain discoverable
+    /// through inventory and persisted bindings without delaying this selection.
+    async fn exact_native_pool(&self, spec: &NativePoolSpec) -> Result<NativePoolStatus> {
+        let desired_template = model::template(&self.config, spec)?;
+        let template_name = desired_template.name_any();
+        let pool_name = model::pool_name(&model::digest(&self.config, spec)?);
+        let (template, pool) = tokio::join!(
+            self.templates.get_opt(&template_name),
+            self.pools.get_opt(&pool_name),
+        );
+        let template = template.map_err(api_error)?;
+        if let Some(template) = &template {
+            model::verify(template, &desired_template)?;
+        }
+        let Some(pool) = pool.map_err(api_error)? else {
+            // A zero-sized pool is the controller's cold-creation template.
+            // Re-read before creation to preserve concurrent-create recovery.
+            return self.ensure_cold_pool(spec).await;
+        };
+        let template = template.ok_or_else(|| rejected("native pool template is missing"))?;
+        let desired_pool = model::pool(&self.config, spec, &template, target(&pool)?)?;
+        model::verify(&pool, &desired_pool)?;
+        super::retirement::admitting(&pool)?;
+        status(binding(&self.config, spec, &template, &pool)?, &pool)
     }
 
     /// Create a cold template without ever changing an administrator's replica target.
@@ -155,6 +172,7 @@ impl AgentSandboxPools {
             None => super::create(&self.pools, &desired).await?,
         };
         let status = self.discover(&pool).await?;
+        super::retirement::admitting(&pool)?;
         if status.binding.spec != *spec
             || status.binding.pod_policy != NativePoolPodPolicy::from(&self.config)
             || status.binding.template_uid != template.uid().unwrap_or_default()
@@ -220,7 +238,7 @@ impl AgentSandboxPools {
                 && status.observed
         });
         if let Some(status) = selected {
-            self.verify_seed(&spec.home).await?;
+            self.verify_binding(&status.binding).await?;
             Ok(Some(status.binding))
         } else {
             Ok(None)
@@ -258,16 +276,18 @@ impl AgentSandboxPools {
         {
             return Err(rejected("native pool binding has another configuration"));
         }
-        let template = self
-            .templates
-            .get(&binding.template_name)
-            .await
-            .map_err(api_error)?;
+        // Both names are persisted authority. Start the independent reads
+        // together, then preserve Template-before-Pool validation and errors.
+        let (template, actual) = tokio::join!(
+            self.templates.get(&binding.template_name),
+            self.pools.get(&binding.name),
+        );
+        let template = template.map_err(api_error)?;
         model::verify(&template, &desired)?;
         if template.uid().as_deref() != Some(&binding.template_uid) {
             return Err(rejected("native pool template UID changed"));
         }
-        let actual = self.pools.get(&binding.name).await.map_err(api_error)?;
+        let actual = actual.map_err(api_error)?;
         let desired = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
         model::verify(&actual, &desired)?;
         if actual.uid().as_deref() != Some(&binding.uid) {
@@ -289,6 +309,7 @@ impl AgentSandboxPools {
             service_account: definition.pod_policy.service_account,
             image_pull_secrets: definition.pod_policy.image_pull_secrets,
             template_network_policy: definition.pod_policy.template_network_policy,
+            template_fs_group_change_policy: definition.pod_policy.fs_group_change_policy,
             ..self.config.clone()
         };
         let desired = model::template(&config, &definition.spec)?;
@@ -311,6 +332,9 @@ impl AgentSandboxPools {
         let mut prior = desired.clone();
         prior.data["spec"]["replicas"] = json!(target(&actual)?);
         model::verify(&actual, &prior)?;
+        if target(desired)? > 0 {
+            super::retirement::admitting(&actual)?;
+        }
         if actual.data["spec"]["replicas"] == desired.data["spec"]["replicas"] {
             return Ok(actual);
         }
@@ -345,6 +369,9 @@ impl AgentSandboxPools {
             return Err(rejected("native pool UID changed during scaling"));
         }
         model::verify(&updated, desired)?;
+        if target(desired)? > 0 {
+            super::retirement::admitting(&updated)?;
+        }
         Ok(updated)
     }
 }
@@ -370,7 +397,7 @@ pub(super) fn binding(
     })
 }
 
-fn target(pool: &DynamicObject) -> Result<u32> {
+pub(super) fn target(pool: &DynamicObject) -> Result<u32> {
     pool.data["spec"]["replicas"]
         .as_u64()
         .filter(|v| *v <= 1000)

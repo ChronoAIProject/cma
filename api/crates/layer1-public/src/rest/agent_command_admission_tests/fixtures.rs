@@ -137,6 +137,7 @@ pub(super) async fn fixture() -> Fixture {
         &base.store,
         agents_tests::seeded_agent("agt_common", AgentStatus::Working, 3, Some(3)),
         vec![AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         }],

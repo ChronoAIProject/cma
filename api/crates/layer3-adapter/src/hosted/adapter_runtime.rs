@@ -65,7 +65,7 @@ impl HostedAdapter {
         Ok(status)
     }
 
-    fn retained_request(
+    pub(super) fn retained_request(
         &self,
         request: &RuntimeAdoptionRequest,
         generation: u64,
@@ -75,11 +75,7 @@ impl HostedAdapter {
                 "native suspension requires an exact runtime and persistent home".into(),
             ));
         }
-        let mut deployment = self.deployment.clone();
-        if let Some(image) = &request.expected_image {
-            deployment.image.uri = image.clone();
-        }
-        deployment.render_runtime(&request.spec, generation)
+        self.deployment.render_adoption(request, generation)
     }
 
     pub(super) async fn suspend_exact(
@@ -106,11 +102,45 @@ impl HostedAdapter {
         request: &RuntimeAdoptionRequest,
         successor: &crate::RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
+        self.transition_exact(request, successor, false).await
+    }
+
+    pub(super) async fn upgrade_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.transition_exact(request, successor, true).await
+    }
+
+    async fn transition_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+        upgrade: bool,
+    ) -> crate::Result<RuntimeHandle> {
         let mut allowed = request.spec.clone();
         allowed.reaches.clone_from(&successor.spec.reaches);
+        if upgrade {
+            if successor.spec.runtime_image.is_none()
+                || request.expected_image.is_none()
+                || !request.spec.home_volume.as_ref().is_some_and(|home| {
+                    home.request.policy.is_native_vct() && home.receipt.native_authority.is_some()
+                })
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime upgrade requires an explicit image and original native VCT home"
+                        .into(),
+                ));
+            }
+            allowed
+                .runtime_image
+                .clone_from(&successor.spec.runtime_image);
+        }
         if successor.generation <= request.generation || successor.spec != allowed {
             return Err(AdapterError::Rejected(
-                "resume must advance generation and may change only service scope".into(),
+                "runtime transition must advance generation and retain its admitted specification"
+                    .into(),
             ));
         }
         let previous = self.retained_request(request, request.generation)?;
@@ -118,6 +148,11 @@ impl HostedAdapter {
         let mut resumed = request.clone();
         resumed.spec = successor.spec.clone();
         resumed.generation = successor.generation;
+        if upgrade {
+            resumed
+                .expected_image
+                .clone_from(&successor.spec.runtime_image);
+        }
         let next = self.retained_request(&resumed, successor.generation)?;
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
@@ -134,9 +169,18 @@ impl HostedAdapter {
             }
             states.remove(&request.handle);
         }
-        self.backend
-            .resume(&request.handle, &previous, &next)
-            .await?;
+        let home = request.spec.home_volume.as_deref().ok_or_else(|| {
+            AdapterError::Rejected("runtime transition requires its persisted home".into())
+        })?;
+        if upgrade {
+            self.backend
+                .upgrade_with_home(&request.handle, &previous, &next, home)
+                .await?;
+        } else {
+            self.backend
+                .resume_with_home(&request.handle, &previous, &next, home)
+                .await?;
+        }
         self.verify_spec_home(&request.spec).await?;
         self.attach_state(request.handle.clone(), &successor.spec, next_identity)
             .await
@@ -155,7 +199,10 @@ impl HostedAdapter {
                 .await?;
         }
         let identity = provider_request_identity(&request)?;
-        let handle = self.backend.provision(request).await?;
+        let handle = match spec.home_volume.as_deref() {
+            Some(home) => self.backend.provision_with_home(request, home).await?,
+            None => self.backend.provision(request).await?,
+        };
         self.verify_spec_home(spec).await?;
         self.attach_state(handle, spec, identity).await
     }
@@ -182,11 +229,9 @@ impl HostedAdapter {
                 "runtime adoption handle is invalid".into(),
             ));
         }
-        let mut deployment = self.deployment.clone();
-        if let Some(image) = &adoption.expected_image {
-            deployment.image.uri = image.clone();
-        }
-        let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
+        let request = self
+            .deployment
+            .render_adoption(adoption, adoption.generation)?;
         self.verify_spec_home(&adoption.spec).await?;
         self.verify_adoption_home_route(adoption)?;
         let expected = provider_request_identity(&request)?;

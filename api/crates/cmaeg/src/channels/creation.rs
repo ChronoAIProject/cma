@@ -45,9 +45,10 @@ pub async fn create(
                 record_id.clone(),
                 binding_id,
                 ConformanceLevel::L1,
-                super::write_gate::WriteFlags::default(),
+                state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            super::native_discord::initialize(state, &mut definition)?;
             definition.creation = Some(ChannelCreation {
                 channel_id: channel_id.clone(),
                 fingerprint: fingerprint.clone(),

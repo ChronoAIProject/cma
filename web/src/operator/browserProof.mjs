@@ -262,12 +262,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     const result = await page.evaluate(() => ({
       width: innerWidth,
       scroll: document.documentElement.scrollWidth,
-      clipped: [...document.querySelectorAll('.frame__center, .console__surface, .operator')]
+      clipped: [
+        ...document.querySelectorAll(
+          '.frame__center, .console__surface, .operator, .operator-table',
+        ),
+      ]
         .filter((element) => element.getBoundingClientRect().right > innerWidth + 1)
         .map((element) => element.className),
-      overflow: [
-        ...document.querySelectorAll('.operator-record, .operator-field, .operator-settings'),
-      ]
+      overflow: [...document.querySelectorAll('.operator-field, .operator-settings')]
         .filter((element) => element.scrollWidth > element.clientWidth + 1)
         .map((element) => element.className),
     }));
@@ -277,7 +279,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   };
   await page.setViewport({ width: 1440, height: 1000 });
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.operator-record');
+  await page.waitForSelector('.operator-table tbody tr');
   await assertLayout();
   await page.screenshot({ path: join(output, 'desktop-sandboxes.png'), fullPage: true });
   await page.focus('.operator-tabs [role="tab"][aria-selected="true"]');
@@ -349,7 +351,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     revision: 3,
   });
   assert.equal(writes[1].body.settings.triggers.orchestration_paused, true);
-  for (const view of ['Sandboxes', 'Profiles', 'Platform settings', 'Activity']) {
+  for (const view of ['Sandboxes', 'Platform settings', 'Activity']) {
     await page.setViewport({ width: 390, height: 844 });
     await clickText('[role="tab"]', view);
     await page.waitForFunction(
@@ -388,9 +390,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   assert.equal(await page.$eval('.risk__confirm', (button) => button.disabled), false);
   await page.screenshot({ path: join(output, 'mobile-confirmation.png'), fullPage: true });
   await clickText('button', 'Retire Sandbox');
-  await page.waitForFunction(() =>
-    document.body.textContent.includes('Retirement already requested.'),
-  );
+  await page.waitForFunction(() => document.body.textContent.includes('Deleting'));
   assert.equal(writes.length, 3);
   assert.equal(writes[2].method, 'POST');
   assert.equal(writes[2].body, null);
@@ -404,7 +404,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   const beforeRevocation = requests.length;
   capabilities = ['read_activity_log'];
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.operator-record');
+  await page.waitForSelector('.operator-table tbody tr');
   assert.deepEqual(
     await page.$$eval('.operator-tabs [role="tab"]', (tabs) => tabs.map((tab) => tab.textContent)),
     ['Activity'],

@@ -89,6 +89,7 @@ pub struct ConsoleDeps {
     /// `CMAEG_PUBLIC_URL`: the only origin console forms may come from and
     /// redirects may point to.
     pub public_url: String,
+    pub public_api_url: String,
     /// `CMAEG_NYXID_BASE_URL`: the only origin console endpoints may use.
     pub nyxid_base_url: String,
     /// The time source of session lifetimes and token ages.
@@ -118,6 +119,7 @@ pub struct Console {
 
 struct Inner {
     public_url: String,
+    public_api_url: String,
     nyxid_base_url: String,
     client_id: String,
     http: Client,
@@ -171,6 +173,7 @@ impl Console {
         Ok(Self {
             inner: Arc::new(Inner {
                 public_url: deps.public_url,
+                public_api_url: deps.public_api_url,
                 nyxid_base_url: deps.nyxid_base_url,
                 client_id: deps.config.client_id.clone(),
                 http,
@@ -206,6 +209,10 @@ impl Console {
             .layer(axum::middleware::from_fn(request_metrics::count))
             .layer(map_response(headers::secure))
             .with_state(self.clone())
+    }
+
+    pub(crate) fn public_api_url(&self) -> &str {
+        &self.inner.public_api_url
     }
 
     pub(crate) fn public_url(&self) -> &str {
@@ -392,6 +399,7 @@ pub(crate) fn compose(
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),
+        public_api_url: state.advertised_api_url().to_owned(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
         clock: Arc::new(clock::SystemClock),
         keys: state.master_keys.clone(),

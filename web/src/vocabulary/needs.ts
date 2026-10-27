@@ -27,7 +27,6 @@ export const publicCopy = {
   from: (publisher: string) => `From ${publisher}`,
   next: 'What happens next',
   details: 'Technical details',
-  provider: 'Provider',
   model: 'Model',
   effort: 'Thinking',
   size: 'Size',

@@ -319,7 +319,7 @@ impl PrivateProfileCreationService {
         .await
     }
 
-    async fn create_sandbox_configured_for_owner(
+    pub async fn create_sandbox_configured_for_owner(
         &self,
         owner: &crate::SubjectId,
         key: &str,

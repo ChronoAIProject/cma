@@ -16,6 +16,10 @@ impl DurableProfileWorkspaceProvisioner {
 
 #[async_trait::async_trait]
 impl ProfileWorkspaceProvisioner for DurableProfileWorkspaceProvisioner {
+    fn requires_runtime_adoption(&self) -> bool {
+        false
+    }
+
     async fn create_profile_workspace(
         &self,
         sandbox: &Sandbox,
@@ -37,22 +41,40 @@ impl ProfileWorkspaceProvisioner for DurableProfileWorkspaceProvisioner {
                 }
                 error => SandboxDependencyError::Validation(error.to_string()),
             })?;
-        let workspace = self
+        let drained = self
             .worker
-            .run_until_ready(&workspace.id, SystemTime::now())
+            .run_until_ready_observing_bootstrap(&workspace.id, sandbox, SystemTime::now())
             .await
             .map_err(|error| SandboxDependencyError::Transient(error.to_string()))?;
+        let workspace = drained.workspace;
+        if !drained.executed_work {
+            // A retry can find a completed or currently unclaimable child.
+            // Retain the runtime proof previously supplied by the outer worker.
+            self.worker.runtime(&workspace).await.map_err(|failure| {
+                if failure.retryable {
+                    SandboxDependencyError::Transient(failure.detail.into())
+                } else {
+                    runtime_failure(failure.class, failure.detail.into())
+                }
+            })?;
+        }
         match workspace.status {
             WorkspaceStatus::Ready => Ok(()),
-            WorkspaceStatus::Failed => Err(SandboxDependencyError::Validation(
-                workspace.failed.map_or_else(
-                    || "workspace preparation failed".into(),
-                    |failure| failure.detail,
-                ),
+            WorkspaceStatus::Failed => Err(workspace.failed.map_or_else(
+                || SandboxDependencyError::Validation("workspace preparation failed".into()),
+                |failure| runtime_failure(&failure.class, failure.detail),
             )),
             _ => Err(SandboxDependencyError::Transient(
                 "workspace lifecycle has not reached ready".into(),
             )),
         }
+    }
+}
+
+fn runtime_failure(class: &str, detail: String) -> SandboxDependencyError {
+    match class {
+        "workspace_resource_quota" => SandboxDependencyError::ResourceQuota(detail),
+        "workspace_runtime_contract_mismatch" => SandboxDependencyError::Security(detail),
+        _ => SandboxDependencyError::Validation(detail),
     }
 }

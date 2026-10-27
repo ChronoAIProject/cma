@@ -1,0 +1,171 @@
+//! Native Discord reply delivery, independent of relay envelopes and credentials.
+use super::{
+    gate::expired,
+    intents::{DeliveryOutcome, IntentReceipt},
+    render::{RelayText, RenderedPart, Renderer},
+    send::{unsupported, SendContext, SendEffects, Sender},
+};
+use crate::{
+    discord::{
+        outbound_media,
+        rest::{token, RestError},
+    },
+    tools::Capabilities,
+};
+use cmaeg_core::{
+    message::OutboundMessage,
+    seal::{EventRefPayload, ReplyAddress},
+};
+
+impl Sender {
+    pub(super) async fn discord_reply(
+        &self,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+    ) -> (IntentReceipt, SendEffects) {
+        if self.relay.discord_interactions_enabled()
+            && crate::interactions::discord::requested(message)
+        {
+            return self.discord_controls(ctx, event, message).await;
+        }
+        let effects = SendEffects::default();
+        let ReplyAddress::Discord {
+            bot_id,
+            channel_id,
+            message_id,
+            thread_id,
+        } = &event.reply
+        else {
+            return (unsupported(), effects);
+        };
+        if message.validate().is_err()
+            || message.whatsapp_template.is_some()
+            || (message.thread_reply && thread_id.as_ref() != Some(channel_id))
+            || message.reply_to.is_some()
+        {
+            return (unsupported(), effects);
+        }
+        let (mut parts, rendering) = RelayText.render(message, &Capabilities::native_discord());
+        let mut receipt = IntentReceipt {
+            message_ref: None,
+            rendering,
+            delivery: DeliveryOutcome::Rejected {
+                reason: "empty_message".into(),
+            },
+        };
+        let Some(credential) = token(ctx.channel, bot_id) else {
+            receipt.delivery = DeliveryOutcome::Rejected {
+                reason: "native_destination_revoked".into(),
+            };
+            return (receipt, effects);
+        };
+        if let Err(error) = self.relay.discord.verify_bot(credential, bot_id).await {
+            receipt.delivery = outcome(error);
+            return (receipt, effects);
+        }
+        let files = match outbound_media::prepare(&message.native_attachments).await {
+            Ok(files) => files,
+            Err(_) => {
+                receipt.delivery = DeliveryOutcome::Rejected {
+                    reason: "attachment_preparation_failed".into(),
+                };
+                return (receipt, effects);
+            }
+        };
+        if parts.is_empty() && !files.is_empty() {
+            parts.push(RenderedPart {
+                text: String::new(),
+            });
+        }
+        let route = format!("discord:{bot_id}:{channel_id}");
+        let _ticket = match ctx.gate.enter_route(&route).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                receipt.delivery = refusal.outcome();
+                return (receipt, effects);
+            }
+        };
+        let mut confirmed = 0;
+        let mut first = None;
+        for (index, part) in parts.iter().enumerate() {
+            let Some(mut slot) = self.pacing.acquire(&route).await else {
+                receipt.delivery = DeliveryOutcome::Rejected {
+                    reason: "pacing_capacity".into(),
+                };
+                break;
+            };
+            let permit = match ctx.gate.attempt().await {
+                Ok(permit) => permit,
+                Err(refusal) => {
+                    receipt.delivery = refusal.outcome();
+                    break;
+                }
+            };
+            if index == 0 && !ctx.gate.commit() {
+                receipt.delivery = expired();
+                break;
+            }
+            let sent = self
+                .relay
+                .discord
+                .send(
+                    credential,
+                    bot_id,
+                    channel_id,
+                    (index == 0).then_some(message_id.as_str()),
+                    &part.text,
+                    if index == 0 { &files } else { &[] },
+                )
+                .await;
+            drop(permit);
+            ctx.gate.progress();
+            match sent {
+                Ok(id) => {
+                    confirmed += 1;
+                    if first.is_none() {
+                        first = Some(id);
+                    }
+                    receipt.delivery = DeliveryOutcome::Confirmed {
+                        platform_message_id: first.clone(),
+                    };
+                }
+                Err(error) => {
+                    if let RestError::RateLimited(seconds) = error {
+                        slot.cooldown(seconds);
+                    }
+                    receipt.delivery = outcome(error);
+                    break;
+                }
+            }
+        }
+        if confirmed > 0 && confirmed < parts.len() {
+            receipt.delivery = DeliveryOutcome::Unknown {
+                reason: "partial_delivery".into(),
+            };
+        }
+        if confirmed == 1 && parts.len() == 1 && super::discord_edit::editable_content(message) {
+            if let DeliveryOutcome::Confirmed {
+                platform_message_id: Some(id),
+            } = &receipt.delivery
+            {
+                receipt.message_ref = self.discord_message_ref(ctx.channel, event, id);
+            }
+        }
+        (receipt, effects)
+    }
+}
+pub(super) fn outcome(error: RestError) -> DeliveryOutcome {
+    match error {
+        RestError::RateLimited(retry_after) => DeliveryOutcome::RateLimited { retry_after },
+        RestError::Rejected | RestError::NotFound => DeliveryOutcome::Rejected {
+            reason: "native_request_rejected".into(),
+        },
+        RestError::Unavailable => DeliveryOutcome::Rejected {
+            reason: "native_dispatch_unavailable".into(),
+        },
+        RestError::Unknown => DeliveryOutcome::Unknown {
+            reason: "native_delivery_unconfirmed".into(),
+        },
+    }
+}

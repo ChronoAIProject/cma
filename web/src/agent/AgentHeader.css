@@ -1,0 +1,123 @@
+/* Compact conversation toolbar — docs/Web_Style.md §13. */
+.agent-header {
+  grid-row: 1;
+  padding: 16px 20px 14px;
+  background: var(--dsw-alias-bg-base);
+}
+.agent-toolbar {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 20px;
+  background: var(--dsw-alias-bg-base);
+}
+.agent-toolbar__identity,
+.agent-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.agent-toolbar__identity {
+  flex: 1;
+}
+.agent-toolbar__actions {
+  flex: none;
+}
+.agent-toolbar__heading {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.agent-toolbar__heading > span {
+  max-width: 100%;
+}
+.agent-toolbar__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.agent-toolbar__title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-toolbar__title svg {
+  flex: none;
+}
+.agent-toolbar__title:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.agent-toolbar__title:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-toolbar__machine {
+  flex: none;
+  display: inline-flex;
+}
+.agent-toolbar__machine-card {
+  width: min(360px, calc(100vw - 24px));
+}
+.agent-toolbar__machine-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.agent-toolbar__machine-content h2 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.agent-toolbar__machine-content code {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.agent-toolbar__scope {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 20px;
+}
+.agent-toolbar__scope li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-toolbar__prompt {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+}
+@container agent-conversation (max-width: 30rem) {
+  .agent-toolbar {
+    padding-inline: 8px;
+    gap: 4px;
+  }
+  .agent-toolbar__title {
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-toolbar__title {
+    transition: none;
+  }
+}

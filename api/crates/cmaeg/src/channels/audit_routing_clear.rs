@@ -32,7 +32,8 @@ use cmaeg_core::{
 use std::collections::BTreeSet;
 
 /// Extended sources remain once `custom_key` is gone: 0 or more than 4
-/// sources, several relays, or a custom source on a chat-keyed channel.
+/// sources, several relays, a custom source on a chat-keyed channel, or raw-event
+/// verification whose removal would change the owner-selected trust policy.
 pub const SOURCES_NEED_OWNER: &str = "sources_need_owner";
 /// Removing routing would let `default` see events its policy keeps from it.
 pub const DEFAULT_WOULD_WIDEN: &str = "default_would_widen";
@@ -124,7 +125,10 @@ async fn step(
         definition.routing.is_some() && !default_receives_all(&definition, clearing.non_human);
     let bindings = additional_bindings(&definition);
     let next = legacy_shape(definition);
-    if next.validate_legacy_sources_and_partition().is_err() {
+    // Raw-event verification remains owner-controlled. Clearing it could
+    // either admit unverified facts or disable a working source. Neither is
+    // a safe automatic rollback, even with the routing-widening override.
+    if Extensions::of(&next).sources {
         return Ok(Step::Stop(SOURCES_NEED_OWNER));
     }
     if widens && !clearing.allow_default_widening {
@@ -160,10 +164,21 @@ fn additional_bindings(definition: &ChannelDefinition) -> Vec<Binding> {
         .collect()
 }
 
-/// The definition without routing and consumer keys, and without a
+/// The definition without native opt-ins, routing and consumer keys, and without a
 /// `custom_key` that no custom source uses.
 fn legacy_shape(mut definition: ChannelDefinition) -> ChannelDefinition {
+    for source in &mut definition.sources {
+        if let Source::Telegram { admission, .. }
+        | Source::Discord { admission, .. }
+        | Source::NyxidRelay { admission, .. } = source
+        {
+            if let cmaeg_core::channel::AdmissionPolicy::Scoped { bot_messages, .. } = admission {
+                *bot_messages = Default::default();
+            }
+        }
+    }
     definition.routing = None;
+    definition.reply.thread_contract = None;
     definition.secrets.consumer_keys.clear();
     if !definition
         .sources

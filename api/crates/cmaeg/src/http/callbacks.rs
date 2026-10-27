@@ -97,9 +97,9 @@ pub async fn callback(
 
 /// Verifies and normalizes one relay callback into an admitted chat turn.
 ///
-/// Taking `request` by value means `parts`, `body`, the verified envelope and
-/// every parsed copy are dropped when this returns, before the caller waits for
-/// acceptance. Every early return is the handler's final response.
+/// Headers, the verified envelope and parsed copies are dropped when this
+/// returns. Selected durable ingress retains bounded authenticated wire bytes
+/// through commit; legacy ingress releases its body before acceptance waits.
 async fn admit_callback(
     state: &IngressState,
     channel_id: &str,
@@ -215,18 +215,102 @@ async fn admit_callback(
     let record = channel.definition.record_id.clone();
     let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
-    let facts = match observe(source, &verified.payload, state.media_enabled) {
+    let mut facts = match observe(source, &verified.payload, state.media_enabled) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),
     };
+    if crate::interactions::lark::supported(platform) {
+        if let Some(callback) = &facts.callback {
+            let Some(store) = &state.interactions else {
+                return Err(refuse(Refusal::InteractiveActionUnsupported));
+            };
+            let kind = match store
+                .lark_context(
+                    &channel,
+                    platform,
+                    &verified.payload.conversation.id,
+                    &verified.payload.sender.platform_id,
+                    &verified.payload.conversation.platform_id,
+                    &callback.message_id,
+                    &callback.data,
+                )
+                .await
+            {
+                Ok(kind) => kind,
+                Err(crate::interactions::Error::Denied) => {
+                    return Err(refuse(Refusal::InteractionExpiredOrInvalid))
+                }
+                Err(crate::interactions::Error::Unavailable) => {
+                    return Err(problem(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        ProblemCode::ProviderUnavailable,
+                        "interaction_store_unavailable",
+                    ))
+                }
+            };
+            // The provider omits chat_type on normal card callbacks. A retained
+            // exact card supplies it; an explicit conflicting claim is invalid.
+            if verified
+                .payload
+                .raw_platform_data
+                .as_ref()
+                .and_then(|raw| raw.pointer("/event/context/chat_type"))
+                .is_some()
+                && facts.conversation != kind
+            {
+                return Err(reject(VerificationError("lark_callback_invalid")));
+            }
+            facts.conversation = kind;
+        }
+    }
+    let mut selected_admission = std::borrow::Cow::Borrowed(admission);
+    if let Some(contract) = channel
+        .definition
+        .reply
+        .thread_contract
+        .as_ref()
+        .filter(|_| facts.callback.is_none())
+    {
+        if let cmaeg_core::channel::Source::NyxidRelay {
+            bot_id: Some(bot_id),
+            platform: cmaeg_core::channel::Platform::Lark | cmaeg_core::channel::Platform::Feishu,
+            ..
+        } = source
+        {
+            facts.thread =
+                match crate::ingress::relay::lark::thread_facts(&verified.payload, bot_id) {
+                    Ok(thread) => thread.map(Box::new),
+                    Err(error) => return Err(reject(error)),
+                };
+            if let Some(thread) = &facts.thread {
+                facts.mentioned =
+                    Some(thread.address == cmaeg_core::thread::ThreadAddress::Mention);
+                if contract.follow_chat_ids.contains(&thread.chat_id) {
+                    if let cmaeg_core::channel::AdmissionPolicy::Scoped { groups, .. } =
+                        selected_admission.to_mut()
+                    {
+                        // Chat/sender ACL and an explicit group deny still win.
+                        if *groups != cmaeg_core::channel::GroupAdmission::Deny {
+                            *groups = cmaeg_core::channel::GroupAdmission::All;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Err(reason) = admit(
-        admission,
+        &selected_admission,
         &AdmissionFacts {
             sender_id: &verified.payload.sender.platform_id,
             chat_id: &verified.payload.conversation.platform_id,
             is_group: facts.conversation != cmaeg_core::activity::ConversationKind::Private,
-            is_bot_sender: false,
+            is_bot_sender: facts.actor == cmaeg_core::activity::ActorKind::Bot,
+            receiving_bot_id: match source {
+                cmaeg_core::channel::Source::NyxidRelay { bot_id, .. } => bot_id.as_deref(),
+                _ => None,
+            },
+            mentioned: facts.mentioned,
             is_system: false,
             addressed: facts.addressed(admission),
         },
@@ -265,7 +349,9 @@ async fn admit_callback(
     };
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
+    let routed_source = state.capture_routed(&request, &body, true);
     Ok(AdmittedChat {
+        routed_source,
         request,
         callback,
         route,

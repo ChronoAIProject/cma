@@ -1,4 +1,4 @@
-//! Stateless Streamable HTTP for the limited Agent consent-request capability.
+//! Stateless Streamable HTTP for bounded Agent consent and document tools.
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -17,16 +17,20 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 mod dispatch;
+mod documents;
 mod limits;
+mod reply;
 #[cfg(test)]
 mod tests;
 const VERSION: &str = "2025-06-18";
-const BODY_LIMIT: usize = 16 * 1024;
+const BODY_LIMIT: usize = 6 * layer2_core::document_artifacts::MAX_DOCUMENT_BYTES + 16 * 1024;
 const DEADLINE: Duration = Duration::from_secs(15);
 
 struct AccessState {
     auth: Arc<dyn AgentAccessToolAuthenticator>,
     admission: Arc<dyn AgentAccessToolAdmission>,
+    documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    public_origin: String,
     concurrency: tokio::sync::Semaphore,
     rate: limits::RateLimit,
 }
@@ -37,12 +41,25 @@ pub fn agent_access_router(
     auth: Arc<dyn AgentAccessToolAuthenticator>,
     admission: Arc<dyn AgentAccessToolAdmission>,
 ) -> Router {
+    agent_tools_router(auth, admission, None, "")
+}
+
+/// Runtime authority is confined to consent proposals and private documents
+/// authored by this exact Agent. It never conveys owner/share administration.
+pub fn agent_tools_router(
+    auth: Arc<dyn AgentAccessToolAuthenticator>,
+    admission: Arc<dyn AgentAccessToolAdmission>,
+    documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
+    public_origin: &str,
+) -> Router {
     Router::new()
         .route("/api/v1/agent-tools", post(invoke))
         .layer(axum::middleware::from_fn(headers))
         .with_state(Arc::new(AccessState {
             auth,
             admission,
+            documents,
+            public_origin: public_origin.trim_end_matches('/').to_owned(),
             concurrency: tokio::sync::Semaphore::new(32),
             rate: limits::RateLimit::default(),
         }))
@@ -135,6 +152,18 @@ async fn accept(state: &AccessState, request: Request) -> Response {
             )
         }
     };
+    let document_call = rpc.method == "tools/call"
+        && rpc
+            .params
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| matches!(name, "publish_document" | "update_document"));
+    if !document_call && bytes.len() > 16 * 1024 {
+        return http_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "MCP request body is too large",
+        );
+    }
     if rpc.jsonrpc != "2.0"
         || rpc.method.is_empty()
         || rpc.method.len() > 128

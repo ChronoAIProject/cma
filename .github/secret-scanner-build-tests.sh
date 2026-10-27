@@ -41,9 +41,9 @@ pass 'scanner build steps have valid POSIX shell syntax'
 
 image_definition=$(<"$dockerfile")
 contains "$image_definition" \
-  'FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c AS secret-scanner-build' \
+  'FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0 AS secret-scanner-build' \
   'native builder must use the reviewed multi-platform Go digest'
-contains "$prepare" 'test "$(go env GOVERSION)" = '\''go1.26.9'\' \
+contains "$prepare" 'test "$(go env GOVERSION)" = '\''go1.26.10'\' \
   'builder must assert its Go version'
 contains "$image_definition" 'GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off' \
   'builder must not inherit Go settings or download another toolchain'
@@ -82,11 +82,11 @@ case "$prepare" in
 esac
 pass 'source archive and embedded rules are checksum-verified'
 
-contains "$prepare" 'go get golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0' \
+contains "$prepare" 'go get golang.org/x/crypto@v0.55.0 golang.org/x/text@v0.41.0 github.com/klauspost/compress@v1.18.7' \
   'dependency changes must use the exact reviewed versions'
-contains "$prepare" 'e0edfb0862afb47842aee08811984801fef09c60865c77988c814a2b58450404  go.mod' \
+contains "$prepare" '0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675  go.mod' \
   'resolved module graph must be pinned'
-contains "$prepare" '8220b35a8d9ab7e2befe8880db36aded4fc68547ce5c2b42bb28c102d933e09c  go.sum' \
+contains "$prepare" 'c1f21f073cc203c7678f230b9cb14131a25729f3e2fdbd73475d0de44be5711e  go.sum' \
   'resolved module checksums must be pinned'
 contains "$prepare" 'go mod download all' 'modules must be cached before the offline build'
 contains "$prepare" 'go mod verify' 'downloaded modules must be verified'

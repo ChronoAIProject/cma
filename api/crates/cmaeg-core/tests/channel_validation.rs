@@ -484,3 +484,54 @@ fn legacy_rules_allow_at_most_one_relay_source() {
         ("/sources/1", "source variant is duplicated")
     );
 }
+
+#[test]
+fn native_bot_mentions_require_raw_native_verification_and_pinned_receiver() {
+    for platform in ["telegram", "lark", "feishu", "slack"] {
+        for (identity, trusted, allowed) in [
+            (None, false, false),
+            (Some("display-name"), false, false),
+            (
+                Some(if platform == "telegram" {
+                    "77"
+                } else {
+                    "ou_receiver"
+                }),
+                false,
+                platform != "slack",
+            ),
+            (
+                Some(if platform == "telegram" {
+                    "77"
+                } else {
+                    "ou_receiver"
+                }),
+                true,
+                false,
+            ),
+        ] {
+            let mut value = relay_channel();
+            let source = &mut value["sources"][0];
+            source["platform"] = json!(platform);
+            source["bot_id"] = json!(identity);
+            if platform == "telegram" {
+                source["bot_username"] = json!("receiver_bot");
+            }
+            source["trust_normalized"] = json!(trusted);
+            source["admission"] = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention","bot_messages":"native_mentions"});
+            let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                definition.validate().is_ok(),
+                allowed,
+                "{platform} {identity:?} trusted={trusted}"
+            );
+        }
+    }
+    let definition: ChannelDefinition = serde_json::from_value(relay_channel()).unwrap();
+    assert!(!definition.sources[0].native_bot_mentions());
+    assert!(
+        serde_json::to_value(&definition).unwrap()["sources"][0]["admission"]
+            .get("bot_messages")
+            .is_none()
+    );
+}

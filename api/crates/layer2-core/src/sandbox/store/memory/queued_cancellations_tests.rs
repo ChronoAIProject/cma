@@ -6,7 +6,7 @@ use crate::sandbox::{Agent, AgentStatus};
 #[path = "queued_cancellations_failure_tests.rs"]
 mod failures;
 
-async fn queued() -> (
+pub(super) async fn queued() -> (
     InMemorySandboxStore,
     Agent,
     QueuedCancellationReservation,
@@ -45,7 +45,7 @@ fn applied(value: QueuedCancellationOutcome) -> AdmittedQueuedCancellation {
     }
 }
 
-fn claim_request(agent: &Agent, holder: &str) -> CommandClaimRequest {
+pub(super) fn claim_request(agent: &Agent, holder: &str) -> CommandClaimRequest {
     let now = std::time::SystemTime::now();
     CommandClaimRequest {
         agent_id: agent.id.clone(),

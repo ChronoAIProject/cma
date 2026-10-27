@@ -89,16 +89,27 @@ impl SandboxWorker {
                 return self.handle_lifecycle_failure(sandbox, failure, now).await;
             }
         }
-        let request = RuntimeProvisionRequest::new(
-            generation,
-            sandbox_spec(&sandbox, &self.config.deployment_id),
-        );
+        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        if let Some(target) = sandbox.admitted_runtime_update_target() {
+            spec.runtime_image = Some(target.into());
+        }
+        let request = RuntimeProvisionRequest::new(generation, spec);
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             match crate::sandbox::runtime_attachment::retained_runtime_request(
                 &sandbox,
                 binding,
                 &self.config.deployment_id,
             ) {
+                Ok(retained)
+                    if sandbox
+                        .admitted_runtime_update_target()
+                        .is_some_and(|target| target != binding.runtime_version) =>
+                {
+                    self.dependencies
+                        .adapter
+                        .upgrade_runtime(&retained, &request)
+                        .await
+                }
                 Ok(retained) => {
                     self.dependencies
                         .adapter
@@ -118,7 +129,7 @@ impl SandboxWorker {
                     .await
             }
         };
-        if let Some(checkpoint) = checkpoint {
+        let native_status = if let Some(checkpoint) = checkpoint {
             let restore = checkpoint.restore_request().map_err(model_error)?;
             let bootstrap = RestoreBootstrapRequest::new(
                 operation_id(&sandbox, "bootstrap_restore")?,
@@ -156,28 +167,39 @@ impl SandboxWorker {
                     )
                     .await;
             }
-        } else if let Err(failure) = self
-            .verify_native_runtime(&sandbox, &handle, generation, false)
-            .await
-        {
-            return self.handle_lifecycle_failure(sandbox, failure, now).await;
-        }
+            None
+        } else {
+            match self
+                .verify_native_runtime(&sandbox, &handle, generation, false)
+                .await
+            {
+                Ok(status) => Some(status),
+                Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+            }
+        };
 
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
-        let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
-            self.dependencies.adapter.as_ref(),
-            &sandbox_spec(&sandbox, &self.config.deployment_id),
-            &handle,
-            generation,
-        )
-        .await
-        {
-            Ok(status) => status.map(|status| status.boot_id),
-            Err(error) => {
-                return self
-                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
-                    .await;
+        // Bind the same process whose generation, home, installation and empty
+        // owner state were just validated. A second observation could name a
+        // replacement boot whose recovery state was never checked.
+        let boot_id = if let Some(status) = native_status {
+            Some(status.boot_id)
+        } else {
+            match crate::sandbox::runtime_attachment::provisioned_runtime_status(
+                self.dependencies.adapter.as_ref(),
+                &sandbox_spec(&sandbox, &self.config.deployment_id),
+                &handle,
+                generation,
+            )
+            .await
+            {
+                Ok(status) => status.map(|status| status.boot_id),
+                Err(error) => {
+                    return self
+                        .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                        .await;
+                }
             }
         };
         let mut next = sandbox.clone();
@@ -449,19 +471,16 @@ pub(super) fn replacement_runtime_generation(
 }
 
 fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
-    if let Some(binding) = &sandbox.lifecycle.suspended_runtime {
-        return binding.runtime_version.clone();
-    }
-    match sandbox.lifecycle.operation.as_ref() {
-        Some(SandboxLifecycleOperation::ImageRotation {
-            target_runtime_version,
-            ..
-        }) => target_runtime_version.clone(),
-        _ => sandbox
-            .profile
-            .content
-            .runtime_image
-            .clone()
-            .unwrap_or_else(|| deployed.to_owned()),
-    }
+    sandbox
+        .admitted_runtime_update_target()
+        .map(str::to_owned)
+        .or_else(|| {
+            sandbox
+                .lifecycle
+                .suspended_runtime
+                .as_ref()
+                .map(|binding| binding.runtime_version.clone())
+        })
+        .or_else(|| sandbox.profile.content.runtime_image.clone())
+        .unwrap_or_else(|| deployed.to_owned())
 }

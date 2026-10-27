@@ -20,7 +20,8 @@ pub(super) fn scope(snapshot: &AgentProvenanceSnapshot, runtime: &RuntimeHandle)
                 agent.work.step,
                 AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
             ));
-    if !agent.status.is_live()
+    if !sandbox.credential.source.is_managed()
+        || !agent.status.is_live()
         || agent.requested_stop_reason.is_some()
         || agent.stopped_at.is_some()
         || agent.deleted_at.is_some()
@@ -31,7 +32,16 @@ pub(super) fn scope(snapshot: &AgentProvenanceSnapshot, runtime: &RuntimeHandle)
         || process.runtime_id != runtime.0
         || process.provision_generation.is_none_or(|value| value == 0)
         || !sandbox.credential.delivered
-        || sandbox.credential.current.is_none()
+        || sandbox
+            .credential
+            .current
+            .as_ref()
+            .is_none_or(|credential| {
+                layer2_core::seconds_from_rfc3339(&credential.expires_at).is_none_or(|expiry| {
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry)
+                        <= std::time::SystemTime::now()
+                })
+            })
         || sandbox.credential.pending.is_some()
     {
         return Err(Error::Refused);

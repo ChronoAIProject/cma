@@ -25,6 +25,8 @@ fn fixture() -> (Sandbox, RuntimeStatus) {
     })
     .unwrap();
     let status = RuntimeStatus {
+        agent_filesystem: false,
+        agent_attachment_upload: false,
         agent_skill_install: false,
         agent_model_catalog: false,
         sandbox_id: sandbox.id.to_string(),

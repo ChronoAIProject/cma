@@ -13,7 +13,23 @@ use crate::{
 };
 
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
-pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn serve(
+    config: Config,
+    complete_replies: bool,
+    native_media: bool,
+    relay_text_edits: bool,
+    native_discord_edits: bool,
+    native_discord_effects: bool,
+    native_discord_threads: bool,
+    lark_cards: bool,
+    whatsapp_templates: bool,
+    whatsapp_interactions: bool,
+    discord_interactions: bool,
+    discord_multiselect: bool,
+    consumer_interactions: bool,
+    telegram_effects: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
@@ -32,17 +48,45 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    observers.activity = std::sync::Arc::new(crate::activity::ObservedActivity::new(
+        state.activity.clone(),
+        observers.activity.clone(),
+    ));
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
+    state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
+    state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
+    state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
+    state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
+    state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
+    state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
+    state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
+    state.native_discord_admission_enabled = config.routing.admission_enabled;
+    state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
+    state.outbound_relay = Some(
+        delivery::relay_client::RelayClient::new(
+            &config.management.nyxid_base_url,
+            config.delivery.reply_timeout,
+        )?
+        .with_native_media(native_media)
+        .with_whatsapp_templates(whatsapp_templates),
+    );
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
         std::sync::Arc::new(delivery::router::ShardedScheduler::new(inbound));
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+    let custom_delivery = delivery::custom::CustomDelivery::new(
+        config.management.public_url.clone(),
+        waiters.clone(),
+    )
+    .with_activity(observers.activity.clone());
     let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),
         state.master_keys.clone(),
@@ -55,13 +99,22 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_complete_replies(complete_replies)
+        .with_native_media(native_media)
+        .with_text_edits(relay_text_edits)
+        .with_native_discord_edits(native_discord_edits)
+        .with_native_discord_effects(native_discord_effects)
+        .with_lark_cards(lark_cards)
+        .with_whatsapp_templates(whatsapp_templates)
+        .with_whatsapp_interactions(whatsapp_interactions)
+        .with_discord_interactions(discord_interactions)
+        .with_discord_multiselect(discord_multiselect)
+        .with_consumer_interactions(consumer_interactions)
+        .with_telegram_effects(telegram_effects)
         .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
-        delivery::custom::CustomDelivery::new(
-            config.management.public_url.clone(),
-            waiters.clone(),
-        ),
+        custom_delivery.clone(),
         observers.activity.clone(),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
@@ -81,10 +134,22 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let media = media::service::compose(
         &config,
         media::service::ComposeDeps {
+            resolver: state.resolver.clone(),
             keys: state.master_keys.clone(),
             tool_providers: tool_providers.clone(),
             telegram: telegram.clone(),
             transformer,
+        },
+    )?;
+    let routed = crate::serve_routed::compose(
+        &config,
+        &state,
+        crate::serve_routed::Deps {
+            media: media.clone(),
+            tool_providers: tool_providers.clone(),
+            delivery: delivery.clone(),
+            tracker: tracker.clone(),
+            custom: custom_delivery,
         },
     )?;
     let runner = std::sync::Arc::new(
@@ -94,6 +159,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             delivery.clone(),
             config.turns.clone(),
         )
+        .with_activity(observers.activity.clone())
         .with_media_tool_providers(tool_providers)
         .with_media(
             media.clone(),
@@ -107,19 +173,55 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        observers.launcher(runner.clone()),
+        std::sync::Arc::new(turns::observer::ObservedLauncher::new(
+            runner.clone(),
+            observers.activity.clone(),
+        )),
     )?
-    .with_telegram(telegram)
+    .with_telegram(telegram.clone())
+    .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_routed(
+        routed
+            .as_ref()
+            .map(|composition| composition.ingress.clone()),
+    )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        discord_thread_history: config
+            .native_discord_thread_history_enabled
+            .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))
+            .transpose()?
+            .map(std::sync::Arc::new),
+        complete_replies_enabled: complete_replies,
+        routed_replies: routed
+            .as_ref()
+            .map(|composition| composition.tool_replies.clone()),
+        telegram_effects_issuance_enabled: telegram_effects,
+        telegram_effects: Some(std::sync::Arc::new(tools::MessageEffectsClient::new(
+            telegram,
+        ))),
+        whatsapp_templates_enabled: whatsapp_templates,
+        discord_interactions_enabled: discord_interactions,
+        whatsapp_interactions_enabled: whatsapp_interactions,
+        consumer_interactions_enabled: consumer_interactions,
+        native_media_enabled: native_media,
+        relay_text_edits_enabled: relay_text_edits,
+        native_discord_edits_enabled: native_discord_edits,
+        discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
+        discord_effects: Some(std::sync::Arc::new(tools::DiscordEffectsClient::new(
+            crate::discord::DiscordRest::new()?,
+        ))),
+        lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
         providers,
         delivery,
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
+        public_api_url: config.management.public_api_url.clone(),
+        advertise_public_api_url: config.management.advertise_public_api_url,
         media,
         downloads: std::sync::Arc::new(
             tools::MediaDownloads::default().with_link_ttl(config.media.link_ttl_seconds),
@@ -130,6 +232,19 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let mut routed_worker = routed.map(|composition| {
+        crate::serve_routed::Worker::start(composition.scheduler, state.readiness.clone())
+    });
+    let mut native_discord = crate::discord::lifecycle::Worker::start(
+        &config.native_discord,
+        state.native_discord.clone(),
+        native_discord_threads,
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        ingress.clone(),
+        state.readiness.clone(),
+    )
+    .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
@@ -148,7 +263,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
     if let Some(browser) = browser {
-        router = browser.protect(router).merge(browser.routes());
+        router = router.merge(cma_service_auth::session::router(browser));
     }
     // The retained console has its own OAuth session, CSRF and owner checks.
     // Portal cookie middleware must not change that independent authority.
@@ -161,8 +276,37 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         wait_for_shutdown_signal().await;
         tracker.start_draining();
         let deadline = Instant::now() + config.turns.drain;
-        if !tracker.drain(deadline).await {
+        if let Some(worker) = &native_discord {
+            worker.stop();
+        }
+        if let Some(worker) = &routed_worker {
+            worker.stop_scheduling();
+        }
+        let (turns_drained, routed_drained, native_drained) = tokio::join!(
+            tracker.drain(deadline),
+            async {
+                match &mut routed_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            },
+            async {
+                match &mut native_discord {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            }
+        );
+        if !native_drained {
+            tracing::warn!(
+                "native Discord drain incomplete; durable inbox and lease fences retained"
+            );
+        }
+        if !turns_drained {
             tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
+        }
+        if !routed_drained {
+            tracing::warn!("routed execution drain incomplete; durable recovery retained");
         }
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(

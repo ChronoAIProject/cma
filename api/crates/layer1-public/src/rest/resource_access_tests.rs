@@ -18,6 +18,51 @@ use std::{
 use super::agents_tests::{fixture, insert_agent, json_response, seeded_agent};
 use crate::{AuthenticatedSubject, DelegatedCredential};
 
+struct ShareDirectory;
+#[async_trait::async_trait]
+impl layer2_core::UserDirectoryStore for ShareDirectory {
+    async fn observe(
+        &self,
+        _: &layer2_core::PublicIdentity,
+    ) -> Result<(), layer2_core::StoreError> {
+        Ok(())
+    }
+    async fn user(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+        Ok(["owner-a", "recipient", "outsider"]
+            .contains(&subject.as_str())
+            .then(|| layer2_core::RegisteredUser {
+                identity: layer2_core::PublicIdentity {
+                    subject: subject.clone(),
+                    display_name: Some(format!("Name {subject}")),
+                    avatar_url: None,
+                },
+                first_seen_at: "2026-09-05T00:00:00Z".into(),
+                last_seen_at: "2026-09-05T00:00:00Z".into(),
+            }))
+    }
+    async fn list(
+        &self,
+        query: &layer2_core::DirectoryQuery,
+    ) -> Result<layer2_core::Page<layer2_core::RegisteredUser>, layer2_core::StoreError> {
+        let mut items = Vec::new();
+        for subject in ["owner-a", "recipient", "outsider"] {
+            if query
+                .text
+                .as_ref()
+                .is_none_or(|text| format!("Name {subject}").contains(text))
+            {
+                items.push(self.user(&SubjectId::new(subject)).await?.unwrap());
+            }
+        }
+        Ok(layer2_core::Page {
+            items,
+            next_cursor: None,
+        })
+    }
+}
 struct Authority {
     member: AtomicBool,
 }
@@ -83,7 +128,8 @@ async fn app() -> (Router, Arc<InMemorySandboxStore>, Arc<Authority>) {
         member: AtomicBool::new(true),
     });
     let router = super::resource_access::resource_access_router(Arc::new(
-        ResourceAccessService::new(fixture.store.clone(), authority.clone()),
+        ResourceAccessService::new(fixture.store.clone(), authority.clone())
+            .with_directory(layer2_core::UserDirectory::new(Arc::new(ShareDirectory))),
     ));
     (router, fixture.store, authority)
 }
@@ -413,5 +459,328 @@ async fn http_rejects_authority_fields_unverified_extensions_and_unsafe_interact
     assert_eq!(
         json_response(&router, missing).await.0,
         StatusCode::UNAUTHORIZED
+    );
+}
+
+const LINKS: &str = "/api/v1/agents/agt_share/share-links";
+
+#[tokio::test]
+async fn agent_link_requires_secret_and_redemption_and_revokes_one_link_only() {
+    let (router, store, _) = app().await;
+    let token = "ab".repeat(32);
+    let (status, created) = json_response(
+        &router,
+        request(
+            "POST",
+            LINKS,
+            "owner-a",
+            Some("link-view"),
+            Some(json!({"audience":{"kind":"public"},"mode":"view","token":token})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert!(!created.to_string().contains(&token));
+    assert!(created.get("token_sha256").is_none());
+    let id = created["id"].as_str().unwrap();
+    let durable = store.resource_share(id).await.unwrap().unwrap();
+    assert_ne!(durable.link.as_ref().unwrap().token_sha256, token);
+    assert!(!serde_json::to_string(&durable).unwrap().contains(&token));
+    let redeem = format!("/api/v1/agent-share-links/{id}/redeem");
+    assert_eq!(
+        json_response(&router, request("GET", ACCESS, "outsider", None, None))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "outsider",
+                None,
+                Some(json!({"token":"ff".repeat(32)}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, accepted) = json_response(
+        &router,
+        request(
+            "POST",
+            &redeem,
+            "outsider",
+            None,
+            Some(json!({"token":token})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert_eq!(accepted["accepted_count"], 1);
+    let (status, access) =
+        json_response(&router, request("GET", ACCESS, "outsider", None, None)).await;
+    assert_eq!(status, StatusCode::OK, "{access}");
+    let caps = access["capabilities"].as_array().unwrap();
+    assert!(caps.contains(&json!("view_files")));
+    assert!(caps.contains(&json!("view_history")));
+    for denied in [
+        "interact",
+        "operate_agent",
+        "manage_sharing",
+        "manage_sandbox",
+    ] {
+        assert!(!caps.contains(&json!(denied)));
+    }
+    assert_eq!(access["shared_by"]["subject"], "owner-a");
+    let (status, replay) = json_response(
+        &router,
+        request(
+            "POST",
+            &redeem,
+            "outsider",
+            None,
+            Some(json!({"token":token})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["revision"], replay["revision"]);
+    let (status, second) = json_response(
+        &router,
+        request(
+            "POST",
+            LINKS,
+            "owner-a",
+            Some("link-write"),
+            Some(json!({"audience":{"kind":"public"},"mode":"view_write","token":"cd".repeat(32)})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let second_id = second["id"].as_str().unwrap();
+    let (status, second) = json_response(
+        &router,
+        request(
+            "POST",
+            &format!("/api/v1/agent-share-links/{second_id}/redeem"),
+            "outsider",
+            None,
+            Some(json!({"token":"cd".repeat(32)})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    let revoke_path = format!("{LINKS}/{id}?expected_revision={}", accepted["revision"]);
+    let (status, revoked) = json_response(
+        &router,
+        request("DELETE", &revoke_path, "owner-a", Some("revoke-view"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "outsider",
+                None,
+                Some(json!({"token":token}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, access) =
+        json_response(&router, request("GET", ACCESS, "outsider", None, None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let caps = access["capabilities"].as_array().unwrap();
+    assert!(caps.contains(&json!("interact")));
+    assert!(caps.contains(&json!("operate_agent")));
+    assert!(!caps.contains(&json!("manage_sandbox")));
+    assert!(!caps.contains(&json!("manage_sharing")));
+    let target = ResourceTarget::Agent {
+        agent_id: layer2_core::AgentId("agt_share".into()),
+    };
+    let snapshot = store.resource_access_snapshot(&target).await.unwrap();
+    assert_eq!(snapshot.shares.len(), 1);
+    assert!(snapshot
+        .shared_agent(&SubjectId::new("outsider"), &[])
+        .is_ok());
+    let final_path = format!(
+        "{LINKS}/{second_id}?expected_revision={}",
+        second["revision"]
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request("DELETE", &final_path, "owner-a", Some("revoke-write"), None)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        json_response(&router, request("GET", ACCESS, "outsider", None, None))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(store
+        .resource_access_snapshot(&target)
+        .await
+        .unwrap()
+        .shared_agent(&SubjectId::new("outsider"), &[])
+        .is_err());
+}
+
+#[tokio::test]
+async fn agent_link_organization_is_revalidated_after_redemption() {
+    let (router, _, authority) = app().await;
+    let token = "01".repeat(32);
+    let (status, created) = json_response(&router, request("POST", LINKS, "owner-a", Some("org-link"), Some(json!({"audience":{"kind":"organization","organization_id":"org"},"mode":"view_write","token":token})))).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let redeem = format!(
+        "/api/v1/agent-share-links/{}/redeem",
+        created["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "outsider",
+                None,
+                Some(json!({"token":token}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "recipient",
+                None,
+                Some(json!({"token":token}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        json_response(&router, request("GET", ACCESS, "recipient", None, None))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    authority.member.store(false, Ordering::SeqCst);
+    assert_eq!(
+        json_response(&router, request("GET", ACCESS, "recipient", None, None))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn agent_link_users_require_canonical_selection_and_cannot_be_redeemed_by_others() {
+    let (router, _, _) = app().await;
+    let token = "23".repeat(32);
+    let (status, response) = json_response(
+        &router,
+        request(
+            "GET",
+            "/api/v1/agents/agt_share/share-recipients?q=recipient",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["items"][0]["subject"], "recipient");
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "GET",
+                "/api/v1/agents/agt_share/share-recipients?q=recipient",
+                "outsider",
+                None,
+                None
+            )
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let body = json!({"audience":{"kind":"users","subjects":["unknown-user"]},"mode":"view_write","token":token});
+    assert_eq!(
+        json_response(
+            &router,
+            request("POST", LINKS, "owner-a", Some("unknown-link"), Some(body))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let body = json!({"audience":{"kind":"users","subjects":["recipient"]},"mode":"view_write","token":token});
+    let (status, created) = json_response(
+        &router,
+        request("POST", LINKS, "owner-a", Some("users-link"), Some(body)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let redeem = format!(
+        "/api/v1/agent-share-links/{}/redeem",
+        created["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "outsider",
+                None,
+                Some(json!({"token":token}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        json_response(
+            &router,
+            request(
+                "POST",
+                &redeem,
+                "recipient",
+                None,
+                Some(json!({"token":token}))
+            )
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        json_response(&router, request("GET", ACCESS, "recipient", None, None))
+            .await
+            .0,
+        StatusCode::OK
     );
 }

@@ -14,8 +14,12 @@ use crate::{
 
 mod consumer;
 mod custom_attachments;
+pub(crate) mod discord;
+pub use discord::valid_id as valid_discord_id;
 mod extensions;
+pub mod lark_resources;
 mod lookup;
+pub use lark_resources::{LarkResourceBinding, LarkResourceKind};
 mod partition;
 mod platform;
 mod routing;
@@ -118,6 +122,15 @@ pub enum Source {
         bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
+    /// Native Discord Gateway, independently owned by CMAEG.
+    Discord {
+        bot_id: String,
+        intents: u64,
+        /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_history: bool,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         jwks_url: String,
@@ -132,6 +145,12 @@ pub enum Source {
         // Explicit opt-in to admit a platform without a raw-event verifier.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         trust_normalized: bool,
+        /// Verify Discord/WhatsApp raw facts; omitted on retained normalized sources.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        verify_raw_event: bool,
+        /// Optional exact NyxID connection for embedded Lark/Feishu resources.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_resources: Option<LarkResourceBinding>,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -164,7 +183,45 @@ pub enum AdmissionPolicy {
         senders: IdentityAdmission,
         chats: IdentityAdmission,
         groups: GroupAdmission,
+        /// Native exact bot mentions only. The caller must bound downstream
+        /// automated execution; the gateway grants no human execution identity.
+        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
+        bot_messages: BotMessageAdmission,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BotMessageAdmission {
+    #[default]
+    Deny,
+    NativeMentions,
+}
+impl BotMessageAdmission {
+    pub fn is_deny(&self) -> bool {
+        *self == Self::Deny
+    }
+}
+impl AdmissionPolicy {
+    pub fn native_bot_mentions(&self) -> bool {
+        matches!(
+            self,
+            Self::Scoped {
+                bot_messages: BotMessageAdmission::NativeMentions,
+                ..
+            }
+        )
+    }
+}
+impl Source {
+    pub fn native_bot_mentions(&self) -> bool {
+        match self {
+            Self::Telegram { admission, .. }
+            | Self::Discord { admission, .. }
+            | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
+            Self::Custom { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -214,6 +271,8 @@ pub struct PartitionRule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_contract: Option<crate::thread::ThreadContract>,
     pub auto_final: bool,
     pub ack_after_ms: u32,
     #[serde(default)]
@@ -328,6 +387,9 @@ impl ChannelDefinition {
     }
 
     fn validate_tail(&self) -> Result<(), ValidationError> {
+        if let Some(contract) = &self.reply.thread_contract {
+            contract.validate(self)?;
+        }
         if self.reply.sinks.len() > MAX_SINKS {
             return Err(ValidationError::new("/reply/sinks", "too many sinks"));
         }
@@ -381,6 +443,9 @@ impl ChannelDefinition {
         });
         // Emitted only when present, so a legacy blob keeps its exact bytes and
         // an older image, which refuses the unknown key, can still read it.
+        if let Some(token) = &self.secrets.discord_bot_token {
+            secrets["discord_bot_token"] = json!(token.as_str());
+        }
         if !self.secrets.consumer_keys.is_empty() {
             secrets["consumer_keys"] = self
                 .secrets

@@ -22,6 +22,7 @@ pub(super) fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMuta
     agent.conversation.active_turn = Some(turn_sequence);
     agent.conversation.last_seq += 2;
     AgentConversationMutation {
+        settings_fence: None,
         command_claim: None,
         execution_fence: None,
         trigger_execution_fence: None,
@@ -33,6 +34,7 @@ pub(super) fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMuta
         appended_at: NOW.into(),
         agent_logs: vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: None,
             },

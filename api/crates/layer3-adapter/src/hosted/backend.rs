@@ -10,6 +10,8 @@ use crate::{
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
+    /// Trusted control-plane binding; never supplied by a provider renderer.
+    pub context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub permission_mode: Option<String>,
     pub own_credential: bool,
     pub channel_tool: Option<super::HostedChannelToolBinding>,
@@ -26,6 +28,7 @@ pub trait HostedAgentRuntime: Send + Sync {
 
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
+            context_refresh: None,
             permission_mode: None,
             own_credential: request.options.own_credential,
             channel_tool: None,
@@ -79,6 +82,15 @@ pub trait HostedBackend: Send + Sync {
         Ok(None)
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+    /// Carry persisted home identity through provisioning without rediscovering it.
+    /// Backends must still prove current resource authority before any effect.
+    async fn provision_with_home(
+        &self,
+        request: ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        self.provision(request).await
+    }
     async fn teardown_retained(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "retained provider deletion is unavailable".into(),
@@ -112,6 +124,27 @@ pub trait HostedBackend: Send + Sync {
             "provider resumption is unavailable".into(),
         ))
     }
+    /// Pass durable home authority to providers that can prove retained resources together.
+    async fn resume_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.resume(handle, previous, next).await
+    }
+    async fn upgrade_with_home(
+        &self,
+        _handle: &RuntimeHandle,
+        _previous: &ProviderSandboxRequest,
+        _next: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "native runtime upgrades are unavailable".into(),
+        ))
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,
@@ -130,6 +163,13 @@ pub trait HostedBackend: Send + Sync {
         Err(crate::AdapterError::Unsupported(
             "hosted provider finality is unavailable".into(),
         ))
+    }
+
+    async fn runtime_termination(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Result<Option<crate::RuntimeTermination>> {
+        Ok(None)
     }
 
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
