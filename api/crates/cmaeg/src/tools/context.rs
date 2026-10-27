@@ -14,6 +14,9 @@ use serde::Serialize;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
+    /// Explicitly requested current text context of the original native thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<super::ThreadHistory>,
     pub event_id: EventId,
     pub channel_id: cmaeg_core::ids::ChannelId,
     pub provider_binding_id: cmaeg_core::ids::BindingId,
@@ -48,6 +51,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// A fixed 20-message prior window is available on explicit request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<bool>,
     /// New exact-message effects; absent until compatible readers are deployed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,
@@ -110,6 +116,7 @@ impl Capabilities {
             native_media: None,
             whatsapp_templates: None,
             message_effects: None,
+            thread_history: None,
         }
     }
     pub fn native_discord() -> Self {
@@ -136,6 +143,7 @@ impl Capabilities {
             native_media: None,
             whatsapp_templates: None,
             message_effects: None,
+            thread_history: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -152,6 +160,7 @@ impl Capabilities {
             native_media: None,
             whatsapp_templates: None,
             message_effects: None,
+            thread_history: None,
         }
     }
     /// Legacy capabilities before ordinary relay text-edit issuance is enabled.
@@ -283,6 +292,9 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        thread_history: (state.discord_thread_history.is_some()
+            && super::thread_history::eligible(channel, event, &activity))
+        .then_some(true),
         message_effects: (state.telegram_effects_issuance_enabled
             || state.discord_effects_issuance_enabled)
             .then(|| {
@@ -363,6 +375,7 @@ pub(super) fn project(
         capabilities.cards = "none".into();
     }
     ContextResponse {
+        thread_history: None,
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),
         provider_binding_id: consumer.provider.binding_id.clone(),

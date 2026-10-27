@@ -758,7 +758,8 @@
         "max_reactions": 1,
         "reaction": true,
         "scope": "confirmed_native_bot_message"
-      }
+      },
+      "thread_history": true
     }
   ],
   "ChannelCreateRequest": [
@@ -2945,7 +2946,8 @@
           "max_reactions": 1,
           "reaction": true,
           "scope": "confirmed_native_bot_message"
-        }
+        },
+        "thread_history": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -2959,7 +2961,26 @@
       "source": {
         "type": "custom"
       },
-      "expires_at": 1
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      }
     },
     {
       "activity": {
@@ -3065,7 +3086,8 @@
           "max_reactions": 1,
           "reaction": true,
           "scope": "confirmed_native_bot_message"
-        }
+        },
+        "thread_history": true
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3079,7 +3101,26 @@
       "source": {
         "type": "custom"
       },
-      "expires_at": 1
+      "expires_at": 1,
+      "thread_history": {
+        "thread_id": "99",
+        "before_message_id": "700",
+        "messages": [
+          {
+            "message_id": "698",
+            "author": {
+              "id": "51",
+              "display_name": "Reader",
+              "kind": "human"
+            },
+            "text": "Earlier thread text",
+            "occurred_at": "2026-10-27T01:00:00Z",
+            "edited_at": "2026-10-27T01:01:00Z",
+            "attachment_count": 0
+          }
+        ],
+        "text_truncated": false
+      }
     }
   ],
   "ConversationId": [
@@ -4190,7 +4231,8 @@
       "intents": 37377,
       "admission": {
         "type": "all"
-      }
+      },
+      "thread_history": true
     }
   ],
   "SourceKind": [
@@ -4295,7 +4337,8 @@
       "intents": 37377,
       "admission": {
         "type": "all"
-      }
+      },
+      "thread_history": true
     }
   ],
   "TestChannelResponse": [
@@ -4419,7 +4462,8 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "native_discord_thread_history_enabled": false
       }
     },
     {
@@ -4453,7 +4497,8 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "native_discord_thread_history_enabled": false
       }
     },
     {
@@ -4496,7 +4541,8 @@
         "native_media_writes_enabled": false,
         "native_discord_writes_enabled": true,
         "native_discord_auto_activation_enabled": true,
-        "native_discord_capacity": 64
+        "native_discord_capacity": 64,
+        "native_discord_thread_history_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -5774,7 +5820,8 @@
       "native_media_writes_enabled": false,
       "native_discord_writes_enabled": true,
       "native_discord_auto_activation_enabled": true,
-      "native_discord_capacity": 64
+      "native_discord_capacity": 64,
+      "native_discord_thread_history_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -5935,6 +5982,41 @@
       "detail": "Selected for native Discord intake; connection health is unconfirmed.",
       "capacity": 64,
       "selected_records": 1
+    }
+  ],
+  "ThreadHistory": [
+    {
+      "thread_id": "99",
+      "before_message_id": "700",
+      "messages": [
+        {
+          "message_id": "698",
+          "author": {
+            "id": "51",
+            "display_name": "Reader",
+            "kind": "human"
+          },
+          "text": "Earlier thread text",
+          "occurred_at": "2026-10-27T01:00:00Z",
+          "edited_at": "2026-10-27T01:01:00Z",
+          "attachment_count": 0
+        }
+      ],
+      "text_truncated": false
+    }
+  ],
+  "ThreadHistoryMessage": [
+    {
+      "message_id": "698",
+      "author": {
+        "id": "51",
+        "display_name": "Reader",
+        "kind": "human"
+      },
+      "text": "Earlier thread text",
+      "occurred_at": "2026-10-27T01:00:00Z",
+      "edited_at": "2026-10-27T01:01:00Z",
+      "attachment_count": 0
     }
   ]
 }

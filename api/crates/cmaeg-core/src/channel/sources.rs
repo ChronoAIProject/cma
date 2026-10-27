@@ -179,6 +179,7 @@ fn validate_source(
             bot_id,
             intents,
             admission,
+            ..
         } => super::discord::validate(bot_id, *intents, admission, secrets, pointer),
         Source::Telegram {
             bot_id,

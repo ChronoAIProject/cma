@@ -40,6 +40,7 @@ pub struct ManagementState {
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
+    pub native_discord_thread_history_enabled: bool,
     pub native_discord: crate::discord::selection::Selection,
     pub native_discord_admission_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
@@ -67,6 +68,7 @@ impl ManagementState {
             dynamic_sources: self.dynamic_sources_writes_enabled,
             relay_raw_verification: self.relay_raw_verification_writes_enabled,
             native_discord: self.native_discord_writes_enabled,
+            discord_thread_history: self.native_discord_thread_history_enabled,
         }
     }
 
@@ -135,6 +137,7 @@ impl ManagementState {
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             native_discord_writes_enabled: false,
+            native_discord_thread_history_enabled: false,
             native_discord: Default::default(),
             native_discord_admission_enabled: false,
             outbound_messages_writes_enabled: false,
