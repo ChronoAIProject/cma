@@ -13,14 +13,13 @@ impl StatusSetup {
         Self::with_group(false).await
     }
     async fn with_group(group: bool) -> Self {
-        let mut setup = Setup::new().await;
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let mut setup = Setup::at(now).await;
         if group {
             Arc::make_mut(&mut setup.channel).definition.sources =
                 vec![crate::whatsapp::groups::tests::source_group()];
             setup.state = setup.state.with_whatsapp_groups(true);
         }
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        setup.server.memory.clock.store(now, Ordering::SeqCst);
         let activity = Arc::new(ActivityStore::new(
             setup.server.records.clone(),
             Arc::new(fixture::keys()),
