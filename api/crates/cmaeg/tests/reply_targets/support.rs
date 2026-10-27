@@ -38,6 +38,7 @@ pub struct App {
     pub base: String,
     pub client: reqwest::Client,
     pub native: Option<cmaeg::telegram::TelegramClient>,
+    pub telegram_media_effects: bool,
     engine: Option<DeliveryEngine>,
     server: JoinHandle<()>,
 }
@@ -109,6 +110,7 @@ impl App {
             lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
+            native_whatsapp_outbound_media_enabled: false,
             native_discord_edits_enabled: false,
             discord_effects_issuance_enabled: false,
             discord_effects: None,
@@ -130,7 +132,7 @@ impl App {
             media: None,
             downloads: Default::default(),
         };
-        let engine = engine(receiver, &state, &relay, None);
+        let engine = engine(receiver, &state, &relay, None, false);
         let (base, server) =
             serve(http::tools::router(state.clone()).merge(cmaeg::mcp::router(state.clone())))
                 .await;
@@ -146,6 +148,7 @@ impl App {
             base,
             client: reqwest::Client::new(),
             native: None,
+            telegram_media_effects: false,
             engine: Some(engine),
             server,
         }
@@ -165,6 +168,7 @@ impl App {
             &self.state,
             &self.relay,
             self.native.clone(),
+            self.telegram_media_effects,
         ));
         (self.base, self.server) = serve(
             http::tools::router(self.state.clone()).merge(cmaeg::mcp::router(self.state.clone())),
@@ -348,12 +352,14 @@ fn engine(
     state: &ToolsState,
     relay: &FakeReply,
     native: Option<cmaeg::telegram::TelegramClient>,
+    media_effects: bool,
 ) -> DeliveryEngine {
     let mut transport = RelayClient::new(&relay.base, Duration::from_millis(200)).unwrap();
     if let Some(native) = native {
         transport = transport
             .with_telegram(native)
-            .with_telegram_effects(state.telegram_effects_issuance_enabled);
+            .with_telegram_effects(state.telegram_effects_issuance_enabled)
+            .with_telegram_media_effects(media_effects);
     }
     DeliveryEngine::start(
         receiver,

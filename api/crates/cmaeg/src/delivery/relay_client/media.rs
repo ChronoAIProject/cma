@@ -2,7 +2,7 @@
 use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_MAX_BYTES};
 use cmaeg_core::{
     channel::Platform,
-    message::{validate_native_attachments, NativeAttachment, NativeMediaSource},
+    message::{validate_native_attachments, NativeAttachment, NativeMediaKind, NativeMediaSource},
 };
 
 /// Platforms whose NyxID adapters implement each of the four declared media kinds.
@@ -39,7 +39,11 @@ impl RelayClient {
         else {
             return Err(rejected("native_media_unsupported"));
         };
-        if !supported(*platform) {
+        if !supported(*platform)
+            || attachments
+                .iter()
+                .any(|item| item.kind == NativeMediaKind::Sticker)
+        {
             return Err(rejected("native_media_unsupported"));
         }
         validate_native_attachments(attachments).map_err(|_| rejected("native_media_invalid"))?;

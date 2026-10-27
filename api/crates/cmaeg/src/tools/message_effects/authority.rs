@@ -58,6 +58,7 @@ pub(crate) fn enrich(
     channel: &ResolvedChannel,
     keys: &MasterKeyRing,
     issued_at: i64,
+    effects_only: bool,
 ) -> Option<MessageRef> {
     let proof = event.telegram_admission.as_ref()?;
     if event.validate().is_err() || event.lineage.is_some() {
@@ -83,6 +84,7 @@ pub(crate) fn enrich(
     }
     let consumer = channel.consumer(event.consumer.as_ref())?;
     let authority = TelegramEffectAuthority {
+        effects_only,
         record_id: event.record_id.clone(),
         owner: channel.definition.owner.clone(),
         provider: consumer.provider.clone(),

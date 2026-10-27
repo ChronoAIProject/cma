@@ -1,4 +1,4 @@
-//! Exact confirmed native Discord text destinations and their current authority.
+//! Exact confirmed native Discord destinations and their current authority.
 use super::{
     discord::outcome,
     gate::expired,
@@ -18,8 +18,13 @@ use sha2::{Digest, Sha256};
 /// Only text/link blocks are editable. Native media, cards and degraded controls
 /// must never accidentally grant authority over one part of a richer message.
 pub(crate) fn editable_content(message: &OutboundMessage) -> bool {
+    message.native_attachments.is_empty() && reference_content(message)
+}
+
+/// A reference describes the entire plain message, with or without native files.
+/// Degraded cards and controls cannot become ordinary message authority.
+fn reference_content(message: &OutboundMessage) -> bool {
     message.validate().is_ok()
-        && message.native_attachments.is_empty()
         && message.whatsapp_template.is_none()
         && message
             .blocks
@@ -61,8 +66,18 @@ impl Sender {
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         message_id: &str,
+        message: &OutboundMessage,
     ) -> Option<MessageRef> {
-        if !self.relay.native_discord_edits_enabled()
+        let effects_only = !message.native_attachments.is_empty();
+        let enabled = if effects_only {
+            self.relay.native_discord_media_effects_enabled()
+                && self.relay.native_discord_effects_enabled()
+                && event.lineage.is_none()
+        } else {
+            self.relay.native_discord_edits_enabled()
+        };
+        if !enabled
+            || !reference_content(message)
             || event.channel_id != channel.id
             || event.record_id != channel.pointer.record_id
         {
@@ -76,6 +91,7 @@ impl Sender {
         };
         let reference = MessageRefPayload {
             discord_message: Some(Box::new(DiscordMessageDestination {
+                effects_only,
                 effects: (self.relay.native_discord_effects_enabled() && event.lineage.is_none())
                     .then(|| {
                         let now = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -111,6 +127,7 @@ impl Sender {
             return unsupported();
         };
         if reference.validate().is_err()
+            || destination.effects_only
             || !editable_content(message)
             || message.thread_reply
             || message.reply_to.is_some()
