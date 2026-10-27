@@ -76,6 +76,11 @@ impl FakeCma {
                 "/api/v1/gateway/interaction-records/{record_id}",
                 put(put_record).get(get_record).delete(delete_record),
             )
+            // Test-only transport for the dedicated Mongo-backed persistent domain.
+            .route(
+                "/api/v1/gateway/thread-fence-records/{record_id}",
+                put(put_record).get(get_record),
+            )
             .with_state(state.clone())
             .layer(axum::middleware::from_fn(
                 |request: axum::extract::Request, next: axum::middleware::Next| async move {
@@ -188,6 +193,7 @@ struct RecordResponse {
 async fn put_record(
     State(state): State<StateData>,
     Path(record_id): Path<String>,
+    uri: axum::http::Uri,
     body: Result<Json<PutRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     if state.fail_put.load(Ordering::SeqCst)
@@ -201,6 +207,16 @@ async fn put_record(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let Json(body) = body.unwrap();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let interaction = uri.path().contains("/interaction-records/");
+    if if interaction {
+        body.expires_at
+            .is_none_or(|expiry| expiry <= now || expiry > now + 7 * 86400)
+    } else {
+        body.expires_at.is_some()
+    } {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let blob = STANDARD.decode(body.blob).unwrap();
     let mut records = state.records.lock().unwrap();
     let Some(existing) = records.get_mut(&record_id) else {

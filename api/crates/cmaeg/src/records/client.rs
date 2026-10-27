@@ -64,6 +64,8 @@ pub struct RecordClient {
     record_path: &'static str,
     record_kind: super::RecordKind,
     service_token: crate::service_auth::ServiceAuth,
+    #[cfg(test)]
+    thread_fences_fixture: bool,
 }
 
 impl RecordClient {
@@ -101,6 +103,8 @@ impl RecordClient {
             record_path: RECORD_PATH,
             record_kind: super::RecordKind::Channel,
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
+            #[cfg(test)]
+            thread_fences_fixture: false,
         })
     }
 
@@ -145,6 +149,7 @@ impl RecordClient {
     }
 
     pub fn record_url(&self, record_id: &str) -> Result<Url, RecordError> {
+        self.check_thread_fence_transport()?;
         let record_path = self.record_path;
         let id = uuid::Uuid::parse_str(record_id)
             .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
@@ -342,6 +347,7 @@ impl RecordClient {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
+        self.check_thread_fence_transport()?;
         if let Some(db) = &self.database {
             return db
                 .for_kind(self.record_kind)
@@ -475,3 +481,6 @@ mod tests {
         assert!(client.record_url("not-a-uuid").is_err());
     }
 }
+
+#[path = "client_thread_fences.rs"]
+mod thread_fences;
