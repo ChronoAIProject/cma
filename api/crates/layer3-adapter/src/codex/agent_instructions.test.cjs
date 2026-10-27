@@ -8,6 +8,7 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { agentInstructions, method, recording } = require("./agent_instructions.cjs");
+const { method: steeringMethod, route: steeringRoute } = require("./turn_steering.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
 async function modelFixture() {
   const calls = [];
@@ -81,23 +82,7 @@ function config(directory, provider, origin) {
 }
 
 
-test("instruction patch refuses unreviewed source", () => { assert.throws(() => agentInstructions("unknown"), /Unexpected ACP source/); });
-
-for (const legacy of [false, true]) test(
-  legacy ? "legacy instruction failure recovers through exact session load without close or new conversation"
-    : "pinned native instructions change at idle without replacing the thread, process, files or history",
-  { timeout: 120000 }, async () => {
-  const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
-  const directory = mkdtempSync(join(tmpdir(), "cma-agent-instructions-test-"));
-  const home = join(directory, "agent-home");
-  const fixture = await modelFixture();
-  config(home, "cma_test", fixture.origin);
-  writeFileSync(join(directory, "dirty-work.txt"), "preserved user work");
-  writeFileSync(join(home,"AGENTS.md"), "OLD_OWNER_INSTRUCTION_MARKER: be precise.");
-  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
-  if (legacy) {
-    const installed = readFileSync(program, "utf8");
+function legacyInstructions(installed) {
     const oldMethod = method.replace(`    const mcpServers = session.cmaInstructionMcpServers;
     if (!Array.isArray(mcpServers))
       throw RequestError.invalidRequest("Reload the Agent session before updating instructions");
@@ -106,10 +91,38 @@ for (const legacy of [false, true]) test(
     const oldRecording = recording.replace(`    // ACP's sessionMcpServers contains names for display, not resume definitions.
     sessionState.cmaInstructionMcpServers = structuredClone(requestedMcpServers);
 `, "");
-    const source = installed.replace(method, oldMethod).replaceAll(recording, oldRecording);
+    // Reconstruct the exact deployed legacy bytes, including removal of later
+    // steering support. Retain the original hash as the recovery authority.
+    const source = installed.replace(steeringMethod, "").replace(steeringRoute, "")
+      .replace(method, oldMethod).replaceAll(recording, oldRecording);
     assert.equal(createHash("sha256").update(source).digest("hex"),
       "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
       "Recovery regression must use the exact previously deployed bridge bytes");
+    return source;
+}
+
+test("instruction patch refuses unreviewed source", () => {
+  assert.throws(() => agentInstructions("unknown"), /Unexpected ACP source/);
+  assert.throws(() => legacyInstructions("unknown"), /exact previously deployed bridge bytes/);
+});
+
+for (const legacy of [false, true]) test(
+  legacy ? "legacy instruction failure recovers through exact session load without close or new conversation"
+    : "pinned native instructions change at idle without replacing the thread, process, files or history",
+  { timeout: 120000 }, async () => {
+  const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
+  assert.equal(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.147.0");
+  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
+  // Validate before opening the HTTP fixture so a source-pin assertion cannot
+  // leave a listening server that holds the whole image build open.
+  const source = legacy ? legacyInstructions(readFileSync(program, "utf8")) : null;
+  const directory = mkdtempSync(join(tmpdir(), "cma-agent-instructions-test-"));
+  const home = join(directory, "agent-home");
+  const fixture = await modelFixture();
+  config(home, "cma_test", fixture.origin);
+  writeFileSync(join(directory, "dirty-work.txt"), "preserved user work");
+  writeFileSync(join(home,"AGENTS.md"), "OLD_OWNER_INSTRUCTION_MARKER: be precise.");
+  if (legacy) {
     program = join(directory, "legacy-bridge.mjs");
     writeFileSync(program, source);
   }

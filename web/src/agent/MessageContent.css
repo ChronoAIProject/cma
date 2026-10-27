@@ -102,11 +102,26 @@
   border: 1px solid var(--dsw-alias-border-l1);
 }
 
-.agent-content img {
+.agent-content img,
+.agent-content video,
+.agent-content audio {
   display: block;
   max-width: 100%;
   height: auto;
   border-radius: 8px;
+}
+
+.agent-content__media {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.agent-content__media-status {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .agent-content[data-streaming] > :last-child::after {
