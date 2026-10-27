@@ -1,6 +1,6 @@
 //! AAC-LC sample entry and AudioSpecificConfig validation.
 use super::{atoms, one, u32_at, Atom};
-pub(in crate::whatsapp::outbound) fn sample_entry(entry: &Atom<'_>) -> Option<()> {
+pub(crate) fn sample_entry(entry: &Atom<'_>) -> Option<()> {
     if entry.kind != *b"mp4a" {
         return None;
     }
