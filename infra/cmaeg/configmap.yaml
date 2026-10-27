@@ -31,7 +31,7 @@ data:
   # Compatible readers and Custom acceptance verified; enable owner Meta setup/testing.
   CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "false"
-  # Independent native JPEG/PNG/PDF/audio/sticker reply uploads, pending connected Meta acceptance.
+  # Independent native image/PDF/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "false"
   # Issue received-message reaction references only after compatible reader rollout.
   CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED: "false"
