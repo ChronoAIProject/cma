@@ -27,6 +27,7 @@
   line-height: 20px;
 }
 .delivery-flow {
+  position: relative;
   flex: 1;
   min-height: 320px;
   height: 100%;
@@ -36,8 +37,8 @@
 .delivery-flow .react-flow {
   --xy-background-color: var(--dsw-alias-bg-layer-2);
   --xy-background-pattern-color: var(--dsw-alias-border-l3);
-  --xy-edge-stroke: var(--dsw-alias-border-l3);
-  --xy-edge-stroke-width: 1;
+  --xy-edge-stroke: var(--dsw-alias-label-tertiary);
+  --xy-edge-stroke-width: 1.5;
   --xy-handle-background-color: var(--dsw-alias-bg-layer-1);
   --xy-handle-border-color: var(--dsw-alias-border-l3);
   --xy-controls-button-background-color: var(--dsw-alias-bg-layer-1);
@@ -67,26 +68,6 @@
 }
 .channel-map__node--illustration {
   cursor: default;
-}
-.channel-map__outline {
-  margin: 12px 24px;
-  font-size: 13px;
-}
-.channel-map__outline section {
-  display: grid;
-  gap: 8px;
-}
-.channel-map__outline button {
-  border: 0;
-  background: transparent;
-  text-align: start;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  padding: 8px;
-  cursor: pointer;
-}
-.channel-map__outline button small {
-  color: var(--dsw-alias-label-secondary);
 }
 .channel-map__legend {
   margin: 12px 24px;
@@ -244,7 +225,42 @@
 
 .channel-map__actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  flex-direction: column;
   gap: 8px;
-  flex-wrap: wrap;
+}
+
+
+.delivery-flow__overlay {
+  position: absolute;
+  z-index: 5;
+  top: 16px;
+  right: 24px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: calc(100% - 48px);
+}
+.delivery-flow__overlay .button {
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv1);
+  white-space: nowrap;
+}
+.delivery-flow__tool-access .react-flow__edge-path {
+  stroke-dasharray: 4 4;
+}
+.delivery-flow__tool-access .react-flow__edge-text {
+  font-size: 12px;
+  fill: var(--dsw-alias-label-secondary);
+}
+.delivery-flow__tool-access .react-flow__edge-textbg {
+  fill: var(--dsw-alias-bg-layer-1);
+}
+@media (max-width: 720px) {
+  .delivery-flow__overlay {
+    right: 16px;
+    left: 16px;
+    max-width: none;
+    gap: 8px;
+  }
 }

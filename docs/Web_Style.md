@@ -3645,3 +3645,31 @@ uses existing smooth motion and honors reduced motion.
 | Date | Change |
 | --- | --- |
 | 2026-10-27 | Organize node configuration by actual settings with aligned fields, contextual explanations and active section navigation; expose a truthful Agent toolsets catalog while preserving node drafts. |
+
+### Shared Gateway navigation and map controls (2026-10-27)
+
+Channels and Consumers now use the Agent Manager's same text view tabs and
+single-line TreeRow navigation, including quiet 32px rows (44px on narrow
+screens), selected fill, keyboard navigation, and metadata revealed on focus,
+hover or selection. Creation uses the shared top sidebar action, with the
+existing Channel branch or Consumer Agent glyph. Retained content and drafts
+survive section changes. The prior expandable group layout is superseded.
+
+The map's Activity and Add producer actions float at the top right beside a
+compact preview of the latest three authoritative Activity receipts. The preview
+shares the selected channel's existing feed and preserves per-consumer outcomes,
+connection, waiting and empty states. Its 12px insets, radius and secondary 12/18
+metadata reuse existing tokens. Fit and resize reserve space for this overlay.
+The bottom Browse delivery nodes disclosure is removed; canvas node buttons
+retain their names, pressed states and ordinary keyboard activation.
+Below 640px of canvas width, nodes stack in reading order with top-to-bottom
+arrows; the canvas grows to preserve readable node size below its controls.
+
+Configured event edges have arrowheads and a slow three-second directional dash
+progression. This indicates routing direction, not live traffic; Activity is the
+evidence of events. Reduced motion leaves static arrows and removes viewport
+transitions. The optional Agent toolsets node sits below the Channel; its dashed,
+static, labeled Tool access associations point to Consumers and do not imply
+that tools publish traffic. All controls reuse shared hover and focus treatment.
+
+| 2026-10-27 | Reuse Agent Manager resource tabs, single-line navigation and top creation actions in Event Gateway; float map actions beside three actual Activity receipts, remove the duplicate node browser, and show routing direction with reduced-motion-aware arrows and separate static tool-access associations. |

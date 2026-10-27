@@ -4,13 +4,14 @@ import { ProfileMenu } from '../profile/ProfileMenu';
 import type { AppRoute } from '../routing/routes';
 import { serviceFor } from '../services/ServiceMenu';
 import { AppFrame } from './AppFrame';
-import { Sidebar } from './Sidebar';
+import { Sidebar, type SidebarNewAgent } from './Sidebar';
 
 /** All portals share the same frame, brand, navigation switch and account controls. */
 export function PortalFrame({
   route,
   onNavigate,
   navigation,
+  createAction,
   children,
   landing = false,
   fullWidth = false,
@@ -20,6 +21,7 @@ export function PortalFrame({
   readonly route: AppRoute;
   readonly onNavigate: (route: AppRoute) => void;
   readonly navigation?: ReactNode;
+  readonly createAction?: SidebarNewAgent;
   readonly children: ReactNode;
   readonly landing?: boolean;
   readonly fullWidth?: boolean;
@@ -51,6 +53,7 @@ export function PortalFrame({
             onNavigate(next);
           }}
           navigation={navigation}
+          newAgent={createAction}
           account={
             state.status === 'authenticated' ? (
               <ProfileMenu

@@ -1,4 +1,9 @@
 import { useId, useState, type ReactNode } from 'react';
+import { TreeRow } from '../shell/TreeRow';
+import { keyboardNavigation } from '../shell/treePresentation';
+import type { SidebarNewAgent } from '../shell/Sidebar';
+import { IconBranchOutline16, IconRefreshOutline16 } from '../ui/icons';
+import '../shell/Tree.css';
 import { Button } from '../ui/Button';
 import { routePath } from '../routing/routes';
 import { PageHeader, type Crumb } from '../ui/PageHeader';
@@ -28,6 +33,7 @@ import './EventGateway.css';
 
 export interface EventGatewaySlots {
   readonly sidebar: ReactNode;
+  readonly createAction?: SidebarNewAgent;
   readonly content: ReactNode;
 }
 interface EventGatewayProps {
@@ -96,38 +102,42 @@ function EventGatewayBody({
   const sidebar = (
     <section className="gateway-sidebar" aria-label="Channels">
       <div className="gateway-sidebar__heading">
-        {canCreate ? (
-          <Button size="sm" onClick={startCreate}>
-            New channel
-          </Button>
-        ) : null}
-        <Button
-          size="sm"
+        <button
+          type="button"
+          className="navigation-filters__toggle"
           disabled={channels.busy}
           onClick={channels.refresh}
           aria-label="Refresh channels"
+          title="Refresh channels"
         >
-          Refresh
-        </Button>
+          <IconRefreshOutline16 />
+        </button>
       </div>
       {/* The welcome surface shows loading; the rail retains failures. */}
       <PageStatus error={channels.error} retry={channels.refresh} />
       {channels.value && items.length === 0 ? (
         <p className="gateway-sidebar__empty">No channels yet.</p>
       ) : null}
-      <ul className="gateway-sidebar__list">
+      <div
+        className="agent-navigation"
+        role="tree"
+        aria-label="Channels"
+        onKeyDown={keyboardNavigation}
+      >
         {items.map((channel) => (
-          <li key={channel.record_id}>
-            <button
-              type="button"
-              className="gateway-sidebar__channel"
-              aria-current={
-                !creating && current?.record_id === channel.record_id ? 'page' : undefined
-              }
-              onClick={() => select(channel.record_id)}
-            >
-              <span>{channel.definition.name}</span>
+          <TreeRow
+            key={channel.record_id}
+            nodeId={`channel:${channel.record_id}`}
+            level={1}
+            layout="line"
+            label={channel.definition.name}
+            icon={null}
+            selected={!creating && current?.record_id === channel.record_id}
+            onNavigate={() => {}}
+            onActivate={() => select(channel.record_id)}
+            meta={
               <GatewayRecordMeta
+                compact
                 createdAt={
                   channel.created_at ??
                   (typeof channel.definition.created_at === 'string'
@@ -136,10 +146,10 @@ function EventGatewayBody({
                 }
                 owner={channel.owner ?? channel.definition.owner}
               />
-            </button>
-          </li>
+            }
+          />
         ))}
-      </ul>
+      </div>
       {channels.value?.next_cursor ? (
         <Button disabled={channels.busy} onClick={channels.more}>
           Load more channels
@@ -209,10 +219,24 @@ function EventGatewayBody({
     </div>
   );
   return children ? (
-    children({ sidebar, content })
+    children({
+      sidebar,
+      content,
+      createAction: canCreate
+        ? { label: 'New channel', icon: <IconBranchOutline16 />, onCreate: startCreate }
+        : undefined,
+    })
   ) : (
     <div className="gateway-layout">
-      {sidebar}
+      <div>
+        {canCreate ? (
+          <button type="button" className="sidebar__new" onClick={startCreate}>
+            <IconBranchOutline16 />
+            <span>New channel</span>
+          </button>
+        ) : null}
+        {sidebar}
+      </div>
       {content}
     </div>
   );

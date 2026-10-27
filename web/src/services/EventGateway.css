@@ -1,38 +1,10 @@
 .gateway-navigation {
-  flex: none;
+  position: relative;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: 12px 0;
   min-height: 0;
-  overflow: auto;
-}
-.gateway-navigation a {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--dsw-alias-label-primary);
-  font-size: var(--text-ui);
-  text-decoration: none;
-  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-.gateway-navigation a:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-.gateway-navigation a[aria-current='page'] {
-  background: var(--dsw-specific-sidebar-nav-item-active);
-  font-weight: 600;
-}
-.gateway-navigation a:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-@media (prefers-reduced-motion: reduce) {
-  .gateway-navigation a {
-    transition: none;
-  }
+  overflow: hidden;
 }
 .gateway-layout {
   display: grid;
@@ -45,63 +17,18 @@
   gap: 8px;
   min-width: 0;
   min-height: 0;
-  overflow: visible;
-  padding: 8px 0;
+  overflow: auto;
 }
 .gateway-sidebar__heading {
+  display: flex;
+  justify-content: flex-end;
   padding-inline: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
 }
-.gateway-sidebar__heading h2 {
-  margin: 0;
-  font-size: var(--text-ui);
-  color: var(--dsw-alias-label-secondary);
-}
-.gateway-sidebar__list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.gateway-sidebar__channel {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-1);
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: 8px;
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 20px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  text-align: left;
-  cursor: pointer;
-}
-.gateway-sidebar__channel:hover,
-.gateway-sidebar__channel[aria-current='page'] {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-.gateway-sidebar__channel:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-.gateway-sidebar__channel > span {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.gateway-sidebar__channel small,
 .gateway-sidebar__empty {
-  color: var(--dsw-alias-label-secondary);
+  padding: 16px 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
 }
 .gateway-content {
   min-width: 0;
@@ -125,7 +52,7 @@
 .gateway-detail[hidden] {
   display: none;
 }
-.gateway-detail header {
+.gateway-detail > header {
   margin-bottom: var(--space-6);
 }
 .gateway-detail__section {
@@ -221,9 +148,6 @@
 }
 
 /* Match the quiet Agent Manager navigation and fill the available workspace. */
-.gateway-navigation > button {
-  justify-content: space-between;
-}
 .gateway-navigation [hidden] {
   display: none;
 }
@@ -243,4 +167,11 @@
 }
 .gateway-detail > header {
   padding: 0 24px;
+}
+
+.gateway-navigation .gateway-sidebar__heading {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0;
 }
