@@ -26,6 +26,23 @@ fn apply_owner(request: &mut Request<'_>, options: &ConnectionOptions<'_>) -> Re
 }
 
 impl Cmaeg {
+    /// List this credential subject's eligible Lark/Feishu bot API connections.
+    /// Does not select another owner, create credentials, or grant channel access.
+    pub async fn list_relay_resource_connections(
+        &self,
+        platform: ResourcePlatform,
+    ) -> Result<ResourceConnectionList> {
+        let platform = match platform {
+            ResourcePlatform::Lark => "lark",
+            ResourcePlatform::Feishu => "feishu",
+        };
+        let query = [("platform", platform.to_owned())];
+        let mut request = Request::get(&["v1", "relay-resource-connections"]);
+        request.root = true;
+        request.query = &query;
+        self.client.request(request).await
+    }
+
     /// Read the gateway's platform connection capabilities.
     pub async fn get_channel_capabilities(&self) -> Result<CapabilityView> {
         let mut request = Request::get(&["v1", "channel-capabilities"]);

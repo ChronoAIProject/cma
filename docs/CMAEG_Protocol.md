@@ -3785,3 +3785,46 @@ readers and keys are required through original card expiry. The optional stored
 edit state is absent from old records; text-only successors require the new
 reader. Public SDK and OpenAPI request/response schemas are unchanged. Local
 contract coverage does not claim live Discord acceptance.
+
+### Existing Lark/Feishu resource connection discovery
+
+`GET /v1/relay-resource-connections?platform=lark|feishu` is an optional
+creator-authenticated, current-subject-only read. It requires the existing
+channel-read permission and returns `{ "items": [...] }`; each item contains
+only `user_service_id`, `catalog_service_id`, `name`, `platform` and `source`
+(`personal` or `organization`).
+There is no owner override: `X-CMAEG-Owner` or an unknown query parameter is
+rejected on this new route. Other organization/channel routes are unchanged.
+
+Discovery borrows the incoming bearer for existing NyxID metadata GETs. It never
+mints, refreshes, persists or grants a credential. Eligible connections are
+active, non-node token-exchange services with the exact regional catalog identity
+and official endpoint. Personal connections and current-subject-visible organization
+connections with `allowed=true` and member/admin role are included. Viewer or
+otherwise disallowed organization rows are excluded.
+
+NyxID's endpoint inventory is personal by default. For eligible organization rows
+whose exact endpoint is absent, discovery reads the existing
+`GET /api/v1/endpoints/{endpoint_id}/authorization` with the same incoming bearer.
+It never selects an organization owner or calls an administrator-only inventory.
+Only matching ID/catalog evidence with `auto_connected=true` is accepted from
+that projection; custom endpoints remain manual. Missing/denied exact evidence
+omits that option without modifying any saved binding. This does not prove the
+channel key has a grant.
+
+Responses are bounded to 1 MiB and 1000 rows per inventory. Shared endpoint reads
+are capped at 32 with concurrency four, within an eight-second overall discovery
+deadline, with no redirects or automatic retries. Duplicate identities or
+malformed/oversized upstream data fail discovery. Inventory 401/403 remain 401/403;
+provider errors remain 503, never a successful empty inventory.
+
+Selection is convenience only. The caller must still pin the independently
+confirmed receiving `app_id` and bot `open_id`, and the existing channel key must
+have access to the exact selected connection. Resource reads retain all current
+binding, official-origin, app/bot and key-revision checks. When an authorized shared
+endpoint is absent from the channel key's personal endpoint inventory, media reads
+use the same exact endpoint-authorization fallback under that channel key and the
+existing media deadline. Allowed shared membership, exact catalog-managed endpoint
+evidence and the independent bot proof are all required; a selector result cannot
+substitute for them. Saved/manual bindings remain intact when discovery is absent,
+unavailable, or does not list them.

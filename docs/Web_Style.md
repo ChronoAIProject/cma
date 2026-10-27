@@ -3610,3 +3610,20 @@ metadata. Each newly reported event uses the shared Presence arrival transition
 and reduced-motion behavior; updates to the same event do not restart it.
 
 | 2026-10-27 | Start one Activity stream on explicit channel selection; share its authoritative latest receipt with the map and retained dialog, close inactive streams and preserve native recoverable reconnects without an arbitrary error cap. |
+
+### Lark and Feishu resource connection selection (2026-10-27)
+
+The existing embedded-media field group offers **Load my bot connections** using
+the shared Button and Picker. Discovery begins only after this explicit action;
+refresh/retry is explicit, with no polling. Options name the connection and its
+exact ID and Personal/Organization provenance so identical labels remain distinguishable. Selecting an option sets
+only the connection/catalog pair. Receiving app ID and independently confirmed
+Bot ID remain separate fields; selection is not described as granting access.
+Use existing channel-field-hint typography for loading, unavailable and empty
+states. The manual-ID toggle preserves existing and unavailable bindings without
+rewriting them. Eligible allowed organization connections are included; selection
+never claims that a channel key is granted access. Capability-off bindings stay read-only with
+removal available. Owner/permission changes unmount the discovery context, and
+region changes discard in-flight results. No new palette, spacing or popup is added.
+
+| 2026-10-27 | Add explicit current-subject Lark/Feishu connection discovery with the shared Picker, retaining manual bindings, receiving identities and owner/region isolation without polling or inferred grants. |

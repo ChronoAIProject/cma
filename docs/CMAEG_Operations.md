@@ -2702,3 +2702,37 @@ a 70-second opaque tool-proxy wait; retained runtimes can still have the earlier
 runtime compatibility before enabling full sends, without interrupting active
 Sandboxes. Source budgets and desired configuration are not production acceptance
 evidence; do not widen the routed delivery window beyond its leases.
+
+### Optional Lark/Feishu connection selector
+
+The portal can load existing bot-service connections through public
+`GET /v1/relay-resource-connections?platform=lark|feishu`. Agent Manager's existing
+cookie transport forwards the current server-held credential after its existing
+refresh/custody checks and checks custody again before returning the response.
+The Gateway reads metadata with that request credential only; there is no new
+secret, OAuth grant, NyxID configuration, database collection, or background job.
+
+Roll out Gateway and Agent Manager before the web selector for immediate
+availability. A missing route or unavailable metadata leaves the manual IDs and
+saved bindings intact. The selector includes eligible personal and allowed
+organization connections already visible to the current subject, with provenance
+labels. Exact shared endpoint evidence is read through NyxID's existing
+membership-scoped authorization route; no owner switching or grant change occurs.
+A separately held channel key must pass the same exact resource authorization
+and receiving-bot proof before media can be read. Custom shared endpoints whose
+official origin cannot be established from that projection remain manual.
+Selecting a connection does not prove the receiving app or bot, and does not
+send a provider message. Local auth/HTTP/SDK/UI tests establish the code path;
+real Lark and Feishu account eligibility and resource-byte reads still require
+separate connected acceptance under the actual permissions.
+
+
+Connected read-only contract check on 2026-10-27: the current subject's shared
+`api-lark-bot` connection was visible with organization admin membership and
+`allowed=true`. Its exact endpoint authorization returned 200 with matching
+endpoint/catalog IDs but `auto_connected=false` and no endpoint URL. This custom
+shared connection is therefore not an automatic selector option and remains a
+manual binding. The check made no platform call and does not establish that an
+individual channel key can read its media; exact origin and bot evidence remain
+required. This is a public metadata projection limit, not a failed membership
+check or a newly granted permission.

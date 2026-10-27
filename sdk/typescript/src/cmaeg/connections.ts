@@ -7,6 +7,9 @@ import {
   ConnectionPageSchema,
   ConnectionViewSchema,
   CreateConnectionSchema,
+  ResourceConnectionListSchema,
+  ResourcePlatformSchema,
+  type ResourcePlatform,
   type CreateConnection,
 } from './types.js';
 
@@ -35,6 +38,18 @@ export class CmaegConnections {
 
   getChannelCapabilities(options: OperationOptions = {}) {
     return read(this.config, '/v1/channel-capabilities', CapabilityViewSchema, options);
+  }
+
+  /** Current subject's eligible connections; no owner override or scope mutation. */
+  listRelayResourceConnections(platform: ResourcePlatform, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      query('/v1/relay-resource-connections', {
+        platform: input(ResourcePlatformSchema, platform),
+      }),
+      ResourceConnectionListSchema,
+      options,
+    );
   }
 
   createChannelConnection(body: CreateConnection, options: CreateConnectionOptions) {

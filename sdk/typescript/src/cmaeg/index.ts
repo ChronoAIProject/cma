@@ -21,6 +21,7 @@ import type {
   ChannelUpdateRequest,
   CloudEvent,
   CreateConnection,
+  ResourcePlatform,
   OutboundMessage,
   RoutingUpdateRequest,
   MessageReactionRequest,
@@ -82,6 +83,9 @@ export class Cmaeg {
   }
   getChannelCapabilities(options?: OperationOptions) {
     return this.#connections.getChannelCapabilities(options);
+  }
+  listRelayResourceConnections(platform: ResourcePlatform, options?: OperationOptions) {
+    return this.#connections.listRelayResourceConnections(platform, options);
   }
   createChannelConnection(body: CreateConnection, options: CreateConnectionOptions) {
     return this.#connections.createChannelConnection(body, options);
