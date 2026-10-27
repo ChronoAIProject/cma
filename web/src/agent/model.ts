@@ -88,6 +88,9 @@ export interface ConversationState {
   readonly recovery: readonly RecoveryNotice[];
   readonly usage?: AgentUsage;
   readonly turnUsage?: Readonly<Record<string, NonNullable<AgentUsage['currentTurn']>>>;
+  readonly turnTiming?: Readonly<
+    Record<string, { readonly startedAt: string; readonly finishedAt?: string }>
+  >;
   /** Ephemeral visible text already covered by the latest provider usage report. */
   readonly visibleUsageAnchor?: {
     readonly turnSequence: number;
