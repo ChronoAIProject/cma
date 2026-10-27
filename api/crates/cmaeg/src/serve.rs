@@ -142,6 +142,14 @@ pub(crate) async fn serve(
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_lark_outbound_media(config.native_lark_outbound_media_enabled)
         .with_native_lark_effects(config.native_lark_message_effects_enabled)
+        .with_native_media_edits(
+            config.native_telegram_media_edits_enabled,
+            config.native_discord_media_edits_enabled,
+            std::sync::Arc::new(crate::native_media::store::Store::new(
+                (*state.records).clone(),
+                state.master_keys.clone(),
+            )),
+        )
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_native_whatsapp_templates(config.native_whatsapp_templates_enabled)
         .with_native_whatsapp_interactions(config.native_whatsapp_interactions_enabled)
@@ -257,6 +265,12 @@ pub(crate) async fn serve(
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
         telegram_effects_issuance_enabled: telegram_effects,
+        native_media_edits: Some(std::sync::Arc::new(crate::native_media::Client::new(
+            telegram.clone(),
+            crate::discord::DiscordRest::new()?,
+            config.native_telegram_media_edits_enabled,
+            config.native_discord_media_edits_enabled,
+        ))),
         native_lark_effects: Some(std::sync::Arc::new(tools::NativeLarkEffectsClient::new(
             crate::native_lark::Client::production()?,
             config.native_lark_message_effects_enabled,
