@@ -1,8 +1,8 @@
 //! Activities wire types for the independent CMAEG v1 protocol.
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConsumerId, ConsumerName,
-    ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode, ReplyChoice,
-    RuleId, SourceId, SourceKind, ThreadFacts,
+    ConversationId, ConversationKind, EventId, EventRef, LarkResourceKind, MessageRef, ProblemCode,
+    ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -490,14 +490,4 @@ pub struct PublicActivity {
     /// The routing decision of a routed event; absent on unrouted events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ActivityRouting>,
-}
-
-/// Native Lark/Feishu message resource type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LarkResourceKind {
-    /// Image resource.
-    Image,
-    /// File resource, including embedded video.
-    File,
 }

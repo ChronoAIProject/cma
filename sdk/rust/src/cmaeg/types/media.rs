@@ -2,6 +2,16 @@
 use super::{AttachmentKind, MediaVariant};
 use serde::{Deserialize, Serialize};
 
+/// Native Lark/Feishu message resource type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LarkResourceKind {
+    /// Image resource.
+    Image,
+    /// File resource, including embedded video.
+    File,
+}
+
 /// CMAEG `AttachmentViewKind` wire shape: what to read from an attachment.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttachmentViewKind {
