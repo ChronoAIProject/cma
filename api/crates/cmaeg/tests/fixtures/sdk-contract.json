@@ -791,7 +791,12 @@
         ],
         "telegram_bot_token": "fixture",
         "telegram_webhook_secret": "fixture",
-        "discord_bot_token": "native-fixture"
+        "discord_bot_token": "native-fixture",
+        "whatsapp": {
+          "app_secret": "fixture-app-secret",
+          "access_token": "fixture-access-token",
+          "verify_token": "fixture-verify-token"
+        }
       },
       "name": "fixture",
       "partition": {
@@ -1284,7 +1289,8 @@
       "endpoints": {
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
-        "telegram_webhook_url": "fixture"
+        "telegram_webhook_url": "fixture",
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1575,7 +1581,8 @@
       "endpoints": {
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
-        "telegram_webhook_url": "fixture"
+        "telegram_webhook_url": "fixture",
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -1873,7 +1880,8 @@
           "endpoints": {
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
-            "telegram_webhook_url": "fixture"
+            "telegram_webhook_url": "fixture",
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2164,7 +2172,8 @@
           "endpoints": {
             "custom_event_url": "fixture",
             "nyxid_callback_url": "fixture",
-            "telegram_webhook_url": "fixture"
+            "telegram_webhook_url": "fixture",
+            "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
           },
           "provider": {
             "binding_id": "fixture",
@@ -2463,7 +2472,8 @@
       "endpoints": {
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
-        "telegram_webhook_url": "fixture"
+        "telegram_webhook_url": "fixture",
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2757,7 +2767,8 @@
       "endpoints": {
         "custom_event_url": "fixture",
         "nyxid_callback_url": "fixture",
-        "telegram_webhook_url": "fixture"
+        "telegram_webhook_url": "fixture",
+        "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -2799,7 +2810,12 @@
         ],
         "telegram_bot_token": "fixture",
         "telegram_webhook_secret": "fixture",
-        "discord_bot_token": "native-fixture"
+        "discord_bot_token": "native-fixture",
+        "whatsapp": {
+          "app_secret": "fixture-app-secret",
+          "access_token": "fixture-access-token",
+          "verify_token": "fixture-verify-token"
+        }
       },
       "expected_version": 1,
       "name": "fixture",
@@ -3257,7 +3273,12 @@
       ],
       "telegram_bot_token": "fixture",
       "telegram_webhook_secret": "fixture",
-      "discord_bot_token": "native-fixture"
+      "discord_bot_token": "native-fixture",
+      "whatsapp": {
+        "app_secret": "fixture-app-secret",
+        "access_token": "fixture-access-token",
+        "verify_token": "fixture-verify-token"
+      }
     }
   ],
   "CredentialsRequest": [
@@ -3272,7 +3293,12 @@
       ],
       "telegram_bot_token": "fixture",
       "telegram_webhook_secret": "fixture",
-      "discord_bot_token": "native-fixture"
+      "discord_bot_token": "native-fixture",
+      "whatsapp": {
+        "app_secret": "fixture-app-secret",
+        "access_token": "fixture-access-token",
+        "verify_token": "fixture-verify-token"
+      }
     }
   ],
   "CustomAttachments": [
@@ -3320,7 +3346,8 @@
     {
       "custom_event_url": "fixture",
       "nyxid_callback_url": "fixture",
-      "telegram_webhook_url": "fixture"
+      "telegram_webhook_url": "fixture",
+      "whatsapp_webhook_url": "https://gateway.example/v1/whatsapp/fixture"
     }
   ],
   "EventAccepted": [
@@ -4366,6 +4393,15 @@
         "type": "all"
       },
       "thread_history": true
+    },
+    {
+      "type": "whatsapp",
+      "app_id": "12345",
+      "waba_id": "23456",
+      "phone_number_id": "34567",
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "SourceKind": [
@@ -4390,6 +4426,12 @@
     {
       "type": "discord",
       "bot_id": "77"
+    },
+    {
+      "type": "whatsapp",
+      "app_id": "12345",
+      "waba_id": "23456",
+      "phone_number_id": "34567"
     }
   ],
   "SourceRequest": [
@@ -4488,6 +4530,15 @@
         "type": "all"
       },
       "thread_history": true
+    },
+    {
+      "type": "whatsapp",
+      "app_id": "12345",
+      "waba_id": "23456",
+      "phone_number_id": "34567",
+      "admission": {
+        "type": "all"
+      }
     }
   ],
   "TestChannelResponse": [
@@ -6216,5 +6267,18 @@
   "ResourceConnectionSource": [
     "personal",
     "organization"
+  ],
+  "WhatsappCredentials": [
+    {
+      "app_secret": "fixture-app-secret",
+      "access_token": "fixture-access-token",
+      "verify_token": "fixture-verify-token"
+    }
+  ],
+  "WhatsappWebhookResponse": [
+    {
+      "accepted": 2,
+      "refused": 1
+    }
   ]
 }

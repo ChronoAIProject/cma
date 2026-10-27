@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreateRequest {
     /// Stable UUID reserved by a durable creator before issuing the request.
-    /// Required as a canonical UUID v4 when authoring a native Discord source;
+    /// Required as a canonical UUID v4 when authoring native Discord or WhatsApp;
     /// optional for existing non-native creation contracts.
     #[serde(default)]
     pub record_id: Option<RecordId>,
@@ -65,6 +65,13 @@ pub struct ProviderRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceRequest {
+    /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
+    Whatsapp {
+        app_id: String,
+        waba_id: String,
+        phone_number_id: String,
+        admission: AdmissionPolicy,
+    },
     Telegram {
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -117,6 +124,8 @@ pub enum SourceRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialsRequest {
+    #[serde(default)]
+    pub whatsapp: Option<cmaeg_core::channel::WhatsappCredentials>,
     pub agent_key: Secret,
     #[serde(default)]
     pub channel_key: Option<Secret>,
@@ -133,6 +142,8 @@ pub struct CredentialsRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialPatch {
+    #[serde(default)]
+    pub whatsapp: Option<cmaeg_core::channel::WhatsappCredentials>,
     #[serde(default)]
     pub agent_key: Option<Secret>,
     #[serde(default)]

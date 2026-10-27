@@ -19,6 +19,7 @@ pub struct IngressState {
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
     /// Whether Telegram media is admitted; off, media is refused as before.
     pub media_enabled: bool,
@@ -30,6 +31,10 @@ pub struct IngressState {
 impl IngressState {
     pub fn with_routed(mut self, routed: Option<Arc<super::routed::RoutedIngress>>) -> Self {
         self.routed = routed;
+        self
+    }
+    pub fn with_whatsapp_receipts(mut self, store: Arc<crate::whatsapp::receipts::Store>) -> Self {
+        self.whatsapp_receipts = Some(store);
         self
     }
     pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
@@ -69,6 +74,7 @@ impl IngressState {
             routed: None,
             interactions: None,
             telegram: None,
+            whatsapp_receipts: None,
             receipt_observer: None,
             media_enabled: false,
             telegram_effects_issuance_enabled: false,

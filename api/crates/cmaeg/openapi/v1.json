@@ -1819,7 +1819,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/RecordId",
-                "description": "Stable UUID reserved by a durable creator before issuing the request.\nRequired as a canonical UUID v4 when authoring a native Discord source;\noptional for existing non-native creation contracts."
+                "description": "Stable UUID reserved by a durable creator before issuing the request.\nRequired as a canonical UUID v4 when authoring native Discord or WhatsApp;\noptional for existing non-native creation contracts."
               },
               {
                 "type": "null"
@@ -2577,6 +2577,16 @@
                 "type": "null"
               }
             ]
+          },
+          "whatsapp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhatsappCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
@@ -2627,6 +2637,16 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "whatsapp": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WhatsappCredentials"
               },
               {
                 "type": "null"
@@ -2916,6 +2936,12 @@
             "type": "string"
           },
           "telegram_webhook_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "whatsapp_webhook_url": {
             "type": [
               "string",
               "null"
@@ -5067,6 +5093,37 @@
       "Source": {
         "oneOf": [
           {
+            "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "app_id": {
+                "type": "string"
+              },
+              "phone_number_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "whatsapp"
+                ],
+                "type": "string"
+              },
+              "waba_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_id",
+              "waba_id",
+              "phone_number_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
@@ -5301,11 +5358,37 @@
         "type": "string"
       },
       "SourceId": {
-        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\" or \"whatsapp\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
         "type": "string"
       },
       "SourceKind": {
         "oneOf": [
+          {
+            "properties": {
+              "app_id": {
+                "type": "string"
+              },
+              "phone_number_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "whatsapp"
+                ],
+                "type": "string"
+              },
+              "waba_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_id",
+              "waba_id",
+              "phone_number_id",
+              "type"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "bot_id": {
@@ -5386,6 +5469,37 @@
       },
       "SourceRequest": {
         "oneOf": [
+          {
+            "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "app_id": {
+                "type": "string"
+              },
+              "phone_number_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "whatsapp"
+                ],
+                "type": "string"
+              },
+              "waba_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_id",
+              "waba_id",
+              "phone_number_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "admission": {
@@ -5818,6 +5932,26 @@
         ],
         "type": "string"
       },
+      "WhatsappCredentials": {
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "app_secret": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "verify_token": {
+            "$ref": "#/components/schemas/Secret"
+          }
+        },
+        "required": [
+          "app_secret",
+          "access_token",
+          "verify_token"
+        ],
+        "type": "object"
+      },
       "WhatsappTemplate": {
         "additionalProperties": false,
         "description": "The template must already be approved in the destination WhatsApp account.\nApproval and placeholder compatibility are checked by Meta on delivery.",
@@ -6148,6 +6282,23 @@
             "type": "object"
           }
         ]
+      },
+      "WhatsappWebhookResponse": {
+        "properties": {
+          "accepted": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "refused": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted",
+          "refused"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -8509,6 +8660,124 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CallbackResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
+        ]
+      }
+    },
+    "/whatsapp/{channel_id}": {
+      "get": {
+        "operationId": "verifyNativeWhatsappWebhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "hub.mode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "hub.verify_token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "hub.challenge",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
+        ]
+      },
+      "post": {
+        "operationId": "receiveNativeWhatsappWebhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-hub-signature-256",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WhatsappWebhookResponse"
                 }
               }
             },

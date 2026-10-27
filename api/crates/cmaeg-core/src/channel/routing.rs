@@ -92,7 +92,10 @@ pub fn default_receives_all(
     let chat = def.sources.iter().any(|source| {
         matches!(
             source,
-            Source::Telegram { .. } | Source::Discord { .. } | Source::NyxidRelay { .. }
+            Source::Whatsapp { .. }
+                | Source::Telegram { .. }
+                | Source::Discord { .. }
+                | Source::NyxidRelay { .. }
         )
     });
     let custom = def

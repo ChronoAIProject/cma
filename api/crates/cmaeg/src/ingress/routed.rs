@@ -1,5 +1,8 @@
 //! Durable admission for explicitly selected channel records. Legacy traffic
 //! never performs a routing-store read or retains its raw body here.
+#[path = "routed_whatsapp.rs"]
+mod whatsapp;
+
 use super::{
     launch::{LaunchOutcome, LaunchRequest},
     routing_plan::{self, OrdinaryPlan, RoutingOptions},

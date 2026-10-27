@@ -27,6 +27,7 @@ pub mod gate;
 pub mod intents;
 mod interactive;
 pub mod local_stream;
+mod native_clients;
 mod pacing;
 pub mod relay_client;
 pub mod render;
@@ -39,4 +40,5 @@ mod telegram_media;
 #[cfg(test)]
 mod telegram_media_tests;
 pub mod webhook_client;
+mod whatsapp;
 mod worker;
