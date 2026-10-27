@@ -15,8 +15,9 @@ use crate::{
 };
 use budget::Budget;
 use cmaeg_core::{
+    channel::Source,
     problem::{Problem, ProblemCode},
-    seal::{EventRef, EventRefPayload, ThreadRef, ThreadRefPayload},
+    seal::{EventRef, EventRefPayload, ReplyAddress, ThreadRef, ThreadRefPayload},
     thread_lifecycle::{
         CreateThreadRequest, ManageThreadRequest, ThreadAction, ThreadCapabilities, ThreadList,
         ThreadListScope, ThreadListView, ThreadOutcome, ThreadReceipt, ThreadSummary, ThreadTarget,
@@ -66,25 +67,56 @@ impl ToolsState {
             .resolve_current(event.channel_id.as_str())
             .await
             .map_err(|error| error.problem())?;
-        super::state::owner(caller, &channel, event.consumer.as_ref(), "threadLifecycle")?;
+        let authority = self
+            .thread_authority_in_channel(caller, event, &channel)
+            .await?;
+        Ok((channel, authority))
+    }
+    async fn thread_authority_in_channel(
+        &self,
+        caller: AgentCaller,
+        event: &EventRefPayload,
+        channel: &ResolvedChannel,
+    ) -> Result<Authority, Problem> {
+        super::state::owner(caller, channel, event.consumer.as_ref(), "threadLifecycle")?;
         if !self.resolver.record_client().thread_fences_ready().await {
             return Err(unavailable());
         }
-        let authority = thread_authority::load(
+        thread_authority::load(
             self.resolver.record_client(),
             self.keys.clone(),
-            &channel,
+            channel,
             event,
         )
-        .await?;
-        Ok((channel, authority))
+        .await
     }
     pub(super) async fn thread_capabilities(
         &self,
         caller: AgentCaller,
         event: &EventRefPayload,
+        channel: &ResolvedChannel,
     ) -> Option<ThreadCapabilities> {
-        let (_, authority) = self.thread_authority(caller, event).await.ok()?;
+        let client = self.discord_threads.as_deref()?;
+        let ReplyAddress::Discord { bot_id, .. } = &event.reply else {
+            return None;
+        };
+        if event.lineage.is_some() || event.expires_at <= now()
+            || !channel.definition.sources.iter().any(|source| {
+                matches!(source, Source::Discord { bot_id: configured, thread_lifecycle: true, .. } if configured == bot_id)
+            })
+        {
+            return None;
+        }
+        token(channel, bot_id)?;
+        let _permit = client.slots.try_acquire().ok()?;
+        // Reuse the authorized context snapshot. Explicit operations refresh it before writing.
+        let authority = tokio::time::timeout(
+            budget::DISCOVERY,
+            self.thread_authority_in_channel(caller, event, channel),
+        )
+        .await
+        .ok()?
+        .ok()?;
         Some(ThreadCapabilities {
             create_from_original_message: !authority.origin.thread(),
             list: scope(&authority),

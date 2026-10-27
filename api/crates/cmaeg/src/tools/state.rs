@@ -280,7 +280,8 @@ impl ToolsState {
                 self,
             );
             response.received_message = received_message;
-            response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
+            response.capabilities.thread_lifecycle =
+                self.thread_capabilities(caller, &event, &channel).await;
             Ok(response)
         }
         .await;
@@ -319,7 +320,8 @@ impl ToolsState {
             self,
         );
         response.received_message = received_message;
-        response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
+        response.capabilities.thread_lifecycle =
+            self.thread_capabilities(caller, &event, &channel).await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(
