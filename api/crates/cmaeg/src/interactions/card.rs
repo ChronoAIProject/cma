@@ -46,6 +46,9 @@ pub struct Card {
     /// Native replacement claim and result; omitted on all historical cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord_edit: Option<super::discord_edit::Edit>,
+    /// Retained native effect capability and deletion fence; absent on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_effect: Option<super::discord_effect::State>,
 }
 impl Card {
     pub(crate) fn consumed_at(&self) -> Option<&str> {

@@ -17,8 +17,10 @@ use std::sync::Arc;
 mod card;
 mod consume;
 pub(crate) mod discord;
+pub(crate) mod discord_authority;
 pub(crate) mod discord_consume;
 pub(crate) mod discord_edit;
+pub(crate) mod discord_effect;
 #[cfg(test)]
 mod discord_tests;
 mod keyboard;
@@ -116,6 +118,7 @@ impl InteractionStore {
             || !whatsapp::valid_record(&card)
             || !discord::valid(&card)
             || !discord_edit::valid(&card)
+            || !discord_effect::valid(&card)
             || !lark_form_authority::valid(&card)
             || card.lark.as_ref().is_some_and(|identity| {
                 !lark::supported(identity.platform)

@@ -57,7 +57,10 @@ impl InteractionStore {
                     != (cmaeg_core::activity::SourceKind::Discord {
                         bot_id: identity.bot_id.clone(),
                     })
-                || (card.superseded && (card.discord_edit.is_none() || card.consumed.is_none()))
+                || (card.superseded
+                    && (card.consumed.is_none()
+                        || (card.discord_edit.is_none()
+                            && !super::discord_effect::deleting(&card))))
                 || card.reference.is_none()
                 || card.expires_at <= now()
                 || card

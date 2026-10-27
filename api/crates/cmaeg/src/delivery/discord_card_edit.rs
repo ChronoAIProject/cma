@@ -102,6 +102,35 @@ impl Sender {
         if !ctx.gate.commit() {
             return refused(rendering, expired());
         }
+        let serial = store.mutation_store();
+        let held = match serial
+            .acquire(
+                candidate.mutation_destination(),
+                &ctx.channel.definition.owner.subject,
+                candidate.card.expires_at,
+            )
+            .await
+        {
+            Ok(Some(held)) => held,
+            Ok(None) => {
+                return refused(
+                    rendering,
+                    DeliveryOutcome::Rejected {
+                        reason: "native_message_effect_busy".into(),
+                    },
+                )
+            }
+            Err(_) => return discord_edit::uncertain(),
+        };
+        // Refresh after the shared destination lock, before the card CAS. A
+        // callback may have won in the meantime; retain its consumed result.
+        let candidate = match store
+            .discord_edit_candidate(ctx.channel, reference, message)
+            .await
+        {
+            Ok(Admission::Ready(candidate)) => candidate,
+            _ => return discord_edit::uncertain(),
+        };
         let mut claim = match store.begin_discord_edit(*candidate, message).await {
             Ok(claim) => claim,
             Err(_) => return discord_edit::uncertain(),
@@ -152,6 +181,11 @@ impl Sender {
         }
         if store.finish_discord_edit(claim, &receipt).await.is_err() {
             return discord_edit::uncertain();
+        }
+        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. })
+            && serial.release(held).await.is_err()
+        {
+            tracing::warn!("native card mutation fence remains held after completed edit");
         }
         receipt
     }
