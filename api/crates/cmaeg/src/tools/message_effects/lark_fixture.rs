@@ -282,7 +282,7 @@ impl App {
     }
     pub fn restart(&mut self) {
         self.engine.take();
-        let records = RecordClient::new(&self.backend.base_url, "cma-service").unwrap();
+        let records = self.state.resolver.record_client();
         self.state.resolver = ChannelResolver::new(
             Arc::new(records.clone()),
             self.state.keys.clone(),
