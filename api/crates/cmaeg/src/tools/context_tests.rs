@@ -273,3 +273,30 @@ fn native_whatsapp_template_discovery_requires_verified_private_destination_and_
         );
     }
 }
+
+#[test]
+fn native_lark_media_discovery_is_independent_and_reports_bounded_subset() {
+    assert!(NativeMediaCapabilities::native_lark(false).is_none());
+    let source = SourceKind::NativeLark(crate::native_lark::test_support::identity());
+    assert!(NativeMediaCapabilities::for_source(&source, true).is_none());
+    let capability = NativeMediaCapabilities::native_lark(true).unwrap();
+    assert_eq!(capability.kinds, ["image", "file", "audio", "video"]);
+    assert_eq!(
+        capability.mime_types.unwrap(),
+        [
+            "image/jpeg",
+            "image/png",
+            "application/pdf",
+            "text/plain",
+            "audio/ogg",
+            "video/mp4"
+        ]
+    );
+    assert_eq!(capability.max_attachments, 4);
+    assert_eq!(capability.max_inline_bytes, 65536);
+    assert_eq!(capability.max_total_bytes, Some(8 * 1024 * 1024));
+    assert_eq!(capability.max_image_bytes, Some(8 * 1024 * 1024));
+    assert_eq!(capability.max_caption_chars, Some(0));
+    assert!(capability.sticker.is_none());
+    assert_eq!(capability.video.unwrap().max_duration_ms, 600_000);
+}

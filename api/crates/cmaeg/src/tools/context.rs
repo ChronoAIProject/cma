@@ -328,7 +328,9 @@ pub(super) fn project(
                 activity_verified,
             ))
         .then_some(true),
-        native_media: if matches!(activity.source, SourceKind::Whatsapp { .. }) {
+        native_media: if matches!(activity.source, SourceKind::NativeLark(_)) {
+            NativeMediaCapabilities::native_lark(state.native_lark_outbound_media_enabled)
+        } else if matches!(activity.source, SourceKind::Whatsapp { .. }) {
             NativeMediaCapabilities::native_whatsapp(state.native_whatsapp_outbound_media_enabled)
         } else {
             NativeMediaCapabilities::for_source(&activity.source, state.native_media_enabled)
