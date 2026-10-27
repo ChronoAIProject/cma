@@ -38,7 +38,7 @@ fn revision(channel: &ResolvedChannel, message: &MessageRefPayload) -> Option<St
         "source":source, "channel":channel.id, "record":channel.pointer.record_id,
         "owner":channel.definition.owner, "consumer":message.consumer,
         "provider":consumer.provider, "agent_key":channel.consumer_key_hash(message.consumer.as_ref())?,
-        "provider_credential":format!("{:x}", Sha256::digest(consumer.credential?.as_str().as_bytes())),
+        "consumer_credential_sha256":format!("{:x}", Sha256::digest(consumer.credential?.as_str().as_bytes())),
         "routing":channel.definition.routing, "credential":format!("{:x}", Sha256::digest(key.as_str().as_bytes()))
     })))
 }
