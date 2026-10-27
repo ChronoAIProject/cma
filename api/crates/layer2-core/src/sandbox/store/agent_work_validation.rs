@@ -107,7 +107,12 @@ pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bo
 /// A retired-runtime close is not a runtime request receipt or a completed turn.
 pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
     agent.status == AgentStatus::Paused
-        && agent.requested_stop_reason == Some(AgentStopReason::SandboxRetired)
+        // Parent retirement supplies cleanup authority independently of who
+        // originally requested this stop. Preserve that original attribution.
+        && matches!(
+            agent.requested_stop_reason,
+            Some(AgentStopReason::SandboxRetired | AgentStopReason::Owner)
+        )
         && agent.work.step == AgentWorkStep::CloseProcess
         && agent.work.cleanup_debt.is_empty()
         && agent.conversation.active_turn.is_none()
