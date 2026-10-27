@@ -136,18 +136,39 @@ pub async fn send_typing(
     result(state.typing(caller, &reference).await)
 }
 #[utoipa::path(get,path="/v1/events/{event_ref}/context",operation_id="readEventContext",tag="tools",
-    security(("agentBearer"=[])),params(("event_ref"=String,Path)),
+    security(("agentBearer"=[])),params(("event_ref"=String,Path),("include_thread_history"=Option<bool>,Query,description="Explicitly request up to 20 earlier messages from this event’s opted-in native Discord thread.")),
     responses((status=200,body=ContextResponse),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn read_event_context(
     State(state): State<ToolsState>,
     caller: AgentCaller,
     Path(reference): Path<String>,
+    query: Result<Query<ContextQuery>, QueryRejection>,
 ) -> Response {
+    let query = match query {
+        Ok(Query(value)) => value,
+        Err(_) => {
+            return result::<ContextResponse>(Err(Problem::new(
+                ProblemCode::InvalidRequest,
+                400,
+                "invalid context query",
+            )))
+        }
+    };
     let reference = match event_ref(&reference) {
         Ok(value) => value,
         Err(error) => return result::<ContextResponse>(Err(error)),
     };
-    result(state.context(caller, &reference).await)
+    result(
+        state
+            .context_with_history(caller, &reference, query.include_thread_history)
+            .await,
+    )
+}
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextQuery {
+    #[serde(default)]
+    include_thread_history: bool,
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/context",operation_id="verifyEventContext",tag="provider integration",
     security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=cmaeg_core::activity::Activity,

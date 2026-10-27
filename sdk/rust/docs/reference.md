@@ -132,6 +132,17 @@ without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
 `stream_event`, `reply_to_event`, `update_message`, `send_typing` and
 `read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
 
+Native Discord thread context is opt-in. When ordinary context advertises
+`capabilities.thread_history == Some(true)`, use
+`read_event_context_with_history(event_ref)` to read at most 20 text messages
+strictly before that event in the same thread. The optional `thread_history`
+includes author/timestamps and attachment counts, without download links or
+message action references. There is no caller-supplied channel, pagination or
+history backfill; ordinary context calls make no Discord history request.
+The gateway gate and native source's `thread_history: true` must both be enabled.
+Rust callers constructing `Source::Discord` or `SourceRequest::Discord` directly
+should use `thread_history: None` to preserve the legacy wire shape.
+
 Connection setup uses `get_channel_capabilities`, `create_channel_connection`,
 `list_channel_connections`, `get_channel_connection`, and
 `cancel_channel_connection`. Use the creator-token client and pass the separate

@@ -98,6 +98,7 @@ impl App {
         let tracker = TurnTracker::new(http::readiness::Readiness::initialized());
         let (delivery, receiver) = mpsc::channel(16);
         let state = ToolsState {
+            discord_thread_history: None,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             whatsapp_interactions_enabled: false,

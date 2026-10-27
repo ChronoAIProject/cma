@@ -486,3 +486,24 @@ async fn native_effect_operations_preserve_reference_and_idempotency_without_ret
     );
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn explicit_thread_history_keeps_the_original_event_destination() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    server.expect(wire::json(
+        "GET",
+        "/v1/events/original/context?include_thread_history=true",
+        None,
+        200,
+        sample("ContextResponse"),
+        true,
+    ));
+    same(
+        client
+            .read_event_context_with_history("original")
+            .await
+            .unwrap(),
+        sample("ContextResponse"),
+    );
+}

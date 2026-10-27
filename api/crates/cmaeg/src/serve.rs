@@ -62,6 +62,7 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_discord_thread_history_enabled = config.native_discord_thread_history_enabled;
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
@@ -184,6 +185,11 @@ pub(crate) async fn serve(
     )
     .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
+        discord_thread_history: config
+            .native_discord_thread_history_enabled
+            .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))
+            .transpose()?
+            .map(std::sync::Arc::new),
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),

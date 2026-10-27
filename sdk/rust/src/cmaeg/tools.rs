@@ -104,6 +104,18 @@ impl Cmaeg {
         );
         self.client.request(request).await
     }
+    /// Explicitly request up to 20 preceding messages in the event's opted-in native thread.
+    pub async fn read_event_context_with_history(
+        &self,
+        event_ref: &str,
+    ) -> Result<ContextResponse> {
+        let segments = ["v1", "events", event_ref, "context"];
+        let mut request = Request::get(&segments);
+        let query = [("include_thread_history", "true".to_owned())];
+        request.query = &query;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Retrieve full event context from provider persistence with agent-key authorization.
     pub async fn read_event_context(&self, event_ref: &str) -> Result<ContextResponse> {
         let segments = ["v1", "events", event_ref, "context"];

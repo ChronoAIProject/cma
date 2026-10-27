@@ -86,6 +86,9 @@ pub struct CreateConnection {
 /// Deployment gates for new relay authoring; existing exact records remain readable.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelayAuthoringCapabilities {
+    /// Opt-in native Discord thread history is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_thread_history_enabled: Option<bool>,
     /// New direct Discord source and token writes are available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_writes_enabled: Option<bool>,

@@ -95,6 +95,8 @@ data:
   CMAEG_NATIVE_DISCORD_EDITS_ENABLED: "true"
   CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: "true"
   # Persist verified native thread metadata only after compatible readers are deployed.
+  # Opt-in bounded history reads require compatible readers and source consent.
+  CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED: "false"
   CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: "true"
   # Enable new Lark/Feishu cards only after every interaction reader is upgraded.
   CMAEG_LARK_CARDS_ENABLED: "false"

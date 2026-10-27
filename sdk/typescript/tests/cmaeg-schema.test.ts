@@ -339,3 +339,10 @@ it('keeps legacy listed records without inventing channel IDs or endpoints', () 
   const legacy = { ...page, items: [record] };
   expect(ChannelPageSchema(legacy)).toEqual(legacy);
 });
+
+it('retains native sources without adding thread history access', () => {
+  const value = { type: 'discord', bot_id: '77', intents: 37377, admission: { type: 'all' } };
+  expect(SourceSchema(value)).toEqual(value);
+  expect(SourceRequestSchema(value)).toEqual(value);
+  expect(JSON.stringify(SourceSchema(value))).not.toContain('thread_history');
+});

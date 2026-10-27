@@ -122,6 +122,12 @@ describe('independent CMAEG client', () => {
         path: `/v1/events/${segment}/context`,
         response: sample('ContextResponse'),
       },
+      {
+        run: () => client.readEventContext(id, { includeThreadHistory: true }),
+        method: 'GET',
+        path: `/v1/events/${segment}/context?include_thread_history=true`,
+        response: sample('ContextResponse'),
+      },
     ];
     for (const scenario of cases) {
       fetch.mockResolvedValueOnce(

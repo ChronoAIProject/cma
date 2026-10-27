@@ -1,9 +1,7 @@
 //! Exercise the real delivery engine, public effects routes and durable receipts.
-#[allow(dead_code)]
-#[path = "../../../tests/fake_cma.rs"]
-mod fake_cma;
 use super::*;
 use crate::channels::{definition::fixture as definition_fixture, routing_fixture};
+use crate::tools::fake_cma;
 use crate::{
     auth::AgentCaller,
     channels::resolver::ChannelResolver,
@@ -69,6 +67,7 @@ impl App {
         let mut definition = definition_fixture::with_agent_key(&key);
         definition.record_id = uuid::Uuid::new_v4().to_string().parse().unwrap();
         definition.sources = vec![Source::Discord {
+            thread_history: false,
             bot_id: "77".into(),
             intents: 37377,
             admission: AdmissionPolicy::All {},
@@ -124,6 +123,7 @@ impl App {
         };
         let (sender, _) = mpsc::channel(16);
         let state = ToolsState {
+            discord_thread_history: None,
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,

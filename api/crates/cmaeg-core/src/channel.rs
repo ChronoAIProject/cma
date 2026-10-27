@@ -124,6 +124,9 @@ pub enum Source {
     Discord {
         bot_id: String,
         intents: u64,
+        /// Allow an admitted consumer to read up to 20 earlier messages in its exact thread.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_history: bool,
         admission: AdmissionPolicy,
     },
     NyxidRelay {

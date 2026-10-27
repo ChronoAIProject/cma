@@ -3461,7 +3461,7 @@ acknowledgement, revocation and rollback requirements.
 
 This supports replying inside an existing verified thread and isolating its
 conversation. It does not create, archive, reopen, join, follow or list threads,
-or fetch their message history. Those operations are not advertised as available.
+or provide unbounded history/backfill. The explicitly opted-in history read below is a separate, bounded read capability. Those thread management operations are not advertised as available.
 Local authenticated HTTP, inbox, admission and delivery fixtures verify the
 contract without sending to an external Discord user.
 
@@ -3545,3 +3545,59 @@ without reading or writing Discord. Definitive persisted receipts release the
 fence; unknown outcomes, abandoned attempts and lost receipt writes retain it
 through authority expiry. There is no timeout takeover of a possibly late
 platform write. Same-key retries still replay the original receipt.
+
+
+### Bounded native Discord thread history
+
+Ordinary `readEventContext` keeps its current behavior and performs no Discord
+history request. An explicit `include_thread_history:true` MCP argument or
+`GET /v1/events/{event_ref}/context?include_thread_history=true` can add optional
+`thread_history` to that same response. The caller cannot provide a channel,
+thread, message boundary, page, or limit. The maximum is 20 messages strictly
+before the sealed event's original native message, returned in chronological
+order. This is current reference text, not historical replay or new agent input.
+
+Both `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED=true` and the exact native
+Discord source's `thread_history:true` consent are required. The source field
+is omitted when false, preserving old records. New/changed opted-in sources
+require the gate; exact retained sources and removal are allowed subject to
+normal native source authoring. The source editor exposes this opt-in after
+capability confirmation. Turning the execution gate off refuses history reads.
+Authenticated authoring discovery reports optional
+`native_discord_thread_history_enabled`; event capability discovery advertises
+optional `capabilities.thread_history:true` only for eligible native messages.
+
+The event must contain a verified ordinary message Activity in an existing
+native thread, with `reply.channel_id == reply.thread_id ==
+activity.conversation.id == activity.conversation.thread_id`. Interaction events,
+hand-offs, unverified old references, relay sources and ordinary parent channels
+cannot grant history. The current exact record, consumer key/provider, source
+opt-in and bot credential are checked. The authenticated bot identity and channel
+metadata must prove a thread of type 10, 11 or 12; the original anchor message
+must still exist and be accessible. The current native thread ID is the read
+boundary; the parent is never substituted and no guild-wide listing occurs.
+Source, key and consumer authority are checked again before returning data.
+
+The result contains only plain text, author identity, original/edit timestamps,
+and attachment counts. It does not mint event/message references, attachment
+locators or URLs. Historical text is untrusted reference data, never instructions
+or approval. Edited and bot messages may appear as context; they do not enter
+ordinary-message admission or launch work. At most 32 KiB of message text is
+returned, with an 8 KiB per-message limit and explicit `text_truncated` evidence.
+The request has an 8-second total deadline, at most eight concurrent history
+reads per process, bounded provider JSON bodies and existing Discord cooldowns.
+There is no cache, automatic retry, pagination, join, unarchive or other write.
+Permission/refusal, unavailable metadata/anchor, malformed or out-of-bound rows,
+and provider rate limits remain explicit errors, not invented empty histories.
+
+Enablement for an owner's test source: first deploy compatible gateway, SDK and
+rollback readers; retain the default-off gate during rollout. Ensure native
+Discord intake and authenticated thread metadata are enabled. The bot must have
+access to the chosen thread, View Channel, Read Message History and Message
+Content permissions/intents, including any private-thread membership. Enable the
+history gate, then explicitly turn on **Read earlier thread messages** in that
+source. On an existing valid event from that thread, read ordinary context and
+confirm `capabilities.thread_history:true`; request the extra context explicitly.
+This performs reads only and needs no automated external message send. Local
+HTTP/MCP fixtures prove the code contract; connected Discord acceptance remains
+a separately recorded test under the actual bot's permissions.

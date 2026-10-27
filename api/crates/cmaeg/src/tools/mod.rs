@@ -3,6 +3,12 @@ mod attachment_compose;
 mod attachment_view;
 mod attachments;
 mod context;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../tests/fake_cma.rs"]
+mod fake_cma;
+mod thread_history;
+pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
 mod download_access;
 mod media_links;
 pub(crate) mod message_effects;
@@ -60,3 +66,6 @@ pub(crate) fn validate_reply_key(key: Option<&str>) -> Result<(), cmaeg_core::pr
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod thread_history_tests;

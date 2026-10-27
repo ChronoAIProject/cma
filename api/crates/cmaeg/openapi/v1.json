@@ -1577,6 +1577,13 @@
               }
             ]
           },
+          "thread_history": {
+            "description": "A fixed 20-message prior window is available on explicit request.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "typing": {
             "type": "boolean"
           },
@@ -2388,6 +2395,17 @@
           },
           "source": {
             "$ref": "#/components/schemas/SourceKind"
+          },
+          "thread_history": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ThreadHistory",
+                "description": "Explicitly requested current text context of the original native thread."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4320,6 +4338,12 @@
               "null"
             ]
           },
+          "native_discord_thread_history_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_writes_enabled": {
             "type": [
               "boolean",
@@ -4925,6 +4949,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -5226,6 +5254,10 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "thread_history": {
+                "description": "Allow an admitted consumer to read up to 20 earlier messages in its exact thread.",
+                "type": "boolean"
+              },
               "type": {
                 "enum": [
                   "discord"
@@ -5497,6 +5529,70 @@
           "message_id",
           "sender_kind",
           "address"
+        ],
+        "type": "object"
+      },
+      "ThreadHistory": {
+        "description": "A current text-only window, with no pagination or transferable message authority.",
+        "properties": {
+          "before_message_id": {
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ThreadHistoryMessage"
+            },
+            "type": "array"
+          },
+          "text_truncated": {
+            "description": "True when text was clipped to the 32 KiB total content budget.",
+            "type": "boolean"
+          },
+          "thread_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "before_message_id",
+          "messages",
+          "text_truncated"
+        ],
+        "type": "object"
+      },
+      "ThreadHistoryMessage": {
+        "properties": {
+          "attachment_count": {
+            "description": "Historical attachments have no download or effect authority in this result.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "author",
+          "text",
+          "occurred_at",
+          "attachment_count"
         ],
         "type": "object"
       },
@@ -7527,6 +7623,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Explicitly request up to 20 earlier messages from this event’s opted-in native Discord thread.",
+            "in": "query",
+            "name": "include_thread_history",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

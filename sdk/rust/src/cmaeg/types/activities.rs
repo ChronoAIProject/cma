@@ -313,6 +313,9 @@ pub enum MediaVariant {
 /// CMAEG `Capabilities` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Capabilities {
+    /// Explicit bounded prior-thread text reads are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<bool>,
     /// Exact-message effect support, absent before compatible reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_effects: Option<super::MessageEffectsCapabilities>,
@@ -373,6 +376,9 @@ pub struct CloudEvent {
 /// CMAEG `ContextResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextResponse {
+    /// Included only when explicitly requested and authorized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_history: Option<super::ThreadHistory>,
     /// Wire field `activity`.
     pub activity: PublicActivity,
     /// Wire field `activity_verified`.
