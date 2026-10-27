@@ -187,8 +187,9 @@ module CIContract
     }.each { |name, command| step(gate, name, command) }
     backend = job(ci, "backend", "Backend")
     step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
-    step(backend, "Tests", "cargo nextest run --workspace --locked -E 'not binary(=media_image_peak)'")
-    order(backend, ["Image normalization budgets", "Tests"])
+    step(backend, "Tests", "cargo nextest run --workspace --locked -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
+    step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
+    order(backend, ["Image normalization budgets", "Tests", "Gateway socket latency budget"])
     mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
     require!(mongo["timeout-minutes"] == 75, "Mongo proof must retain its 75-minute bound")
     step(backend, "Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n")
