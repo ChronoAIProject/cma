@@ -207,3 +207,24 @@ fn a_bot_address_at_the_start_is_measured_with_the_same_rules() {
         assert_eq!(bot_address_len(text, "bot"), None, "{text:?}");
     }
 }
+
+#[test]
+fn native_discord_routing_and_rendering_share_exact_leading_bot_identity() {
+    let source = SourceKind::Discord {
+        bot_id: "77".into(),
+    };
+    for (text, rest) in [
+        ("<@77> /to reviewer 你好", "/to reviewer 你好"),
+        (" <@!77>\t<@77> @reviewer please", "@reviewer please"),
+        ("<@77> hello <@78> and <@77>", "hello <@78> and <@77>"),
+        ("<@77>", ""),
+        ("<@78> /to reviewer", "<@78> /to reviewer"),
+        ("<@&77> /to reviewer", "<@&77> /to reviewer"),
+        ("<@770> /to reviewer", "<@770> /to reviewer"),
+        ("hello <@77> /to reviewer", "hello <@77> /to reviewer"),
+    ] {
+        let end = leading_address_end(text, &source, None);
+        assert_eq!(&text[end..], rest, "{text}");
+        assert_eq!(strip_address(text, &source, None), rest, "{text}");
+    }
+}
