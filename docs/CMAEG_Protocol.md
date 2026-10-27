@@ -2724,6 +2724,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `PUT /v1/channels/{channel_id}/routing` | `updateChannelRouting` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
 | `GET /v1/events/{event_ref}/threads` | `listEventThreads` |
+| `GET /v1/events/{event_ref}/history` | `readEventHistory` |
 | `POST /v1/events/{event_ref}/threads` | `createEventThread` |
 | `POST /v1/thread-operations` | `manageThread` |
 | `GET /v1/events/{event_ref}/attachments/{index}` | `readEventAttachment` |
