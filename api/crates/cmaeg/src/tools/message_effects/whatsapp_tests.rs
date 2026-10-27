@@ -1,4 +1,5 @@
 use super::{lark_fixture::App, *};
+use crate::channels::definition::fixture as definition_fixture;
 use crate::{
     net::exchange::{HttpReply, TransportError},
     tools::WhatsappReactionsClient,
@@ -484,7 +485,10 @@ async fn native_whatsapp_reaction_rotation_remint_replays_stable_receipt() {
         .as_mut()
         .unwrap()
         .access_token = Secret::new("rotated-fixture-access");
-    app.definition.secrets.provider_credential = Some(Secret::new("rotated-fixture-provider"));
+    definition_fixture::replace_default_credential(
+        &mut app.definition,
+        Some("rotated-fixture-provider"),
+    );
     app.replace();
     app.restart();
     assert!(app
@@ -526,8 +530,11 @@ async fn native_whatsapp_reaction_changed_original_source_or_provider_cannot_rem
                     sender_ids: vec!["447700900123".into()],
                 };
             }
-            1 => app.definition.provider.binding_id = "replacement-provider".parse().unwrap(),
-            2 => app.definition.secrets.provider_credential = None,
+            1 => definition_fixture::replace_default_binding(
+                &mut app.definition,
+                "replacement-provider".parse().unwrap(),
+            ),
+            2 => definition_fixture::replace_default_credential(&mut app.definition, None),
             _ => unreachable!(),
         }
         app.replace();
