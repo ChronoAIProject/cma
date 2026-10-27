@@ -5,6 +5,7 @@ use cmaeg_core::{
     ids::MessageRef,
     seal::{
         native_lark_effect::{NativeLarkEffectAuthority, NativeLarkEffectTarget},
+        received_reaction::{ReceivedReactionAuthority, ReceivedReactionPlatform},
         MasterKeyRing, MessageRefPayload,
     },
 };
@@ -35,7 +36,6 @@ fn payload() -> MessageRefPayload {
     };
     MessageRefPayload {
         route_id: a.route(),
-        received_reaction: None,
         received_reaction: None,
         native_lark_effect: Some(Box::new(a)),
         channel_id: "cmaeg1.ch.fixture".parse().unwrap(),
@@ -99,5 +99,53 @@ fn native_lark_effect_authority_rejects_mixed_destinations_and_bad_lifetimes() {
             _ => payload.interaction_record_id = Some("card".into()),
         }
         assert!(payload.validate().is_err(), "{defect}");
+    }
+}
+
+#[test]
+fn received_native_authorities_cannot_be_combined_in_a_message_seal() {
+    let keys = MasterKeyRing::parse(&format!(
+        "1:{}",
+        base64::engine::general_purpose::STANDARD.encode([3; 32])
+    ))
+    .unwrap();
+    let lark = payload();
+    let native_lark = lark.native_lark_effect.as_ref().unwrap().clone();
+    for platform in [
+        ReceivedReactionPlatform::Telegram,
+        ReceivedReactionPlatform::Discord,
+    ] {
+        let received = ReceivedReactionAuthority {
+            platform,
+            bot_id: "77".into(),
+            chat_id: "99".into(),
+            actor_id: "42".into(),
+            thread_id: None,
+            event_sha256: "a".repeat(64),
+            authority_sha256: "b".repeat(64),
+            received_at: 100,
+            expires_at: 200,
+        };
+        let mut message = lark.clone();
+        message.native_lark_effect = None;
+        message.route_id = received.route();
+        message.platform_message_id = "800".into();
+        message.received_reaction = Some(Box::new(received.clone()));
+        message.validate().unwrap();
+        MessageRef::seal(&message, &keys).unwrap();
+        // Each validator rejects the sibling even with its own valid route and IDs.
+        message.native_lark_effect = Some(native_lark.clone());
+        assert!(received.validate(&message).is_err());
+        assert!(MessageRef::seal(&message, &keys)
+            .unwrap()
+            .open(&keys)
+            .is_err());
+        let mut message = lark.clone();
+        message.received_reaction = Some(Box::new(received));
+        assert!(native_lark.validate(&message).is_err());
+        assert!(MessageRef::seal(&message, &keys)
+            .unwrap()
+            .open(&keys)
+            .is_err());
     }
 }
