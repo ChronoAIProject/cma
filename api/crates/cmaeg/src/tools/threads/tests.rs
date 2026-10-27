@@ -797,3 +797,103 @@ async fn missing_persistent_storage_hides_capabilities_and_blocks_all_thread_io(
     );
     assert!(app.memory.lock().unwrap().calls.is_empty());
 }
+
+#[tokio::test]
+async fn non_discord_context_discovery_performs_no_lifecycle_storage_reads() {
+    let mut app = App::new(Some(11), false).await;
+    let channel = app
+        .state
+        .resolver
+        .resolve_current(app.event.channel_id.as_str())
+        .await
+        .unwrap();
+    let caller = AgentCaller {
+        key_hash: channel.agent_key_hash,
+    };
+    let gets = app.backend.gets.load(Ordering::SeqCst);
+    for reply in [
+        json!({"type":"none"}),
+        json!({"type":"sync","waiter":"fixture"}),
+        json!({"type":"result_webhook","url":"https://example.com/result","hmac_key_id":"key"}),
+        json!({"type":"telegram","bot_id":"77","chat_id":"98","message_id":"700"}),
+        json!({"type":"whatsapp","app_id":"1","waba_id":"2","phone_number_id":"3","recipient_id":"4","message_id":"wamid.one"}),
+        json!({"type":"whatsapp_group","revision":"a".repeat(64),"app_id":"1","waba_id":"2","phone_number_id":"3","group_id":"4","participant_id":"5","message_id":"wamid.one"}),
+        json!({"type":"native_lark","mentioned":false,"identity":{"region":"lark","app_id":"cli_app","tenant_key":"tenant","bot_open_id":"ou_bot"},"chat_id":"oc_chat","message_id":"om_message","revision":"a".repeat(64)}),
+        json!({"type":"nyxid_relay","thread_reply":true,"message_id":"700","route_id":"route","platform":"discord","reply_token":"fixture","reply_token_expires_at":app.event.expires_at}),
+    ] {
+        let mut event = app.event.clone();
+        event.reply = serde_json::from_value(reply).unwrap();
+        assert!(app
+            .state
+            .thread_capabilities(caller, &event, &channel)
+            .await
+            .is_none());
+    }
+    assert_eq!(app.backend.gets.load(Ordering::SeqCst), gets);
+    // The disabled gate and absent source consent are also local fast paths.
+    app.state.discord_threads = None;
+    assert!(app
+        .state
+        .thread_capabilities(caller, &app.event, &channel)
+        .await
+        .is_none());
+    assert_eq!(app.backend.gets.load(Ordering::SeqCst), gets);
+    assert!(app.memory.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
+async fn optional_thread_discovery_has_one_short_deadline_and_never_queues_for_capacity() {
+    let mut app = App::new(Some(11), false).await;
+    let channel = app
+        .state
+        .resolver
+        .resolve_current(app.event.channel_id.as_str())
+        .await
+        .unwrap();
+    let caller = AgentCaller {
+        key_hash: channel.agent_key_hash,
+    };
+    let client = app.state.discord_threads.as_ref().unwrap();
+    let permits = client.slots.try_acquire_many(8).unwrap();
+    let gets = app.backend.gets.load(Ordering::SeqCst);
+    assert!(app
+        .state
+        .thread_capabilities(caller, &app.event, &channel)
+        .await
+        .is_none());
+    assert_eq!(app.backend.gets.load(Ordering::SeqCst), gets);
+    drop(permits);
+    app.backend.get_delay_ms.store(1000, Ordering::SeqCst);
+    let start = std::time::Instant::now();
+    assert!(app
+        .state
+        .thread_capabilities(caller, &app.event, &channel)
+        .await
+        .is_none());
+    assert_eq!(budget::DISCOVERY, std::time::Duration::from_millis(100));
+    assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    assert_eq!(client.slots.available_permits(), 8);
+    assert!(app.backend.gets.load(Ordering::SeqCst) > gets);
+    app.backend.get_delay_ms.store(0, Ordering::SeqCst);
+    if let Source::Discord {
+        thread_lifecycle, ..
+    } = &mut app.definition.sources[0]
+    {
+        *thread_lifecycle = false;
+    }
+    app.save();
+    let channel = app
+        .state
+        .resolver
+        .resolve_current(app.event.channel_id.as_str())
+        .await
+        .unwrap();
+    let gets = app.backend.gets.load(Ordering::SeqCst);
+    assert!(app
+        .state
+        .thread_capabilities(caller, &app.event, &channel)
+        .await
+        .is_none());
+    assert_eq!(app.backend.gets.load(Ordering::SeqCst), gets);
+    assert!(app.memory.lock().unwrap().calls.is_empty());
+}
