@@ -405,10 +405,15 @@ pub(crate) mod fixture {
             "../../../cmaeg-core/tests/fixtures/channel.json"
         ))
         .unwrap();
-        definition.secrets.agent_key_hash = hash_secret(agent_key);
-        definition.secrets.provider_credential = Some(Secret::new(agent_key));
+        replace_default_agent_key(&mut definition, agent_key);
         definition.profile_digest = definition.profile.digest();
         definition
+    }
+
+    /// Model a stored default credential rotation for recovery fixtures.
+    pub(crate) fn replace_default_agent_key(definition: &mut ChannelDefinition, agent_key: &str) {
+        definition.secrets.agent_key_hash = hash_secret(agent_key);
+        definition.secrets.provider_credential = Some(Secret::new(agent_key));
     }
 
     /// Model a stored binding replacement to test revocation of old authority.

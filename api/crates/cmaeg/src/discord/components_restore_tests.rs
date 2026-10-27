@@ -123,8 +123,12 @@ async fn native_component_restore_admits_after_unrelated_edits_and_valid_key_rot
             1 => rotate(&mut value, 1, "rotated-unrelated-fixture"),
             2 => rotate(&mut value, 0, "rotated-selected-fixture"),
             _ => {
-                value["secrets"]["agent_key_hash"] = hash_secret("rotated-default-fixture").into();
-                value["secrets"]["provider_credential"] = "rotated-default-fixture".into();
+                let mut definition = serde_json::from_value(value).unwrap();
+                crate::channels::definition::fixture::replace_default_agent_key(
+                    &mut definition,
+                    "rotated-default-fixture",
+                );
+                value = definition.to_blob_json();
             }
         }
         value["routing"]["default_targets"] = json!(["default"]);
