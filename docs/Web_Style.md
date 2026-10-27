@@ -3743,3 +3743,16 @@ callback appears under its own WhatsApp webhook label. No new modal, palette,
 spacing, motion or background request is introduced.
 
 | 2026-10-27 | Add structured direct WhatsApp account and atomic credential controls to the producer inspector, preserve disabled/saved configurations, and show the exact Meta callback with shared endpoint-copy UI. |
+
+The Agent toolsets inspector now lists only tools advertised by the gateway's
+shared owner-scoped capability discovery. Tool names and descriptions come from
+that catalog; known names may retain their plain-language labels. Read-only and
+destructive annotations use the existing secondary description text. An absent
+or null catalog means availability is not reported; an explicit empty catalog
+means no tools are advertised. Loading and failure use the shared field hint and
+explicit retry Button. Catalog rows use the existing Presence opacity transition
+and reduced-motion behavior. This supersedes the static core/optional tool list:
+opening the inspector adds no discovery request or polling, and catalog entries
+do not establish platform permissions or installation in connected agents.
+
+| 2026-10-27 | Render the authoritative advertised tool catalog in the existing inspector, distinguish unknown/empty/loading/error states, and preserve shared discovery, agent-installation caveats and reduced-motion arrival. |
