@@ -213,6 +213,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         discord_interactions_enabled: false,
         consumer_interactions_enabled: false,
         native_media_enabled: false,
+        native_whatsapp_outbound_media_enabled: false,
         relay_text_edits_enabled: false,
         media: None,
         downloads: Default::default(),

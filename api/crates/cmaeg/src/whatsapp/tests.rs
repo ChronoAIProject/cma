@@ -96,11 +96,43 @@ fn native_whatsapp_preserves_replacement_removal_actor_and_message_identity() {
         webhook::event_id(&source(), &messages[0].id).unwrap(),
         webhook::event_id(&source(), &messages[1].id).unwrap()
     );
-    let mut malformed = reaction("wamid.reaction-four", "wamid.original", "");
-    malformed["reaction"]
-        .as_object_mut()
-        .unwrap()
-        .remove("emoji");
+    let mut removed = reaction("wamid.reaction-four", "wamid.original", "");
+    removed["reaction"].as_object_mut().unwrap().remove("emoji");
+    let removed = webhook::extract(&source(), &envelope(vec![removed])).unwrap();
+    assert!(
+        matches!(&removed[0].content, Content::Reaction { target, emoji }
+        if target == "wamid.original" && emoji.is_empty())
+    );
+}
+
+#[test]
+fn native_whatsapp_malformed_reactions_never_become_removals() {
+    for emoji in [
+        Value::Null,
+        json!(false),
+        json!(0),
+        json!([]),
+        json!({}),
+        json!("\n"),
+        json!("a".repeat(513)),
+    ] {
+        let mut malformed = reaction("wamid.malformed", "wamid.original", "");
+        malformed["reaction"]["emoji"] = emoji;
+        assert_eq!(
+            webhook::extract(&source(), &envelope(vec![malformed])),
+            Err(webhook::Error::Message)
+        );
+    }
+    for field in ["reaction", "from", "timestamp", "id"] {
+        let mut malformed = reaction("wamid.malformed", "wamid.original", "");
+        malformed.as_object_mut().unwrap().remove(field);
+        assert!(webhook::extract(&source(), &envelope(vec![malformed])).is_err());
+    }
+    let mut malformed = reaction("wamid.malformed", "wamid.original", "");
+    malformed["reaction"].as_object_mut().unwrap().clear();
+    assert!(webhook::extract(&source(), &envelope(vec![malformed])).is_err());
+    let mut malformed = text("wamid.malformed", "hello");
+    malformed["text"].as_object_mut().unwrap().clear();
     assert!(webhook::extract(&source(), &envelope(vec![malformed])).is_err());
 }
 

@@ -100,6 +100,7 @@ fn discord_edit_destination_is_additive_and_cannot_mix_native_or_relay_authority
     reference.platform_message_id = "800".into();
     reference.route_id = "discord:77:99".into();
     reference.discord_message = Some(Box::new(DiscordMessageDestination {
+        effects_only: false,
         effects: None,
         bot_id: "77".into(),
         channel_id: "99".into(),
@@ -143,6 +144,7 @@ fn discord_effect_windows_are_additive_bounded_and_preserved_by_sealing() {
     message.platform_message_id = "800".into();
     message.route_id = "discord:77:99".into();
     message.discord_message = Some(Box::new(DiscordMessageDestination {
+        effects_only: false,
         bot_id: "77".into(),
         channel_id: "99".into(),
         authority_sha256: [4; 32],
@@ -150,6 +152,7 @@ fn discord_effect_windows_are_additive_bounded_and_preserved_by_sealing() {
     }));
     let legacy = serde_json::to_value(&message).unwrap();
     assert!(legacy["discord_message"].get("effects").is_none());
+    assert!(legacy["discord_message"].get("effects_only").is_none());
     assert_eq!(
         serde_json::from_value::<MessageRefPayload>(legacy).unwrap(),
         message
@@ -173,4 +176,78 @@ fn discord_effect_windows_are_additive_bounded_and_preserved_by_sealing() {
             assert_eq!(reopened.unwrap().payload, message);
         }
     }
+}
+
+#[test]
+fn discord_media_scope_round_trips_and_requires_bounded_effect_authority() {
+    use cmaeg_core::seal::{DiscordEffectWindow, DiscordMessageDestination};
+    let keys = keys(1);
+    let mut message = payload(&keys);
+    message.platform_message_id = "800".into();
+    message.route_id = "discord:77:99".into();
+    message.discord_message = Some(Box::new(DiscordMessageDestination {
+        bot_id: "77".into(),
+        channel_id: "99".into(),
+        authority_sha256: [4; 32],
+        effects: Some(DiscordEffectWindow {
+            issued_at: 1,
+            expires_at: 86401,
+        }),
+        effects_only: true,
+    }));
+    assert_eq!(
+        serde_json::to_value(&message).unwrap()["discord_message"]["effects_only"],
+        true
+    );
+    assert_eq!(
+        MessageRef::seal(&message, &keys)
+            .unwrap()
+            .open(&keys)
+            .unwrap()
+            .payload,
+        message
+    );
+    message.discord_message.as_mut().unwrap().effects = None;
+    assert!(MessageRef::seal(&message, &keys)
+        .unwrap()
+        .open(&keys)
+        .is_err());
+}
+
+#[test]
+fn telegram_media_scope_preserves_legacy_serialization_and_cannot_mix_card_authority() {
+    use cmaeg_core::seal::TelegramEffectAuthority;
+    use serde_json::json;
+    let keys = keys(1);
+    let channel: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
+    let legacy = json!({
+        "record_id":"record-1", "owner":channel["owner"], "provider":channel["provider"],
+        "agent_key_hash":vec![3_u8;32], "routing_sha256":"a".repeat(64),
+        "bot_id":"77", "chat_id":"-42", "thread_id":"7",
+        "admission":{"actor_id":"42","actor_kind":"human","conversation_kind":"group",
+            "mentioned":true,"replied_to_bot":false},
+        "issued_at":1,"expires_at":86401
+    });
+    let mut authority: TelegramEffectAuthority = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(!authority.effects_only);
+    assert_eq!(serde_json::to_value(&authority).unwrap(), legacy);
+    authority.effects_only = true;
+    let mut reference = payload(&keys);
+    reference.platform_message_id = "800".into();
+    reference.route_id = "telegram:77:-42".into();
+    reference.telegram_effect = Some(authority);
+    assert_eq!(
+        MessageRef::seal(&reference, &keys)
+            .unwrap()
+            .open(&keys)
+            .unwrap()
+            .payload,
+        reference
+    );
+    reference.interaction_record_id = Some("card".into());
+    assert!(MessageRef::seal(&reference, &keys)
+        .unwrap()
+        .open(&keys)
+        .is_err());
 }

@@ -179,12 +179,17 @@ async fn native_whatsapp_reactions_keep_original_routing_and_do_not_invent_prior
         .await
         .unwrap()
         .unwrap();
-    for (id, emoji) in [
-        ("wamid.add", "👍"),
-        ("wamid.replace", "❤️"),
-        ("wamid.remove", ""),
+    for (id, emoji, omitted) in [
+        ("wamid.add", "👍", false),
+        ("wamid.replace", "❤️", false),
+        ("wamid.remove", "", false),
+        ("wamid.remove-omitted", "", true),
     ] {
-        let mut verified = setup.verified(reaction(id, "wamid.original", emoji), Vec::new());
+        let mut raw = reaction(id, "wamid.original", emoji);
+        if omitted {
+            raw["reaction"].as_object_mut().unwrap().remove("emoji");
+        }
+        let mut verified = setup.verified(raw.clone(), Vec::new());
         Arc::make_mut(&mut verified.channel)
             .definition
             .routing
@@ -226,10 +231,7 @@ async fn native_whatsapp_reactions_keep_original_routing_and_do_not_invent_prior
         let writes = setup.server.memory.writes.load(Ordering::SeqCst);
         admitted(
             setup
-                .launch(setup.verified(
-                    reaction(id, "wamid.original", emoji),
-                    vec![text("wamid.other", "batch changed")],
-                ))
+                .launch(setup.verified(raw, vec![text("wamid.other", "batch changed")]))
                 .await,
         );
         assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), writes);

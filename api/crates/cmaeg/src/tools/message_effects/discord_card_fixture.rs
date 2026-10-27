@@ -29,6 +29,7 @@ pub(crate) fn state(f: &FixtureState, enabled: bool) -> ToolsState {
         whatsapp_interactions_enabled: false,
         consumer_interactions_enabled: false,
         native_media_enabled: false,
+        native_whatsapp_outbound_media_enabled: false,
         relay_text_edits_enabled: false,
         native_discord_edits_enabled: false,
         discord_effects_issuance_enabled: false,
