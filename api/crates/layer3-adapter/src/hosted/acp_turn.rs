@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use super::acp::{Bridge, Outcome, TURN_DEADLINE};
+use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
 use super::update_relay::UpdateRelay;
 use crate::{ConversationInput, ConversationUpdate, PromptResponse};
@@ -51,6 +51,43 @@ impl Bridge {
                     working_directory.as_deref(),
                 )
                 .await
+            }
+            ConversationInput::Steer(content) => {
+                // Probe before mutation so an older retained runtime refuses
+                // steering without creating a competing prompt or waiter.
+                let support = self.call("cma/steer", serde_json::json!({ "action": "support" }))
+                    .await.map_err(|error| match error {
+                        crate::AdapterError::Rejected(_) => crate::AdapterError::Unsupported(
+                            "this runtime cannot safely steer an active turn; update the Sandbox when idle".into()),
+                        other => other,
+                    })?;
+                if support
+                    .get("supported")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+                    || support.get("version").and_then(serde_json::Value::as_u64) != Some(1)
+                {
+                    return Err(crate::AdapterError::Unsupported(
+                        "runtime steering contract is unavailable".into(),
+                    ));
+                }
+                let result = self
+                    .call(
+                        "cma/steer",
+                        serde_json::json!({
+                            "sessionId": session, "prompt": content,
+                        }),
+                    )
+                    .await?;
+                if result.get("injected").and_then(serde_json::Value::as_bool) != Some(true)
+                    || result.get("sessionId").and_then(serde_json::Value::as_str)
+                        != Some(session.as_str())
+                {
+                    return Err(crate::AdapterError::Unavailable(
+                        "runtime steering was not confirmed".into(),
+                    ));
+                }
+                Ok(())
             }
             ConversationInput::Prompt(content) => {
                 self.drive_prompt(session, content, None, updates).await
@@ -134,24 +171,20 @@ impl Bridge {
                 let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
                 let updates = updates.clone();
                 tokio::spawn(async move {
-                    let answered = tokio::time::timeout(TURN_DEADLINE, waiting).await;
+                    // A turn can outlive any API request. The bridge owns the
+                    // waiter until an actual provider result or link closure;
+                    // elapsed time cannot invent a terminal for a later turn.
+                    let answered = waiting.await;
                     let previous = owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                     debug_assert!(previous > 0, "prompt waiter is released once");
                     answered_permissions.lock().await.clear();
                     let update = match answered {
-                        Err(_) => Some(scoped_turn_outcome(
-                            Outcome::Failed {
-                                message: "agent did not answer this turn".into(),
-                                capability: None,
-                            },
-                            false,
-                        )),
-                        Ok(Ok(_)) => None,
+                        Ok(_) => None,
                         // The runtime still owns this identified prompt when
                         // its API attachment closes. Connection recovery must
                         // observe its original result, never invent a failure.
-                        Ok(Err(_)) if recoverable => None,
-                        Ok(Err(_)) => Some(scoped_turn_outcome(
+                        Err(_) if recoverable => None,
+                        Err(_) => Some(scoped_turn_outcome(
                             Outcome::Failed {
                                 message: "agent stopped answering before the turn finished".into(),
                                 capability: None,
