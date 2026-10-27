@@ -7,6 +7,7 @@ pub(crate) mod media;
 pub(crate) mod outbound;
 mod reaction;
 pub mod receipts;
+pub(crate) mod status;
 pub(crate) mod templates;
 pub mod webhook;
 pub use client::{Client, Error, Transport};

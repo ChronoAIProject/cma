@@ -169,6 +169,12 @@ receipt-storage loss, and partial delivery remain `unknown`; CMA does not resend
 automatically after an uncertain native effect. Free-form replies remain subject
 to Meta's customer service window; approved templates have a separate gate.
 
+Authenticated `sent`, `delivered`, `read`, `played` and `failed` callbacks now
+annotate these exact retained sends in Channel Activity. API acceptance is shown
+separately from recipient delivery. Status observation never admits another
+turn or resends a failed message; see [status reconciliation](CMAEG_Native_WhatsApp_Status.md)
+for original-consumer binding, bounded retention and retry behavior.
+
 Validation uses original Meta-shaped envelopes, injected Graph transports and
 local CMA/provider HTTP fixtures. These prove local contracts and do not prove
 acceptance under a live app's current permissions or a real WhatsApp client.
