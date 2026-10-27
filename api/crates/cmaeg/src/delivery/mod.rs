@@ -6,6 +6,9 @@ pub mod custom;
 mod default_reply;
 pub mod destination;
 mod discord;
+mod discord_card_edit;
+#[cfg(test)]
+mod discord_card_edit_tests;
 mod discord_controls;
 #[cfg(test)]
 mod discord_controls_tests;
