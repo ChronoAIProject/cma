@@ -5,6 +5,7 @@ import {
   activityStateLabels,
 } from './ChannelActivityStatus';
 import type { ChannelActivityFeed } from './useChannelActivity';
+import { activityActor, activityLabel } from './channelActivityLabels';
 import './ChannelActivity.css';
 
 export function ChannelActivityPreview({ feed }: { readonly feed: ChannelActivityFeed }) {
@@ -20,8 +21,10 @@ export function ChannelActivityPreview({ feed }: { readonly feed: ChannelActivit
           <Presence key={event.event_id}>
             <div className="channel-activity-preview__receipt">
               <p>
-                <strong>{event.source.platform ?? event.source.type}</strong>
-                <span>{event.actor.display_name ?? event.actor.id}</span>
+                <strong>
+                  {activityLabel(event)} · {event.source.platform ?? event.source.type}
+                </strong>
+                <span>{activityActor(event)}</span>
                 <span>
                   Received <ActivityTimestamp value={event.received_at} />
                 </span>

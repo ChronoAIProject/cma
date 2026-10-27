@@ -1,6 +1,7 @@
 import { Presence } from '../ui/Presence';
 import './ChannelActivity.css';
 import { useChannelActivity, type ChannelActivityFeed } from './useChannelActivity';
+import { activityActor, activityLabel } from './channelActivityLabels';
 import {
   ActivityConnection,
   ActivityTimestamp,
@@ -34,19 +35,25 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
             <Presence>
               <article className="channel-activity__event">
                 <header>
-                  <strong>{event.source.platform ?? event.source.type}</strong>
+                  <strong>
+                    {activityLabel(event)} · {event.source.platform ?? event.source.type}
+                  </strong>
                   <span>
                     Received <ActivityTimestamp value={event.received_at} />
                   </span>
                 </header>
                 <p>
-                  {event.actor.display_name ?? event.actor.id} · <code>{event.event_id}</code>
+                  {activityActor(event)} · <code>{event.event_id}</code>
                 </p>
                 <dl>
                   <div>
-                    <dt>Event time</dt>
+                    <dt>{event.kind === 'event' ? 'Source event time' : 'Recorded event time'}</dt>
                     <dd>
-                      <ActivityTimestamp value={event.occurred_at} />
+                      <ActivityTimestamp
+                        value={
+                          event.kind === 'event' ? event.source_occurred_at : event.occurred_at
+                        }
+                      />
                     </dd>
                   </div>
                   <div>
