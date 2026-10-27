@@ -40,6 +40,7 @@ impl LarkEffectAuthority {
             || self.issued_at <= 0
             || self.expires_at <= self.issued_at
             || self.expires_at > self.issued_at.saturating_add(LARK_EFFECT_TTL)
+            || message.native_media_edit.is_some()
             || message.received_reaction.is_some()
             || message.native_lark_effect.is_some()
             || message.discord_message.is_some()
