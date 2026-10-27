@@ -18,7 +18,7 @@ const requiredPrefixes = [
   'store::agent_access_tools::tests::',
   'store::agent_access_requests::',
   'agent_access_worker::',
-  'auth::cookie_authorization_tests::api_bearer_command_tests::owner_service_access_tests::',
+  'owner_service_access::',
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
   'store::schema_mongo_integration_tests::',
