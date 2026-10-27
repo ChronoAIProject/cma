@@ -4,7 +4,7 @@ pub(crate) fn fixtures() -> [(&'static str, &'static [u8]); 5] {
     [
         (
             "audio/aac",
-            include_bytes!("../../../tests/fixtures/media/whatsapp-tone.aac"),
+            include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-tone.aac"),
         ),
         (
             "audio/amr",
@@ -16,7 +16,7 @@ pub(crate) fn fixtures() -> [(&'static str, &'static [u8]); 5] {
         ),
         (
             "audio/mp4",
-            include_bytes!("../../../tests/fixtures/media/whatsapp-tone.m4a"),
+            include_bytes!("../../../tests/fixtures/whatsapp-outbound/whatsapp-tone.m4a"),
         ),
         (
             "audio/ogg",
