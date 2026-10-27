@@ -140,6 +140,7 @@ impl InboxDispatcher {
                                     source_bytes: verified.source_bytes,
                                     received_at: verified.received_at,
                                     original,
+                                    outbound_consumer: None,
                                 },
                                 permit,
                             )
