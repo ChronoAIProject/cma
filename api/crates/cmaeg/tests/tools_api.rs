@@ -51,6 +51,8 @@ mod rpc;
 pub mod signer;
 #[path = "tools/support.rs"]
 mod support;
+#[path = "tools/whatsapp_template_budget.rs"]
+mod whatsapp_template_budget;
 #[path = "tools/whatsapp_templates.rs"]
 mod whatsapp_templates;
 

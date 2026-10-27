@@ -310,7 +310,11 @@ impl ToolsState {
         // Structured relay replies can fall back to complete text after the
         // engine checks their Activity. Their outer wait is also 18 s; native
         // card/control transport still uses the configured ordinary timeout.
-        let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. } if !message.native_attachments.is_empty())
+        // Template media lives in its components, not native_attachments; both
+        // use the same 60 s exchange and need room for queueing/pacing here.
+        let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. }
+            if !message.native_attachments.is_empty()
+                || message.whatsapp_template.as_ref().is_some_and(|template| template.has_media()))
         {
             Duration::from_secs(65)
         } else if self.complete_replies_enabled
