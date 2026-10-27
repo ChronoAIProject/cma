@@ -17,7 +17,7 @@ use cmaeg_core::{
 use serde::{Deserialize, Serialize};
 
 const TTL: i64 = 7 * 86400;
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Context {
     kind: String,
@@ -106,33 +106,55 @@ impl Context {
             expires_at,
         })
     }
-    /// Best effort after successful ordinary dispatch. Never changes its outcome.
-    pub(crate) async fn remember(self, state: &IngressState, channel: &ResolvedChannel) {
+    /// Opted-in webhooks acknowledge only a confirmed locator. Retrying the
+    /// original update reuses its committed admission before repairing this row.
+    pub(crate) async fn remember(
+        self,
+        state: &IngressState,
+        channel: &ResolvedChannel,
+    ) -> Result<(), Error> {
         let work = async {
             let id = id(channel, &self.bot, &self.chat, &self.message);
-            let bytes = serde_json::to_vec(&self).map_err(|_| ())?;
-            let blob = seal_interaction(&state.master_keys, &id, &bytes).map_err(|_| ())?;
-            state
-                .resolver
-                .record_client()
-                .interactions()
+            let bytes = serde_json::to_vec(&self).map_err(|_| Error::Unavailable)?;
+            let blob = seal_interaction(&state.master_keys, &id, &bytes)
+                .map_err(|_| Error::Unavailable)?;
+            let records = state.resolver.record_client().interactions();
+            match records
                 .put_expiring(
-                    &RecordId::new(id).map_err(|_| ())?,
+                    &RecordId::new(&id).map_err(|_| Error::Unavailable)?,
                     &self.original.owner,
                     &blob,
                     None,
                     Some(self.expires_at),
                 )
                 .await
-                .map(|_| ())
-                .or_else(|error| match error {
-                    RecordError::Conflict { .. } => Ok(()),
-                    _ => Err(()),
-                })
+            {
+                Ok(1) => Ok(()),
+                Err(RecordError::Conflict { .. }) => {
+                    let row = records
+                        .get(
+                            records
+                                .record_url(&id)
+                                .map_err(|_| Error::Unavailable)?
+                                .as_str(),
+                        )
+                        .await
+                        .map_err(|_| Error::Unavailable)?;
+                    let opened = open_interaction(&state.master_keys, &id, &row.blob)
+                        .map_err(|_| Error::Unavailable)?;
+                    let saved: Self =
+                        serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
+                    if row.version != 1 || saved != self {
+                        return Err(Error::Unavailable);
+                    }
+                    Ok(())
+                }
+                _ => Err(Error::Unavailable),
+            }
         };
-        if tokio::time::timeout(std::time::Duration::from_millis(250), work).await != Ok(Ok(())) {
-            tracing::warn!("Telegram message context unavailable; ordinary admission preserved");
-        }
+        tokio::time::timeout(std::time::Duration::from_millis(250), work)
+            .await
+            .map_err(|_| Error::Unavailable)?
     }
 }
 pub(super) async fn original(
