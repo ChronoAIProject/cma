@@ -1,8 +1,10 @@
 //! Durable claims and shared message fences prevent uncertain native edits being resent.
 use super::{
     authority, denied,
-    model::{Current, Original, Snapshot},
+    model::{Current, Original},
+    provider::{self, PreparationError, WriteError},
     store::Store,
+    verify::{self, Confirmation},
     Client,
 };
 use crate::{
@@ -111,11 +113,12 @@ impl ToolsState {
             self.execute_media(caller, reference, patch, client, &store, claim.id()),
         )
         .await;
-        let receipt = outcome.unwrap_or_else(|_| unknown());
+        let execution = outcome.unwrap_or_else(|_| Execution::held(unknown()));
+        let receipt = execution.receipt;
         if claims.finish(claim, &receipt).await.is_err() {
             return Ok(unknown());
         }
-        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) {
+        if execution.release {
             let _ = serial.release(held).await;
         }
         Ok(receipt)
@@ -132,7 +135,7 @@ impl ToolsState {
         let a = message.native_media_edit.as_ref().ok_or_else(denied)?;
         let (original, current) = store.load(&a.original_sha256).await?;
         authority::check(&channel, &message, &original, caller)?;
-        if a.revision != current.revision {
+        if a.revision != current.revision || !current.ready() {
             return Err(Problem::new(
                 ProblemCode::Conflict,
                 409,
@@ -149,197 +152,144 @@ impl ToolsState {
         client: &Client,
         store: &Store,
         operation: &str,
-    ) -> IntentReceipt {
+    ) -> Execution {
         let Ok((channel, message, original, current)) =
             self.media_current(caller, reference, store).await
         else {
-            return rejected("native_media_authority_or_revision_changed");
+            return Execution::settled(rejected("native_media_authority_or_revision_changed"));
         };
         let a = message
             .native_media_edit
             .as_ref()
             .expect("checked authority");
         let Some(token) = authority::token(&channel, &a.destination) else {
-            return rejected("native_media_credential_unavailable");
+            return Execution::settled(rejected("native_media_credential_unavailable"));
         };
         let token_hash = crate::channels::definition::hash_secret(token.as_str());
-        let mut file = if let Some(replacement) = &patch.replacement {
+        let file = if let Some(replacement) = &patch.replacement {
             match outbound::prepare(&[replacement.attachment()]).await {
                 Ok(mut f) if f.len() == 1 => f.pop(),
-                _ => return rejected("attachment_preparation_failed"),
+                _ => return Execution::settled(rejected("attachment_preparation_failed")),
             }
         } else {
             None
         };
-        let intended = serde_json::json!({"caption":patch.caption.as_ref().unwrap_or(&current.snapshot.caption),
-            "content":patch.text.as_ref().unwrap_or(&current.snapshot.content),
-            "file":file.as_ref().map(|f| serde_json::json!({"sha256":format!("{:x}",Sha256::digest(&f.bytes)),"size":f.bytes.len(),"filename":f.filename,"mime":f.mime}))});
+        let intended = serde_json::json!({
+            "before": current.snapshot,
+            "caption": patch.caption.as_ref().unwrap_or(&current.snapshot.caption),
+            "content": patch.text.as_ref().unwrap_or(&current.snapshot.content),
+            "replace_caption": patch.caption.is_some(), "replace_content": patch.text.is_some(),
+            "file": file.as_ref().map(|f| serde_json::json!({"sha256":format!("{:x}",Sha256::digest(&f.bytes)),"size":f.bytes.len(),"filename":f.filename,"mime":f.mime}))
+        });
         if store.freeze(&original, operation, &intended).await.is_err() {
-            return rejected("native_media_attempt_unavailable");
+            return Execution::settled(rejected("native_media_attempt_unavailable"));
         }
-        let observed = match &a.destination {
-            Destination::Telegram {
-                bot_id,
-                chat_id,
-                thread_id,
-            } => {
-                if client
-                    .telegram
-                    .get_me(token)
-                    .await
-                    .ok()
-                    .is_none_or(|b| b.id != *bot_id)
-                {
-                    return rejected("native_media_bot_custody_unavailable");
-                }
-                let caption = patch
-                    .caption
-                    .as_deref()
-                    .unwrap_or(&current.snapshot.caption);
-                let edit = match client
-                    .telegram
-                    .prepare_media_edit(
-                        chat_id,
-                        &message.platform_message_id,
-                        a.kind,
-                        caption,
-                        file.take(),
+        let prepared = match provider::prepare(
+            client, token, &message, &original, &current, patch, file,
+        )
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(PreparationError::Rejected(reason)) => return Execution::settled(rejected(reason)),
+            Err(PreparationError::Changed) => {
+                return if store
+                    .retire(
+                        &original,
+                        &current,
+                        operation,
+                        "native_media_message_changed",
                     )
                     .await
+                    .is_ok()
                 {
-                    Ok(edit) => edit,
-                    Err(_) => return rejected("native_media_request_invalid"),
+                    Execution::settled(rejected("native_media_message_changed"))
+                } else {
+                    Execution::held(unknown())
                 };
-                if !self
-                    .media_final_check(caller, reference, store, &token_hash, current.version)
-                    .await
-                {
-                    return rejected("native_media_authority_changed");
-                }
-                match client.telegram.edit_media(token, edit).await {
-                    Ok(body) => crate::telegram::media_edit::snapshot(
-                        &body,
-                        bot_id,
-                        chat_id,
-                        thread_id.as_deref(),
-                        &message.platform_message_id,
-                        a.kind,
-                    )
-                    .ok(),
-                    Err(crate::telegram::Error::Rejected) => {
-                        return rejected("native_media_update_rejected")
-                    }
-                    Err(crate::telegram::Error::RateLimited(retry_after)) => {
-                        return result(DeliveryOutcome::RateLimited { retry_after })
-                    }
-                    Err(_) => None,
-                }
-            }
-            Destination::Discord { bot_id, channel_id } => {
-                if client
-                    .discord
-                    .verify_media_bot(token, bot_id)
-                    .await
-                    .is_err()
-                {
-                    return rejected("native_media_bot_custody_unavailable");
-                }
-                if client
-                    .discord
-                    .media_channel(token, channel_id, &original.activity.conversation)
-                    .await
-                    .ok()
-                    .as_ref()
-                    != original.discord_channel.as_ref()
-                {
-                    return rejected("native_media_channel_changed");
-                }
-                let before = client
-                    .discord
-                    .message(token, channel_id, &message.platform_message_id)
-                    .await
-                    .ok()
-                    .and_then(|body| {
-                        crate::discord::rest::media_edit::snapshot(
-                            &body,
-                            bot_id,
-                            channel_id,
-                            &message.platform_message_id,
-                            a.kind,
-                        )
-                        .ok()
-                    });
-                if before.as_ref() != Some(&current.snapshot) {
-                    return rejected("native_media_message_changed");
-                }
-                let edit = match client
-                    .discord
-                    .prepare_media_edit(patch, &current.snapshot, file.take())
-                    .await
-                {
-                    Ok(edit) => edit,
-                    Err(_) => return rejected("native_media_request_invalid"),
-                };
-                if !self
-                    .media_final_check(caller, reference, store, &token_hash, current.version)
-                    .await
-                {
-                    return rejected("native_media_authority_changed");
-                }
-                match client
-                    .discord
-                    .edit_media(token, channel_id, &message.platform_message_id, edit)
-                    .await
-                {
-                    Ok(body) => crate::discord::rest::media_edit::snapshot(
-                        &body,
-                        bot_id,
-                        channel_id,
-                        &message.platform_message_id,
-                        a.kind,
-                    )
-                    .ok(),
-                    Err(crate::discord::rest::RestError::RateLimited(retry_after)) => {
-                        return result(DeliveryOutcome::RateLimited { retry_after })
-                    }
-                    Err(
-                        crate::discord::rest::RestError::Rejected
-                        | crate::discord::rest::RestError::NotFound
-                        | crate::discord::rest::RestError::Unavailable,
-                    ) => return rejected("native_media_update_rejected"),
-                    Err(_) => None,
-                }
             }
         };
-        let Some(snapshot) = observed else {
-            return unknown();
+        // This CAS closes the old revision before a write can become confirmed.
+        let pending = match store.begin(&original, &current, operation).await {
+            Ok(pending) => pending,
+            Err(_) => return Execution::held(unknown()),
         };
-        if !verify_result(
+        if !self
+            .media_final_check(caller, reference, store, &token_hash, &pending, operation)
+            .await
+        {
+            return Execution {
+                receipt: rejected("native_media_authority_changed"),
+                release: store.restore(&original, &pending, operation).await.is_ok(),
+            };
+        }
+        let observed = match prepared.send(client, token, &message).await {
+            Ok(observed) => observed,
+            Err(WriteError::Unknown) => return Execution::held(unknown()),
+            Err(error) => {
+                let receipt = match error {
+                    WriteError::Rejected => rejected("native_media_update_rejected"),
+                    WriteError::RateLimited(retry_after) => {
+                        result(DeliveryOutcome::RateLimited { retry_after })
+                    }
+                    WriteError::Unknown => unreachable!(),
+                };
+                return Execution {
+                    receipt,
+                    release: store.restore(&original, &pending, operation).await.is_ok(),
+                };
+            }
+        };
+        let Some(confirmation) = verify::confirm(
             &a.destination,
             patch,
             &current.snapshot,
-            &snapshot,
+            observed,
             &intended,
-        ) {
-            return unknown();
-        }
-        let Ok(next) = store
-            .advance(&original, &current, snapshot, operation)
-            .await
-        else {
-            return unknown();
-        };
-        let Some(next_reference) =
-            authority::reference(&original, &next, &self.keys, Some(reference))
-        else {
-            return unknown();
+        ) else {
+            return Execution::held(unknown());
         };
         let mut receipt = result(DeliveryOutcome::Confirmed {
-            platform_message_id: Some(message.platform_message_id),
+            platform_message_id: Some(message.platform_message_id.clone()),
         });
         receipt.rendering.outcome = RenderingOutcome::Rendered;
-        receipt.message_ref = Some(next_reference);
-        receipt
+        match confirmation {
+            Confirmation::Renewable(snapshot) => {
+                match store
+                    .advance(&original, &pending, *snapshot, operation)
+                    .await
+                {
+                    Ok(next) => {
+                        receipt.message_ref =
+                            authority::reference(&original, &next, &self.keys, Some(reference));
+                        if receipt.message_ref.is_some() {
+                            return Execution::settled(receipt);
+                        }
+                        // Never leave a ready revision behind without its exact reference.
+                        let retired = store
+                            .retire(
+                                &original,
+                                &next,
+                                operation,
+                                "native_media_reference_unavailable",
+                            )
+                            .await
+                            .is_ok();
+                        Execution {
+                            receipt,
+                            release: retired,
+                        }
+                    }
+                    Err(_) => Execution::held(receipt),
+                }
+            }
+            Confirmation::Retired(reason) => Execution {
+                receipt,
+                release: store
+                    .retire(&original, &pending, operation, reason)
+                    .await
+                    .is_ok(),
+            },
+        }
     }
     async fn media_final_check(
         &self,
@@ -347,64 +297,48 @@ impl ToolsState {
         reference: &MessageRef,
         store: &Store,
         token_hash: &str,
-        version: u64,
+        pending: &Current,
+        operation: &str,
     ) -> bool {
-        let Ok((channel, message, _, current)) = self.media_current(caller, reference, store).await
+        let Ok((channel, message, _)) = self
+            .authorize_message(caller, reference, "nativeMediaUpdate")
+            .await
         else {
             return false;
         };
-        current.version == version
-            && authority::token(
-                &channel,
-                &message
-                    .native_media_edit
-                    .as_ref()
-                    .expect("checked")
-                    .destination,
-            )
-            .is_some_and(|t| crate::channels::definition::hash_secret(t.as_str()) == token_hash)
+        let Some(a) = message.native_media_edit.as_ref() else {
+            return false;
+        };
+        let Ok((original, current)) = store.load(&a.original_sha256).await else {
+            return false;
+        };
+        authority::check(&channel, &message, &original, caller).is_ok()
+            && current.version == pending.version
+            && current.revision == a.revision
+            && current.owns_attempt(operation)
+            && authority::token(&channel, &a.destination)
+                .is_some_and(|t| crate::channels::definition::hash_secret(t.as_str()) == token_hash)
     }
 }
-pub(crate) fn verify_result(
-    destination: &Destination,
-    patch: &NativeMediaUpdate,
-    before: &Snapshot,
-    after: &Snapshot,
-    intended: &serde_json::Value,
-) -> bool {
-    if after.kind != before.kind
-        || Some(after.caption.as_str()) != intended["caption"].as_str()
-        || Some(after.content.as_str()) != intended["content"].as_str()
-    {
-        return false;
-    }
-    if patch.replacement.is_none() {
-        return after.same_files(before);
-    }
-    match destination {
-        Destination::Discord { .. } => {
-            after.files.len() == 1
-                && after.files[0].filename.as_deref() == intended["file"]["filename"].as_str()
-                && after.files[0].size == intended["file"]["size"].as_u64()
-                && after.files[0]
-                    .mime
-                    .as_deref()
-                    .is_none_or(|mime| Some(mime) == intended["file"]["mime"].as_str())
-                && !before.files.iter().any(|f| f.id == after.files[0].id)
+struct Execution {
+    receipt: IntentReceipt,
+    release: bool,
+}
+impl Execution {
+    fn settled(receipt: IntentReceipt) -> Self {
+        Self {
+            receipt,
+            release: true,
         }
-        Destination::Telegram { .. } => after.files.iter().all(|f| {
-            f.filename
-                .as_deref()
-                .is_none_or(|v| Some(v) == intended["file"]["filename"].as_str())
-                && f.mime
-                    .as_deref()
-                    .is_none_or(|v| Some(v) == intended["file"]["mime"].as_str())
-                && (after.kind != cmaeg_core::message::NativeMediaKind::File
-                    || f.size.is_none()
-                    || f.size == intended["file"]["size"].as_u64())
-        }),
+    }
+    fn held(receipt: IntentReceipt) -> Self {
+        Self {
+            receipt,
+            release: false,
+        }
     }
 }
+
 fn result(delivery: DeliveryOutcome) -> IntentReceipt {
     let mut r = unknown();
     r.delivery = delivery;

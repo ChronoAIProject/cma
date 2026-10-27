@@ -36,7 +36,14 @@ fn upload(caption: &str, text: Option<&str>) -> cmaeg_core::message::OutboundMes
 
 #[tokio::test]
 async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_effects() {
-    for scenario in ["plain", "embed", "storage", "wrong_bot"] {
+    for scenario in [
+        "plain",
+        "embed",
+        "spoiler",
+        "unsupported_embed",
+        "storage",
+        "wrong_bot",
+    ] {
         let (mut app, _) = media_app().await;
         let _provider = enable(&mut app, false).await;
         {
@@ -46,6 +53,13 @@ async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_e
             if scenario == "embed" {
                 memory.message["embeds"] = json!([{"type":"link","url":"https://example.org"}]);
             }
+            if scenario == "spoiler" {
+                memory.message["attachments"][0]["flags"] = 8.into();
+                memory.message["attachments"][0]["filename"] = "SPOILER_report.bin".into();
+            }
+            if scenario == "unsupported_embed" {
+                memory.message["embeds"] = json!([{"type":"link","title":"x".repeat(257)}]);
+            }
             if scenario == "wrong_bot" {
                 memory.message["author"]["id"] = "78".into();
             }
@@ -53,9 +67,11 @@ async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_e
         if scenario == "storage" {
             app.backend.fail_put.store(true, Ordering::SeqCst);
         }
-        let receipt = app
-            .send_message(upload("alt", Some("https://example.org")))
-            .await;
+        let mut message = upload("alt", Some("https://example.org"));
+        if scenario == "spoiler" {
+            message.native_attachments[0].filename = Some("SPOILER_report.bin".into());
+        }
+        let receipt = app.send_message(message).await;
         assert_eq!(
             app.platform.memory.lock().unwrap().writes.len(),
             1,
@@ -71,7 +87,7 @@ async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_e
         let opened = reference.open(&app.state.keys).unwrap();
         assert_eq!(
             opened.payload.native_media_edit.is_some(),
-            scenario == "plain",
+            matches!(scenario, "plain" | "embed" | "spoiler"),
             "{scenario}"
         );
         assert!(opened
@@ -85,7 +101,7 @@ async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_e
             let capabilities = app.caps(&reference).await;
             assert_eq!(
                 capabilities.get("media_edit").is_some(),
-                scenario == "plain"
+                matches!(scenario, "plain" | "embed" | "spoiler")
             );
         }
     }
@@ -94,13 +110,22 @@ async fn discord_optional_edit_enrichment_preserves_confirmed_delivery_and_old_e
 #[tokio::test]
 async fn telegram_optional_edit_enrichment_preserves_confirmed_caption_entities_and_storage_failure(
 ) {
-    for scenario in ["plain", "entities", "storage", "wrong_bot"] {
+    for scenario in [
+        "plain",
+        "entities",
+        "unsupported_entities",
+        "storage",
+        "wrong_bot",
+    ] {
         let (mut app, _, platform) = telegram_app().await;
         let _provider = enable(&mut app, true).await;
         let caption = "https://example.org";
         let mut body = telegram_body(caption);
         if scenario == "entities" {
             body["caption_entities"] = json!([{"type":"url","offset":0,"length":19}]);
+        }
+        if scenario == "unsupported_entities" {
+            body["caption_entities"] = json!([{"type":"bold","offset":0,"length":19}]);
         }
         if scenario == "wrong_bot" {
             body["from"]["id"] = 78.into();
@@ -128,7 +153,7 @@ async fn telegram_optional_edit_enrichment_preserves_confirmed_caption_entities_
         let opened = receipt.message_ref.unwrap().open(&app.state.keys).unwrap();
         assert_eq!(
             opened.payload.native_media_edit.is_some(),
-            scenario == "plain",
+            matches!(scenario, "plain" | "entities"),
             "{scenario}"
         );
         assert!(opened.payload.telegram_effect.is_some());
