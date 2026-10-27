@@ -16,10 +16,7 @@ impl MongoSandboxStore {
         validate_access_services(&services.iter().map(ToString::to_string).collect::<Vec<_>>())?;
         services.sort();
         if services.windows(2).any(|pair| pair[0] == pair[1])
-            || !authorization.authority_id.starts_with("personal:")
-            || authorization.authority_id.len() <= "personal:".len()
-            || authorization.authority_id.chars().any(char::is_control)
-            || authorization.policy_revision == 0
+            || !valid_owner_authorization(&authorization)
         {
             return Err(AgentAccessError::Invalid);
         }
