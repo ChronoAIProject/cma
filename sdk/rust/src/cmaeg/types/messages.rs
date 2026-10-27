@@ -327,6 +327,9 @@ pub struct NativeMediaCapabilities {
     /// Structural sticker limits, absent on unsupported destinations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sticker: Option<NativeStickerCapabilities>,
+    /// Bounded video profile; absent when no destination-specific profile is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<NativeVideoCapabilities>,
 }
 
 /// Exact dimensions, size and animation limits for native sticker delivery.
@@ -346,4 +349,33 @@ pub struct NativeStickerCapabilities {
     pub max_duration_ms: u32,
     /// Minimum duration per animation frame, in milliseconds.
     pub min_frame_duration_ms: u32,
+}
+
+/// Structural native video limits; not a full decoding or client-acceptance guarantee.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeVideoCapabilities {
+    /// Video codec, currently h264.
+    pub video_codec: String,
+    /// Codec profile, currently baseline.
+    pub video_profile: String,
+    /// Optional audio track's codec, currently aac_lc.
+    pub audio_codec: String,
+    /// Maximum audio track count; a silent video is allowed.
+    pub max_audio_tracks: u32,
+    /// Maximum display width in pixels.
+    pub max_width: u32,
+    /// Maximum display height in pixels.
+    pub max_height: u32,
+    /// Maximum frames per second.
+    pub max_frame_rate: u32,
+    /// Maximum track duration in milliseconds.
+    pub max_duration_ms: u32,
+    /// Total samples across video and optional audio.
+    pub max_samples: u64,
+    /// Whether interlaced video is refused.
+    pub progressive_only: bool,
+    /// Maximum coded slices per frame.
+    pub max_slices_per_frame: u32,
+    /// Whether the movie metadata must precede media bytes.
+    pub fast_start_required: bool,
 }

@@ -2975,7 +2975,9 @@ forum-topic/reply-chain and mention evidence before it can advertise this contra
 `OutboundMessage.native_attachments` is an optional array, omitted when empty.
 It is independent of legacy `blocks` attachment records, which retain their
 link-text rendering. A caller must discover `context.capabilities.native_media`
-before using native attachments. Native Telegram and native Discord advertise
+before using native attachments. The separate `native_lark` source is text-only
+and never advertises this capability; its relay counterpart keeps the existing
+relay contract. Native Telegram and native Discord advertise
 this capability independently of the NyxID-specific relay gate. For relay
 sources it is absent while `CMAEG_NYXID_NATIVE_MEDIA_ENABLED=false`, and it is
 always absent on custom events and relay platforms outside Telegram,
@@ -2984,9 +2986,9 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 enable a new native connection.
 
 Native WhatsApp advertises a separate bounded subset only when
-`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker"]`,
+`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker", "video"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
-"audio/mpeg", "audio/mp4", "audio/ogg", "image/webp"]`,
+"audio/mpeg", "audio/mp4", "audio/ogg", "image/webp", "video/mp4", "video/3gpp"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
 on transports that do not declare them. Shared captions remain limited to 1024
@@ -3004,7 +3006,15 @@ Its optional `native_media.sticker` object reports required `width`/`height` 512
 frame headers are checked without pixel decoding. The sticker message contains
 only the upload ID. Legacy and unsupported transports omit that object; native
 Telegram/Discord and all NyxID replies/initiated sends refuse the new kind before
-any effect. Native video and other document formats remain unsupported. Public HTTPS sources use the existing pinned public
+any effect. Video accepts self-contained nonfragmented MP4/3GPP with one H.264
+Baseline track and zero or one AAC-LC track. Optional `native_media.video`
+(`NativeVideoCapabilities`) reports `video_codec: "h264"`, `video_profile: "baseline"`,
+`audio_codec: "aac_lc"`, `max_audio_tracks: 1`, `max_width: 1920`, `max_height: 1080`,
+`max_frame_rate: 60`, `max_duration_ms: 600000`, `max_samples: 65536` across tracks,
+`progressive_only: true`, `max_slices_per_frame: 1` and `fast_start_required: true`.
+Video supports captions; every sample range, timing table, parameter set and
+admitted I/P slice header is checked without full decoding. See the linked native
+media profile for further syntax restrictions. Other document formats remain unsupported. Public HTTPS sources use the existing pinned public
 address fetcher without Meta credentials, redirects or local-file access; inline
 sources retain the 65536-byte aggregate limit. Every attachment is prepared before
 any text/upload is sent. A native upload returns the sole media ID accepted by the

@@ -1,8 +1,12 @@
-//! Bounded native image, PDF and audio uploads; media IDs are produced only by upload.
+//! Bounded native image, PDF, audio, sticker and video uploads; media IDs are produced only by upload.
 #[path = "outbound_audio.rs"]
 pub(crate) mod audio;
+#[path = "outbound_bmff.rs"]
+mod bmff;
 #[path = "outbound_sticker.rs"]
 pub(crate) mod sticker;
+#[path = "outbound_video.rs"]
+pub(crate) mod video;
 use super::{Client, Error};
 use crate::media::{outbound::PreparedFile, sniff::sniff};
 use cmaeg_core::{
@@ -22,7 +26,7 @@ use serde_json::{json, Value};
 
 /// Meta documents 5 MB; use decimal bytes conservatively.
 pub(crate) const MAX_IMAGE_BYTES: usize = 5_000_000;
-pub(crate) const MIME_TYPES: [&str; 9] = [
+pub(crate) const MIME_TYPES: [&str; 11] = [
     "image/jpeg",
     "image/png",
     "application/pdf",
@@ -32,6 +36,8 @@ pub(crate) const MIME_TYPES: [&str; 9] = [
     "audio/mp4",
     "audio/ogg",
     "image/webp",
+    "video/mp4",
+    "video/3gpp",
 ];
 
 pub(crate) struct MediaUpload {
@@ -66,10 +72,18 @@ impl Client {
         } else {
             None
         };
-        let mime = audio.map_or_else(
-            || sniff(&file.bytes[..file.bytes.len().min(64)]).mime,
-            audio::Format::mime,
-        );
+        let video = if item.kind == NativeMediaKind::Video {
+            Some(video::inspect(&file.bytes).ok_or(Error::Invalid)?)
+        } else {
+            None
+        };
+        let mime = if let Some(video) = video {
+            video.mime()
+        } else if let Some(audio) = audio {
+            audio.mime()
+        } else {
+            sniff(&file.bytes[..file.bytes.len().min(64)]).mime
+        };
         if item
             .mime_type
             .as_deref()
@@ -88,6 +102,7 @@ impl Client {
             (NativeMediaKind::Image, "image/png") => ("image", &["png"][..]),
             (NativeMediaKind::File, "application/pdf") => ("document", &["pdf"][..]),
             (NativeMediaKind::Audio, _) => ("audio", audio.ok_or(Error::Invalid)?.extensions()),
+            (NativeMediaKind::Video, _) => ("video", video.ok_or(Error::Invalid)?.extensions()),
             (NativeMediaKind::Sticker, "image/webp") => ("sticker", &["webp"][..]),
             _ => return Err(Error::Invalid),
         };
