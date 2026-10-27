@@ -54,6 +54,10 @@ finding.
 
 ## CMA-only implementation path
 
+The separate native implementation is described in
+[Native WhatsApp text and incoming reactions](CMAEG_Native_WhatsApp.md). It leaves
+this pinned relay contract unchanged and remains a bounded, default-off source.
+
 If NyxID must remain unchanged, CMA needs a separate native Meta webhook source
 that receives the original reaction delivery before the relay's filter. This is
 a new ingestion and provisioning path, not a flag on the existing relay. It

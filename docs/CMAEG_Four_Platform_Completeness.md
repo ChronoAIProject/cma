@@ -40,6 +40,12 @@ callback construction. CMA cannot enable them by widening its relay parser or
 declaring activity callback support. See the [pinned reaction-contract review and
 CMA-only ingestion path](CMAEG_WhatsApp_Incoming_Reactions.md).
 
+The separate default-off [native WhatsApp source](CMAEG_Native_WhatsApp.md) adds
+private text ingress, retained incoming/outbound reaction authority and native
+text replies without changing that relay. Its local signed-webhook/provider/send
+tests pass; native media, templates, structured setup UI and connected Meta
+acceptance remain required, so this does not complete WhatsApp support.
+
 ## Native Lark and Feishu forms
 
 The CMA native form path supports one Form with 1–12 text, number, date or

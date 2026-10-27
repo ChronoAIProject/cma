@@ -159,9 +159,32 @@ pub struct ChannelUpdateRequest {
     pub sources: Vec<SourceRequest>,
 }
 
+/// Credentials for one native Meta WhatsApp app/account/phone binding.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct WhatsappCredentials {
+    /// Meta app secret used to authenticate original webhook bytes.
+    pub app_secret: Secret,
+    /// Access token whose app and WABA phone membership are verified at authoring.
+    pub access_token: Secret,
+    /// Private challenge token configured in the dedicated Meta callback.
+    pub verify_token: Secret,
+}
+
+/// Counts of native Meta webhook messages durably admitted or refused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WhatsappWebhookResponse {
+    /// Durably admitted messages, including identical replays.
+    pub accepted: u64,
+    /// Authenticated messages refused by admission or target authority.
+    pub refused: u64,
+}
+
 /// CMAEG `CredentialPatch` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialPatch {
+    /// Atomic native Meta credentials; kept encrypted by the gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<WhatsappCredentials>,
     /// Wire field `agent_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_key: Option<Secret>,
@@ -185,6 +208,9 @@ pub struct CredentialPatch {
 /// CMAEG `CredentialsRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialsRequest {
+    /// Atomic native Meta credentials; kept encrypted by the gateway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<WhatsappCredentials>,
     /// Wire field `agent_key`.
     pub agent_key: Secret,
     /// Wire field `channel_key`.
@@ -225,6 +251,9 @@ pub enum CustomAuth {
 /// CMAEG `EndpointResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct EndpointResponse {
+    /// Native Meta callback endpoint for manual dedicated-app setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_webhook_url: Option<String>,
     /// Wire field `custom_event_url`.
     pub custom_event_url: String,
     /// Wire field `nyxid_callback_url`.

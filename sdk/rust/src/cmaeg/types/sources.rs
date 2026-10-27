@@ -17,6 +17,18 @@ pub struct CustomAttachments {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Native Meta WhatsApp Cloud API, independent of relay sources.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+        /// Admission policy for raw private senders and conversations.
+        admission: AdmissionPolicy,
+    },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
     #[serde(rename = "discord")]
     Discord {
@@ -96,6 +108,18 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Native Meta WhatsApp Cloud API, independent of relay sources.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+        /// Admission policy for raw private senders and conversations.
+        admission: AdmissionPolicy,
+    },
     /// Native Discord Gateway source; credentials remain in the encrypted channel.
     #[serde(rename = "discord")]
     Discord {
@@ -173,6 +197,16 @@ pub enum SourceRequest {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceKind {
+    /// Native Meta app/account/phone identities.
+    #[serde(rename = "whatsapp")]
+    Whatsapp {
+        /// Meta app identity proved during source authoring.
+        app_id: String,
+        /// WhatsApp Business Account owning the configured phone.
+        waba_id: String,
+        /// Native receiving and sending phone number identity.
+        phone_number_id: String,
+    },
     /// Native Discord ingress.
     #[serde(rename = "discord")]
     Discord {

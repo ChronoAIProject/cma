@@ -197,6 +197,9 @@ mod targets;
 #[path = "management/custom_attachments.rs"]
 mod custom_attachments;
 
+#[path = "management/native_whatsapp.rs"]
+mod native_whatsapp;
+
 #[path = "management/audit.rs"]
 mod audit;
 

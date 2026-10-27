@@ -1,3 +1,5 @@
+import { CredentialsRequestSchema, CredentialPatchSchema } from './credentials.js';
+export * from './credentials.js';
 import { EventWorkerProfileSchema, NyxIdIdentitySchema } from './profile.js';
 import {
   BindingIdSchema,
@@ -8,7 +10,6 @@ import {
   PlatformSchema,
   ProviderSlugSchema,
   RecordIdSchema,
-  SecretSchema,
 } from './primitives.js';
 import {
   array,
@@ -52,19 +53,6 @@ export const AdmissionPolicySchema = tagged(
   'type',
 );
 export type AdmissionPolicy = Output<typeof AdmissionPolicySchema>;
-
-export const HmacSecretRequestSchema = object({ key_id: text, secret: SecretSchema });
-export type HmacSecretRequest = Output<typeof HmacSecretRequestSchema>;
-
-export const CredentialsRequestSchema = object({
-  agent_key: SecretSchema,
-  channel_key: optional(nullable(SecretSchema)),
-  discord_bot_token: optional(nullable(SecretSchema)),
-  telegram_bot_token: optional(nullable(SecretSchema)),
-  telegram_webhook_secret: optional(nullable(SecretSchema)),
-  hmac_secrets: optional(array(HmacSecretRequestSchema)),
-});
-export type CredentialsRequest = Output<typeof CredentialsRequestSchema>;
 
 export const PartitionRuleSchema = object({
   key: PartitionKeySchema,
@@ -135,6 +123,13 @@ export const LarkResourceBindingSchema = object({
 export type LarkResourceBinding = Output<typeof LarkResourceBindingSchema>;
 export const SourceRequestSchema = tagged(
   {
+    whatsapp: object({
+      app_id: text,
+      waba_id: text,
+      phone_number_id: text,
+      admission: AdmissionPolicySchema,
+      type: enumeration('whatsapp'),
+    }),
     discord: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -345,6 +340,13 @@ export const PublicSecretsSchema = object({ agent_key_hash: text });
 export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 export const SourceSchema = tagged(
   {
+    whatsapp: object({
+      app_id: text,
+      waba_id: text,
+      phone_number_id: text,
+      admission: AdmissionPolicySchema,
+      type: enumeration('whatsapp'),
+    }),
     discord: object({
       admission: AdmissionPolicySchema,
       bot_id: text,
@@ -406,6 +408,7 @@ export const PublicChannelDefinitionSchema = object({
 export type PublicChannelDefinition = Output<typeof PublicChannelDefinitionSchema>;
 
 export const EndpointResponseSchema = object({
+  whatsapp_webhook_url: optional(nullable(text)),
   custom_event_url: text,
   nyxid_callback_url: text,
   telegram_webhook_url: optional(nullable(text)),
@@ -462,16 +465,6 @@ export const ChannelPageSchema = object({
   next_cursor: optional(nullable(text)),
 });
 export type ChannelPage = Output<typeof ChannelPageSchema>;
-
-export const CredentialPatchSchema = object({
-  agent_key: optional(nullable(SecretSchema)),
-  channel_key: optional(nullable(SecretSchema)),
-  discord_bot_token: optional(nullable(SecretSchema)),
-  telegram_bot_token: optional(nullable(SecretSchema)),
-  telegram_webhook_secret: optional(nullable(SecretSchema)),
-  hmac_secrets: optional(nullable(array(HmacSecretRequestSchema))),
-});
-export type CredentialPatch = Output<typeof CredentialPatchSchema>;
 
 export const ChannelUpdateRequestSchema = object({
   connection_ref: optional(nullable(text)),

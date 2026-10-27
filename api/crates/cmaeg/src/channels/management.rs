@@ -44,16 +44,16 @@ pub async fn create(
             "must match the authenticated NyxID subject type",
         )));
     }
-    if request
-        .sources
-        .iter()
-        .any(|source| matches!(source, SourceRequest::Discord { .. }))
-        && !request.record_id.as_ref().is_some_and(|record| {
-            uuid::Uuid::parse_str(record.as_str())
-                .is_ok_and(|id| id.get_version_num() == 4 && id.to_string() == record.as_str())
-        })
-    {
-        return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Discord creation requires a stable canonical UUID v4 record_id for recoverable activation")));
+    if request.sources.iter().any(|source| {
+        matches!(
+            source,
+            SourceRequest::Discord { .. } | SourceRequest::Whatsapp { .. }
+        )
+    }) && !request.record_id.as_ref().is_some_and(|record| {
+        uuid::Uuid::parse_str(record.as_str())
+            .is_ok_and(|id| id.get_version_num() == 4 && id.to_string() == record.as_str())
+    }) {
+        return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
     }
     if let Some(record_id) = request.record_id.clone() {
         return super::creation::create(state, creator, request, record_id).await;
@@ -273,6 +273,21 @@ pub async fn update(
         .map_err(ManagementError::Invalid)?;
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
     definition.version = current.record.version;
+    if definition.routing.is_none()
+        || definition.secrets.whatsapp != current.definition.secrets.whatsapp
+        || !definition
+            .sources
+            .iter()
+            .filter(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
+            .eq(current
+                .definition
+                .sources
+                .iter()
+                .filter(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. })))
+    {
+        crate::whatsapp::management::initialize(state, &mut definition)?;
+    }
+    crate::whatsapp::management::verify(state, Some(&current.definition), &definition).await?;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;
     // A previous PUT may have updated the provider but failed to persist the

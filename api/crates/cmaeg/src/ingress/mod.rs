@@ -12,6 +12,10 @@ pub mod routed;
 pub mod routing_plan;
 pub mod routing_store;
 pub mod telegram;
+pub(crate) mod whatsapp;
 
 mod state;
 pub use state::IngressState;
+
+#[cfg(test)]
+mod whatsapp_tests;

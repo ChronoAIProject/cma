@@ -62,6 +62,7 @@ impl ChannelDefinition {
             Source::NyxidRelay { platform, .. } => Some(*platform),
             Source::Telegram { .. } => Some(Platform::Telegram),
             Source::Discord { .. } => Some(Platform::Discord),
+            Source::Whatsapp { .. } => Some(Platform::Whatsapp),
             Source::Custom { .. } => None,
         })
     }

@@ -69,6 +69,11 @@ pub async fn check(
             ));
             platform.as_str().to_owned()
         }
+        Source::Whatsapp { .. } => {
+            checks.push(item("credential", "Native Meta credentials", secrets.whatsapp.is_some(), "Encrypted app, access and verification credentials are required. Meta app and WABA phone custody are checked when these are authored; this diagnostic does not contact Meta."));
+            checks.push(item("callback", "Dedicated app callback", false, "Configure the returned native WhatsApp webhook URL on a dedicated Meta app. Existing external callbacks are never changed automatically. Text and reaction ingress with native text replies are supported; media and templates are not enabled."));
+            "whatsapp".into()
+        }
         Source::Discord { .. } => {
             checks.push(item(
                 "credential",
