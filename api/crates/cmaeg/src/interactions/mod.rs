@@ -21,6 +21,11 @@ pub(crate) mod discord_authority;
 pub(crate) mod discord_consume;
 pub(crate) mod discord_edit;
 pub(crate) mod discord_effect;
+pub(crate) mod discord_form;
+pub(crate) mod discord_form_store;
+#[cfg(test)]
+mod discord_form_tests;
+pub(crate) mod discord_form_values;
 #[cfg(test)]
 mod discord_tests;
 mod keyboard;
@@ -119,6 +124,7 @@ impl InteractionStore {
             || !discord::valid(&card)
             || !discord_edit::valid(&card)
             || !discord_effect::valid(&card)
+            || !discord_form::valid(&card)
             || !lark_form_authority::valid(&card)
             || card.lark.as_ref().is_some_and(|identity| {
                 !lark::supported(identity.platform)
@@ -186,7 +192,15 @@ impl InteractionStore {
 
 fn markup(card: &Card) -> Result<serde_json::Value, Error> {
     if card.discord.is_some() {
-        discord::render(&card.message, &card.id, card.revision)
+        if card
+            .discord
+            .as_ref()
+            .is_some_and(|identity| identity.form.is_some())
+        {
+            discord_form::button(card)
+        } else {
+            discord::render(&card.message, &card.id, card.revision)
+        }
     } else if card.whatsapp.is_some() {
         whatsapp::markup(card)
     } else if card.lark.is_some() {

@@ -118,6 +118,7 @@ impl InteractionStore {
                 }
             } else {
                 card.consumed = Some(Click {
+                    form_launch: None,
                     event_id: activity.event_id.to_string(),
                     callback_id: callback_id.into(),
                     action: index,
