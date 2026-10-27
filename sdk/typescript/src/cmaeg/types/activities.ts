@@ -83,10 +83,10 @@ export const AttachmentSourceSchema = tagged(
     nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
     native_lark: object({
       type: enumeration('native_lark'),
-      message_id: string,
-      resource_key: string,
+      message_id: text,
+      resource_key: text,
       resource_kind: LarkResourceKindSchema,
-      source_revision: string,
+      source_revision: text,
     }),
     lark_resource: object({
       type: enumeration('lark_resource'),
