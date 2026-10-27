@@ -62,8 +62,14 @@ export function ChannelMap({
             {activityPreview}
             <div className="channel-map__actions">
               {onActivity ? <Button onClick={onActivity}>Activity</Button> : null}
-              {canAddProducer && groups[0]!.length < 4 ? (
-                <Button onClick={() => onSelect({ kind: 'producer', index: groups[0]!.length })}>
+              {canAddProducer ? (
+                <Button
+                  disabled={groups[0]!.length >= 4}
+                  title={
+                    groups[0]!.length >= 4 ? 'This channel supports up to 4 producers.' : undefined
+                  }
+                  onClick={() => onSelect({ kind: 'producer', index: groups[0]!.length })}
+                >
                   Add producer
                 </Button>
               ) : null}

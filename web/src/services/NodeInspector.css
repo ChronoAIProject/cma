@@ -328,3 +328,8 @@
     transition: none;
   }
 }
+
+.channel-form-section > button,
+.channel-node-editor > form > button {
+  justify-self: start;
+}

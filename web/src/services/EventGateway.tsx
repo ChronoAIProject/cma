@@ -313,6 +313,7 @@ function AddressedChannel({
 }) {
   const inspectorId = useId();
   const [inspecting, setInspecting] = useState(false);
+  const [sendAvailable, setSendAvailable] = useState(false);
   const [inspectorSection, setInspectorSection] = useState<'overview' | 'activity'>('overview');
   const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
   const [editorSelection, setEditorSelection] = useState<
@@ -359,11 +360,14 @@ function AddressedChannel({
         id={inspectorId}
         open={active && inspecting}
         initialSection={inspectorSection}
+        sendAvailable={sendAvailable}
+        testsAvailable={!newProducer}
         onClose={() => setInspecting(false)}
         send={
           editable ? (
             <ChannelOutboundMessage
               owner={session.subject}
+              onAvailability={setSendAvailable}
               channel={current}
               selection={selected}
               denied={denied}
