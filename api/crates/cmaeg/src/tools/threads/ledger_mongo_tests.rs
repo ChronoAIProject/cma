@@ -133,9 +133,9 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
         .as_document_mut()
         .unwrap()
         .insert("actions", vec!["find", "insert", "listIndexes"]);
-    partial.remove("createRole");
-    partial.insert("updateRole", "cma_eg_thread_fences_runtime");
-    db.run_command(partial).await?;
+    db.run_command(doc! {"updateRole":"cma_eg_thread_fences_runtime",
+    "privileges":partial.get_array("privileges")?.clone(),"roles":[]})
+        .await?;
     let runtime = connect("runtime").await?;
     let records = MongoRecords::open(runtime.database(name)).await?;
     assert!(records.thread_fences_ready().await.is_err());
