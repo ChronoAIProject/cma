@@ -1,8 +1,8 @@
 # Native Discord conversation history pagination — source design
 
-Status: design for review before implementation, 2026-10-28. Base:
-`f1d6fbf6a1bac21a417962ba8c75ae2a1357d7b4`. This document introduces no
-implementation, runtime change, deployment, activation or platform send.
+Status: implemented and locally validated, 2026-10-28. Deployment and native Discord acceptance remain pending. Base:
+`f1d6fbf6a1bac21a417962ba8c75ae2a1357d7b4`. This document specifies the separate default-off implementation; it does not authorize
+deployment, activation or platform sends.
 
 ## Problem and intended behavior
 
@@ -101,7 +101,12 @@ schemas, OpenAPI fixtures and wire examples. Optional event discovery describes
 `conversation_history` with page size 25, backward direction, attachment facts
 only and original expiry. Authoring discovery adds optional
 `native_discord_conversation_history_enabled`. Older readers omit/ignore the
-additive properties; the old context history operation does not expand.
+additive properties; the old context history operation does not expand. Optional
+history discovery first checks native Discord/original-event/source consent using
+the context-authorized channel, then bounds retained-plan enrichment to 100 ms.
+Unrelated platforms and absent consent cause no enrichment storage or platform
+reads. Slow/busy enrichment omits the hint; explicit reads retain fresh authorization
+and the separate eight-second total deadline.
 
 ## Original authority and fresh checks
 

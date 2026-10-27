@@ -117,6 +117,18 @@ describe('independent CMAEG client', () => {
         response: sample('TypingReceipt'),
       },
       {
+        run: () => client.readEventHistory(id),
+        method: 'GET',
+        path: `/v1/events/${segment}/history`,
+        response: sample('ConversationHistoryPage'),
+      },
+      {
+        run: () => client.readEventHistory(id, 'opaque/+?cursor'),
+        method: 'GET',
+        path: `/v1/events/${segment}/history?cursor=opaque%2F%2B%3Fcursor`,
+        response: sample('ConversationHistoryPage'),
+      },
+      {
         run: () => client.readEventContext(id),
         method: 'GET',
         path: `/v1/events/${segment}/context`,

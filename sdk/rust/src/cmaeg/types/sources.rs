@@ -48,6 +48,9 @@ pub enum Source {
         /// Opt in to bounded original-event thread lifecycle operations.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_lifecycle: Option<bool>,
+        /// Read earlier messages and attachment facts in the original conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },
@@ -154,6 +157,9 @@ pub enum SourceRequest {
         /// Opt in to bounded original-event thread lifecycle operations.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread_lifecycle: Option<bool>,
+        /// Read earlier messages and attachment facts in the original conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },

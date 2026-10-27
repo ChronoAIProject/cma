@@ -26,6 +26,7 @@ pub struct ToolsState {
     pub whatsapp_reactions: Option<Arc<super::WhatsappReactionsClient>>,
     pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     pub discord_threads: Option<Arc<super::DiscordThreads>>,
+    pub discord_conversation_history: Option<Arc<super::DiscordConversationHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
@@ -281,6 +282,8 @@ impl ToolsState {
             );
             response.received_message = received_message;
             response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
+            response.capabilities.conversation_history =
+                self.history_capabilities(caller, &event, &channel).await;
             Ok(response)
         }
         .await;
@@ -320,6 +323,8 @@ impl ToolsState {
         );
         response.received_message = received_message;
         response.capabilities.thread_lifecycle = self.thread_capabilities(caller, &event).await;
+        response.capabilities.conversation_history =
+            self.history_capabilities(caller, &event, &channel).await;
         Ok(response)
     }
     pub(super) async fn deliver<T>(

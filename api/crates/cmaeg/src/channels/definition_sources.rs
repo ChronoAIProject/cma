@@ -94,12 +94,14 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 intents,
                 thread_history,
                 thread_lifecycle,
+                conversation_history,
                 admission,
             } => Source::Discord {
                 bot_id: bot_id.clone(),
                 intents: *intents,
                 thread_history: *thread_history,
                 thread_lifecycle: *thread_lifecycle,
+                conversation_history: *conversation_history,
                 admission: admission.clone(),
             },
             SourceRequest::NyxidRelay {

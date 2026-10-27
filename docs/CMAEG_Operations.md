@@ -2852,3 +2852,33 @@ be removed without enabling the gate. No runtime or infrastructure flag is
 activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
 for authority boundaries, persistent uncertain-write fences, unsupported private
 and forum creation, and exact API semantics.
+
+## Native Discord conversation history gate
+
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` defaults to `false` and accepts
+`true`/`false`. It independently enables the `readEventHistory` MCP tool and execution
+of the exact original-conversation REST read. Owners must also opt into source
+`conversation_history` before the original human event is admitted. Turning it on
+after admission does not upgrade an old event. Saved consent can be retained or
+removed while the writer gate is disabled; normal native source gates still apply.
+
+Deploy readers that understand the additive source field before authoring it.
+When disabled, no history platform reads execute and the tool is omitted from
+discovery. This increment does not enable production history or establish connected
+Discord acceptance. Permission and Message Content behavior still require acceptance
+with the intended bot. The legacy 20-message thread context option retains its
+separate flag and consent.
+
+Each request is bounded by an entry-to-response eight-second deadline, eight
+in-flight slots, one 26-row list request, existing bot cooldowns and fixed response
+budgets. A source, owner, consumer, provider, credential, partition or original-anchor
+change can invalidate the result or continuation. Failures never return a partial
+page or mint new authority. An empty visible result is not a complete-history claim.
+See [conversation history design](CMAEG_Native_Discord_History_Pagination_Design.md)
+for the authenticated evidence, projection bounds and unsupported scope.
+
+Optional context discovery uses the channel already authorized by the context read,
+performs no enrichment I/O for other platforms or sources without consent, and
+allows at most 100 ms for retained history authority. Slow or busy discovery omits
+the capability hint. Explicit history reads still perform fresh authority checks
+under their independent eight-second total budget.

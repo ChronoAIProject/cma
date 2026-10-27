@@ -25,6 +25,8 @@ import {
   ThreadListSchema,
   ThreadReceiptSchema,
   ThreadCapabilitiesSchema,
+  ConversationHistoryPageSchema,
+  ConversationHistoryCapabilitiesSchema,
   CreateThreadRequestSchema,
   ManageThreadRequestSchema,
   SourceSchema,
@@ -473,4 +475,26 @@ it('round-trips bounded thread lifecycle contracts and preserves absent consent'
     ...legacy,
     thread_lifecycle: true,
   });
+});
+
+it('round-trips paginated history facts and keeps consent independent', () => {
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, unknown[]>;
+  for (const value of fixtures.ConversationHistoryPage ?? [])
+    expect(ConversationHistoryPageSchema(value)).toEqual(value);
+  for (const value of fixtures.ConversationHistoryCapabilities ?? [])
+    expect(ConversationHistoryCapabilitiesSchema(value)).toEqual(value);
+  const source = {
+    type: 'discord',
+    bot_id: '77',
+    intents: 37377,
+    admission: { type: 'all' },
+    conversation_history: true,
+  };
+  expect(SourceSchema(source)).toEqual(source);
+  expect(SourceRequestSchema(source)).toEqual(source);
 });

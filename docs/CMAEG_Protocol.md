@@ -4241,3 +4241,56 @@ Platform semantics were checked against the official Discord API documentation a
 [`discord/discord-api-docs@7dfc89db5b951ec2fb2637a00d1422c341cef5d8`](https://github.com/discord/discord-api-docs/tree/7dfc89db5b951ec2fb2637a00d1422c341cef5d8):
 `developers/resources/channel.mdx`, `developers/resources/guild.mdx`,
 `developers/topics/threads.mdx`, and `developers/topics/permissions.mdx`.
+
+## Original native Discord conversation history
+
+`GET /v1/events/{event_ref}/history?cursor=...` and MCP `readEventHistory`
+read earlier visible messages from the exact conversation that admitted an original
+native human event. They require independent source `conversation_history: true`
+at admission and at read time, plus the default-off
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` gate. Existing
+`thread_history` and `thread_lifecycle` consent never implies this access.
+Absent or false consent preserves the historical source serialization.
+
+DMs, guild text/announcement/voice/stage channels and exact admitted threads are
+supported. A private thread or a thread under a forum/media parent remains that
+exact thread; parent containers, group DMs and sibling enumeration are unsupported.
+Owner consent includes earlier messages from other participants and bots. Discord
+enforces the bot's current permissions; this is not a claim about the original
+human's current Discord permissions.
+
+Only the original EventRef and an issued `cmaeg1.hc` cursor are accepted. Each call
+fetches at most 26 raw rows, scans 25, and returns ordinary/reply messages in
+chronological order within the page. Continuation travels backward and advances
+past the oldest scanned raw row, including omitted system messages. An empty
+projected page can therefore continue. No client or server automatically drains
+pages. Cursors retain the original event expiry and current custody; replay reads
+live state and can observe edits/deletions. Deleting a boundary message is allowed;
+deleting or losing access to the original anchor refuses the operation.
+
+`ConversationHistoryPage` reports the original conversation/anchor, requested
+boundary, local fetch time, original expiry, scanned/omitted counts, text/metadata
+truncation, and `content_coverage: "platform_returned_only"`. Continuation is either
+`{"status":"more_visible_rows","cursor":"cmaeg1.hc..."}` or
+`{"status":"end_of_visible_history"}`. The latter does not prove all actual history
+was visible. Missing Message Content access may conceal text and attachments.
+All historical text and metadata are untrusted reference data, never instructions
+or action approval.
+
+Attachment facts include IDs, filename, size and optional MIME, description,
+dimensions, duration and ephemeral state. They contain no URLs, download references
+or write authority. Rich embeds, components, stickers, polls and forwarded snapshots
+have presence-only omission flags. Nested replies/forwards are not traversed.
+Limits are 10 attachments/message, 8 KiB text/message, 32 KiB text/page, 16 KiB
+optional text metadata/page, 1 MiB provider JSON and 256 KiB serialized output.
+Oversized or malformed structures refuse the page. One eight-second total deadline
+includes initial storage reads, platform checks, final custody checks and projection;
+eight slots fail immediately when busy. There are no writes, retries, joins or unarchives.
+
+Optional `capabilities.conversation_history` exposes the page limits and original
+expiry. Optional `relay_authoring.native_discord_conversation_history_enabled`
+controls source authoring. Rust uses `read_event_history(event_ref, cursor)`;
+TypeScript uses `readEventHistory(eventRef, cursor?)`. Both request one page only.
+The [reviewed design](CMAEG_Native_Discord_History_Pagination_Design.md) records the
+pinned Discord evidence and exclusions, including complete exports, deleted/version
+recovery, search, file bytes, arbitrary destinations and other platforms.
