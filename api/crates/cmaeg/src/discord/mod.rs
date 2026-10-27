@@ -19,6 +19,15 @@ pub mod inbox_dispatch;
 mod inbox_reader;
 mod inbox_scan;
 pub(crate) mod lifecycle;
+mod modal;
+#[cfg(test)]
+pub(crate) mod modal_fixture;
+#[cfg(test)]
+mod modal_race_tests;
+#[cfg(test)]
+mod modal_recovery_tests;
+#[cfg(test)]
+mod modal_tests;
 #[cfg(test)]
 mod multiselect_tests;
 pub(crate) mod mutation;

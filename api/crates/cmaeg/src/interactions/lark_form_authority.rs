@@ -90,9 +90,13 @@ pub(super) fn valid(card: &Card) -> bool {
         .and_then(|identity| identity.form.as_ref());
     let Some(form) = form else {
         return card
-            .consumed
+            .discord
             .as_ref()
-            .is_none_or(|click| click.submitted.is_none());
+            .is_some_and(|identity| identity.form.is_some())
+            || card
+                .consumed
+                .as_ref()
+                .is_none_or(|click| click.submitted.is_none());
     };
     let Ok((index, _, fields)) = lark_form::schema(&card.message) else {
         return false;

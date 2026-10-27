@@ -99,10 +99,22 @@ impl InteractionStore {
         next.consumed = None;
         next.reference = None;
         next.discord_edit = None;
+        next.discord_form_launch = None;
+        if let Some(identity) = &mut next.discord {
+            identity.form = super::discord_form::authority(message).ok();
+        }
         if let Some(state) = &mut next.discord_effect {
             state.deletion = None;
         }
-        let markup = discord::render_replacement(message, &next.id, next.revision)?;
+        let markup = if next
+            .discord
+            .as_ref()
+            .is_some_and(|identity| identity.form.is_some())
+        {
+            super::discord_form::button(&next)?
+        } else {
+            discord::render_replacement(message, &next.id, next.revision)?
+        };
         card.superseded = true;
         card.discord_edit = Some(Edit {
             request_hash: request_hash(message),

@@ -3,6 +3,13 @@ use super::*;
 use crate::providers::EventContextSnapshot;
 use cmaeg_core::{message::OutboundMessage, seal::ReplyAddress};
 
+#[derive(Clone, Copy, PartialEq)]
+enum FormMode {
+    None,
+    Lark,
+    Discord,
+}
+
 impl InteractionStore {
     /// Prepare a card for `event`, owned by the consumer the event was issued
     /// to: its context is read through that consumer's binding and
@@ -67,7 +74,7 @@ impl InteractionStore {
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
     ) -> Result<PreparedCard, Error> {
-        self.prepare_card(channel, event, message, context, thread, false)
+        self.prepare_card(channel, event, message, context, thread, FormMode::None)
             .await
     }
     /// Explicit issuance path: legacy preparation never grants native form authority.
@@ -93,7 +100,19 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         lark_form::schema(message)?;
-        self.prepare_card(channel, event, message, context, None, true)
+        self.prepare_card(channel, event, message, context, None, FormMode::Lark)
+            .await
+    }
+    pub(crate) async fn prepare_discord_form(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+        thread: Option<crate::discord::component_thread::ThreadIdentity>,
+    ) -> Result<PreparedCard, Error> {
+        discord_form::schema(message)?;
+        self.prepare_card(channel, event, message, context, thread, FormMode::Discord)
             .await
     }
     #[allow(clippy::too_many_arguments)]
@@ -104,7 +123,7 @@ impl InteractionStore {
         message: &OutboundMessage,
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
-        native_lark_form: bool,
+        form_mode: FormMode,
     ) -> Result<PreparedCard, Error> {
         if context.channel_id != channel.id
             || !event.verifies_activity(&context.activity)
@@ -136,7 +155,7 @@ impl InteractionStore {
                 Some(LarkIdentity {
                     platform: *platform,
                     conversation: context.activity.conversation.kind,
-                    form: if native_lark_form {
+                    form: if form_mode == FormMode::Lark {
                         lark_form_authority::FormAuthority::prepare(
                             channel,
                             event,
@@ -169,7 +188,8 @@ impl InteractionStore {
         } else {
             None
         };
-        let card = Card {
+        let mut card = Card {
+            discord_form_launch: None,
             discord_edit: None,
             discord_effect: None,
             discord: if matches!(event.reply, ReplyAddress::Discord { .. }) {
@@ -204,6 +224,10 @@ impl InteractionStore {
             // its exact stored bytes.
             consumer: event.consumer.clone(),
         };
+        if form_mode == FormMode::Discord {
+            card.discord.as_mut().ok_or(Error::Denied)?.form =
+                Some(discord_form::authority(message)?);
+        }
         let markup = markup(&card)?;
         let version = self.save(&card, None).await?;
         Ok(PreparedCard {
