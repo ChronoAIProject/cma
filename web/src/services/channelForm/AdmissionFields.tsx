@@ -35,12 +35,14 @@ export function AdmissionFields({
   label = 'Admission',
   allowBotMessages = true,
   privateChats = false,
+  allowReplyToBot = true,
 }: {
   value: unknown;
   onChange: (v: Fields) => void;
   label?: string;
   allowBotMessages?: boolean;
   privateChats?: boolean;
+  allowReplyToBot?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const admission = object(value);
@@ -64,7 +66,11 @@ export function AdmissionFields({
                   type,
                   senders: { type: 'open' },
                   chats: { type: 'open' },
-                  groups: privateChats ? 'deny' : 'mention_or_reply_to_bot',
+                  groups: privateChats
+                    ? 'deny'
+                    : allowReplyToBot
+                      ? 'mention_or_reply_to_bot'
+                      : 'mention',
                 }
               : type === 'allowlist'
                 ? { type, sender_ids: [] }
@@ -95,7 +101,11 @@ export function AdmissionFields({
             <Choice
               label="Group messages"
               value={admission.groups}
-              options={['deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot']}
+              options={
+                allowReplyToBot
+                  ? ['deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot']
+                  : ['deny', 'all', 'mention']
+              }
               onChange={(groups) => onChange({ ...admission, groups })}
             />
           ) : null}
