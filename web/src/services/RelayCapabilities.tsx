@@ -8,6 +8,7 @@ export interface RelayAuthoringCapabilities {
   readonly native_discord_capacity?: number | null;
   readonly dynamic_sources_writes_enabled: boolean;
   readonly relay_raw_verification_writes_enabled: boolean;
+  readonly lark_resource_writes_enabled?: boolean | null;
   readonly outbound_messages_writes_enabled?: boolean | null;
   readonly native_media_writes_enabled?: boolean | null;
   readonly multi_consumer_writes_enabled: boolean;

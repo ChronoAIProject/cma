@@ -29,6 +29,14 @@ const MIN_MEDIA_MEMORY_MIB: u64 = 1536;
 const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
+#[test]
+fn lark_resource_writes_ship_disabled_until_reader_and_binding_acceptance() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_LARK_RESOURCE_WRITES_ENABLED"),
+        Some("false")
+    );
+}
+
 struct Line<'a> {
     indent: usize,
     text: &'a str,

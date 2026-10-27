@@ -149,6 +149,7 @@ pub struct Config {
     pub multi_consumer_writes_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
+    pub lark_resource_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
@@ -259,6 +260,9 @@ impl Config {
             )?,
             relay_raw_verification_writes_enabled: routing::write_flag(
                 "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
+            )?,
+            lark_resource_writes_enabled: routing::write_flag(
+                "CMAEG_LARK_RESOURCE_WRITES_ENABLED",
             )?,
             outbound_messages_writes_enabled: routing::write_flag(
                 "CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED",

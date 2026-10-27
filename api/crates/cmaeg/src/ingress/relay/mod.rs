@@ -11,6 +11,7 @@ pub(crate) mod lark;
 mod lark_callback;
 mod lark_media;
 mod lark_post;
+mod lark_resources;
 pub mod payload;
 #[cfg(test)]
 mod seeded_rng;
