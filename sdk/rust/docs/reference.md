@@ -609,7 +609,8 @@ and the original expiry. Retry only the identical body and original reference
 with the same key; an unknown outcome retains its mutation fence and never
 causes an automatic provider retry. Neither provider offers conditional revision
 writes, so external applications sharing bot credentials remain outside CMA's
-fence. Issuance remains disabled pending connected acceptance.
+fence. New issuance stays gated until compatible readers are deployed and release
+checks pass. Connected platform tests remain the owner acceptance step.
 
 ### Native Discord thread lifecycle
 
