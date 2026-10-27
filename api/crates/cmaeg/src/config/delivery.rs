@@ -7,6 +7,8 @@ pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED
 pub const CMAEG_NATIVE_DISCORD_EDITS_ENABLED: &str = "CMAEG_NATIVE_DISCORD_EDITS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED: &str =
     "CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED";
+pub const CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED: &str =
+    "CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED: &str =
     "CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED";
 pub const CMAEG_CONSUMER_INTERACTIONS_ENABLED: &str = "CMAEG_CONSUMER_INTERACTIONS_ENABLED";
@@ -21,6 +23,7 @@ pub const CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: &str = "CMAEG_DISCORD_MESSAGE_EV
 pub const CMAEG_DISCORD_FORMS_ENABLED: &str = "CMAEG_DISCORD_FORMS_ENABLED";
 pub const CMAEG_LARK_FORMS_ENABLED: &str = "CMAEG_LARK_FORMS_ENABLED";
 pub const CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED";
+pub const CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED";
 pub const CMAEG_ACK_TEXT: &str = "CMAEG_ACK_TEXT";
 pub const CMAEG_HEARTBEAT_MS: &str = "CMAEG_HEARTBEAT_MS";
 pub const CMAEG_FAILURE_TEXT: &str = "CMAEG_FAILURE_TEXT";
@@ -69,6 +72,9 @@ pub(crate) fn native_discord_edits_from_env() -> Result<bool, ConfigError> {
 }
 pub(crate) fn native_discord_effects_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED)
+}
+pub(crate) fn native_discord_media_effects_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED)
 }
 pub(crate) fn native_discord_thread_metadata_from_env() -> Result<bool, ConfigError> {
     super::routing::write_flag(CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED)
@@ -142,6 +148,9 @@ pub(crate) fn lark_forms_from_env() -> Result<bool, ConfigError> {
 }
 pub(crate) fn telegram_message_effects_from_env() -> Result<bool, ConfigError> {
     telegram_effects(env::var(CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED))
+}
+pub(crate) fn telegram_media_effects_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED)
 }
 fn telegram_effects(value: Result<String, env::VarError>) -> Result<bool, ConfigError> {
     match value.as_deref() {
