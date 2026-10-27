@@ -85,6 +85,13 @@ pub enum AttachmentKind {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum AttachmentSource {
+    /// Signed native WhatsApp media; temporary download URLs are never retained.
+    Whatsapp {
+        message_id: String,
+        media_id: String,
+        /// Canonical lowercase hexadecimal digest from the signed webhook.
+        sha256: String,
+    },
     /// Exact native Discord message attachment; resolved with current bot custody.
     Discord {
         channel_id: String,
@@ -118,6 +125,7 @@ pub enum AttachmentSource {
 impl fmt::Debug for AttachmentSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Whatsapp { .. } => formatter.write_str("Whatsapp([REDACTED])"),
             Self::LarkResource { .. } => formatter.write_str("LarkResource([REDACTED])"),
             Self::Discord { .. } => formatter.write_str("Discord([REDACTED])"),
             Self::NyxidRelay { index } => formatter
@@ -324,6 +332,24 @@ fn require_dimension(value: u32, pointer: &str) -> Result<(), ValidationError> {
 fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(), String> {
     match (locator, source) {
         (
+            AttachmentSource::Whatsapp {
+                message_id,
+                media_id,
+                sha256,
+            },
+            SourceKind::Whatsapp { .. },
+        ) => {
+            if !crate::channel::whatsapp::valid_message_id(message_id)
+                || !crate::channel::whatsapp::valid_meta_id(media_id)
+                || sha256.len() != 64
+                || !sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err("invalid native WhatsApp media identity".into());
+            }
+        }
+        (
             AttachmentSource::LarkResource {
                 message_id,
                 resource_key,
@@ -436,3 +462,7 @@ fn json_pointer(value: &str) -> bool {
 #[cfg(test)]
 #[path = "attachment_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "attachment_whatsapp_tests.rs"]
+mod whatsapp_tests;

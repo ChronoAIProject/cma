@@ -805,6 +805,34 @@
         "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
         "oneOf": [
           {
+            "description": "Signed native WhatsApp media; temporary download URLs are never retained.",
+            "properties": {
+              "media_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "sha256": {
+                "description": "Canonical lowercase hexadecimal digest from the signed webhook.",
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "whatsapp"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "message_id",
+              "media_id",
+              "sha256",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "description": "Exact native Discord message attachment; resolved with current bot custody.",
             "properties": {
               "attachment_id": {
