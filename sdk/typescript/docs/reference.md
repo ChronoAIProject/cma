@@ -655,7 +655,31 @@ Disabled or threaded contexts retain their advertised fallback capabilities. Nat
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
-### Native WhatsApp image, PDF, audio and sticker replies
+### Separate native Lark / Feishu source
+
+`NativeLarkSource` requests `type: "native_lark"`, `separate_app: true`, an
+`identity` (`NativeLarkIdentity`) and an admission policy. The identity binds
+`region: "lark" | "feishu"`, `app_id`, `tenant_key` and `bot_open_id`.
+`NativeLarkCredentials` supplies the atomic `app_secret`, `encrypt_key` and
+`verification_token` object through `credentials.native_lark`; public source
+objects never contain those secrets. Discover the optional
+`native_lark_writes_enabled` and `native_lark_intake_enabled` authoring capability
+flags before setup. Both default off and require the operator's durable-routing
+prerequisites. Creation requires a stable canonical UUID v4 `record_id` and
+returns `endpoints.native_lark_webhook_url`.
+
+Use a separately provisioned app and its webhook; replacing an existing NyxID
+app's webhook would redirect its traffic. This source supports native text
+replies, retained recall notifications with unknown actors, and human reaction
+add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
+Targets retain the original conversation and consumer authority; these incoming
+notifications confer no outgoing delete/edit/reaction authority. Native media
+(including the WhatsApp video profile), cards/forms, thread history and incoming
+edit propagation are not advertised for this source. Live platform acceptance
+remains separate from local contract tests. See the repository's native Lark
+setup document and preserved incoming-event audit for provisioning and limits.
+
+### Native WhatsApp image, PDF, audio, sticker and video replies
 
 Discover `capabilities.native_media` before using `native_attachments`. Native
 WhatsApp has an independent default-off gate and supports JPEG/PNG `image`,
@@ -671,7 +695,7 @@ attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
 address validation. Matching MIME type and filename extension are required when
 provided; images must have 8-bit RGB/RGBA headers. Audio undergoes bounded
 container/codec checks without a runtime decoder; those checks do not certify
-complete payload decodability. Native video and other document formats remain unavailable. The original event fixes the recipient
+complete payload decodability. Other document formats remain unavailable. The original event fixes the recipient
 and quoted message; clients cannot provide a Meta media ID. Confirmed replies
 record exact target receipts, while uncertain/partial sends must not be retried
 automatically. Actual Meta/client acceptance remains separate from local tests.
@@ -684,6 +708,20 @@ text stays separate. Files undergo bounded container/frame checks without pixel
 decoding. The sticker message carries only the upload result ID. Unsupported
 native transports and all NyxID/initiated paths refuse this kind before any send;
 legacy capabilities omit the optional `sticker` object.
+
+The `video` kind accepts `video/mp4` (`.mp4`) or `video/3gpp` (`.3gp`), with
+captions. Optional `native_media.video` (`NativeVideoCapabilities`) declares
+`video_codec: "h264"`, `video_profile: "baseline"`, `audio_codec: "aac_lc"`,
+`max_audio_tracks: 1`, `max_width: 1920`, `max_height: 1080`, `max_frame_rate: 60`,
+`max_duration_ms: 600000`, `max_samples: 65536` across tracks,
+`progressive_only: true`, `max_slices_per_frame: 1`, and `fast_start_required: true`.
+The container must be self-contained, unencrypted and nonfragmented, with movie
+metadata before media data. A silent video is allowed. The deliberately bounded
+profile requires one SPS/PPS and I/P slice headers; it refuses B-frames, unsupported
+coding modes and overlapping/invalid sample ranges. These structural checks do not
+fully decode media or establish Meta/client acceptance. The message carries the
+upload ID and caption only. See the repository's native WhatsApp outbound-media
+document for the complete accepted syntax. Legacy discovery omits the optional `video` profile object.
 
 ### Approved WhatsApp templates
 

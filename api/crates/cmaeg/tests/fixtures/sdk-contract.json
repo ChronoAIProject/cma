@@ -790,6 +790,20 @@
           "max_frames": 128,
           "max_duration_ms": 10000,
           "min_frame_duration_ms": 8
+        },
+        "video": {
+          "audio_codec": "aac_lc",
+          "fast_start_required": true,
+          "max_audio_tracks": 1,
+          "max_duration_ms": 600000,
+          "max_frame_rate": 60,
+          "max_height": 1080,
+          "max_samples": 65536,
+          "max_slices_per_frame": 1,
+          "max_width": 1920,
+          "progressive_only": true,
+          "video_codec": "h264",
+          "video_profile": "baseline"
         }
       },
       "whatsapp_templates": true,
@@ -3197,6 +3211,20 @@
             "max_frames": 128,
             "max_duration_ms": 10000,
             "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
           }
         },
         "whatsapp_templates": true,
@@ -3356,6 +3384,20 @@
             "max_frames": 128,
             "max_duration_ms": 10000,
             "min_frame_duration_ms": 8
+          },
+          "video": {
+            "audio_codec": "aac_lc",
+            "fast_start_required": true,
+            "max_audio_tracks": 1,
+            "max_duration_ms": 600000,
+            "max_frame_rate": 60,
+            "max_height": 1080,
+            "max_samples": 65536,
+            "max_slices_per_frame": 1,
+            "max_width": 1920,
+            "progressive_only": true,
+            "video_codec": "h264",
+            "video_profile": "baseline"
           }
         },
         "whatsapp_templates": true,
@@ -5953,6 +5995,20 @@
         "max_frames": 128,
         "max_duration_ms": 10000,
         "min_frame_duration_ms": 8
+      },
+      "video": {
+        "audio_codec": "aac_lc",
+        "fast_start_required": true,
+        "max_audio_tracks": 1,
+        "max_duration_ms": 600000,
+        "max_frame_rate": 60,
+        "max_height": 1080,
+        "max_samples": 65536,
+        "max_slices_per_frame": 1,
+        "max_width": 1920,
+        "progressive_only": true,
+        "video_codec": "h264",
+        "video_profile": "baseline"
       }
     },
     {
@@ -5960,7 +6016,8 @@
         "image",
         "file",
         "audio",
-        "sticker"
+        "sticker",
+        "video"
       ],
       "max_attachments": 4,
       "max_inline_bytes": 65536,
@@ -5977,7 +6034,9 @@
         "audio/mpeg",
         "audio/mp4",
         "audio/ogg",
-        "image/webp"
+        "image/webp",
+        "video/mp4",
+        "video/3gpp"
       ],
       "max_total_bytes": 8388608,
       "max_image_bytes": 5000000,
@@ -5990,6 +6049,20 @@
         "max_frames": 128,
         "max_duration_ms": 10000,
         "min_frame_duration_ms": 8
+      },
+      "video": {
+        "audio_codec": "aac_lc",
+        "fast_start_required": true,
+        "max_audio_tracks": 1,
+        "max_duration_ms": 600000,
+        "max_frame_rate": 60,
+        "max_height": 1080,
+        "max_samples": 65536,
+        "max_slices_per_frame": 1,
+        "max_width": 1920,
+        "progressive_only": true,
+        "video_codec": "h264",
+        "video_profile": "baseline"
       }
     }
   ],
@@ -6644,7 +6717,7 @@
       "is_big": false,
       "reaction": [
         {
-          "emoji": "👍",
+          "emoji": "\ud83d\udc4d",
           "type": "emoji"
         }
       ]
@@ -6656,7 +6729,7 @@
   ],
   "TelegramReaction": [
     {
-      "emoji": "👍",
+      "emoji": "\ud83d\udc4d",
       "type": "emoji"
     },
     {
@@ -6824,6 +6897,22 @@
       "admission": {
         "type": "all"
       }
+    }
+  ],
+  "NativeVideoCapabilities": [
+    {
+      "audio_codec": "aac_lc",
+      "fast_start_required": true,
+      "max_audio_tracks": 1,
+      "max_duration_ms": 600000,
+      "max_frame_rate": 60,
+      "max_height": 1080,
+      "max_samples": 65536,
+      "max_slices_per_frame": 1,
+      "max_width": 1920,
+      "progressive_only": true,
+      "video_codec": "h264",
+      "video_profile": "baseline"
     }
   ]
 }
