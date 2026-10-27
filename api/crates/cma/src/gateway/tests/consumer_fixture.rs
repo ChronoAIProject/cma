@@ -111,6 +111,7 @@ impl ConsumerGateway {
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
             discord_thread_history: None,
+            complete_replies_enabled: false,
             routed_replies: None,
             telegram_effects_issuance_enabled: false,
             telegram_effects: None,

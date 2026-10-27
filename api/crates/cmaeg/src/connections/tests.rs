@@ -132,6 +132,7 @@ impl Fixture {
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = ToolsState {
             discord_thread_history: None,
+            complete_replies_enabled: false,
             resolver: management.resolver.clone(),
             keys: self.keys.clone(),
             providers,

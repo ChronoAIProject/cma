@@ -26,6 +26,10 @@ const RECEIPT_MAX_BYTES: usize = 4096;
 /// accommodates both with envelope headroom, independently of platform limits.
 /// Low-level `send` and `send_rich` do not impose this limit.
 pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// NyxID sends a complete ordinary reply's parts sequentially. Leave room for
+/// queueing/pacing inside the existing 20 s routed delivery window.
+pub(crate) const COMPLETE_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const COMPLETE_REPLY_TOOL_TIMEOUT: Duration = Duration::from_secs(18);
 
 /// Serialized before a sender commits or claims a single-use credential.
 pub(super) struct PreparedReply {
@@ -33,6 +37,7 @@ pub(super) struct PreparedReply {
     message_id: String,
     thread_reply: bool,
     native_media: bool,
+    complete_text: bool,
 }
 
 pub enum Credential<'a> {
@@ -304,6 +309,7 @@ impl RelayClient {
             message_id: message_id.clone(),
             thread_reply: *thread_reply,
             native_media: false,
+            complete_text: true,
         })
     }
     pub(super) async fn send_prepared(
@@ -317,6 +323,8 @@ impl RelayClient {
         };
         let timeout = if prepared.native_media {
             Duration::from_secs(60)
+        } else if self.complete_replies && prepared.complete_text {
+            COMPLETE_REPLY_TIMEOUT
         } else {
             self.timeout
         };

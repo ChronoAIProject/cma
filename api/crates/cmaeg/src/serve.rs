@@ -192,6 +192,7 @@ pub(crate) async fn serve(
             .then(|| crate::discord::DiscordRest::new().map(tools::DiscordThreadHistory::new))
             .transpose()?
             .map(std::sync::Arc::new),
+        complete_replies_enabled: complete_replies,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
