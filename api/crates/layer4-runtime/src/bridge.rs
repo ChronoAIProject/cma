@@ -80,6 +80,7 @@ pub(crate) struct Bridge {
     pending: Arc<Mutex<Pending>>,
     pub(crate) retained_output: Arc<OutputRetention>,
     output_mode: AtomicU8,
+    reader: tokio::task::AbortHandle,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
 }
@@ -131,7 +132,7 @@ impl Bridge {
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
         spawn_writer(stdin, input_rx);
-        spawn_reader(
+        let reader = spawn_reader(
             stdout,
             output.clone(),
             Arc::clone(&pending),
@@ -146,6 +147,7 @@ impl Bridge {
             pending,
             retained_output,
             output_mode: AtomicU8::new(OUTPUT_UNSELECTED),
+            reader,
             ended,
             writer_session_root,
         })
@@ -173,7 +175,10 @@ impl Bridge {
             Err(mode) => mode,
         };
         match mode {
-            OUTPUT_LEGACY => Ok(false),
+            OUTPUT_LEGACY => {
+                self.retained_output.select_legacy();
+                Ok(false)
+            }
             OUTPUT_ACKNOWLEDGED if requested => Ok(true),
             _ => Err(()),
         }
@@ -208,6 +213,15 @@ impl Bridge {
     }
 }
 
+impl Drop for Bridge {
+    fn drop(&mut self) {
+        // Attached readers keep the Bridge alive to drain final output after
+        // process exit. Once the supervisor and every attachment release it,
+        // a full journal has no possible consumer and its waiter must end.
+        self.reader.abort();
+    }
+}
+
 fn spawn_writer(mut stdin: tokio::process::ChildStdin, mut input: mpsc::Receiver<Vec<u8>>) {
     tokio::spawn(async move {
         while let Some(frame) = input.recv().await {
@@ -226,8 +240,8 @@ fn spawn_reader(
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
-) {
-    tokio::spawn(async move {
+) -> tokio::task::AbortHandle {
+    let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
         let mut chunk = [0_u8; 8 * 1024];
         let mut frame = Vec::new();
@@ -276,6 +290,7 @@ fn spawn_reader(
         }
         retained_output.finish().await;
     });
+    reader.abort_handle()
 }
 
 async fn publish(

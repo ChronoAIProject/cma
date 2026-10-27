@@ -67,35 +67,119 @@ async fn delayed_consumer_recovers_more_than_the_legacy_broadcast_capacity() {
 }
 
 #[tokio::test]
-async fn byte_overflow_is_permanent_and_does_not_evict_unacknowledged_prefix() {
+async fn full_byte_window_waits_without_losing_or_evicting_the_prefix() {
     let output = OutputRetention::default();
     let bytes = vec![0; BUFFER_BYTES - std::mem::size_of::<RetainedFrame>()];
     output.retain(&bytes).await;
-    output.retain(b"overflow").await;
-    assert_eq!(output.snapshot(0).await.err(), Some(1));
-    {
-        let journal = output.journal.lock().await;
-        assert_eq!(journal.bytes, BUFFER_BYTES);
-        assert_eq!(journal.held.len(), 1);
-    }
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), output.retain(b"next"))
+            .await
+            .is_err()
+    );
+    let held = output.snapshot(0).await.unwrap().frames;
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].bytes.as_ref(), bytes);
+    assert_eq!(output.journal.lock().await.bytes, BUFFER_BYTES);
+    // Cancellation of a blocked retain does not reserve a cursor or lose data.
     assert!(output.acknowledge(output.stream_id(), 1).await);
-    assert!(!output.acknowledge(output.stream_id(), 2).await);
-    output
-        .retain(b"still unavailable after freeing space")
-        .await;
-    assert_eq!(output.snapshot(0).await.err(), Some(2));
+    output.retain(b"next").await;
+    let held = output.snapshot(0).await.unwrap().frames;
+    assert_eq!(held[0].cursor, 2);
+    assert_eq!(held[0].bytes.as_ref(), b"next");
 }
 
 #[tokio::test]
-async fn empty_frames_cannot_exceed_the_retained_frame_count_bound() {
+async fn full_frame_window_waits_and_receiver_disconnect_preserves_replay() {
     let output = OutputRetention::default();
-    for _ in 0..=MAX_RETAINED_FRAMES {
+    for _ in 0..MAX_RETAINED_FRAMES {
         output.retain(b"").await;
     }
-    assert_eq!(output.snapshot(0).await.err(), Some(1));
-    let journal = output.journal.lock().await;
-    assert_eq!(journal.held.len(), MAX_RETAINED_FRAMES);
-    assert!(journal.bytes < BUFFER_BYTES);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), output.retain(b"last"))
+            .await
+            .is_err()
+    );
+    let attachment = output.subscribe();
+    drop(attachment);
+    assert_eq!(
+        output.snapshot(0).await.unwrap().frames.len(),
+        MAX_RETAINED_FRAMES
+    );
+    assert!(output.journal.lock().await.bytes < BUFFER_BYTES);
+    assert!(
+        output
+            .acknowledge(output.stream_id(), MAX_RETAINED_FRAMES as u64)
+            .await
+    );
+    output.retain(b"last").await;
+    assert_eq!(
+        output.snapshot(0).await.unwrap().frames[0].cursor,
+        MAX_RETAINED_FRAMES as u64 + 1
+    );
+}
+
+#[tokio::test]
+async fn slow_durable_consumer_drains_more_than_both_retention_limits_in_order() {
+    let output = Arc::new(OutputRetention::default());
+    let producer = output.clone();
+    let count = MAX_RETAINED_FRAMES as u64 + 37;
+    let sending = tokio::spawn(async move {
+        for cursor in 1..=count {
+            let mut frame = vec![0; 1024];
+            frame[..8].copy_from_slice(&cursor.to_be_bytes());
+            producer.retain(&frame).await;
+        }
+        producer.finish().await;
+    });
+    // Make the real producer fill the 8 MiB window before consuming anything.
+    tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    assert!(!sending.is_finished());
+    let mut cursor = 0;
+    let mut changed = output.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while cursor < count {
+            let snapshot = output.snapshot(cursor).await.unwrap();
+            if snapshot.frames.is_empty() {
+                changed.changed().await.unwrap();
+                continue;
+            }
+            for frame in snapshot.frames {
+                cursor += 1;
+                assert_eq!(frame.cursor, cursor);
+                assert_eq!(&frame.bytes[..8], &cursor.to_be_bytes());
+                // Durable consumer receipt, cumulative only through this prefix.
+                assert!(output.acknowledge(output.stream_id(), cursor).await);
+            }
+        }
+    })
+    .await
+    .unwrap();
+    sending.await.unwrap();
+    assert!(
+        output
+            .snapshot(cursor)
+            .await
+            .unwrap()
+            .finished_and_acknowledged
+    );
+}
+
+#[tokio::test]
+async fn choosing_legacy_output_releases_a_full_unselected_window() {
+    let output = OutputRetention::default();
+    output
+        .retain(&vec![
+            0;
+            BUFFER_BYTES - std::mem::size_of::<RetainedFrame>()
+        ])
+        .await;
+    output.select_legacy();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        output.retain(b"legacy frame"),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

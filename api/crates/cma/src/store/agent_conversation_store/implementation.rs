@@ -26,6 +26,17 @@ impl AgentConversationStore for MongoSandboxStore {
         checkpoint::load(self, id).await
     }
 
+    async fn commit_agent_reopen_update(
+        &self,
+        current: Agent,
+        previous: Option<AgentMessageCheckpoint>,
+        next: AgentMessageCheckpoint,
+        mutation: Option<AgentConversationMutation>,
+        guard: layer2_core::sandbox::store::AgentReopenGuard,
+    ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
+        checkpoint::commit(self, current, previous, next, mutation, Some(guard)).await
+    }
+
     async fn commit_agent_message_update(
         &self,
         current: Agent,
@@ -33,6 +44,6 @@ impl AgentConversationStore for MongoSandboxStore {
         next: AgentMessageCheckpoint,
         mutation: Option<AgentConversationMutation>,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
-        checkpoint::commit(self, current, previous, next, mutation).await
+        checkpoint::commit(self, current, previous, next, mutation, None).await
     }
 }

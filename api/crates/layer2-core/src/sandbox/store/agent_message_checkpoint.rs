@@ -99,6 +99,21 @@ impl AgentMessageCheckpoint {
     /// Other semantic writes may append control evidence while the same message is active.
     /// Carry its anchor in that transaction, but never carry a prefix into a different turn.
     pub fn advance(&self, current: &Agent, next: &Agent) -> Option<Self> {
+        // A lifecycle recorder may already own replacement-generation output.
+        // Publication carries that exact durable cursor into ordinary recording.
+        if current.conversation.runtime_generation != next.conversation.runtime_generation
+            && next.conversation.runtime_generation == Some(self.runtime_generation)
+            && current.conversation.conversation_id == next.conversation.conversation_id
+            && next.conversation.conversation_id.as_deref() == Some(&self.native_conversation_id)
+            && current.conversation.active_turn.is_none()
+            && next.conversation.active_turn.is_none()
+            && self.active_turn.is_none()
+            && self.assembly.is_empty()
+        {
+            let mut checkpoint = self.clone();
+            checkpoint.after_seq = next.conversation.last_seq;
+            return Some(checkpoint);
+        }
         if current.conversation.conversation_id != next.conversation.conversation_id
             || current.conversation.runtime_generation != next.conversation.runtime_generation
             || current.conversation.active_turn != next.conversation.active_turn
