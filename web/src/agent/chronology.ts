@@ -187,6 +187,21 @@ export function mergeTranscriptSnapshot(
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
+    turnTiming: Object.fromEntries(
+      [
+        ...new Set([
+          ...Object.keys(snapshot.turnTiming ?? {}),
+          ...Object.keys(current.turnTiming ?? {}),
+        ]),
+      ].map((runId) => [
+        runId,
+        {
+          ...(current.turnTiming?.[runId] ?? snapshot.turnTiming![runId]!),
+          finishedAt:
+            current.turnTiming?.[runId]?.finishedAt ?? snapshot.turnTiming?.[runId]?.finishedAt,
+        },
+      ]),
+    ),
     activeRunId,
     activeRunStartedAt:
       activeRunId === undefined

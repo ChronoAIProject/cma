@@ -22,10 +22,7 @@ impl MongoSandboxStore {
             }
         }
         if !baseline.iter().all(|service| services.contains(service))
-            || !authorization.authority_id.starts_with("personal:")
-            || authorization.authority_id.len() <= "personal:".len()
-            || authorization.authority_id.chars().any(char::is_control)
-            || authorization.policy_revision == 0
+            || !valid_owner_authorization(&authorization)
         {
             return Err(AgentAccessError::Invalid);
         }
@@ -120,7 +117,7 @@ impl MongoSandboxStore {
             }
             fence(self, &snapshot, session).await?;
             let now = layer2_core::now_rfc3339();
-            let record = AgentAccessRecord {
+            let mut record = AgentAccessRecord {
                 id,
                 requester,
                 proposal,
@@ -148,6 +145,7 @@ impl MongoSandboxStore {
                 revision: 1,
                 error: None,
             };
+            super::authority::renew_current_scope(self, sandbox, &mut record, session).await?;
             self.agent_access_requests
                 .insert_one(document(&record)?)
                 .session(session)

@@ -53,27 +53,49 @@ async fn ready(store: &InMemorySandboxStore) -> ProviderBinding {
 }
 
 #[test]
-fn binding_reconfiguration_preserves_only_compatible_immutable_environments() {
+fn metadata_reconfiguration_preserves_generation_and_never_schedules_cleanup() {
     let mut value = binding();
     value.state = BindingState::Ready;
     value.work = BindingWork::Idle;
-    let mut changed = value.profile.clone();
-    changed.profile_digest = format!("sha256:{}", "b".repeat(64));
-    changed.agent.system_prompt = "New instructions".into();
-    let compatible = value
-        .reconfigure(changed.clone(), value.key_sha256.clone(), NOW.into())
+    let mut metadata = value.profile.clone();
+    metadata.name = "Renamed binding".into();
+    metadata.profile_digest = format!("sha256:{}", "b".repeat(64));
+    let changed = value
+        .reconfigure(metadata, value.key_sha256.clone(), NOW.into())
         .unwrap();
-    assert_eq!(compatible.sandbox_id, value.sandbox_id);
-    assert_eq!(compatible.workspace_id, value.workspace_id);
-    assert_eq!(compatible.generation, 2);
-    assert!(!compatible.previous.as_ref().unwrap().retire_sandbox);
-    assert!(compatible
-        .reconfigure(changed.clone(), value.key_sha256.clone(), NOW.into())
-        .is_err());
-    for change in ["resources", "workspace", "key"] {
-        let mut profile = changed.clone();
-        let mut hash = value.key_sha256.clone();
-        match change {
+    assert_eq!(changed.sandbox_id, value.sandbox_id);
+    assert_eq!(changed.workspace_id, value.workspace_id);
+    assert_eq!(changed.generation, value.generation);
+    assert_eq!(changed.state, BindingState::Ready);
+    assert_eq!(changed.work, BindingWork::Idle);
+    assert!(changed.previous.is_none());
+    super::store::validate_binding_write(Some(&value), Some(value.revision), &changed).unwrap();
+
+    for field in [
+        "prompt",
+        "skills",
+        "services",
+        "resources",
+        "workspace",
+        "key",
+        "affinity",
+    ] {
+        let mut profile = value.profile.clone();
+        let mut key = value.key_sha256.clone();
+        match field {
+            "prompt" => profile.agent.system_prompt = "Updated instruction".into(),
+            "skills" => profile.agent.skills.push(crate::profiles::SkillRef {
+                source: crate::profiles::SkillSource::Ornn,
+                id: crate::SkillId::new("new-skill"),
+                version: Some("1.0".into()),
+            }),
+            "services" => profile
+                .environment
+                .as_mut()
+                .unwrap()
+                .sandbox
+                .nyxid_services
+                .push(crate::ServiceId::new("extra")),
             "resources" => profile.environment.as_mut().unwrap().sandbox.cpu_millis += 250,
             "workspace" => profile
                 .environment
@@ -82,12 +104,13 @@ fn binding_reconfiguration_preserves_only_compatible_immutable_environments() {
                 .workspace
                 .setup_commands
                 .push("setup-new".into()),
-            _ => hash = "c".repeat(64),
+            "affinity" => profile.session_affinity = SessionAffinity::SourceUser,
+            _ => key = "c".repeat(64),
         }
-        let replacement = value.reconfigure(profile, hash, NOW.into()).unwrap();
-        assert_ne!(replacement.sandbox_id, value.sandbox_id, "{change}");
-        assert_ne!(replacement.workspace_id, value.workspace_id, "{change}");
-        assert!(replacement.previous.unwrap().retire_sandbox);
+        assert!(
+            value.reconfigure(profile, key, NOW.into()).is_err(),
+            "{field}"
+        );
     }
 }
 

@@ -4688,7 +4688,8 @@
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
       "type": "telegram",
-      "message_events": false
+      "message_events": false,
+      "channel_posts": false
     },
     {
       "type": "discord",
@@ -4875,7 +4876,8 @@
       "bot_id": "12345678",
       "bot_username": "fixture_bot",
       "type": "telegram",
-      "message_events": false
+      "message_events": false,
+      "channel_posts": false
     },
     {
       "type": "discord",
