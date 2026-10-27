@@ -14,7 +14,7 @@ use serde::Serialize;
 use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
-    /// Reaction-only reference to the exact received native WhatsApp message.
+    /// Reaction-only reference to the exact received native Telegram, Discord or WhatsApp message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub received_message: Option<super::ReceivedMessageContext>,
     /// Explicitly requested current text context of the original native thread.
