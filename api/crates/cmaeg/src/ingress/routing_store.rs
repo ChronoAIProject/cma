@@ -26,3 +26,6 @@ mod security_tests;
 pub(crate) mod test_server;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod message_event_tests;
