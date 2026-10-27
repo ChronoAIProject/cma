@@ -133,7 +133,7 @@ impl TelegramClient {
         {
             return Err(Error::Rejected);
         }
-        let value = self.call(token, "setWebhook", &json!({"url":url,"secret_token":secret.as_str(),"allowed_updates":["message","edited_message","callback_query","message_reaction","message_reaction_count"],"drop_pending_updates":false})).await?;
+        let value = self.call(token, "setWebhook", &json!({"url":url,"secret_token":secret.as_str(),"allowed_updates":["message","edited_message","channel_post","edited_channel_post","callback_query","message_reaction","message_reaction_count"],"drop_pending_updates":false})).await?;
         if value != true {
             return Err(Error::Unconfirmed);
         }

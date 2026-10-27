@@ -30,6 +30,7 @@ fn setup(f: &Fixture) -> (Sender, Arc<ResolvedChannel>, EventRefPayload) {
     .unwrap();
     definition.sources = vec![Source::Telegram {
         message_events: false,
+        channel_posts: false,
         bot_id: "77".into(),
         bot_username: None,
         admission: AdmissionPolicy::All {},

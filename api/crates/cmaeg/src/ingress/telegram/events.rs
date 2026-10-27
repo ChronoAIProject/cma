@@ -60,6 +60,7 @@ fn event(raw: &Value) -> Result<(&str, &Value), Error> {
     }
     for name in [
         "edited_message",
+        "edited_channel_post",
         "message_reaction",
         "message_reaction_count",
     ] {
@@ -67,7 +68,6 @@ fn event(raw: &Value) -> Result<(&str, &Value), Error> {
             return Ok((name, value));
         }
     }
-    // Channel posts are not admitted originals today.
     Err(Error::Refused(Refusal::SystemSender))
 }
 fn address(value: &Value) -> Result<(String, String), Error> {
@@ -156,6 +156,7 @@ fn normalize(
     let Some(Source::Telegram {
         bot_username,
         admission,
+        channel_posts,
         ..
     }) = channel.definition.source_of(&original.activity.source)
     else {
@@ -164,12 +165,13 @@ fn normalize(
     // Original wire facts preserve mention/reply evidence even when an edit
     // removes addressing or a reaction contains no message text/thread at all.
     let wire = serde_json::from_slice(&original.source_body).map_err(|_| Error::Invalid)?;
-    let Outcome::Admitted(saved) = super::observe(
+    let Outcome::Admitted(saved) = super::observe_source(
         wire,
         bot,
         bot_username.as_deref(),
         media,
-        admission.native_bot_mentions(),
+        admission,
+        *channel_posts,
     )
     .map_err(|_| Error::Invalid)?
     else {
@@ -181,8 +183,8 @@ fn normalize(
     {
         return Err(Error::Invalid);
     }
-    let (actor, occurred_at, change) = if name == "edited_message" {
-        if value.get("sender_chat").is_some()
+    let (actor, occurred_at, change) = if matches!(name, "edited_message" | "edited_channel_post") {
+        if (name == "edited_message" && value.get("sender_chat").is_some())
             || value.get("business_connection_id").is_some()
             || value.get("guest_query_id").is_some()
         {
@@ -193,13 +195,31 @@ fn normalize(
         if edit_date < created || created_at != original.activity.occurred_at {
             return Err(Error::Invalid);
         }
-        let plain = json!({"update_id":raw["update_id"],"message":value});
-        let observed = match super::observe(
+        let channel_edit = name == "edited_channel_post";
+        if channel_edit
+            != (original.activity.conversation.kind
+                == cmaeg_core::activity::ConversationKind::Channel)
+        {
+            return Err(Error::Invalid);
+        }
+        let mut content = value.clone();
+        content
+            .as_object_mut()
+            .ok_or(Error::Invalid)?
+            .remove("edit_date");
+        let key = if channel_edit {
+            "channel_post"
+        } else {
+            "message"
+        };
+        let plain = json!({"update_id":raw["update_id"],key:content});
+        let observed = match super::observe_source(
             plain,
             bot,
             bot_username.as_deref(),
             media,
-            admission.native_bot_mentions(),
+            admission,
+            *channel_posts,
         )
         .map_err(|_| Error::Invalid)?
         {
@@ -231,18 +251,24 @@ fn normalize(
             .as_ref()
             .and_then(|raw| raw["message"]["chat"]["type"].as_str())
             .ok_or(Error::Invalid)?,
+        cmaeg_core::activity::ConversationKind::Channel => "channel",
         _ => return Err(Error::Refused(Refusal::SystemSender)),
     };
     if value["chat"]["type"] != chat_type {
         return Err(Error::Invalid);
     }
-    // Anonymous notifications have no human sender to authorize. The helper
-    // already required an open sender policy; original author/chat/group
-    // admission below remains authoritative and cannot be bypassed by counts.
+    // Anonymous reactors require open senders in reaction_facts. Always
+    // recheck the original author, using channel admission for channel posts.
     let actors = std::iter::once(&original.activity.actor)
         .chain((actor.kind != ActorKind::Unknown).then_some(&actor));
     for admitted_actor in actors {
-        admit(
+        let channel_actor = chat_type == "channel" && admitted_actor == &original.activity.actor;
+        let admit_actor = if channel_actor {
+            super::channel_posts::admit_channel
+        } else {
+            admit
+        };
+        admit_actor(
             admission,
             &AdmissionFacts {
                 receiving_bot_id: Some(bot),
@@ -250,7 +276,8 @@ fn normalize(
                 chat_id: &chat,
                 is_group: chat_type != "private",
                 is_bot_sender: admitted_actor.kind == ActorKind::Bot,
-                is_system: admitted_actor.kind != ActorKind::Human
+                is_system: !channel_actor
+                    && admitted_actor.kind != ActorKind::Human
                     && admitted_actor.kind != ActorKind::Bot,
                 mentioned: saved.facts.mentioned,
                 addressed: saved.facts.addressed(admission),
@@ -276,7 +303,7 @@ fn normalize(
                 specversion: "1.0".into(),
                 id,
                 source: format!("telegram:bot:{bot}"),
-                r#type: if name == "edited_message" {
+                r#type: if matches!(name, "edited_message" | "edited_channel_post") {
                     "cma.message.updated.v1"
                 } else {
                     "cma.message.reaction.updated.v1"
