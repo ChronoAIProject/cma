@@ -265,11 +265,12 @@ fn observe_callback(
     Ok(Observation::Message(RelayFacts {
         thread: None,
         event: None,
-        callback: Some(CallbackFacts {
+        callback: Some(Box::new(CallbackFacts {
             id,
             data,
             message_id,
-        }),
+            form: None,
+        })),
         conversation,
         thread_id,
         mentioned: Some(true),

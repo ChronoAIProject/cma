@@ -145,6 +145,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let native_discord_effects = config::native_discord_effects_from_env()?;
     let native_discord_threads = config::native_discord_thread_metadata_from_env()?;
     let lark_cards = config::lark_cards_from_env()?;
+    let lark_forms = config::lark_forms_from_env()?;
     let consumer_interactions = config::consumer_interactions_from_env()?;
     let whatsapp_interactions = config::whatsapp_interactions_from_env()?;
     let discord_interactions = config::discord_interactions_from_env()?;
@@ -161,6 +162,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         native_discord_effects,
         native_discord_threads,
         lark_cards,
+        lark_forms,
         whatsapp_templates,
         whatsapp_interactions,
         discord_interactions,

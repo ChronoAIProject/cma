@@ -225,7 +225,8 @@ applies with all media flags off.**
 | `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
-| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards or mixed native media; native forms have a separate default-off gate. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_FORMS_ENABLED` | boolean | `false` | Enables new native Lark/Feishu Form issuance after every serving and rollback reader supports optional form authority and persisted submitted results. Requires the native-card gate; named consumers also require the consumer-interaction gate. Off retains historical text-form rendering, while already-issued native form callbacks and edits remain active. Only exact `true`/`false` are accepted. See [native form rollout](#native-lark-and-feishu-form-rollout). |
 | `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED` | boolean | `false` | Issues native Telegram admission evidence and effect authority on newly confirmed bot-message references; advertises delete/reaction tools after all readers are upgraded. Exactly `true`/`false`. Disabling stops new issuance and discovery; previously issued references remain usable until their 24-hour expiry or authority revocation. Relay transports are unsupported. |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
@@ -2349,11 +2350,38 @@ callback contract does not retain the required audience. The same text behavior
 is retained for named consumers while their interaction gate is off. This choice
 is made before any durable card write or platform send; invalid context proofs
 and failures during a native send never trigger a second text send. Named consumers require the separate consumer-interaction gate
-and retain their original provider binding and conversation. Native forms are not
-advertised; their fields stay plain text. Image URLs in a card become an explicit
+and retain their original provider binding and conversation. Form fields stay
+plain text unless the separate native-form issuance gate is enabled. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
 handles. A malformed/lost edit receipt stays unknown, and an old revision remains
 fenced even if its replacement is not confirmed.
+
+## Native Lark and Feishu form rollout
+
+`CMAEG_LARK_FORMS_ENABLED` defaults to false, including in the checked-in
+manifest. Off preserves Form-only text replies and existing mixed-card
+`plain_text_form` rendering. Deploy compatible serving and rollback readers
+before enabling it: new records add optional form authority and consumed clicks
+add the complete canonical `submitted` map. Historical record bytes omit both.
+The distinct `clf1:` locator cannot be treated as an old button callback.
+
+The pinned NyxID adapter already passes native card JSON and authenticated form
+submission data. This is CMA implementation evidence, with no NyxID deployment
+or real-platform acceptance claimed. Before enabling the gate, obtain explicitly
+authorized Lark and Feishu checks for required/optional text, number, date and
+single-choice inputs; verify empty optional values, invalid submissions, restart
+between display and submit, exact redelivery, competing submits, source/provider
+revocation, and revision replacement. Confirm the provider receives typed
+`values.fields` under the original consumer and conversation.
+
+Turning issuance off preserves callbacks and replacements of already-issued
+native forms, including native-form replacements. Existing plain cards stay
+plain on edit and cannot gain form authority. Keep compatible readers and keys
+for the full retained 24-hour card lifetime; replacements do not renew expiry.
+Never use a blind resend after an uncertain delivery or edit receipt. The
+[native forms contract](CMAEG_Native_Lark_Forms.md) lists supported shapes, input
+bounds and canonical replay rules. Local tests do not establish regional live
+rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
 

@@ -69,6 +69,8 @@ impl WhatsappKind {
 pub struct LarkIdentity {
     pub platform: Platform,
     pub conversation: ConversationKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<super::lark_form_authority::FormAuthority>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Destination {
@@ -84,6 +86,9 @@ pub struct Click {
     /// Absent on historical clicks, buttons, single-selects and other transports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) selection: Option<Vec<usize>>,
+    /// Canonical whole-form result; absent on every pre-form click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) submitted: Option<super::lark_form::Submitted>,
     pub(super) occurred_at: String,
 }
 pub struct PreparedCard {
@@ -111,7 +116,7 @@ pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error>
     }
     let mut parts = value.split(':');
     let kind = parts.next();
-    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l" | "cd1")) {
+    if !matches!(kind, Some("ce1" | "cl1" | "clf1" | "cw1b" | "cw1l" | "cd1")) {
         return Err(Error::Denied);
     }
     let id =

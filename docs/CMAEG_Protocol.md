@@ -1001,7 +1001,8 @@ trusted platforms still refuse attachments.
 `buttons`, single/multi `choice`, `card` and `link` blocks. Eligible verified human
 contexts advertise `buttons:"native_card"`, `cards:"native_card"`, `edit:true`.
 The default is off, preserving numbered-text delivery. This does not enable
-threaded contexts, native forms, or cards mixed with native attachments.
+threaded contexts or cards mixed with native attachments. Native forms require
+the additional default-off form gate described below.
 Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED=true`. Controls use the documented [JSON 2.0 button](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/interactive-components/button)
 `behaviors` callback/open_url
 objects; display text uses `plain_text` and cannot inject mentions or card JSON.
@@ -1010,7 +1011,8 @@ providers update the card after each accepted toggle, as for Telegram controls.
 
 The callback verifier checks the signed raw header/event, operator open ID, chat,
 source platform and original message against NyxID's envelope. Only button values
-containing a CMA-issued `cl1:<record>:<revision>:<action>` locator are candidates;
+containing a CMA-issued `cl1:<record>:<revision>:<action>` locator are candidates
+for buttons and choices;
 no agent-supplied callback string, option value or form input becomes authority.
 The encrypted record binds actor, chat, platform, originating event, consumer,
 message receipt and current revision. Missing/unbound, expired, superseded,
@@ -1039,10 +1041,47 @@ serialized default-card records are unchanged.
 
 Cards allow at most 4,000 displayed text characters, 100 elements/actions and
 28 KiB serialized card JSON, with a 32 KiB relay request bound. Over-limit cards
-are refused without truncation. Native forms degrade to text; URL card images
-become links, with explicit `plain_text_form`/`image_link` rendering outcomes.
+are refused without truncation. With native forms disabled, form fields degrade
+to text; URL card images become links, with explicit
+`plain_text_form`/`image_link` rendering outcomes.
 This is a verified code/adapter contract; real platform sends require separate
 production acceptance evidence.
+
+#### Native Lark and Feishu forms
+
+`CMAEG_LARK_FORMS_ENABLED=true`, together with the native-card gate, enables one
+neutral `Form` with 1–12 fields: text, number, date and single-choice. Named
+consumers also require the consumer-interaction gate. The flag defaults to false:
+Form-only replies retain ordinary text, and forms mixed into existing cards
+retain `plain_text_form`. Existing Telegram and plain relay form-text edits keep
+their historical behavior. No neutral schema change is required.
+
+Native forms contain opaque field names and choice indices. Their distinct
+`clf1:<record>:<revision>:<block>` submit locator resolves only a saved native
+form. The signed raw callback and normalized envelope must agree on the submitted
+object, actor, chat, message and action. Text remains text; number strings become
+JSON numbers, dates become `YYYY-MM-DD`, and choices resolve to saved option IDs.
+Unknown names/options, invalid types, missing required fields and unsupported
+form shapes fail closed. Optional empty/null/omitted values are absent from the
+canonical result. Forms cannot mix independent Buttons/Choice blocks, native
+media, threads or published-agent audiences.
+
+The provider receives `InteractionResult` with both `block_id` and `action_id`
+equal to the authored Form ID, and `values.fields` keyed by authored field IDs:
+`{"fields":{"reason":"Ready","amount":12.5,"day":"2024-02-29","scope":"private-write"}}`.
+Existing result context metadata remains present. Buttons and choices retain
+`values.selected`. The complete canonical form result is persisted before
+provider dispatch. Exact retry retains that result, timestamp, original provider,
+consumer, conversation and partition across restart. A changed result or callback
+cannot consume the same revision; repeated CAS conflicts return retryable 503.
+Current actor, source-policy and provider authority still apply.
+
+Disabling new issuance leaves existing native callbacks and edits active using
+the saved authority. Historical plain form cards remain plain on edit and cannot
+accept a native form locator. Native replacements preserve the original expiry
+and fence the previous revision before the external edit. See
+[native form limits and callback recovery](CMAEG_Native_Lark_Forms.md) for exact
+bounds and the separately required Lark/Feishu platform acceptance checks.
 
 #### Lark and Feishu media
 

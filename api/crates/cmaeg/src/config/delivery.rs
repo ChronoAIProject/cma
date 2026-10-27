@@ -15,6 +15,7 @@ pub const CMAEG_DISCORD_INTERACTIONS_ENABLED: &str = "CMAEG_DISCORD_INTERACTIONS
 pub const CMAEG_DISCORD_MULTISELECT_ENABLED: &str = "CMAEG_DISCORD_MULTISELECT_ENABLED";
 pub const CMAEG_WHATSAPP_TEMPLATES_ENABLED: &str = "CMAEG_WHATSAPP_TEMPLATES_ENABLED";
 pub const CMAEG_LARK_CARDS_ENABLED: &str = "CMAEG_LARK_CARDS_ENABLED";
+pub const CMAEG_LARK_FORMS_ENABLED: &str = "CMAEG_LARK_FORMS_ENABLED";
 pub const CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED: &str = "CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED";
 pub const CMAEG_ACK_TEXT: &str = "CMAEG_ACK_TEXT";
 pub const CMAEG_HEARTBEAT_MS: &str = "CMAEG_HEARTBEAT_MS";
@@ -116,6 +117,9 @@ fn whatsapp_templates(value: Result<String, env::VarError>) -> Result<bool, Conf
 
 pub(crate) fn lark_cards_from_env() -> Result<bool, ConfigError> {
     lark_cards(env::var(CMAEG_LARK_CARDS_ENABLED))
+}
+pub(crate) fn lark_forms_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_LARK_FORMS_ENABLED)
 }
 pub(crate) fn telegram_message_effects_from_env() -> Result<bool, ConfigError> {
     telegram_effects(env::var(CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED))
