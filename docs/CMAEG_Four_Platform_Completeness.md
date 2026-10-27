@@ -176,14 +176,33 @@ and the [protocol](CMAEG_Protocol.md).
   `inbound.attachments`. CMA retains honest placeholders instead of inventing a
   download URL. The additive default-off `lark_resources` path instead uses the
   existing authorized NyxID bot-API proxy and independent receiving-bot evidence.
-  This is advanced explicit configuration, with no generic connection selector or
-  automatic grants and no live regional acceptance claim. See the
+  The owner connection selector offers eligible personal/shared connections with
+  verified regional endpoint evidence. Saved/manual bindings remain available;
+  selection grants no new access and makes no live regional acceptance claim. See the
   [binding contract](CMAEG_Protocol.md#opt-in-lark-and-feishu-embedded-resource-binding).
 - WhatsApp free-form replies remain subject to its 24-hour customer service
   window. Approved templates require provider approval and the matching relay
   contract; a CMA template flag does not grant either.
 
 ## Verification evidence and remaining acceptance
+
+Production verification on 27 October 2026 completed for candidate
+`f308d88f23754c2c55aef5a51372fd534c2a89d9`, built by the fully passing
+[CI run 40486174299](https://github.com/ChronoAIProject/cma/actions/runs/40486174299).
+Agent Manager, Event Gateway and Web converged before Discord multiselect and
+card-edit issuance were enabled. The checked-in manifest records those enabled
+values; their code defaults remain false. Lark forms and complete replies remain
+disabled. The Lark connection endpoint returned HTTP 200, but the test owner had
+no eligible connections, so actual connection selection remains unverified.
+
+An isolated production Custom channel verified invalid-signature rejection,
+completed ordinary and structured Form/multiselect replies, and Activity visible
+at 237 ms without creating another provider turn on reconnect. The first
+structured attempt timed out waiting for guarded approval and remains a failed
+delivery; separate explicitly approved events completed. Structured durations
+include approval time. These results establish Custom transport behavior, not
+native platform rendering, callback or media acceptance. The fixture and its
+temporary credential were subsequently retired through their public APIs.
 
 Local WebSocket and HTTP fixtures cover native ownership/resume quotas, source
 rotation, discovery/revocation, receipt-before-execution, immutable replay, media
