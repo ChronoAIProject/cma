@@ -79,6 +79,18 @@ impl DurableJournal {
             Ok(None) | Err(GatewayError::Protocol) => return Ok(()),
             Err(error) => return Err(error),
         };
+        self.persist_change_snapshot(authority, message, raw, change, original.retained_until)
+            .await
+    }
+    pub(super) async fn persist_change_snapshot(
+        &self,
+        authority: &Authority,
+        message: &str,
+        raw: &Value,
+        change: super::message_event::Snapshot,
+        expiry: i64,
+    ) -> Result<(), GatewayError> {
+        let now = (self.store.clock)() / 1000;
         let change_id = change.activity.event_id.to_string();
         let id = index_id(
             "discord-native-message-event-v1",
@@ -99,7 +111,6 @@ impl DurableJournal {
         }
         let payload_hash =
             hash_secret(std::str::from_utf8(&bytes).map_err(|_| GatewayError::Protocol)?);
-        let expiry = original.retained_until;
         let mut parts = Vec::new();
         for (index, chunk) in bytes.chunks(32 * 1024).enumerate() {
             let part = index_id(

@@ -26,6 +26,7 @@ pub(crate) mod discord_form_store;
 #[cfg(test)]
 mod discord_form_tests;
 pub(crate) mod discord_form_values;
+mod discord_receipts;
 #[cfg(test)]
 mod discord_tests;
 mod keyboard;

@@ -236,6 +236,9 @@ impl DurableJournal {
         {
             self.persist_message_event(&current, event).await?;
         }
+        if self.api.reactions && super::reactions::is_event(&event.name) {
+            self.persist_reaction(&current, checkpoint, event).await?;
+        }
         // Persisting an inbox record cannot advance the stream or launch work.
         // The checkpoint follows confirmed durable storage, under the same fence.
         self.current_authority().await?;

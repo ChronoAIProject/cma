@@ -102,6 +102,11 @@ impl Inbox {
     pub(super) fn id(&self) -> Result<String, GatewayError> {
         let (domain, identity) = match (self.kind.as_str(), &self.change_id) {
             ("discord_inbox_v1", None) => ("discord-native-message-v1", self.message_id.as_str()),
+            ("discord_reaction_pending_v1", Some(change))
+                if !change.is_empty() && change.len() <= 512 =>
+            {
+                ("discord-native-reaction-pending-v1", change.as_str())
+            }
             ("discord_message_event_inbox_v1", Some(change))
                 if !change.is_empty() && change.len() <= 512 =>
             {

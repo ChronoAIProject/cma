@@ -15,8 +15,12 @@ export function DiscordSourceFields({
   const intents = typeof value.intents === 'number' ? value.intents : 37377;
   const guilds = (intents & 512) !== 0;
   const direct = (intents & 4096) !== 0;
+  const reactions = (intents & (1024 | 8192)) !== 0;
   function intent(bits: number, enabled: boolean) {
-    onChange({ ...value, intents: (enabled ? intents | bits : intents & ~bits) | 32768 });
+    let next = (enabled ? intents | bits : intents & ~bits) | 32768;
+    next &= ~(1024 | 8192);
+    if (reactions) next |= ((next & 512) !== 0 ? 1024 : 0) | ((next & 4096) !== 0 ? 8192 : 0);
+    onChange({ ...value, intents: next });
   }
   return (
     <>
@@ -56,6 +60,27 @@ export function DiscordSourceFields({
           disabled={direct && !guilds}
           onChange={(enabled) => intent(4096, enabled)}
         />
+        {discovery.authoring?.native_discord_reactions_enabled === true || reactions ? (
+          <>
+            <Toggle
+              label="Receive reactions to retained messages"
+              value={reactions}
+              onChange={(enabled) =>
+                onChange({
+                  ...value,
+                  intents: enabled
+                    ? intents | (guilds ? 1024 : 0) | (direct ? 8192 : 0)
+                    : intents & ~(1024 | 8192),
+                })
+              }
+            />
+            <p className="channel-field-hint">
+              Reaction changes notify the original consumer. Applies to messages received or sent
+              after enabling this option; earlier messages and changed source credentials are
+              excluded.
+            </p>
+          </>
+        ) : null}
         {discovery.authoring?.native_discord_thread_history_enabled === true ||
         value.thread_history === true ? (
           <>

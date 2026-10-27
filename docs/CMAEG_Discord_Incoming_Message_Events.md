@@ -68,11 +68,75 @@ binary without the new `native_message_event_payload_v1` reader cannot safely
 replace serving readers while such admissions remain retained. The checked-in
 configuration remains off; this change does not alter live configuration.
 
-Reactions are **not included** in this Discord feature. They need explicit
-reaction Gateway intents and trustworthy actor facts for add/remove events;
-remove-all and remove-emoji payloads do not identify an actor. Outgoing message
-reactions and incoming reactions to CMA's own replies require their own confirmed
-receipt authority and are not implied by original incoming-message custody.
+## Native reaction opt-in
+
+The independent `CMAEG_DISCORD_REACTIONS_ENABLED=false` authoring/issuance gate
+allows an owner to select reaction intents in the native Discord source editor.
+The legacy `37377` intent mask remains unchanged. Guild reactions require
+`GUILD_MESSAGE_REACTIONS` (`1024`) with guild messages; direct reactions require
+`DIRECT_MESSAGE_REACTIONS` (`8192`) with direct messages. The public authoring
+capability is `native_discord_reactions_enabled`. An exact saved source can be
+retained with the gate off; new or changed reaction sources require it on.
+
+All four native dispatches are represented by
+`cma.message.reaction.updated.v1`: `MESSAGE_REACTION_ADD`,
+`MESSAGE_REACTION_REMOVE`, `MESSAGE_REACTION_REMOVE_ALL` and
+`MESSAGE_REACTION_REMOVE_EMOJI`. Data includes the affected `message_id`, original
+admission `original_event_id`, `target_kind`, `target_author`, `operation` and
+`representation: "delta"`. Emoji identity and supplied normal/burst reaction type
+are retained where relevant. The event does not claim a complete old or new set
+of reactions. Clear-emoji covers the platform's emoji-clear operation, without
+inventing a particular reaction type.
+
+Add/remove actors require Discord's actual guild member user object or a bounded
+read-only native user lookup for the payload's `user_id`. Bot/system reactions
+are refused, including this receiving bot. Sender/chat restrictions are checked
+against the current identical source. Mention/reply addressing comes solely from
+the original retained message, and never selects new consumers. Clear-all and
+clear-emoji have an explicitly unknown actor because Discord provides none;
+these are affected-message notifications, not a claim about an authorized sender.
+None of these dispatches supplies a producer timestamp. CloudEvent `time` is
+absent; Activity `occurred_at` is the immutable first durable intake time.
+
+Reaction delivery identity hashes the native source record, bot, exact source
+revision, fenced Gateway session and dispatch sequence. Replayed dispatches retain
+one immutable payload; conflicting same-delivery payloads are refused. A later
+add/remove/add sequence produces three events. A new Gateway session never
+collides with an earlier session's sequence. Raw session identifiers are not
+exposed to providers or logs.
+
+Reactions to an admitted inbound message retain all its original consumers.
+Reactions to CMA's own reply require a sealed `discord_confirmed_outbound_v1`
+receipt for the exact bot, native channel and Discord-returned message ID. Each
+confirmed text/media part and confirmed controls/form reply gets its own receipt.
+The receipt pins the original admission and exactly the sending consumer,
+provider, partition, conversation and source revision. The notification reaches
+that one consumer even if the original message was broadcast. No current routing
+rule is reevaluated. A confirmed send with an unconfirmed receipt is reported as
+unknown and is never resent to repair custody. Replies to prior notifications
+can also be reaction targets, provided their original admitted plan is retained.
+
+The original inbox/plan or outbound receipt must remain within its seven-day
+retention; reaction dispatch retains the existing 30-minute admission window.
+Strict source revision checks deliberately exclude messages captured before
+reaction opt-in or before changing a source/credential. Known expired or changed
+custody is refused. External bot messages, unconfirmed sends and messages for which no exact receipt was
+retained wait as `discord_reaction_pending_v1` raw inbox custody for at most 60
+seconds. The Gateway checkpoint advances after that durable custody, without
+waiting for target confirmation. The inbox worker retries with persisted 1, 2, 4
+then 8-second backoff. Once the exact confirmed receipt appears, the retained
+reaction produces one notification in the original consumer conversation with
+its original intake time. It does not acquire replacement target authority.
+Unresolved external or missing targets terminate with the explicit durable
+`discord_reaction_target_confirmation_timed_out` refusal. Changed source custody
+is `discord_reaction_target_authority_changed`. Unknown original messages are
+never fetched and reinterpreted as a newly admitted message.
+
+Enable only after compatible inbox, routing and confirmed-receipt readers are
+available. Disabling issuance keeps retained inboxes dispatchable. Rollback to a
+reader that predates these retained shapes is unsupported until their work has
+settled and retention has elapsed. No live flag or Discord source was changed by
+this implementation.
 
 A missing old inbox, expired original custody, messages that predate native
 capture, unsupported system messages and edits after source revocation do not
@@ -96,7 +160,11 @@ ordering, source revocation, bounded expiry, same-revision conflicts, unknown
 actors, attachment patches, exact thread retention and issuance-gate behavior.
 A composed local provider/Discord REST fixture verifies ordinary input plus edit
 and delete produce one provider request each in the original conversation and
-reply channel. Real Discord client delivery has not been exercised by this
+reply channel. Reaction fixtures cover every confirmed split text/media reply,
+consumer narrowing, failed receipt persistence, bounded unknown-target timeout,
+and a reaction arriving before the outbound receipt. The composed fixture then
+reacts to the bot's reaction reply, proving the retained Event chain preserves the
+original provider conversation and native thread without duplicate work. Real Discord client delivery has not been exercised by this
 change; no external messages or deployment are part of its verification.
 
 ## Presentation integration
