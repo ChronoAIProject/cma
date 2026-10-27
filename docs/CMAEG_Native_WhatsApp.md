@@ -1,4 +1,4 @@
-# Native WhatsApp text and incoming reactions
+# Native WhatsApp messages and incoming reactions
 
 The native `whatsapp` source receives original Meta Cloud API webhooks directly.
 It is separate from `nyxid_relay` with `platform: "whatsapp"`; existing relay
@@ -6,10 +6,10 @@ definitions, callbacks and sends keep their existing behavior. The pinned relay
 currently discards reactions before CMA receives them; see
 [the upstream audit](CMAEG_WhatsApp_Incoming_Reactions.md).
 
-This implementation supports private text messages, incoming reaction updates
+This implementation supports private text messages, gated [inbound media](CMAEG_Native_WhatsApp_Media.md), incoming reaction updates
 on retained incoming messages and confirmed CMA text replies, and actual native
 text replies through Graph API `v25.0`. It does not establish complete WhatsApp
-support. Native media ingress/delivery, approved templates, interactive controls,
+support. Native media delivery, approved templates, interactive controls,
 outbound reactions/edits, structured source setup UI and connected Meta client
 acceptance remain required follow-ups. No production rollout, Meta app setting
 change, or external send is part of this implementation.
