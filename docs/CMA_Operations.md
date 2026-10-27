@@ -683,6 +683,12 @@ build layer; final images contain neither compiler nor cache. Cached artifacts
 are not acceptance evidence. Build, identity, runtime and vulnerability gates
 apply to the resulting immutable image on every delivery.
 
+API CI explicitly restores and saves its two Cargo cache mounts across hosted
+runners, extracting them before the required BuildKit prune. See
+[`API_Cargo_Cache.md`](API_Cargo_Cache.md) for cache identity, branch isolation,
+bounds and the manual fresh-builder validation. Ordinary GHA layer export alone
+does not persist these mutable mounts; the first compatible run remains cold.
+
 CI retains each tested native API, web and runtime image for one day after a
 successful component job on `develop` pushes and pull requests from this same
 repository. Export runs after the vulnerability scan and, for runtime, the
