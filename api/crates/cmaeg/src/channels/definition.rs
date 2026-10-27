@@ -439,6 +439,14 @@ pub(crate) mod fixture {
         definition.secrets.provider_credential = Some(Secret::new(agent_key));
     }
 
+    /// Change only the stored serving credential for rotation/revocation fixtures.
+    pub(crate) fn replace_default_credential(
+        definition: &mut ChannelDefinition,
+        credential: Option<&str>,
+    ) {
+        definition.secrets.provider_credential = credential.map(Secret::new);
+    }
+
     /// Model a stored binding replacement to test revocation of old authority.
     pub(crate) fn replace_default_binding(
         definition: &mut ChannelDefinition,
