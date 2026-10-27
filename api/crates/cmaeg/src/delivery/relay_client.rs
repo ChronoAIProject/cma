@@ -113,6 +113,7 @@ pub struct RelayClient {
     timeout: Duration,
     complete_replies: bool,
     native_media: bool,
+    native_whatsapp_outbound_media: bool,
     text_edits: bool,
     native_discord_edits: bool,
     native_discord_effects: bool,
@@ -139,6 +140,14 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    pub fn with_native_whatsapp_outbound_media(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_outbound_media = enabled;
+        self
+    }
+    pub(crate) fn native_whatsapp_outbound_media_enabled(&self) -> bool {
+        self.native_whatsapp_outbound_media
+    }
+
     /// Gate named-consumer cards until all readers support retained owner bindings.
     pub fn with_consumer_interactions(mut self, enabled: bool) -> Self {
         self.consumer_interactions = enabled;
@@ -235,6 +244,7 @@ impl RelayClient {
             timeout,
             complete_replies: false,
             native_media: false,
+            native_whatsapp_outbound_media: false,
             text_edits: false,
             native_discord_edits: false,
             native_discord_effects: false,

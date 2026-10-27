@@ -224,6 +224,7 @@ impl App {
             lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
+            native_whatsapp_outbound_media_enabled: false,
             native_discord_edits_enabled: false,
             discord_effects_issuance_enabled: false,
             discord_effects: None,

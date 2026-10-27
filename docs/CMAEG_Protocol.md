@@ -2975,6 +2975,28 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 `delivery.outcome: "unsupported"` before any platform send. The field does not
 enable a new native connection.
 
+Native WhatsApp advertises a separate bounded subset only when
+`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file"]`,
+`mime_types: ["image/jpeg", "image/png", "application/pdf"]`,
+`max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
+These four optional capability fields refine the existing limits; they are absent
+on transports that do not declare them. Shared captions remain limited to 1024
+UTF-8 bytes. Images require 8-bit RGB/RGBA headers; JPEG is limited to baseline or
+progressive three-component images. Native audio/video/stickers and other document
+formats remain unsupported. Public HTTPS sources use the existing pinned public
+address fetcher without Meta credentials, redirects or local-file access; inline
+sources retain the 65536-byte aggregate limit. Every attachment is prepared before
+any text/upload is sent. A native upload returns the sole media ID accepted by the
+following send, and both effects recheck the routed source/credential revision.
+Native text and media sends preserve the sealed phone, recipient and quote target.
+Every confirmed message requires an exact recipient/`wamid` response and durable
+receipt storage. Unknown acceptance, partial delivery or receipt-storage loss
+stops the batch without automatic retry. Uploads may remain at Meta after a stopped
+batch, subject to Meta retention. The path grants no editable message reference,
+new recipient, caller-supplied media ID, template or interactive-control authority.
+See [native outbound media](CMAEG_Native_WhatsApp_Outbound_Media.md) for limits and
+local verification scope.
+
 Platform presentation remains adapter-specific. NyxID's Lark/Feishu adapter
 uploads images as image messages and the other kinds, including audio and video,
 as downloadable file messages. Accepting those media kinds does not promise an
@@ -3001,7 +3023,7 @@ are accepted. Sources are public HTTPS URLs up to 8192 bytes, or
 decoded inline data is at most 65536 bytes across the request. The existing
 128 KiB tool request limit still applies to text, blocks, media and JSON together.
 Relay URL downloads use NyxID's configured byte limit; clients must not assume
-that every deployment permits the maximum. Native Telegram and Discord prepare
+that every deployment permits the maximum. Native Telegram, Discord and gated native WhatsApp prepare
 all attachments under a shared 30-second deadline and an aggregate 8 MiB cap;
 inline bytes count toward that cap. Filename and MIME type are optional and
 at most 255 bytes; filenames are a single component, MIME types have no parameters.
