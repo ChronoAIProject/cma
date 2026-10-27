@@ -1,6 +1,7 @@
 import {
   modeUnavailable,
   nativeDiscordUnavailable,
+  nativeLarkUnavailable,
   nativeWhatsappUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
@@ -21,8 +22,36 @@ export function validateRelayAuthoring(
   credentials: Fields = {},
 ) {
   const oldSources = records(previous?.sources);
+  if (records(next.sources).filter((source) => source.type === 'native_lark').length > 1)
+    throw new Error('A channel can have only one direct Lark / Feishu producer.');
   for (const source of records(next.sources)) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
+    if (source.type === 'native_lark') {
+      const saved = oldSources.some((old) => old.type === 'native_lark');
+      const replacement = credentialsPatch(credentials, false)?.native_lark;
+      const reason = nativeLarkUnavailable(discovery, !saved);
+      if (reason && (!unchanged || replacement))
+        throw new Error(`${reason} Your draft has been retained.`);
+      if (!saved && !replacement) throw new Error('Enter all three Lark / Feishu credentials.');
+      const identity = object(source.identity);
+      const safeId = (value: unknown) => /^[A-Za-z0-9_-]{1,128}$/.test(text(value));
+      if (
+        !['lark', 'feishu'].includes(text(identity.region)) ||
+        !['app_id', 'tenant_key', 'bot_open_id'].every((key) => safeId(identity[key])) ||
+        !text(identity.app_id).startsWith('cli_') ||
+        !text(identity.bot_open_id).startsWith('ou_')
+      )
+        throw new Error(
+          'Enter the exact Lark / Feishu region, app ID (cli_), tenant key and bot open ID (ou_).',
+        );
+      if (source.separate_app !== true)
+        throw new Error('Confirm that this is a separate app with its own webhook.');
+      if (object(source.admission).bot_messages === 'native_mentions')
+        throw new Error('Direct Lark / Feishu receives human messages only.');
+      if (object(next.reply).thread_contract != null)
+        throw new Error('Direct Lark / Feishu does not support native thread following.');
+      continue;
+    }
     if (source.type === 'whatsapp') {
       const saved = oldSources.some((old) => old.type === 'whatsapp');
       const replacement = credentialsPatch(credentials, false)?.whatsapp;
