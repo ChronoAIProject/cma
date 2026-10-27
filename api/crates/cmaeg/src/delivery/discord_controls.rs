@@ -20,8 +20,11 @@ impl Sender {
         ctx: &SendContext<'_>,
         event: &EventRefPayload,
         message: &OutboundMessage,
+        context: Option<crate::providers::EventContextSnapshot>,
     ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
+        let form = self.relay.discord_forms_enabled()
+            && interactions::discord_form::schema(message).is_ok();
         if interactions::discord::multiselect_requested(message)
             && !self.relay.discord_multiselect_enabled()
         {
@@ -42,13 +45,18 @@ impl Sender {
         if event.consumer.is_some() && !self.relay.consumer_interactions_enabled() {
             return (unsupported(), effects);
         }
-        let Ok(context) = store.event_context(ctx.channel, event).await else {
-            return (unsupported(), effects);
+        let context = match context {
+            Some(context) => context,
+            None => match store.event_context(ctx.channel, event).await {
+                Ok(context) => context,
+                Err(_) => return (unsupported(), effects),
+            },
         };
         if !interactions::discord::eligible(ctx.channel, event, &context.activity)
             || (message.thread_reply && context.activity.conversation.thread_id.is_none())
-            || interactions::discord::render(message, "00000000000000000000000000000000", 1)
-                .is_err()
+            || (!form
+                && interactions::discord::render(message, "00000000000000000000000000000000", 1)
+                    .is_err())
         {
             return (unsupported(), effects);
         }
@@ -56,7 +64,10 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        if form {
+            interactions::discord_form::report(message, &mut rendering);
+        }
         if parts.len() != 1 {
             return (unsupported(), effects);
         }
@@ -90,10 +101,16 @@ impl Sender {
             Ok(thread) => thread,
             Err(error) => return (refused(rendering, super::discord::outcome(error)), effects),
         };
-        let Ok(mut card) = store
-            .prepare_with_discord_thread(ctx.channel, event, message, context, thread)
-            .await
-        else {
+        let prepared = if form {
+            store
+                .prepare_discord_form(ctx.channel, event, message, context, thread)
+                .await
+        } else {
+            store
+                .prepare_with_discord_thread(ctx.channel, event, message, context, thread)
+                .await
+        };
+        let Ok(mut card) = prepared else {
             return (rejected("interaction_state_unavailable"), effects);
         };
         let Some(mut slot) = self.pacing.acquire(&route).await else {
@@ -154,4 +171,14 @@ impl Sender {
             }
         }
     }
+}
+
+/// Decide representational eligibility before native form state or platform I/O.
+pub(super) fn form_eligible(message: &OutboundMessage) -> bool {
+    interactions::discord_form::schema(message).is_ok()
+        && RelayText
+            .render(message, &Capabilities::native_discord())
+            .0
+            .len()
+            == 1
 }
