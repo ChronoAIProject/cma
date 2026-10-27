@@ -32,7 +32,20 @@ export interface RelayAuthoringCapabilities {
 export interface RelayDiscovery {
   readonly status: 'loading' | 'ready' | 'legacy' | 'failed';
   readonly authoring?: RelayAuthoringCapabilities;
+  readonly agentTools?: readonly AgentToolCapability[];
   readonly retry?: () => void;
+}
+export interface AgentToolCapability {
+  readonly name: string;
+  readonly description: string;
+  readonly read_only: boolean;
+  readonly destructive: boolean;
+  readonly idempotent: boolean;
+  readonly open_world: boolean;
+}
+interface CapabilityView {
+  readonly relay_authoring?: RelayAuthoringCapabilities | null;
+  readonly agent_tools?: readonly AgentToolCapability[] | null;
 }
 export const RelayCapabilitiesContext = createContext<RelayDiscovery>({ status: 'legacy' });
 export const useRelayCapabilities = () => useContext(RelayCapabilitiesContext);
@@ -47,8 +60,7 @@ export function RelayCapabilitiesProvider({
 }) {
   const [discovery, setDiscovery] = useState<RelayDiscovery>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
-  const pending =
-    useRef<Promise<{ relay_authoring?: RelayAuthoringCapabilities | null }>>(undefined);
+  const pending = useRef<Promise<CapabilityView>>(undefined);
   const deniedRef = useRef(denied);
   useEffect(() => {
     deniedRef.current = denied;
@@ -59,11 +71,11 @@ export function RelayCapabilitiesProvider({
     void pending.current.then(
       (value) => {
         if (active)
-          setDiscovery(
-            value.relay_authoring
-              ? { status: 'ready', authoring: value.relay_authoring }
-              : { status: 'legacy' },
-          );
+          setDiscovery({
+            status: value.relay_authoring ? 'ready' : 'legacy',
+            authoring: value.relay_authoring ?? undefined,
+            agentTools: value.agent_tools ?? undefined,
+          });
       },
       (error: unknown) => {
         if (!active) return;

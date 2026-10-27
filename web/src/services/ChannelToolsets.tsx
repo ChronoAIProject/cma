@@ -1,82 +1,67 @@
 import type { Channel } from './ChannelEditor';
 import { channelNodes, consumerConfig, list, object } from './channelTopology';
 import { Section } from './channelForm/Fields';
+import { useRelayCapabilities, type AgentToolCapability } from './RelayCapabilities';
+import { Button } from '../ui/Button';
+import { Presence } from '../ui/Presence';
 
-const core = [
-  [
-    'readEventContext',
-    'Read the incoming event',
-    'Read the sender, conversation and event details, including the delivery features available for this event.',
-  ],
-  [
-    'replyToEvent',
-    'Reply to the sender',
-    'Send a response using the event’s configured reply destination.',
-  ],
-  [
-    'updateMessage',
-    'Edit a sent message',
-    'Update a confirmed message when that platform and message support editing.',
-  ],
-  [
-    'sendTyping',
-    'Show a typing indicator',
-    'Let the sender know the agent is working, where the delivery platform supports it.',
-  ],
-] as const;
-const optional = [
-  [
-    'readEventAttachment',
-    'Read received files',
-    'Images, documents and transcripts from the event. Requires media support and a compatible agent binding.',
-  ],
-  [
-    'readMessageCapabilities',
-    'Check message actions',
-    'Discover whether a confirmed message can be deleted or receive a reaction. Requires message effects to be enabled.',
-  ],
-  [
-    'deleteMessage',
-    'Delete a sent message',
-    'Remove an eligible Telegram or Discord bot message. Platform permissions and age limits apply.',
-  ],
-  [
-    'setMessageReaction',
-    'React to a sent message',
-    'Set or clear the bot’s reaction on an eligible Telegram or Discord message. Requires message effects.',
-  ],
-] as const;
-function Tools({ items }: { readonly items: readonly (readonly [string, string, string])[] }) {
+const labels: Readonly<Record<string, string>> = {
+  readEventContext: 'Read the incoming event',
+  replyToEvent: 'Reply to the sender',
+  updateMessage: 'Edit a sent message',
+  sendTyping: 'Show a typing indicator',
+  readEventAttachment: 'Read received files',
+  readMessageCapabilities: 'Check message actions',
+  deleteMessage: 'Delete a sent message',
+  setMessageReaction: 'React to a sent message',
+};
+function Tools({ items }: { readonly items: readonly AgentToolCapability[] }) {
   return (
     <ul className="channel-tools-list">
-      {items.map(([name, label, detail]) => (
-        <li key={name}>
-          <div>
-            <strong>{label}</strong>
-            <code>{name}</code>
-          </div>
-          <p>{detail}</p>
-        </li>
+      {items.map((tool) => (
+        <Presence key={tool.name}>
+          <li>
+            <div>
+              {Object.hasOwn(labels, tool.name) ? <strong>{labels[tool.name]}</strong> : null}
+              <code>{tool.name}</code>
+            </div>
+            <p>{tool.description}</p>
+            <p>
+              {tool.read_only ? 'Read only' : 'Can make changes'}
+              {tool.destructive ? ' · May remove or replace data' : ''}
+            </p>
+          </li>
+        </Presence>
       ))}
     </ul>
   );
 }
-/** Describe real gateway tools without claiming an event or agent supports every operation. */
+/** Read the shared catalog without inferring channel permissions or agent installation. */
 export function ChannelToolsets({ channel }: { readonly channel: Channel }) {
+  const discovery = useRelayCapabilities();
   const { consumers } = channelNodes(channel);
   return (
     <>
       <Section
         title="Event tools"
-        description="The gateway offers these tools to channel consumers. Each call needs the channel’s authorized agent key and a valid event or message reference."
+        description="These tools are advertised by the gateway. Each call still checks authorization and platform support; this list does not confirm installation in an agent."
       >
-        <Tools items={core} />
-      </Section>
-      <Section
-        title="Optional tools"
-        description="These are discovered by the agent when enabled. This channel’s saved configuration alone does not confirm platform support or installation in an existing agent."
-      >
-        <Tools items={optional} />
+        {discovery.agentTools?.length ? (
+          <Tools items={discovery.agentTools} />
+        ) : (
+          <p className="channel-field-hint" role="status">
+            {discovery.agentTools
+              ? 'This gateway advertises no agent tools.'
+              : discovery.status === 'loading'
+                ? 'Checking available agent tools…'
+                : discovery.status === 'failed'
+                  ? 'Agent tool availability could not be loaded.'
+                  : 'Tool availability is not reported by this gateway.'}
+            {discovery.status === 'failed' && discovery.retry ? (
+              <Button onClick={discovery.retry}>Retry capability check</Button>
+            ) : null}
+          </p>
+        )}
       </Section>
       <Section
         title="Connected agents"
