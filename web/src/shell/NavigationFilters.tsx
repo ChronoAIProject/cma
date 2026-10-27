@@ -2,6 +2,7 @@ import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
 import { IconPersonalizationOutline16 } from '../ui/icons';
+import { NavigationViews } from './NavigationViews';
 import { statusLabel } from '../vocabulary/status';
 export type NavigationView = 'agent' | 'sandbox';
 export const navigationStatuses = (view: NavigationView) => [
@@ -58,18 +59,14 @@ export function NavigationFilters({
   return (
     <div className="navigation-filters">
       <div className="navigation-filters__bar">
-        <div className="navigation-filters__views" role="group" aria-label="Navigation view">
-          {(['agent', 'sandbox'] as const).map((value) => (
-            <button
-              type="button"
-              key={value}
-              aria-pressed={view === value}
-              onClick={() => onView(value)}
-            >
-              {value === 'agent' ? 'Agents' : 'Sandboxes'}
-            </button>
-          ))}
-        </div>
+        <NavigationViews
+          value={view}
+          options={[
+            { value: 'agent', label: 'Agents' },
+            { value: 'sandbox', label: 'Sandboxes' },
+          ]}
+          onChange={onView}
+        />
         <button
           type="button"
           className="navigation-filters__toggle"
