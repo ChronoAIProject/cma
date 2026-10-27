@@ -20,7 +20,7 @@ external platform send is authorized by this review.
 | --- | --- | --- | --- | --- |
 | Ordinary ingress | Native webhook and authenticated relay; private/group admission | Raw-verified relay for private conversations; separate native signed-webhook private intake and independently gated owner-selected existing groups | Verified relay private/group text and rich-post text; separate default-off native app source with durable text intake and native text replies | Native authenticated Gateway, owned supervision, durable inbox and routed execution; bounded source discovery and self-service creation. Relay slash commands are also supported |
 | Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts; native retrieval uses authenticated metadata and the signed media digest | Relay standalone media and opt-in exact-source rich-post resources; independently gated native image/file/audio/video and rich-post image/video retrieval, bound to the original regional app and message | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
-| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Default-off native JPEG/PNG, PDF and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; separate native app source is text-only | Native multipart REST uploads; gated relay uploads |
+| Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Default-off native JPEG/PNG, PDF and bounded AAC/AMR/MP3/M4A/mono Opus Ogg audio plus static/animated WebP stickers and bounded Baseline H.264 MP4/3GPP video; gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads; independently gated native JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4 replies | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages; a separate default-off gate adds effects-only references for one individual native upload. Subject to permissions, age and reaction limits | No CMA relay operation | Separate opt-in CMA adapter through the existing NyxID bot-service proxy: exact confirmed text/cards, own retained reaction ID, durable uncertainty fences; live acceptance unverified | Gated native effects on confirmed single-part bot text/link replies; separately gated effects-only uploads contained in one exact native message. Durable idempotency and per-message serialization; no arbitrary message IDs or relay effects |
@@ -76,11 +76,14 @@ uses its own regional app, tenant, bot, encrypted credentials and webhook. It
 supports durable text admission, native text replies and retained recall/human
 reaction notifications, with source/credential revocation before execution and
 sending. Its independent [inbound media gate](CMAEG_Native_Lark_Media.md) adds
-image/file/audio/video and exact rich-post image/video resource reads. The
-existing relay's webhook and capabilities remain independent. This source does
-not advertise native outbound media, cards/forms, outgoing message effects,
-thread history or incoming edits. Its local encrypted-callback, resource-read
-and regional API tests do not establish live permission, subscription or client acceptance. The
+image/file/audio/video and exact rich-post image/video resource reads. Its
+independent default-off [outbound media gate](CMAEG_Native_Lark_Outbound_Media.md)
+adds JPEG/PNG, PDF/UTF-8 text, mono Opus Ogg and bounded Baseline H.264 MP4
+replies with regional bot custody checks and durable delivery uncertainty fences.
+The existing relay's webhook and capabilities remain independent. This source
+does not advertise native cards/forms, outgoing message effects, thread history
+or incoming edits. Its local encrypted-callback, resource-read, upload and regional
+API tests do not establish live permission, subscription or client acceptance. The
 [original gap audit](CMAEG_Lark_Incoming_Message_Events.md) remains the record of
 the pinned relay limitations and the separate-app provisioning constraint.
 
