@@ -3,6 +3,10 @@
 Pinned NyxID: `2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`.
 Pinned official Lark SDK: `larksuite/oapi-sdk-go` `db9f52d0a88e3f5e4ed81bb34d71a28e3f5608fa`.
 
+This document covers effects on confirmed outbound messages. Incoming recall and
+reaction events are filtered by the pinned relay; see the separate
+[incoming-event contract audit and native-source plan](CMAEG_Lark_Incoming_Message_Events.md).
+
 NyxID `backend/src/routes.rs:133` registers ANY `/api/v1/proxy/{service_id}/{*path}`. `backend/src/handlers/proxy.rs:819` requires REST proxy access; lines 897–981 enforce scope/operation preflight and exact `_nyxid_via` UserService selection constrained to the catalog ID in the route. The exact-selection path fails rather than falling back when the connection does not resolve. `backend/src/services/provider_service.rs:5005` and the corresponding Feishu seed define official regional `api-lark-bot` and `api-feishu-bot` services with server-side tenant token exchange. The service description explicitly allows arbitrary official open API paths. The typed Lark bot OpenAPI does not enumerate deletion/reactions; availability here follows the generic proxy, not a claimed channel-relay extension. No upstream change is needed.
 
 Official `service/im/v1/resource.go:1220` defines tenant-token-capable DELETE `/open-apis/im/v1/messages/:message_id`. Lines 1642 and 1670 define POST `/open-apis/im/v1/messages/:message_id/reactions` and DELETE `/open-apis/im/v1/messages/:message_id/reactions/:reaction_id`. `model.go:15774` uses `reaction_type: {emoji_type}` and returns a reaction ID, operator and reaction type. Deletion documentation restricts reaction removal to the calling user's or bot's own reaction. Message recall remains subject to app permissions, conversation membership, and tenant recall age policy.

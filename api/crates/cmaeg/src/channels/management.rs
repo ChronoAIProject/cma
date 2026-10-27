@@ -47,13 +47,15 @@ pub async fn create(
     if request.sources.iter().any(|source| {
         matches!(
             source,
-            SourceRequest::Discord { .. } | SourceRequest::Whatsapp { .. }
+            SourceRequest::NativeLark(_)
+                | SourceRequest::Discord { .. }
+                | SourceRequest::Whatsapp { .. }
         )
     }) && !request.record_id.as_ref().is_some_and(|record| {
         uuid::Uuid::parse_str(record.as_str())
             .is_ok_and(|id| id.get_version_num() == 4 && id.to_string() == record.as_str())
     }) {
-        return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
+        return Err(ManagementError::Invalid(ValidationError::new("/record_id", "native Lark, Discord or WhatsApp creation requires a stable canonical UUID v4 record_id for recoverable activation")));
     }
     if let Some(record_id) = request.record_id.clone() {
         return super::creation::create(state, creator, request, record_id).await;
@@ -287,6 +289,8 @@ pub async fn update(
     {
         crate::whatsapp::management::initialize(state, &mut definition)?;
     }
+    crate::native_lark::management::initialize(state, Some(&current.definition), &mut definition)?;
+    crate::native_lark::management::verify(state, Some(&current.definition), &definition).await?;
     crate::whatsapp::management::verify(state, Some(&current.definition), &definition).await?;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;

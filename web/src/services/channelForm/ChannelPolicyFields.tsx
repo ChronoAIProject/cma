@@ -21,6 +21,7 @@ export function ChannelPolicyFields({
   hideConnection?: boolean;
 }) {
   const discovery = useRelayCapabilities();
+  const nativeLark = records(value.sources).some((source) => source.type === 'native_lark');
   const threadWritesDisabled = discovery.authoring?.thread_contract_writes_enabled === false;
   const partition = object(value.partition),
     reply = object(value.reply),
@@ -167,35 +168,37 @@ export function ChannelPolicyFields({
           Add reply destination
         </Button>
       </Section>
-      <Section
-        title="Native threads"
-        description="Keep supported platform threads connected to the same agent conversation."
-      >
-        <Toggle
-          label="Enable verified thread following"
-          value={reply.thread_contract != null}
-          disabled={threadWritesDisabled && reply.thread_contract == null}
-          onChange={(enabled) =>
-            setReply('thread_contract', enabled ? { version: 1, follow_chat_ids: [] } : undefined)
-          }
-        />
-        <p className="channel-field-hint">
-          {threadWritesDisabled
-            ? 'New thread-following writes are disabled on this gateway. Existing settings are retained. '
-            : null}
-          Available for a single verified Lark or Feishu producer with a bot ID.
-        </p>
-        {reply.thread_contract != null ? (
-          <StringList
-            label="Follow chat IDs"
-            value={strings(thread.follow_chat_ids)}
-            onChange={(follow_chat_ids) =>
-              setReply('thread_contract', { ...thread, follow_chat_ids })
+      {!nativeLark || reply.thread_contract != null ? (
+        <Section
+          title="Native threads"
+          description="Keep supported platform threads connected to the same agent conversation."
+        >
+          <Toggle
+            label="Enable verified thread following"
+            value={reply.thread_contract != null}
+            disabled={(threadWritesDisabled || nativeLark) && reply.thread_contract == null}
+            onChange={(enabled) =>
+              setReply('thread_contract', enabled ? { version: 1, follow_chat_ids: [] } : undefined)
             }
-            max={256}
           />
-        ) : null}
-      </Section>
+          <p className="channel-field-hint">
+            {threadWritesDisabled
+              ? 'New thread-following writes are disabled on this gateway. Existing settings are retained. '
+              : null}
+            Available for a single verified NyxID Lark or Feishu producer with a bot ID.
+          </p>
+          {reply.thread_contract != null ? (
+            <StringList
+              label="Follow chat IDs"
+              value={strings(thread.follow_chat_ids)}
+              onChange={(follow_chat_ids) =>
+                setReply('thread_contract', { ...thread, follow_chat_ids })
+              }
+              max={256}
+            />
+          ) : null}
+        </Section>
+      ) : null}
     </>
   );
 }

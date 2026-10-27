@@ -554,3 +554,6 @@ fn native_thread_history_requires_its_gate_but_retention_and_removal_are_allowed
         .get("thread_history")
         .is_none());
 }
+
+#[path = "write_gate_whatsapp_groups_tests.rs"]
+mod whatsapp_groups;

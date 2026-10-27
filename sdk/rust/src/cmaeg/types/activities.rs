@@ -279,6 +279,9 @@ pub struct Capabilities {
     /// Approved template replies, absent until verified for this WhatsApp relay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whatsapp_templates: Option<bool>,
+    /// Group template component subset; header/body only when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp_template_components: Option<Vec<String>>,
     /// Absent until native relay media has been verified for this deployment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_media: Option<super::NativeMediaCapabilities>,
@@ -333,6 +336,9 @@ pub struct CloudEvent {
 /// CMAEG `ContextResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextResponse {
+    /// Reaction-only reference to an authenticated received native message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub received_message: Option<ReceivedMessageContext>,
     /// Included only when explicitly requested and authorized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<super::ThreadHistory>,
@@ -357,6 +363,15 @@ pub struct ContextResponse {
     pub provider_binding_id: BindingId,
     /// Wire field `source`.
     pub source: SourceKind,
+}
+
+/// Reaction-only reference to one authenticated received native message.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReceivedMessageContext {
+    /// Sealed reference for effects on this exact received message.
+    pub message_ref: super::MessageRef,
+    /// Available effects and the original authority's expiry.
+    pub effects: super::MessageEffectsCapabilities,
 }
 
 /// CMAEG `EventAccepted` wire shape.

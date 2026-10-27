@@ -655,7 +655,31 @@ Disabled or threaded contexts retain their advertised fallback capabilities. Nat
 cards are unsupported; inspect rendering and delivery outcomes. An unknown send
 or edit may have reached the platform and must not be blindly retried.
 
-### Native WhatsApp image, PDF, audio and sticker replies
+### Separate native Lark / Feishu source
+
+`NativeLarkSource` requests `type: "native_lark"`, `separate_app: true`, an
+`identity` (`NativeLarkIdentity`) and an admission policy. The identity binds
+`region: "lark" | "feishu"`, `app_id`, `tenant_key` and `bot_open_id`.
+`NativeLarkCredentials` supplies the atomic `app_secret`, `encrypt_key` and
+`verification_token` object through `credentials.native_lark`; public source
+objects never contain those secrets. Discover the optional
+`native_lark_writes_enabled` and `native_lark_intake_enabled` authoring capability
+flags before setup. Both default off and require the operator's durable-routing
+prerequisites. Creation requires a stable canonical UUID v4 `record_id` and
+returns `endpoints.native_lark_webhook_url`.
+
+Use a separately provisioned app and its webhook; replacing an existing NyxID
+app's webhook would redirect its traffic. This source supports native text
+replies, retained recall notifications with unknown actors, and human reaction
+add/remove deltas. `SourceKind` carries the same regional app/tenant/bot identity.
+Targets retain the original conversation and consumer authority; these incoming
+notifications confer no outgoing delete/edit/reaction authority. Native media
+(including the WhatsApp video profile), cards/forms, thread history and incoming
+edit propagation are not advertised for this source. Live platform acceptance
+remains separate from local contract tests. See the repository's native Lark
+setup document and preserved incoming-event audit for provisioning and limits.
+
+### Native WhatsApp image, PDF, audio, sticker and video replies
 
 Discover `capabilities.native_media` before using `native_attachments`. Native
 WhatsApp has an independent default-off gate and supports JPEG/PNG `image`,
@@ -671,7 +695,7 @@ attachments and 65536 decoded inline bytes. Public HTTPS downloads use bounded
 address validation. Matching MIME type and filename extension are required when
 provided; images must have 8-bit RGB/RGBA headers. Audio undergoes bounded
 container/codec checks without a runtime decoder; those checks do not certify
-complete payload decodability. Native video and other document formats remain unavailable. The original event fixes the recipient
+complete payload decodability. Other document formats remain unavailable. The original event fixes the recipient
 and quoted message; clients cannot provide a Meta media ID. Confirmed replies
 record exact target receipts, while uncertain/partial sends must not be retried
 automatically. Actual Meta/client acceptance remains separate from local tests.
@@ -685,11 +709,28 @@ decoding. The sticker message carries only the upload result ID. Unsupported
 native transports and all NyxID/initiated paths refuse this kind before any send;
 legacy capabilities omit the optional `sticker` object.
 
+The `video` kind accepts `video/mp4` (`.mp4`) or `video/3gpp` (`.3gp`), with
+captions. Optional `native_media.video` (`NativeVideoCapabilities`) declares
+`video_codec: "h264"`, `video_profile: "baseline"`, `audio_codec: "aac_lc"`,
+`max_audio_tracks: 1`, `max_width: 1920`, `max_height: 1080`, `max_frame_rate: 60`,
+`max_duration_ms: 600000`, `max_samples: 65536` across tracks,
+`progressive_only: true`, `max_slices_per_frame: 1`, and `fast_start_required: true`.
+The container must be self-contained, unencrypted and nonfragmented, with movie
+metadata before media data. A silent video is allowed. The deliberately bounded
+profile requires one SPS/PPS and I/P slice headers; it refuses B-frames, unsupported
+coding modes and overlapping/invalid sample ranges. These structural checks do not
+fully decode media or establish Meta/client acceptance. The message carries the
+upload ID and caption only. See the repository's native WhatsApp outbound-media
+document for the complete accepted syntax. Legacy discovery omits the optional `video` profile object.
+
 ### Approved WhatsApp templates
 
 Approved WhatsApp templates use the optional `whatsapp_template` field on
 `OutboundMessage`. Consult `readEventContext` for `capabilities.whatsapp_templates`
-before sending. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
+before sending. Native private event replies and NyxID relay replies have separate
+operator gates; native templates require current native source custody and use
+the original sealed recipient/context. Template media IDs and HTTPS links are
+independent of native upload capability. `WhatsappTemplate`, `WhatsappTemplateLanguage`,
 `WhatsappTemplateComponent` and `WhatsappTemplateParameter` describe the template
 name/language and bounded positional parameters. Header parameters can be text
 or typed image/video/document references; body parameters can be text, currency
@@ -785,3 +826,21 @@ clear the bot reaction or one emoji/custom-emoji entry. Legacy references and
 relay transports report unsupported. An unknown receipt remains unknown and is
 never retried automatically. Capability support remains subject to Telegram's
 message-age, administrator-rights and reaction rules.
+
+### Native WhatsApp existing-group messaging
+
+Native WhatsApp source and request types accept optional `group_ids` (up to 16
+unique opaque Meta group IDs). Absent or empty values retain private behavior.
+New opt-ins require explicit `native_whatsapp_groups_writes_enabled` discovery;
+retained groups can be removed when authoring is disabled. The separate groups
+issuance flag controls new group intake and sends. Eligibility is the exact
+phone's OBA approval and current existing-group membership, verified read-only.
+
+Group event actors retain the original participant while conversation IDs retain
+the group. Replies and delayed targets use sealed original consumer custody.
+Group native media capabilities omit stickers and WebP. Group approved templates
+advertise optional `whatsapp_template_components: ["header", "body"]` alongside
+`whatsapp_templates: true`, and reject button components. Existing media/template
+gates and format limits still apply. No group management, message edit/delete,
+reaction or controls authority is added. Connected Meta v25/OBA acceptance is
+still outstanding; source capability presence does not prove delivery.

@@ -142,6 +142,9 @@ impl InteractionStore {
             ReplyAddress::Discord {
                 bot_id, channel_id, ..
             } => discord::route(bot_id, channel_id),
+            ReplyAddress::Whatsapp { .. } => {
+                whatsapp_authority::route(&context.activity.source, &context.activity.actor.id)?
+            }
             _ => return Err(Error::Denied),
         };
         let lark = match &event.reply {
@@ -171,10 +174,11 @@ impl InteractionStore {
         };
         let whatsapp = if matches!(
             event.reply,
-            ReplyAddress::NyxidRelay {
-                platform: cmaeg_core::channel::Platform::Whatsapp,
-                ..
-            }
+            ReplyAddress::Whatsapp { .. }
+                | ReplyAddress::NyxidRelay {
+                    platform: cmaeg_core::channel::Platform::Whatsapp,
+                    ..
+                }
         ) {
             if !whatsapp::eligible(channel, event, &context.activity) {
                 return Err(Error::Denied);
@@ -188,7 +192,17 @@ impl InteractionStore {
         } else {
             None
         };
+        let native_whatsapp = if matches!(event.reply, ReplyAddress::Whatsapp { .. }) {
+            Some(whatsapp_authority::Authority::prepare(
+                channel,
+                event,
+                &context.activity,
+            )?)
+        } else {
+            None
+        };
         let mut card = Card {
+            native_whatsapp,
             lark_delete: None,
             discord_form_launch: None,
             discord_edit: None,

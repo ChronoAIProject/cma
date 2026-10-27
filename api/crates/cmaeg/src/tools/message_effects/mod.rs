@@ -17,6 +17,8 @@ pub(crate) mod lark_authority;
 pub(crate) mod lark_ledger;
 pub mod lark_transport;
 pub(crate) mod mutation;
+pub(crate) mod whatsapp;
+pub(crate) mod whatsapp_authority;
 use super::{reply_targets::receipts, state::owner, ToolsState};
 use crate::{
     auth::AgentCaller,
@@ -52,7 +54,7 @@ impl MessageEffectsClient {
 pub struct MessageEffectsCapabilities {
     pub delete: bool,
     pub reaction: bool,
-    /// Only an exact confirmed native bot message; never arbitrary chat/message IDs.
+    /// Exact bot-message or received-user-message authority; never arbitrary IDs.
     pub scope: String,
     pub max_reactions: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -87,6 +89,14 @@ impl ToolsState {
         reference: &MessageRef,
     ) -> Result<MessageEffectsCapabilities, Problem> {
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.whatsapp_reaction.is_some() {
+            return whatsapp::capabilities(
+                &message,
+                &channel,
+                caller,
+                self.whatsapp_reactions.is_some(),
+            );
+        }
         if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
             return self
                 .discord_card_capabilities(caller, reference, channel, message)
@@ -185,6 +195,11 @@ impl ToolsState {
             ));
         }
         let (channel, message) = self.current_message(caller, reference).await?;
+        if message.whatsapp_reaction.is_some() {
+            return self
+                .whatsapp_message_reaction(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
         if message.interaction_record_id.is_some() && message.route_id.starts_with("discord:") {
             return self
                 .discord_card_effect(caller, reference, request_id, effect, channel, message)
@@ -343,3 +358,6 @@ mod lark_card_tests;
 
 #[cfg(test)]
 mod lark_custody_tests;
+
+#[cfg(test)]
+mod whatsapp_tests;
