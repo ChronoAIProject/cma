@@ -76,6 +76,7 @@ impl ConsumerGateway {
             native_discord: Default::default(),
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
+            lark_resource_writes_enabled: false,
             multi_consumer_writes_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
