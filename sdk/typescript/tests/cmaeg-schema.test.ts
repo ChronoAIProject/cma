@@ -400,7 +400,7 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
   expect(NativeMediaCapabilitiesSchema(legacy)).toEqual(legacy);
   const native = {
     ...legacy,
-    kinds: ['image', 'file', 'audio'],
+    kinds: ['image', 'file', 'audio', 'sticker'],
     mime_types: [
       'image/jpeg',
       'image/png',
@@ -410,10 +410,20 @@ it('preserves legacy native media capability omissions and exact native WhatsApp
       'audio/mpeg',
       'audio/mp4',
       'audio/ogg',
+      'image/webp',
     ],
     max_total_bytes: 8388608,
     max_image_bytes: 5000000,
     max_caption_chars: 1024,
+    sticker: {
+      width: 512,
+      height: 512,
+      max_static_bytes: 100000,
+      max_animated_bytes: 500000,
+      max_frames: 128,
+      max_duration_ms: 10000,
+      min_frame_duration_ms: 8,
+    },
   };
   expect(NativeMediaCapabilitiesSchema(native)).toEqual(native);
 });

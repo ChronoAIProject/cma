@@ -2976,9 +2976,9 @@ Lark/Feishu, Discord and WhatsApp. Disabled or unsupported delivery returns
 enable a new native connection.
 
 Native WhatsApp advertises a separate bounded subset only when
-`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio"]`,
+`CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED=true`: `kinds: ["image", "file", "audio", "sticker"]`,
 `mime_types: ["image/jpeg", "image/png", "application/pdf", "audio/aac", "audio/amr",
-"audio/mpeg", "audio/mp4", "audio/ogg"]`,
+"audio/mpeg", "audio/mp4", "audio/ogg", "image/webp"]`,
 `max_total_bytes: 8388608`, `max_image_bytes: 5000000`, and `max_caption_chars: 1024`.
 These four optional capability fields refine the existing limits; they are absent
 on transports that do not declare them. Shared captions remain limited to 1024
@@ -2989,7 +2989,14 @@ and one complete mono Opus Ogg stream. Supplied audio MIME/filename extensions
 must match the validated container. Audio captions are refused before any write;
 text stays separate. Audio sends contain the uploaded ID only, with no voice flag.
 Structural checks do not prove full payload decodability or Meta acceptance.
-Native video/stickers and other document formats remain unsupported. Public HTTPS sources use the existing pinned public
+The additive `sticker` kind admits bounded static/animated WebP with no caption.
+Its optional `native_media.sticker` object reports required `width`/`height` 512,
+`max_static_bytes` 100000, `max_animated_bytes` 500000, `max_frames` 128,
+`max_duration_ms` 10000 per cycle and `min_frame_duration_ms` 8. WebP RIFF and
+frame headers are checked without pixel decoding. The sticker message contains
+only the upload ID. Legacy and unsupported transports omit that object; native
+Telegram/Discord and all NyxID replies/initiated sends refuse the new kind before
+any effect. Native video and other document formats remain unsupported. Public HTTPS sources use the existing pinned public
 address fetcher without Meta credentials, redirects or local-file access; inline
 sources retain the 65536-byte aggregate limit. Every attachment is prepared before
 any text/upload is sent. A native upload returns the sole media ID accepted by the
