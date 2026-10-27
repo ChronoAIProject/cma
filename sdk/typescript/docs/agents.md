@@ -395,8 +395,13 @@ issuance, renewal and revocation recover that same authority after restart and
 revalidate it; they never substitute a browser login. API tokens are not refreshed
 by CMA. Expired or revoked authority stops further credential operations with
 `owner_service_authority_required`; authorize further work with a current owner
-token. Already settled access can be reauthorized with a new key and the current
-`expected_services`, even when the desired services are unchanged.
+token. On the original Agent, submit a new idempotency key with both `services`
+and `expected_services` equal to the current scope. Once the prior request has
+settled or failed, this records fresh consent for that exact scope, including
+when credential rotation or revocation is still pending. It preserves the prior
+audit, scope generation, runtime and conversation; a changed scope remains a
+separate update after rotation settles. Replaying an old key returns its original
+result and never substitutes new authority.
 
 HTTP 403 `agent_access_owner_authority_required` requests a direct owner access
 token. HTTP 409 `agent_access_service_connection_required` means the owner must

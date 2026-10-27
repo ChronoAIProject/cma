@@ -93,6 +93,9 @@ pub(crate) struct AgentAccessNotificationIntent {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentAccessProgress {
+    /// Fresh owner consent for this exact scope; the earlier audit stays intact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renewed_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_intent: Option<AgentAccessNotificationIntent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,8 +109,9 @@ pub(crate) struct AgentAccessProgress {
 }
 impl AgentAccessProgress {
     pub(super) fn extends(&self, previous: &Self) -> bool {
-        (previous.notification_intent.is_none()
-            || self.notification_intent == previous.notification_intent)
+        self.renewed_from == previous.renewed_from
+            && (previous.notification_intent.is_none()
+                || self.notification_intent == previous.notification_intent)
             && (previous.hot_update.is_none() || self.hot_update == previous.hot_update)
             && (previous.pause_operation_id.is_none()
                 || self.pause_operation_id == previous.pause_operation_id)
