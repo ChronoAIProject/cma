@@ -27,7 +27,7 @@ import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessages } from './QueuedMessages';
-import type { UploadAttachment } from './attachments';
+import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
@@ -37,6 +37,7 @@ import { queuePresentation } from './queuePresentation';
 import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
+import { usePreparedConfiguration } from './preparedConfiguration';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -120,20 +121,7 @@ export function AgentSurface({
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
-  const connectionConfiguration =
-    state.status === 'ready'
-      ? JSON.stringify([state.detail.sandbox.id, state.detail.sandbox.profile, state.detail.reach])
-      : undefined;
-  const observedConfiguration = useRef<{ scope: object; value: string } | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (connectionConfiguration === undefined) return;
-    if (
-      observedConfiguration.current?.scope === connection.scope &&
-      observedConfiguration.current.value !== connectionConfiguration
-    )
-      discardPrepared();
-    observedConfiguration.current = { scope: connection.scope, value: connectionConfiguration };
-  }, [connectionConfiguration, connection.scope, discardPrepared]);
+  usePreparedConfiguration(state, connection.scope, discardPrepared);
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
@@ -186,15 +174,11 @@ export function AgentSurface({
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
-  const uploadAttachment: UploadAttachment | undefined =
-    readOnly || verified === undefined || lifecycleClient?.uploadAgentAttachment === undefined
-      ? undefined
-      : async (file, options) => {
-          const uploaded = await lifecycleClient.uploadAgentAttachment!(agentId, file, options);
-          if (uploaded.agentId !== agentId || !uploaded.path.startsWith('/home/attachments/'))
-            throw new Error('The upload could not be verified for this Agent. Retry the upload.');
-          return uploaded;
-        };
+
+  const uploadAttachment = agentAttachmentUploader(
+    agentId,
+    readOnly || verified === undefined ? undefined : lifecycleClient,
+  );
 
   return (
     <section className="agent-surface">
