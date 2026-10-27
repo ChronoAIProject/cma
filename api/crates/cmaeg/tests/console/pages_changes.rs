@@ -122,10 +122,12 @@ impl SourceChanges for RecordingSources {
                     })
                 }
                 SourceRequest::Telegram {
+                    message_events,
                     bot_id,
                     bot_username,
                     admission,
                 } => Source::Telegram {
+                    message_events,
                     bot_id,
                     bot_username,
                     admission,

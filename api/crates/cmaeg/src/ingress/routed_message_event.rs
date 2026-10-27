@@ -8,7 +8,7 @@ impl IngressState {
         _hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
         let Some(routing) = self.routed.as_ref().filter(|routing| {
-            routing.selected(&verified.request.channel.definition.record_id)
+            routing.selected_request(&verified.request)
                 || (routing.native_discovery.discovery_enabled()
                     && routing
                         .native_discovery

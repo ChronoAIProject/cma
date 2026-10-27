@@ -185,6 +185,7 @@ fn validate_source(
             bot_id,
             bot_username,
             admission,
+            ..
         } => telegram::validate(bot_id, bot_username.as_deref(), admission, secrets, pointer),
         Source::NyxidRelay {
             issuer,

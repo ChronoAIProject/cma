@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from './client';
 
 export interface RelayAuthoringCapabilities {
+  readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
   readonly native_discord_writes_enabled?: boolean | null;
   readonly native_discord_auto_activation_enabled?: boolean | null;

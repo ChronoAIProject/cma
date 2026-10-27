@@ -35,6 +35,13 @@ use subtle::ConstantTimeEq;
 
 const SOURCE: &str = "telegram";
 
+#[path = "telegram_events.rs"]
+mod events;
+enum Admitted {
+    Chat(AdmittedChat),
+    Event(crate::ingress::message_event::VerifiedMessageEvent),
+}
+
 pub fn router(state: IngressState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
@@ -67,7 +74,23 @@ pub async fn callback(
     // The request is consumed by admission so its body is released before
     // the acceptance wait; the launcher decides how long the permit is held.
     match admit_update(&state, &channel_id, request, &timing).await {
-        Ok(admitted) => super::chat_dispatch::dispatch(state, admitted, timing, permit).await,
+        Ok(Admitted::Chat(admitted)) => {
+            let context = if admitted.callback.is_none() {
+                telegram::events::Context::capture(&state, &admitted.request, admitted.now)
+            } else {
+                None
+            };
+            let channel = admitted.request.channel.clone();
+            let response =
+                super::chat_dispatch::dispatch(state.clone(), admitted, timing, permit).await;
+            if response.status() == StatusCode::ACCEPTED {
+                if let Some(context) = context {
+                    context.remember(&state, &channel).await;
+                }
+            }
+            response
+        }
+        Ok(Admitted::Event(event)) => events::dispatch(state, event, timing, permit).await,
         Err(response) => response,
     }
 }
@@ -83,7 +106,7 @@ async fn admit_update(
     channel_id: &str,
     request: Request,
     timing: &IngressTiming,
-) -> Result<AdmittedChat, Response> {
+) -> Result<Admitted, Response> {
     let (parts, body) = request.into_parts();
     if !verify::single(&parts.headers, "content-type", false)
         .ok()
@@ -128,6 +151,7 @@ async fn admit_update(
             .iter()
             .find_map(|source| match source {
                 Source::Telegram {
+                    message_events: _,
                     bot_id,
                     bot_username,
                     admission,
@@ -189,6 +213,20 @@ async fn admit_update(
         Ok(raw) => raw,
         Err(_) => return Err(reject(VerificationError("telegram_update_invalid"))),
     };
+    if telegram::events::requested(&raw) {
+        let event = telegram::events::prepare(
+            state,
+            channel.clone(),
+            &bot_id,
+            &raw,
+            &body,
+            timing.received(),
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+        )
+        .await
+        .map_err(|error| events::failure(state, &record, error))?;
+        return Ok(Admitted::Event(event));
+    }
     let observed = match telegram::observe(
         raw,
         &bot_id,
@@ -251,11 +289,11 @@ async fn admit_update(
         Err(error) => return Err(reject(error)),
     };
     let routed_source = state.capture_routed(&request, &body, true);
-    Ok(AdmittedChat {
+    Ok(Admitted::Chat(AdmittedChat {
         routed_source,
         request,
         callback,
         route,
         now,
-    })
+    }))
 }

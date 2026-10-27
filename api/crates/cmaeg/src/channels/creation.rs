@@ -49,6 +49,7 @@ pub async fn create(
             )
             .map_err(ManagementError::Invalid)?;
             super::native_discord::initialize(state, &mut definition)?;
+            super::native_telegram::initialize(state, None, &mut definition)?;
             definition.creation = Some(ChannelCreation {
                 channel_id: channel_id.clone(),
                 fingerprint: fingerprint.clone(),
