@@ -7,6 +7,7 @@ use layer2_core::ServiceId;
 use mongodb::bson::{doc, Document};
 use serde::{Deserialize, Serialize};
 
+use super::valid_owner_authorization;
 use crate::store::sandbox_mongo::{read_record, record_bson, DOCUMENT_SCHEMA_VERSION};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
