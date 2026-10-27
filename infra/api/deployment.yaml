@@ -7,18 +7,18 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
   annotations:
-    cma.chronoai.dev/api-image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+    cma.chronoai.dev/api-image-digest: "sha256:e5f21c6b7fac40756368ceefd4aac1216b603efa78d2b5c215858915fa818f74"
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
-    cma.chronoai.dev/ci-artifact: "12710250368"
+    cma.chronoai.dev/candidate: "f308d88f23754c2c55aef5a51372fd534c2a89d9"
+    cma.chronoai.dev/ci-artifact: "12727677853"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
-    cma.chronoai.dev/ci-run: "40445812082"
-    cma.chronoai.dev/image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
-    cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
-    cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:84bc6c74fcf885421bc2b0c3b933e7d1c6ff237acf9d147eb0e28343e699041a"
+    cma.chronoai.dev/ci-head: "f308d88f23754c2c55aef5a51372fd534c2a89d9"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:6c5d679b9d6da4d968a73901c2bb325b7ac5e8fee41de30e2fde90d6487d33c0"
+    cma.chronoai.dev/ci-run: "40486174299"
+    cma.chronoai.dev/image-digest: "sha256:e5f21c6b7fac40756368ceefd4aac1216b603efa78d2b5c215858915fa818f74"
+    cma.chronoai.dev/image-source: "994fec4810c30d045857315eec562fa6cbbf168a"
+    cma.chronoai.dev/source-tree: "b28be90a87e6749a0a434447e0bcb65978427b69"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:c18159ef70c1d91f731f590573390ab48320c56f9c8910db14ef0ecc09ab91c6"
 spec:
   replicas: 1
   # Quota reservations and rate counters are process-local. Keep one replica
@@ -33,20 +33,20 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
+        cma.chronoai.dev/api-image-digest: "sha256:e5f21c6b7fac40756368ceefd4aac1216b603efa78d2b5c215858915fa818f74"
         cma.chronoai.dev/runtime-ci-artifact: "12331617434"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
-        cma.chronoai.dev/ci-artifact: "12710250368"
+        cma.chronoai.dev/candidate: "f308d88f23754c2c55aef5a51372fd534c2a89d9"
+        cma.chronoai.dev/ci-artifact: "12727677853"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "b761d1dea26384d8fe494a44f9fe64f62367a6a2"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:196f843e350aba93539e162dbb705ab1aa3bcf5974293d04e15b7c29e7cc7ce7"
-        cma.chronoai.dev/ci-run: "40445812082"
-        cma.chronoai.dev/image-digest: "sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683"
-        cma.chronoai.dev/image-source: "32ac7cf32a2edadd1fb632c7b44e0867492520c7"
-        cma.chronoai.dev/runtime-image: "sha256:2634b16afd512281de38961f481909df2c7d186788c918dfe39896178e4cf52e"
-        cma.chronoai.dev/source-tree: "a28acd8a66ee111d602e5be031902a71b5bd6c59"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:84bc6c74fcf885421bc2b0c3b933e7d1c6ff237acf9d147eb0e28343e699041a"
+        cma.chronoai.dev/ci-head: "f308d88f23754c2c55aef5a51372fd534c2a89d9"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:6c5d679b9d6da4d968a73901c2bb325b7ac5e8fee41de30e2fde90d6487d33c0"
+        cma.chronoai.dev/ci-run: "40486174299"
+        cma.chronoai.dev/image-digest: "sha256:e5f21c6b7fac40756368ceefd4aac1216b603efa78d2b5c215858915fa818f74"
+        cma.chronoai.dev/image-source: "994fec4810c30d045857315eec562fa6cbbf168a"
+        cma.chronoai.dev/runtime-image: "sha256:46c681940287427090038bf9b0d529c0819bc217585ee54cbb712362d75fc811"
+        cma.chronoai.dev/source-tree: "b28be90a87e6749a0a434447e0bcb65978427b69"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:c18159ef70c1d91f731f590573390ab48320c56f9c8910db14ef0ecc09ab91c6"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -81,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:9984a9b3e48579e3fe1aa600377be1f3237a3551886637eb3f824265723df683
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:e5f21c6b7fac40756368ceefd4aac1216b603efa78d2b5c215858915fa818f74
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -93,29 +93,29 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
-            # Production opts into one prepared default hierarchy at the
-            # Deployment layer while the shared ConfigMap keeps its safe
-            # default of zero for environments that do not opt in.
-            - name: CHRONO_NATIVE_PREPARED_TARGET
-              value: "1"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
                   name: example-namespace-02
                   key: CHRONO_POD_API_SERVER
-                  optional: true
+                  optional: false
             - name: CHRONO_AGENT_SANDBOX_NAMESPACE
               valueFrom:
                 configMapKeyRef:
                   name: example-namespace-02
                   key: CHRONO_POD_NAMESPACE
-                  optional: true
+                  optional: false
             - name: CHRONO_AGENT_SANDBOX_CA_FILE
               valueFrom:
                 configMapKeyRef:
                   name: example-namespace-02
                   key: CHRONO_POD_CA_FILE
-                  optional: true
+                  optional: false
+            # Production opts into one prepared default hierarchy at the
+            # Deployment layer while the shared ConfigMap keeps its safe
+            # default of zero for environments that do not opt in.
+            - name: CHRONO_NATIVE_PREPARED_TARGET
+              value: "1"
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -128,7 +128,7 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: 1000m
+              cpu: "1"
               # Four lifecycle sweeps can each hold bounded upload buffers.
               # All restore downloads share a four-part (128 MiB) buffer cap.
               memory: 1Gi
@@ -174,14 +174,14 @@ spec:
         - name: example-namespace-02
           configMap:
             name: example-namespace-02
-            optional: true
+            optional: false
             items:
               - key: ca.crt
                 path: ca.crt
         - name: agent-sandbox-control
           secret:
             secretName: cma-agent-sandbox-control
-            optional: true
+            optional: false
             defaultMode: 0440
         - name: tmp
           emptyDir: {}

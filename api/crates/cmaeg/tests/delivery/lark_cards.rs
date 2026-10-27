@@ -1,5 +1,7 @@
 //! Real delivery engine and durable card store; only external NyxID sends are
 //! recorded fakes. This establishes the wire contract, not platform acceptance.
+#[path = "lark_forms.rs"]
+mod forms;
 use super::{
     fake_cma::FakeCma,
     fake_http::{Answer, FakeHttp},

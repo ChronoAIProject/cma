@@ -27,8 +27,14 @@ data:
   # Discover explicit native Discord sources without editing record canary lists.
   CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED: "true"
   CMAEG_DISCORD_INTERACTIONS_ENABLED: "true"
+  CMAEG_DISCORD_FORMS_ENABLED: "false"
+  # Upgrade all card-edit readers before starting native replacement chains.
+  CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
+  CMAEG_DISCORD_CARD_EFFECTS_ENABLED: "false"
   # Enable new multi-select cards only after every serving and rollback reader is compatible.
-  CMAEG_DISCORD_MULTISELECT_ENABLED: "false"
+  CMAEG_DISCORD_MULTISELECT_ENABLED: "true"
+  # Deploy form authority/submission readers before issuing native Lark/Feishu forms.
+  CMAEG_LARK_FORMS_ENABLED: "false"
   # Explicit canonical channel record IDs; selected records also require durable routed recovery.
   CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS: ""
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"

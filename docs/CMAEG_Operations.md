@@ -220,12 +220,16 @@ applies with all media flags off.**
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
-| `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; mixed native media and interactive edits remain unsupported. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
+| `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; mixed native media remains unsupported and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
 | `CMAEG_DISCORD_MULTISELECT_ENABLED` | boolean | `false` | Issues native Discord `choice` controls with `multi: true` after serving and rollback readers support the optional consumed-click selection snapshot. Also requires `CMAEG_DISCORD_INTERACTIONS_ENABLED` and the named-consumer gate when applicable. The submitted whole set is canonicalized in card order, including an explicit empty set. Disabling issuance preserves retained callbacks and recovery. No new API/SDK fields or thread lifecycle authority. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
+| `CMAEG_DISCORD_FORMS_ENABLED` | boolean | `false` | Issues native modal launch buttons for eligible neutral Forms after every serving and rollback reader supports retained form authority, launch attempts and canonical submissions. Requires native Discord interactions and the named-consumer gate when applicable. Text/Choice use native controls; Number/Date use strictly validated text and report degradation. Off or ineligible preserves previous text rendering; retained callbacks and edits survive disabling issuance. Only exact `true`/`false` are accepted. See [native forms](CMAEG_Native_Discord_Forms.md). |
+| `CMAEG_DISCORD_CARD_EDITS_ENABLED` | boolean | `false` | Allows existing native card references to start an edit chain after compatible serving and rollback readers are deployed. An encrypted CAS claim fences the prior revision before one exact-message PATCH; retries replay the persisted receipt or remain unknown without resending. Disabling stops new chains while retained successor edits and operation replays remain supported. Named initial edits additionally require the consumer-interaction gate; adding multi-select requires its gate unless already present. Only exact `true`/`false` are accepted. See [native card edits](CMAEG_Native_Discord_Card_Edits.md). |
+| `CMAEG_DISCORD_CARD_EFFECTS_ENABLED` | boolean | `false` | Allows first CAS adoption of native card delete/reaction capability after all serving and rollback readers understand the retained state, shared PATCH/effect lock and exact consumed-callback recovery. Gate-off preserves adopted capability, successor authority and exact receipts through original expiry; it does not permit rollback to older readers. Only exact `true`/`false` are accepted. See [native card effects](CMAEG_Native_Discord_Card_Effects.md). |
 | `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
-| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards, mixed native media, or native forms. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_CARDS_ENABLED` | boolean | `false` | Enables new Lark/Feishu JSON 2.0 card issuance and native card capabilities after all interaction readers are upgraded. Only exact `true`/`false` are accepted. Retained card callbacks and edits remain active when issuance is disabled. Named consumers additionally require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. No threaded cards or mixed native media; native forms have a separate default-off gate. See [Lark and Feishu card rollout](#lark-and-feishu-card-rollout). |
+| `CMAEG_LARK_FORMS_ENABLED` | boolean | `false` | Enables new native Lark/Feishu Form issuance after every serving and rollback reader supports optional form authority and persisted submitted results. Requires the native-card gate; named consumers also require the consumer-interaction gate. Off retains historical text-form rendering, while already-issued native form callbacks and edits remain active. Only exact `true`/`false` are accepted. See [native form rollout](#native-lark-and-feishu-form-rollout). |
 | `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED` | boolean | `false` | Issues native Telegram admission evidence and effect authority on newly confirmed bot-message references; advertises delete/reaction tools after all readers are upgraded. Exactly `true`/`false`. Disabling stops new issuance and discovery; previously issued references remain usable until their 24-hour expiry or authority revocation. Relay transports are unsupported. |
 | `CMAEG_ACK_TEXT` | string | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
@@ -2349,11 +2353,38 @@ callback contract does not retain the required audience. The same text behavior
 is retained for named consumers while their interaction gate is off. This choice
 is made before any durable card write or platform send; invalid context proofs
 and failures during a native send never trigger a second text send. Named consumers require the separate consumer-interaction gate
-and retain their original provider binding and conversation. Native forms are not
-advertised; their fields stay plain text. Image URLs in a card become an explicit
+and retain their original provider binding and conversation. Form fields stay
+plain text unless the separate native-form issuance gate is enabled. Image URLs in a card become an explicit
 link with a degraded rendering report; they are never invented platform image
 handles. A malformed/lost edit receipt stays unknown, and an old revision remains
 fenced even if its replacement is not confirmed.
+
+## Native Lark and Feishu form rollout
+
+`CMAEG_LARK_FORMS_ENABLED` defaults to false, including in the checked-in
+manifest. Off preserves Form-only text replies and existing mixed-card
+`plain_text_form` rendering. Deploy compatible serving and rollback readers
+before enabling it: new records add optional form authority and consumed clicks
+add the complete canonical `submitted` map. Historical record bytes omit both.
+The distinct `clf1:` locator cannot be treated as an old button callback.
+
+The pinned NyxID adapter already passes native card JSON and authenticated form
+submission data. This is CMA implementation evidence, with no NyxID deployment
+or real-platform acceptance claimed. Before enabling the gate, obtain explicitly
+authorized Lark and Feishu checks for required/optional text, number, date and
+single-choice inputs; verify empty optional values, invalid submissions, restart
+between display and submit, exact redelivery, competing submits, source/provider
+revocation, and revision replacement. Confirm the provider receives typed
+`values.fields` under the original consumer and conversation.
+
+Turning issuance off preserves callbacks and replacements of already-issued
+native forms, including native-form replacements. Existing plain cards stay
+plain on edit and cannot gain form authority. Keep compatible readers and keys
+for the full retained 24-hour card lifetime; replacements do not renew expiry.
+Never use a blind resend after an uncertain delivery or edit receipt. The
+[native forms contract](CMAEG_Native_Lark_Forms.md) lists supported shapes, input
+bounds and canonical replay rules. Local tests do not establish regional live
+rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
 
@@ -2673,3 +2704,37 @@ a 70-second opaque tool-proxy wait; retained runtimes can still have the earlier
 runtime compatibility before enabling full sends, without interrupting active
 Sandboxes. Source budgets and desired configuration are not production acceptance
 evidence; do not widen the routed delivery window beyond its leases.
+
+### Optional Lark/Feishu connection selector
+
+The portal can load existing bot-service connections through public
+`GET /v1/relay-resource-connections?platform=lark|feishu`. Agent Manager's existing
+cookie transport forwards the current server-held credential after its existing
+refresh/custody checks and checks custody again before returning the response.
+The Gateway reads metadata with that request credential only; there is no new
+secret, OAuth grant, NyxID configuration, database collection, or background job.
+
+Roll out Gateway and Agent Manager before the web selector for immediate
+availability. A missing route or unavailable metadata leaves the manual IDs and
+saved bindings intact. The selector includes eligible personal and allowed
+organization connections already visible to the current subject, with provenance
+labels. Exact shared endpoint evidence is read through NyxID's existing
+membership-scoped authorization route; no owner switching or grant change occurs.
+A separately held channel key must pass the same exact resource authorization
+and receiving-bot proof before media can be read. Custom shared endpoints whose
+official origin cannot be established from that projection remain manual.
+Selecting a connection does not prove the receiving app or bot, and does not
+send a provider message. Local auth/HTTP/SDK/UI tests establish the code path;
+real Lark and Feishu account eligibility and resource-byte reads still require
+separate connected acceptance under the actual permissions.
+
+
+Connected read-only contract check on 2026-10-27: the current subject's shared
+`api-lark-bot` connection was visible with organization admin membership and
+`allowed=true`. Its exact endpoint authorization returned 200 with matching
+endpoint/catalog IDs but `auto_connected=false` and no endpoint URL. This custom
+shared connection is therefore not an automatic selector option and remains a
+manual binding. The check made no platform call and does not establish that an
+individual channel key can read its media; exact origin and bot evidence remain
+required. This is a public metadata projection limit, not a failed membership
+check or a newly granted permission.

@@ -61,12 +61,26 @@ pub(crate) fn project(
     }
 }
 
-/// The card is bounded before any durable write or platform send. Public forms
-/// remain plain text; images require provider keys, so URL images stay links.
+/// The card is bounded before any durable write or platform send.
 pub(crate) fn render(
     message: &OutboundMessage,
     id: &str,
     revision: u64,
+) -> Result<(Value, RenderingReport), Error> {
+    render_with_forms(message, id, revision, false)
+}
+pub(crate) fn render_form(
+    message: &OutboundMessage,
+    id: &str,
+    revision: u64,
+) -> Result<(Value, RenderingReport), Error> {
+    render_with_forms(message, id, revision, true)
+}
+fn render_with_forms(
+    message: &OutboundMessage,
+    id: &str,
+    revision: u64,
+    native_forms: bool,
 ) -> Result<(Value, RenderingReport), Error> {
     if message.whatsapp_template.is_some()
         || !message.native_attachments.is_empty()
@@ -142,18 +156,25 @@ pub(crate) fn render(
                 elements.push(link(url, label));
             }
             Block::Form { fields, .. } => {
-                for field in fields {
-                    add_text(
-                        &mut elements,
-                        &format!(
-                            "{}:{}",
-                            field.label,
-                            if field.required { " (required)" } else { "" }
-                        ),
-                        &mut text_chars,
-                    );
+                if native_forms {
+                    let (form, count) = super::lark_form::render(message, id, revision)?;
+                    elements.push(form);
+                    text_chars += count;
+                    action += 1;
+                } else {
+                    for field in fields {
+                        add_text(
+                            &mut elements,
+                            &format!(
+                                "{}:{}",
+                                field.label,
+                                if field.required { " (required)" } else { "" }
+                            ),
+                            &mut text_chars,
+                        );
+                    }
+                    degraded = Some("plain_text_form");
                 }
-                degraded = Some("plain_text_form");
             }
             Block::Attachment {
                 reference, caption, ..
@@ -201,7 +222,15 @@ fn link(url: &str, label: &str) -> Value {
 }
 
 pub(super) fn markup(card: &Card) -> Result<Value, Error> {
-    render(&card.message, &card.id, card.revision).map(|(markup, _)| markup)
+    render_with_forms(
+        &card.message,
+        &card.id,
+        card.revision,
+        card.lark
+            .as_ref()
+            .is_some_and(|identity| identity.form.is_some()),
+    )
+    .map(|(markup, _)| markup)
 }
 
 impl InteractionStore {
@@ -223,6 +252,7 @@ impl InteractionStore {
         let lark = card.lark.as_ref().ok_or(Error::Denied)?;
         if !supported(platform)
             || lark.platform != platform
+            || data.starts_with("clf1:") != lark.form.is_some()
             || revision != Some(card.revision)
             || card.channel_id != channel.id
             || card.route_id != route

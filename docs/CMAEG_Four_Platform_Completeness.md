@@ -1,7 +1,8 @@
 # Four-platform messaging status
 
 Reviewed 2026-10-27 against the integrated CMA source, including native Discord
-self-service, edits, verified threads, message effects and component controls.
+self-service, edits, verified threads, message effects and component controls,
+and the default-off CMA native Lark/Feishu forms implementation.
 This document replaces the historical transport-only descriptions; it does not
 claim complete four-platform support or that every implemented feature is live.
 
@@ -20,9 +21,9 @@ external platform send is authorized by this review.
 | Inbound media | Source-bound image/file/audio/video retrieval, voice/sticker facts and album identity | Source-bound image/file/audio/video retrieval; voice/sticker, contact/location and quote facts | Standalone image/file/audio/video retrieval; default-off exact-source proxy binding can retrieve embedded rich-post images/videos, otherwise honest placeholders | Native exact-message metadata and attachment-bound official CDN retrieval; correlated relay media |
 | Outbound media | Native Bot API image/file/audio/video uploads; gated relay uploads | Gated relay image/file/audio/video uploads | Gated relay image/file/audio/video uploads | Native multipart REST uploads; gated relay uploads |
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
-| Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits through sealed exact-message references; gated relay text edits |
+| Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits and separately gated native card replacement with durable receipt replay; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
-| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls, separately gated multi-select, and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
+| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks; separately gated typed Form submissions | Gated native buttons/single-select controls, separately gated multi-select and modal Forms, and durable type-3/type-5 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
 Native Discord thread creation, archive/reopen, join/follow and listing are not
@@ -33,6 +34,45 @@ operations. Native uploads and multi-part/uncertain sends do not issue the
 single-message edit/effect authority described above. WhatsApp editing and groups
 are limitations of this CMA integration, not universal claims about the platform;
 WhatsApp account identity also does not prove a human sender.
+
+## Native Lark and Feishu forms
+
+The CMA native form path supports one Form with 1–12 text, number, date or
+single-choice fields. It uses the pinned NyxID adapter's existing native-card and
+raw callback contract; no upstream change is included. Provider results use the
+existing neutral `InteractionResult.values.fields` JSON map, with the complete
+canonical submission saved before dispatch. Original actor, source, provider,
+consumer, conversation, partition, message and revision remain bound through
+restart, callback replay and replacement.
+
+`CMAEG_LARK_FORMS_ENABLED` defaults to false. Enabling it issues native forms only
+when structural preflight and existing native-control context checks succeed.
+Otherwise valid replies preserve their prior rendering and destination, including
+plain-text forms alongside native Buttons/Choice and text replies in threaded,
+published or nonhuman contexts. Fallback grants no form callback authority.
+Authorization, provider-context and storage errors remain fail-closed; uncertain
+writes or sends never trigger fallback or another send. Already-issued native
+forms remain consumable and editable after issuance is stopped; historical text
+forms cannot acquire native callback authority through an edit. Independent
+controls mixed with a native form, multi-choice fields, native media and threaded
+forms remain unavailable for native issuance. Existing media and unavailable-thread
+refusals still apply. Local signed callback and recorded delivery tests establish
+the composed CMA path; actual Lark and Feishu rendering/submission acceptance
+remains unverified. See [native forms](CMAEG_Native_Lark_Forms.md).
+
+## Native Discord forms
+
+Native Discord Forms are separately default-off. Eligible forms use one launch
+button and a type-9 modal containing up to five Label-wrapped TextInput or
+StringSelect fields. Number and Date use explicitly labeled, strictly validated
+text; their rendering report records degradation. Whole submissions preserve
+the original actor, provider, consumer, conversation and destination. Invalid
+values do not consume a card; users open a fresh modal to retry. Existing text
+fallback for oversized or mixed forms is preserved before native side effects.
+Retained callbacks and exact lost-inbox recovery survive disabling issuance.
+Local contract fixtures pass through the real routed provider execution path;
+real Discord client acceptance remains unverified. See
+[native Discord forms](CMAEG_Native_Discord_Forms.md).
 
 ## Native Discord integration and its bounds
 
@@ -67,7 +107,10 @@ Activity and reply retain that same thread. Exact consumed replay retains the
 original proof. Multi-select has a separate default-off issuance gate and retains
 the complete canonical selection for callback recovery, including an explicit
 empty selection; old buttons/single-selects keep their existing result shapes.
-Controls with native media and interactive card edits are not implemented.
+Controls with native media remain unsupported. Native interactive card edits
+have a separate default-off gate and retain one exact platform message through a
+durable revision chain; text-only completion explicitly removes all controls.
+See [native card edits](CMAEG_Native_Discord_Card_Edits.md).
 
 Native receipt is persisted and observed before provider execution. Immutable
 inbox snapshots preserve routing and receipt time across replay. Verified thread
@@ -104,6 +147,7 @@ then apply the reviewed activation values and roll only the Gateway. Existing
 outbound-message authoring, raw relay verification, thread-contract authoring and
 inbound media stay enabled. The desired user-testing activation also enables
 relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
+Native Lark/Feishu forms remain separately disabled in the manifest.
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
@@ -152,14 +196,33 @@ and the [protocol](CMAEG_Protocol.md).
   `inbound.attachments`. CMA retains honest placeholders instead of inventing a
   download URL. The additive default-off `lark_resources` path instead uses the
   existing authorized NyxID bot-API proxy and independent receiving-bot evidence.
-  This is advanced explicit configuration, with no generic connection selector or
-  automatic grants and no live regional acceptance claim. See the
+  The owner connection selector offers eligible personal/shared connections with
+  verified regional endpoint evidence. Saved/manual bindings remain available;
+  selection grants no new access and makes no live regional acceptance claim. See the
   [binding contract](CMAEG_Protocol.md#opt-in-lark-and-feishu-embedded-resource-binding).
 - WhatsApp free-form replies remain subject to its 24-hour customer service
   window. Approved templates require provider approval and the matching relay
   contract; a CMA template flag does not grant either.
 
 ## Verification evidence and remaining acceptance
+
+Production verification on 27 October 2026 completed for candidate
+`f308d88f23754c2c55aef5a51372fd534c2a89d9`, built by the fully passing
+[CI run 40486174299](https://github.com/ChronoAIProject/cma/actions/runs/40486174299).
+Agent Manager, Event Gateway and Web converged before Discord multiselect and
+card-edit issuance were enabled. The checked-in manifest records those enabled
+values; their code defaults remain false. Lark forms and complete replies remain
+disabled. The Lark connection endpoint returned HTTP 200, but the test owner had
+no eligible connections, so actual connection selection remains unverified.
+
+An isolated production Custom channel verified invalid-signature rejection,
+completed ordinary and structured Form/multiselect replies, and Activity visible
+at 237 ms without creating another provider turn on reconnect. The first
+structured attempt timed out waiting for guarded approval and remains a failed
+delivery; separate explicitly approved events completed. Structured durations
+include approval time. These results establish Custom transport behavior, not
+native platform rendering, callback or media acceptance. The fixture and its
+temporary credential were subsequently retired through their public APIs.
 
 Local WebSocket and HTTP fixtures cover native ownership/resume quotas, source
 rotation, discovery/revocation, receipt-before-execution, immutable replay, media

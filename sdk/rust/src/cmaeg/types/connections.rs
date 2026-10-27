@@ -1,6 +1,48 @@
 //! Platform-neutral channel connection documents.
 use serde::{Deserialize, Serialize};
 
+/// Supported regional bot-resource connection inventory.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePlatform {
+    /// International Lark bot API.
+    Lark,
+    /// Mainland Feishu bot API.
+    Feishu,
+}
+
+/// Provenance of a current-subject-visible bot connection.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceConnectionSource {
+    /// The authenticated subject's connection.
+    Personal,
+    /// An allowed organization connection visible to the subject.
+    Organization,
+}
+
+/// Existing connection metadata, without credentials or implied channel-key grants.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResourceConnection {
+    /// Exact visible connection identity.
+    pub user_service_id: String,
+    /// Exact linked catalog service identity.
+    pub catalog_service_id: String,
+    /// Human-readable connection label.
+    pub name: String,
+    /// Validated regional service.
+    pub platform: ResourcePlatform,
+    /// Metadata provenance, without implied channel-key scope.
+    pub source: ResourceConnectionSource,
+}
+
+/// Bounded current-subject inventory, including eligible shared organization connections.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResourceConnectionList {
+    /// Existing eligible connections; choosing one does not change any grant.
+    pub items: Vec<ResourceConnection>,
+}
+
 /// Durable state of a channel connection.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

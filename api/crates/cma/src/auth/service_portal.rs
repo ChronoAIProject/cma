@@ -74,9 +74,9 @@ fn allowed(method: &Method, path: &str) -> bool {
             method == Method::GET
         }
         ["", "v1", "channels"] => matches!(*method, Method::GET | Method::POST),
-        ["", "v1", "channel-capabilities"] | ["", "v1", "channel-connections"] => {
-            method == Method::GET
-        }
+        ["", "v1", "channel-capabilities"]
+        | ["", "v1", "channel-connections"]
+        | ["", "v1", "relay-resource-connections"] => method == Method::GET,
         ["", "v1", "channels", value] if id(value) => {
             matches!(*method, Method::GET | Method::PUT | Method::DELETE)
         }

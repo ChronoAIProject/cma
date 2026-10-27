@@ -64,7 +64,7 @@ fn native_cards_refuse_media_threads_and_oversize_without_truncation() {
 }
 
 #[test]
-fn unsupported_forms_and_card_images_report_their_actual_degradation() {
+fn historical_forms_and_card_images_keep_their_original_degradation() {
     let message = message(json!({"blocks":[
         {"type":"card","title":"Chart","image":"https://example.com/chart.png"},
         {"type":"form","id":"form","fields":[{"id":"reason","label":"Reason","required":true,"kind":{"type":"text"}}]}]}));

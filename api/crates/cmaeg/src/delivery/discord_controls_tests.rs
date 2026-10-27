@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-fn sender(f: &FixtureState, enabled: bool) -> Sender {
+pub(super) fn sender(f: &FixtureState, enabled: bool) -> Sender {
     let mut relay = RelayClient::new("https://nyx.example", Duration::from_secs(5))
         .unwrap()
         .with_discord_interactions(enabled)

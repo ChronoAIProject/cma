@@ -10,13 +10,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-pub(super) struct Store {
+pub(crate) struct Store {
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Lock {
+pub(crate) struct Lock {
     kind: String,
     id: String,
     owner: String,
@@ -116,5 +116,23 @@ fn unavailable() -> Problem {
         ProblemCode::Internal,
         503,
         "native_message_effect_fence_unavailable",
+    )
+}
+
+pub(crate) fn destination(bot: &str, channel: &str, message: &str) -> String {
+    hash(&serde_json::json!({
+        "bot":bot,"native_channel":channel,"message":message
+    }))
+}
+
+pub(crate) fn hash(value: &impl Serialize) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(
+            cmaeg_core::profile::canonical_json(
+                serde_json::to_value(value).expect("native authority serializes")
+            )
+            .as_bytes()
+        )
     )
 }

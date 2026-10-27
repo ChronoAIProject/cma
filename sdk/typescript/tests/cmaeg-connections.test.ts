@@ -6,6 +6,39 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
 describe('gateway connection client', () => {
+  it('discovers existing current-subject regional resource connections without owner or key grants', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const client = new Cmaeg({
+      baseUrl: 'https://gateway.example',
+      credential: () => 'creator',
+      fetch,
+    });
+    for (const platform of ['lark', 'feishu'] as const) {
+      const item = {
+        user_service_id: 'connection',
+        catalog_service_id: 'catalog',
+        name: 'Bot',
+        source: 'organization',
+        platform,
+      };
+      fetch.mockResolvedValueOnce(json({ items: [{ ...item, private_value: 'not projected' }] }));
+      expect(await client.listRelayResourceConnections(platform)).toEqual({ items: [item] });
+      const call = fetch.mock.calls.at(-1);
+      expect(call?.[0]).toBe(
+        `https://gateway.example/v1/relay-resource-connections?platform=${platform}`,
+      );
+      const headers = new Headers(call?.[1]?.headers);
+      expect(headers.get('authorization')).toBe('Bearer creator');
+      expect(headers.has('x-cmaeg-owner')).toBe(false);
+      expect(headers.has('x-cmaeg-agent-authorization')).toBe(false);
+      expect(call?.[1]?.body).toBeUndefined();
+    }
+    expect(() => client.listRelayResourceConnections('telegram' as 'lark')).toThrow(
+      ValidationError,
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps creator, originating agent and per-operation organization authority separate', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const client = new Cmaeg({

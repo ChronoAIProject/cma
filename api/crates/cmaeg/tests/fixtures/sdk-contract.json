@@ -6121,5 +6121,35 @@
       "edited_at": "2026-10-27T01:01:00Z",
       "attachment_count": 0
     }
+  ],
+  "ResourcePlatform": [
+    "lark",
+    "feishu"
+  ],
+  "ResourceConnection": [
+    {
+      "user_service_id": "fixture",
+      "catalog_service_id": "fixture",
+      "name": "fixture",
+      "platform": "lark",
+      "source": "personal"
+    }
+  ],
+  "ResourceConnectionList": [
+    {
+      "items": [
+        {
+          "user_service_id": "fixture",
+          "catalog_service_id": "fixture",
+          "name": "fixture",
+          "platform": "lark",
+          "source": "personal"
+        }
+      ]
+    }
+  ],
+  "ResourceConnectionSource": [
+    "personal",
+    "organization"
   ]
 }
