@@ -93,7 +93,7 @@ impl Sender {
         if cards.refresh_native_lark(&prepared.card).await.is_err() {
             return (rejected("native_lark_control_authority_revoked"), effects);
         }
-        let _permit = match ctx.gate.attempt().await {
+        let permit = match ctx.gate.attempt().await {
             Ok(p) => p,
             Err(e) => return (refused(rendering, e.outcome()), effects),
         };
@@ -102,6 +102,7 @@ impl Sender {
             .native_lark
             .send_card(&token, reply, &prepared.markup)
             .await;
+        drop(permit);
         ctx.gate.progress();
         let id = match sent {
             Ok(id) => id,
