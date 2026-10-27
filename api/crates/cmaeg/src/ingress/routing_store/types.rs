@@ -16,6 +16,7 @@ pub const RETENTION_SECONDS: i64 = 7 * 86400;
 pub const ROOT_KIND: &str = "ordinary_route_manifest_v1";
 pub const PAYLOAD_KIND: &str = "ordinary_route_payload_v1";
 pub const NATIVE_INTERACTION_KIND: &str = "native_discord_interaction_payload_v1";
+pub const MESSAGE_EVENT_KIND: &str = "native_message_event_payload_v1";
 pub const CHUNK_KIND: &str = "ordinary_route_chunk_v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
