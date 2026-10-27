@@ -129,15 +129,12 @@ impl Fixture {
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap());
         let records = Arc::new(RecordClient::new(&base, "record-fixture").unwrap());
-        let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
-            "../../../../cmaeg-core/tests/fixtures/channel.json"
-        ))
-        .unwrap();
+        let mut definition =
+            crate::channels::definition::fixture::with_agent_key("resource-agent-fixture");
         let binding = super::tests::binding();
         definition.sources = vec![serde_json::from_value(json!({"type":"nyxid_relay","issuer":"https://nyx.example","jwks_url":"https://nyx.example/jwks","key_id":"key-1","route_ids":["route-one"],"platform":platform,"bot_id":"ou_source","lark_resources":binding,"admission":{"type":"all"}})).unwrap()];
         definition.record_id = uuid::Uuid::new_v4().to_string().parse().unwrap();
         definition.secrets.channel_key = Some(Secret::new(KEY));
-        definition.profile_digest = definition.profile.digest();
         definition.partition.key = cmaeg_core::channel::PartitionKey::ConversationAndSender;
         definition.validate().unwrap();
         let pointer = ChannelPointer {
