@@ -8,6 +8,8 @@ use super::{
 };
 #[path = "whatsapp_http_tests.rs"]
 mod http_tests;
+#[path = "whatsapp_media_tests.rs"]
+mod media_tests;
 use crate::{
     channels::resolver::ChannelResolver,
     turns::routed::scheduler::{Disposition, ScheduleConfig, Scheduler, TargetExecutor, WorkItem},

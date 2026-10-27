@@ -21,14 +21,20 @@ pub struct IngressState {
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
     pub whatsapp_receipts: Option<Arc<crate::whatsapp::receipts::Store>>,
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
-    /// Whether Telegram media is admitted; off, media is refused as before.
+    /// Shared media admission; native WhatsApp additionally requires its issuance gate.
     pub media_enabled: bool,
+    /// Reader-first native WhatsApp locator issuance; retained reads remain available.
+    pub native_whatsapp_media_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
     /// Receives authenticated refusals, producers and authentication
     /// failures; a no-op unless the console is on.
     pub activity: Arc<dyn ActivityObserver>,
 }
 impl IngressState {
+    pub fn with_whatsapp_media(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_media_enabled = enabled;
+        self
+    }
     pub fn with_routed(mut self, routed: Option<Arc<super::routed::RoutedIngress>>) -> Self {
         self.routed = routed;
         self
@@ -77,6 +83,7 @@ impl IngressState {
             whatsapp_receipts: None,
             receipt_observer: None,
             media_enabled: false,
+            native_whatsapp_media_enabled: false,
             telegram_effects_issuance_enabled: false,
             activity: Arc::new(NoopObserver),
             resolver,
