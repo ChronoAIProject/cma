@@ -186,6 +186,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
     ToolsState {
         discord_thread_history: None,
         discord_threads: None,
+        discord_conversation_history: None,
         complete_replies_enabled: false,
         routed_replies: None,
         telegram_effects_issuance_enabled: false,

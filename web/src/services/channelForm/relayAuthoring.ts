@@ -150,6 +150,14 @@ export function validateRelayAuthoring(
         throw new Error(
           'New or changed thread management access is disabled on this gateway. Your draft has been retained.',
         );
+      if (
+        source.conversation_history === true &&
+        !unchanged &&
+        discovery.authoring?.native_discord_conversation_history_enabled !== true
+      )
+        throw new Error(
+          'New or changed conversation history access is disabled on this gateway. Your draft has been retained.',
+        );
       const hasSavedNative = oldSources.some((old) => old.type === 'discord');
       const reason = nativeDiscordUnavailable(discovery, !hasSavedNative);
       if (

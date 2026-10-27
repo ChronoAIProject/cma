@@ -7,7 +7,9 @@ mod context;
 #[allow(dead_code)]
 #[path = "../../tests/fake_cma.rs"]
 mod fake_cma;
+mod history;
 mod thread_history;
+pub use history::DiscordConversationHistory;
 mod threads;
 pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
 pub use threads::DiscordThreads;

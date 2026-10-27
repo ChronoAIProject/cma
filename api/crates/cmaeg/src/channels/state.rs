@@ -56,6 +56,7 @@ pub struct ManagementState {
     pub native_telegram_durable_admission_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_discord_thread_lifecycle_enabled: bool,
+    pub native_discord_conversation_history_enabled: bool,
     pub native_discord_reactions_enabled: bool,
     pub native_discord: crate::discord::selection::Selection,
     pub native_discord_admission_enabled: bool,
@@ -92,6 +93,7 @@ impl ManagementState {
             telegram_message_events: self.native_telegram_message_events_writes_enabled,
             discord_thread_history: self.native_discord_thread_history_enabled,
             discord_thread_lifecycle: self.native_discord_thread_lifecycle_enabled,
+            discord_conversation_history: self.native_discord_conversation_history_enabled,
             discord_reactions: self.native_discord_reactions_enabled,
         }
     }
@@ -177,6 +179,7 @@ impl ManagementState {
             native_telegram_durable_admission_enabled: false,
             native_discord_thread_history_enabled: false,
             native_discord_thread_lifecycle_enabled: false,
+            native_discord_conversation_history_enabled: false,
             native_discord_reactions_enabled: false,
             native_discord: Default::default(),
             native_discord_admission_enabled: false,
