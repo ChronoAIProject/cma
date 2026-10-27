@@ -13,7 +13,13 @@ const labels: Readonly<Record<string, string>> = {
   readEventAttachment: 'Read received files',
   readMessageCapabilities: 'Check message actions',
   deleteMessage: 'Delete a sent message',
-  setMessageReaction: 'React to a sent message',
+  setMessageReaction: 'React to a message',
+  listEventThreads: 'Browse conversation threads',
+  createEventThread: 'Start a thread from a message',
+  manageThread: 'Manage a conversation thread',
+  readEventHistory: 'Read earlier conversation messages',
+  prepareFormReply: 'Prepare a WhatsApp form',
+  readFormPreparation: 'Check form preparation and delivery',
 };
 function Tools({ items }: { readonly items: readonly AgentToolCapability[] }) {
   return (
