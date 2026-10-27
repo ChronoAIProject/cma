@@ -355,3 +355,70 @@ async fn discord_card_edit_cas_serializes_with_click_and_preserves_consumed_resu
         }
     }
 }
+
+#[tokio::test]
+async fn discord_modal_retained_forms_edit_with_issuance_off_but_legacy_cards_cannot_adopt() {
+    let f = FixtureState::new().await;
+    let card = crate::discord::modal_fixture::card(&f).await;
+    let legacy = f.card(&message(false)).await;
+    let sender = editing(&f);
+    assert!(!sender.relay.discord_forms_enabled());
+    let mut form = crate::discord::modal_fixture::message();
+    form.text = Some("Revised form".into());
+    let refused = update(&sender, &f, &reference(&f, &legacy), &form).await;
+    assert!(matches!(refused.delivery, DeliveryOutcome::Unsupported));
+    assert!(f.rest.memory.calls.lock().unwrap().is_empty());
+    echo(&f, |_| {});
+    let result = update(&sender, &f, &reference(&f, &card), &form).await;
+    assert!(matches!(result.delivery, DeliveryOutcome::Confirmed { .. }));
+    let next = result
+        .message_ref
+        .as_ref()
+        .unwrap()
+        .open(&f.keys())
+        .unwrap()
+        .payload;
+    let retained = f
+        .store
+        .load(next.interaction_record_id.as_deref().unwrap())
+        .await
+        .unwrap()
+        .0;
+    assert!(retained.discord.as_ref().unwrap().form.is_some());
+    assert!(retained.discord_form_launch.is_none());
+    assert_eq!(retained.revision, 2);
+    let call = f
+        .rest
+        .memory
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|call| call.method == "PATCH")
+        .cloned()
+        .unwrap();
+    let body: Value = serde_json::from_slice(&call.body).unwrap();
+    let raw = f.callback(
+        body["components"][0]["components"][0]["custom_id"]
+            .as_str()
+            .unwrap(),
+    );
+    f.receive(raw, 2).await.unwrap();
+    let body: Value =
+        serde_json::from_slice(&f.rest.memory.calls.lock().unwrap().last().unwrap().body).unwrap();
+    assert_eq!(body["type"], 9);
+    f.receive(
+        crate::discord::modal_fixture::submit(&f, body["data"]["custom_id"].as_str().unwrap()),
+        3,
+    )
+    .await
+    .unwrap();
+    assert!(f
+        .store
+        .load(&retained.id)
+        .await
+        .unwrap()
+        .0
+        .consumed
+        .is_some());
+}

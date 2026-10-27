@@ -3855,3 +3855,21 @@ bot's zero/one ordinary reaction and do not consume controls. See
 [native card effects](CMAEG_Native_Discord_Card_Effects.md) for authority, reader
 rollout and platform limits. Disabling admission never permits rollback below
 the compatible-reader version while adopted authority remains live.
+
+
+### Native Discord modal Form delivery
+
+The existing neutral `Form` may be collected by the native Discord transport when
+`CMAEG_DISCORD_FORMS_ENABLED` and native interactions are enabled. The bounded
+subset is one form with 1–5 Text, Choice, Number or Date fields. Text/Choice use
+native modal controls; Number/Date use strict validated text and report
+`discord_modal_number_date_validated_text` degradation. A type-3 launch opens a
+type-9 modal without consuming or invoking a provider. A valid type-5 submission
+persists the complete canonical `InteractionResult.values.fields` before a
+single type-6 ACK and executes only the original consumer/conversation. Invalid
+fields do not consume the form; the fixed ephemeral response requests a new
+launch. Existing text/mixed-control degradation remains unchanged for disabled
+or ineligible native forms, with no fallback after authority or write failures.
+Retained callbacks, edits and exact lost-inbox recovery remain supported when
+issuance is disabled. See [native Discord forms](CMAEG_Native_Discord_Forms.md)
+for limits, rollback rules, official reference pin and local/live evidence bounds.
