@@ -25,8 +25,10 @@ external platform send is authorized by this review.
 | Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
-Native Discord thread creation, archive/reopen, join/follow, listing and history
-retrieval are not implemented. Existing-thread replies do not imply those
+Native Discord thread creation, archive/reopen, join/follow and listing are not
+implemented. Explicit history reads have a default-off, source-opt-in path through
+`readEventContext`: at most 20 text messages preceding the original message in
+its exact existing thread, with no pagination or write authority. Existing-thread replies do not imply those
 operations. Native uploads and multi-part/uncertain sends do not issue the
 single-message edit/effect authority described above. WhatsApp editing and groups
 are limitations of this CMA integration, not universal claims about the platform;

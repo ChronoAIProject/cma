@@ -96,6 +96,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConformanceLevel,
         ContextConfig,
         ContextResponse,
+        ThreadHistory,
+        ThreadHistoryMessage,
         ConversationId,
         ConversationKind,
         CredentialPatch,
@@ -482,4 +484,13 @@ fn native_bot_extensions_preserve_legacy_omitted_defaults() {
     let policy = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
     let parsed: AdmissionPolicy = serde_json::from_value(policy.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), policy);
+}
+
+#[test]
+fn retained_native_sources_keep_thread_history_absent() {
+    let value = json!({"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"}});
+    let source: Source = serde_json::from_value(value.clone()).unwrap();
+    let request: SourceRequest = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(source).unwrap(), value);
+    assert_eq!(serde_json::to_value(request).unwrap(), value);
 }

@@ -140,6 +140,7 @@ export const SourceRequestSchema = tagged(
       admission: AdmissionPolicySchema,
       bot_id: text,
       intents: integer,
+      thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: object({
@@ -349,6 +350,7 @@ export const SourceSchema = tagged(
       admission: AdmissionPolicySchema,
       bot_id: text,
       intents: integer,
+      thread_history: optional(boolean),
       type: enumeration('discord'),
     }),
     telegram: object({

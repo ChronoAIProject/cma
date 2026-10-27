@@ -24,6 +24,9 @@ pub enum Source {
         bot_id: String,
         /// Requested supported Gateway intents, including MESSAGE_CONTENT.
         intents: u64,
+        /// Explicitly allow a bounded read of the event’s earlier thread messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },
@@ -97,6 +100,9 @@ pub enum SourceRequest {
         bot_id: String,
         /// Requested supported Gateway intents, including MESSAGE_CONTENT.
         intents: u64,
+        /// Explicitly allow a bounded read of the event’s earlier thread messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_history: Option<bool>,
         /// Event admission policy.
         admission: AdmissionPolicy,
     },

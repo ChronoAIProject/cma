@@ -133,10 +133,12 @@ impl SourceChanges for RecordingSources {
                 SourceRequest::Discord {
                     bot_id,
                     intents,
+                    thread_history,
                     admission,
                 } => Source::Discord {
                     bot_id,
                     intents,
+                    thread_history,
                     admission,
                 },
                 SourceRequest::NyxidRelay {

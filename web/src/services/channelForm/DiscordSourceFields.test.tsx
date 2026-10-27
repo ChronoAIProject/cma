@@ -205,3 +205,46 @@ it('keeps activation refusal visible on the delivery map after the create editor
     'Native Discord activation capacity is full.',
   );
 });
+
+it('exposes bounded thread history only after capability confirmation', () => {
+  const onChange = vi.fn();
+  const enabled = {
+    ...available,
+    authoring: { ...available.authoring!, native_discord_thread_history_enabled: true },
+  };
+  const { rerender } = render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  expect(
+    screen.queryByRole('checkbox', { name: 'Read earlier thread messages' }),
+  ).not.toBeInTheDocument();
+  rerender(
+    <RelayCapabilitiesContext value={enabled}>
+      <SourceFields value={native} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Read earlier thread messages' }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...native, thread_history: true });
+  rerender(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={{ ...native, thread_history: true }} onChange={onChange} />
+    </RelayCapabilitiesContext>,
+  );
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Read earlier thread messages' }));
+  expect(onChange).toHaveBeenLastCalledWith(native);
+});
+
+it('retains saved thread history access and blocks a new opt-in when the gate is off', () => {
+  const source = { ...native, thread_history: true };
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [source] }, { sources: [native] }),
+  ).toThrow('thread history access');
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [source] }, { sources: [source] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [native] }, { sources: [source] }),
+  ).not.toThrow();
+});

@@ -32,3 +32,6 @@ pub use whatsapp_template::*;
 
 mod outbound;
 pub use outbound::*;
+
+mod thread_history;
+pub use thread_history::*;

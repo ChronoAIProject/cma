@@ -3,6 +3,7 @@ mod component_channel;
 mod effects;
 #[cfg(test)]
 pub(crate) mod effects_tests;
+mod thread_history;
 use crate::{
     channels::resolver::ResolvedChannel,
     media::{
