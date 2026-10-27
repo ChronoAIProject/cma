@@ -102,11 +102,11 @@ change; no external messages or deployment are part of its verification.
 ## Presentation integration
 
 The full provider Activity exposes the explicit CloudEvent type and affected
-message fields. The existing channel activity projection retains only source,
-actor, event ID, conversation and timestamps; it currently drops Activity kind and
-CloudEvent type. Its UI therefore still renders a generic event row and generic
-"Event time" label. A shared activity projection/UI change should add clear
-message-edited/message-deleted/reaction labels and distinguish native event time
-from gateway receipt time before the integrated release exposes these events to
-users. This transport change does not invent a user-facing human message for a
-change notification.
+message fields. The channel activity projection retains optional Activity kind,
+CloudEvent type and explicit source occurrence time alongside source, actor,
+event ID, conversation and gateway receipt time. It does not copy message bodies
+or event payloads into the activity log. The map preview and Activity view show
+message-edited and message-deleted labels; deletion actors and source timestamps
+remain explicitly unreported when Discord supplies neither. Historical records
+without these optional fields retain their generic event presentation. This
+projection does not invent a user-facing human message for a change notification.
