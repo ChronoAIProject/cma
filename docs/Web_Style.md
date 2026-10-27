@@ -3685,3 +3685,9 @@ available; their retained components keep pending operations while hidden.
 
 Configuration add/remove and save actions keep intrinsic widths and align to the
 start of their section; they do not stretch across the form's grid columns.
+
+Delivery map edges use a 1.5px stroke in `--dsw-alias-label-tertiary` so the
+direction remains legible in both themes. Arrowheads use the same ink. The
+built-page style check verifies these values on the actual rendered paths.
+
+| 2026-10-27 | Record the delivery map's directional edge weight and paint, and align built-page verification with shared sidebar rows. |
