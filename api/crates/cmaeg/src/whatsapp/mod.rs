@@ -1,5 +1,6 @@
 //! Native Meta WhatsApp Cloud API. NyxID relay integration is independent.
 mod client;
+pub(crate) mod forms;
 pub(crate) mod groups;
 mod interactive;
 pub(crate) mod management;
@@ -68,7 +69,7 @@ pub(crate) fn group_revision(
         Sha256::digest(
             serde_json::to_vec(&(
                 "native_whatsapp_group_revision_v1",
-                source,
+                legacy_source(source),
                 credentials.app_secret.as_str(),
                 credentials.access_token.as_str(),
                 credentials.verify_token.as_str()
@@ -76,4 +77,13 @@ pub(crate) fn group_revision(
             .expect("group revision serializes")
         )
     )
+}
+
+/// Forms consent is independent of retained native button/list and group authority.
+pub(crate) fn legacy_source(source: &cmaeg_core::channel::Source) -> serde_json::Value {
+    let mut value = serde_json::to_value(source).expect("native source serializes");
+    if let Some(object) = value.as_object_mut() {
+        object.remove("forms_enabled");
+    }
+    value
 }

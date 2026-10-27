@@ -294,3 +294,34 @@ it('shows structured existing-group opt-in with only supported group admission r
   );
   expect(screen.getByText(/Official Business Account/)).toBeInTheDocument();
 });
+
+it('keeps managed form consent separate from operator availability and permits withdrawal', () => {
+  const consenting = { ...source, forms_enabled: true };
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [consenting] }, { sources: [source] }),
+  ).toThrow('form consent');
+  expect(() =>
+    validateRelayAuthoring(available, { sources: [source] }, { sources: [consenting] }),
+  ).not.toThrow();
+  const enabled = {
+    ...available,
+    authoring: {
+      ...available.authoring!,
+      native_whatsapp_forms_enabled: true,
+      native_whatsapp_flow_writes_enabled: true,
+    },
+  };
+  expect(() =>
+    validateRelayAuthoring(enabled, { sources: [consenting] }, { sources: [source] }),
+  ).not.toThrow();
+  const change = vi.fn();
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <SourceFields value={consenting} onChange={change} />
+    </RelayCapabilitiesContext>,
+  );
+  const checkbox = screen.getByLabelText(/Allow managed WhatsApp forms/);
+  expect(checkbox).toBeEnabled();
+  fireEvent.click(checkbox);
+  expect(change).toHaveBeenCalledWith(expect.objectContaining({ forms_enabled: false }));
+});

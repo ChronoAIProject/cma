@@ -23,6 +23,13 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Content {
+    /// Token-free facts from an authenticated static Flow completion.
+    Flow {
+        card: String,
+        revision: u64,
+        context: String,
+        fields: std::collections::BTreeMap<String, serde_json::Value>,
+    },
     Text {
         text: String,
     },

@@ -404,7 +404,7 @@ fn now() -> i64 {
 }
 
 #[cfg(test)]
-mod lark_fixture;
+pub(crate) mod lark_fixture;
 #[cfg(test)]
 mod lark_tests;
 
