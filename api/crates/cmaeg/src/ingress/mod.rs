@@ -25,3 +25,6 @@ mod native_lark_tests;
 
 #[cfg(test)]
 mod whatsapp_control_tests;
+
+#[cfg(test)]
+mod native_lark_control_tests;

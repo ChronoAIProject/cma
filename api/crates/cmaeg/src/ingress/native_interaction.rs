@@ -12,7 +12,7 @@ pub(crate) fn shape(activity: &cmaeg_core::activity::Activity) -> bool {
     matches!(activity.kind, ActivityKind::Interaction(_))
         && matches!(
             activity.source,
-            SourceKind::Discord { .. } | SourceKind::Whatsapp { .. }
+            SourceKind::Discord { .. } | SourceKind::Whatsapp { .. } | SourceKind::NativeLark(_)
         )
         && activity.routing.as_ref().is_some_and(|routing| {
             routing.resolution == RouteResolution::Interaction

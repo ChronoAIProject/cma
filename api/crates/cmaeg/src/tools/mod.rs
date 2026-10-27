@@ -12,7 +12,7 @@ pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessa
 mod download_access;
 mod media_links;
 pub(crate) mod message_effects;
-mod reply_targets;
+pub(crate) mod reply_targets;
 mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,

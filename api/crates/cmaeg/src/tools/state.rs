@@ -114,7 +114,8 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = if message.native_lark_effect.is_some()
+        let channel = if crate::interactions::native_lark::is_reference(&message)
+            || message.native_lark_effect.is_some()
             || message.whatsapp_reaction.is_some()
             || message.lark_effect.is_some()
             || message.discord_message.is_some()
