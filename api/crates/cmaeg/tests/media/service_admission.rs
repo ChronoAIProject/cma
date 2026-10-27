@@ -233,6 +233,7 @@ fn config(media: MediaConfig) -> Config {
     Config {
         native_whatsapp_writes_enabled: false,
         native_whatsapp_media_enabled: false,
+        native_whatsapp_outbound_media_enabled: false,
         native_bot_mentions_writes_enabled: false,
         thread_contract_writes_enabled: false,
         multi_consumer_writes_enabled: false,
