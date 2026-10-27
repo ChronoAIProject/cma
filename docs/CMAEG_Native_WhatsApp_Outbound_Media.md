@@ -88,7 +88,7 @@ attachment contract exposes no `voice` flag, so this is basic audio delivery.
 ## Local audio evidence
 
 The audio increment uses real tiny media fixtures in
-`api/crates/cmaeg/tests/fixtures/media`. Existing `tone.mp3`, `tone.amr` and
+`api/crates/cmaeg/tests/fixtures/whatsapp-outbound`. Existing `tone.mp3`, `tone.amr` and
 `voice.ogg` are reused. On 2026-10-28 the installed Homebrew FFmpeg/ffprobe 8.1.1
 independently identified them as MP3, AMR-NB mono and Opus mono, and identified the
 new fixtures as AAC-LC mono. This host inspection is fixture evidence, not proof
@@ -178,7 +178,7 @@ img2webp -loop 0 -d 100 -lossless frame-1.png -d 100 frame-2.png -o whatsapp-ani
 
 `webpmux -info` independently reported a 512×512 canvas for all three, transparent
 static lossless/lossy data and two lossless 100 ms frames for the animated fixture.
-Fixtures reside in `api/crates/cmaeg/tests/fixtures/media`:
+Fixtures reside in `api/crates/cmaeg/tests/fixtures/whatsapp-outbound`:
 
 | Fixture | Bytes | SHA-256 |
 | --- | --- | --- |
