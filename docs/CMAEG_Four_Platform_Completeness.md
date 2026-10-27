@@ -22,7 +22,7 @@ external platform send is authorized by this review.
 | Existing threads | Native topic identity remains bound to the reply | Quote/context correlation; no CMA native-thread model | Declared thread contract with retained thread facts and reply/follow paths | Gated authenticated channel metadata, isolated thread partitions and exact existing-thread replies. Parent-message `thread` objects are not current membership |
 | Edit a sent message | Native text/control updates; gated relay text edits | Unsupported by the current CMA relay contract | Gated ordinary text edits and issued-card updates | Gated native single-part text/link edits through sealed exact-message references; gated relay text edits |
 | Delete/react to a sent message | Gated effects on confirmed bot messages, subject to permissions, age and reaction limits | No CMA relay operation | No CMA relay operation | Gated native effects on confirmed single-part bot text/link replies; durable idempotency and per-message serialization. No arbitrary message IDs or relay effects |
-| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
+| Interactive controls | Inline keyboards/choices and durable verified callbacks; named-consumer issuance has its own gate | Gated actor-bound buttons and single-choice lists; approved templates have a separate gate | Gated JSON 2.0 cards and durable verified callbacks | Gated native buttons/single-select controls, separately gated multi-select, and durable type-3 callbacks bound to the original actor, message, consumer and conversation. Relay controls remain blocked by the pinned upstream contract |
 | Incoming edits/deletes/reactions | Do not start ordinary agent work | Status, system and reaction input is refused | No general message-edit/delete/reaction propagation | Native ordinary intake admits `MESSAGE_CREATE`; edits/deletes/reactions do not start work |
 
 Native Discord thread creation, archive/reopen, join/follow and listing are not
@@ -64,8 +64,10 @@ deadline; new late clicks cannot consume a card. Buttons and single-select contr
 also support verified existing thread types 10, 11 and 12. Issuance and fresh
 callbacks authenticate the exact channel, type, guild and parent; the saved card,
 Activity and reply retain that same thread. Exact consumed replay retains the
-original proof. Multi-select, controls with native media and interactive card
-edits are not implemented.
+original proof. Multi-select has a separate default-off issuance gate and retains
+the complete canonical selection for callback recovery, including an explicit
+empty selection; old buttons/single-selects keep their existing result shapes.
+Controls with native media and interactive card edits are not implemented.
 
 Native receipt is persisted and observed before provider execution. Immutable
 inbox snapshots preserve routing and receipt time across replay. Verified thread
@@ -105,9 +107,14 @@ relay native uploads, relay text edits, Lark cards and WhatsApp interactions/tem
 The observed NyxID catalog and matching serving source implement these wire
 contracts; actual platform delivery/callback acceptance remains unverified until
 an authorized test uses each bot. Enabling these features does not authorize test
-messages to external recipients. Complete replies remain disabled: the current
-five-second whole-request budget can expire during a valid multipart send, so
-its timeout ownership must be corrected before switching existing replies.
+messages to external recipients. Complete replies remain disabled pending actual
+upstream delivery/receipt acceptance and retained-runtime compatibility checks.
+The implemented complete-reply exchange/tool budgets are 15 s/18 s; native media
+and media-bearing WhatsApp templates use 60 s/65 s outside routed execution.
+Text-only templates retain their configured exchange timeout and 8 s tool wait.
+Routed delivery retains its independent 20 s window. Compatible new runtimes
+wait 70 s for tools; retained runtimes may still cut off at 10 s. These finite
+budgets do not guarantee that every valid multipart send finishes in time.
 
 Activation requires the following release sequence:
 

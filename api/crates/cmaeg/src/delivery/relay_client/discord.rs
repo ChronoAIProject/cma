@@ -25,4 +25,12 @@ impl RelayClient {
     pub(in crate::delivery) fn discord_interactions_enabled(&self) -> bool {
         self.discord_interactions
     }
+    /// Gate only new multi-select cards; persisted selection recovery stays available.
+    pub fn with_discord_multiselect(mut self, enabled: bool) -> Self {
+        self.discord_multiselect = enabled;
+        self
+    }
+    pub(in crate::delivery) fn discord_multiselect_enabled(&self) -> bool {
+        self.discord_multiselect
+    }
 }

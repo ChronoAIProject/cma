@@ -301,3 +301,11 @@ pub(crate) fn message(select: bool) -> OutboundMessage {
         json!([{"type":"choice","id":"scope","prompt":"Choose a scope","multi":false,"options":[{"id":"private-read","label":"Read"},{"id":"private-write","label":"Write"}]}])
     } else { json!([{"type":"buttons","id":"approval","options":[{"id":"private-yes","label":"Yes","style":"primary"},{"id":"private-no","label":"No","style":"danger"}]}]) }})).unwrap()
 }
+pub(crate) fn multiselect_message() -> OutboundMessage {
+    let mut value = message(true);
+    if let cmaeg_core::message::Block::Choice { multi, options, .. } = &mut value.blocks[0] {
+        *multi = true;
+        options[0].selected = true;
+    }
+    value
+}

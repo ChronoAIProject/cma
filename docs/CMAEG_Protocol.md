@@ -1017,6 +1017,10 @@ message receipt and current revision. Missing/unbound, expired, superseded,
 wrong-actor/chat/message/platform/revision and out-of-range actions fail closed.
 CMA derives selected values from the saved options and uses CAS to consume one
 click. Redelivery retains a stable platform-prefixed event ID and idempotency key.
+If both CAS attempts conflict, the callback returns retryable 503
+`interaction_store_unavailable`; contention does not consume or refuse the click.
+Retry still enforces the current source policy and the original actor, message
+and revision. An already consumed exact replay retains its first result.
 
 Lark normally omits `chat_type` on a card action. CMA recovers private/group kind
 only from that exact bound record before applying current source ACLs; an explicit
@@ -2533,7 +2537,8 @@ to control legacy part exchanges, card/edit and non-media template exchanges
 automatic/tool replies retain their 20 s window and 30 s claims/target leases.
 The opaque runtime tool proxy waits 70 s in compatible runtime images, covering
 both ordinary reply waits and the existing 60 s exchange/65 s non-routed
-native-upload wait. It does not extend the routed window. Existing Sandbox
+native-upload or media-template wait. Text-only templates retain the 8 s tool
+wait and configured exchange timeout. It does not extend the routed window. Existing Sandbox
 runtimes retain their pinned image and may still cut off at 10 s. A timeout or cancellation after dispatch proves no absence of
 platform effects. Valid long replies can still exceed these finite budgets and
 remain unknown without replay; a 64-part payload cap is not a timing guarantee. A fake
@@ -3457,7 +3462,7 @@ pinned connections and no redirects; the latter retain the shared 64 KiB inline
 aggregate bound. At most four files and 8 MiB of aggregate prepared bytes are
 accepted. Multipart metadata preserves filenames, MIME types and descriptions.
 Native media delivery does not depend on NyxID relay-media deployment flags.
-Native buttons and single-select controls use the separately gated
+Native buttons and choice controls use the separately gated
 [interaction contract](CMAEG_Native_Discord_Interactions.md); deletion and
 reactions use the [confirmed-message effects contract](#native-discord-confirmed-message-effects)
 below. Unsupported structured blocks keep their established text fallback.
@@ -3537,7 +3542,7 @@ is never an outbound destination. Single-part editable text/link replies retain
 their normal exact-channel edit authority. Updates cannot add routing fields.
 Old reply references serialize identically when thread evidence is absent.
 
-Native buttons and single-select controls can use that same retained existing
+Native buttons and choice controls can use that same retained existing
 thread when native interaction issuance is enabled (and named consumer issuance
 is enabled when applicable). A fresh authenticated channel preflight must match
 the sealed event's exact thread before a card is persisted. The card retains an
@@ -3695,3 +3700,18 @@ confirm `capabilities.thread_history:true`; request the extra context explicitly
 This performs reads only and needs no automated external message send. Local
 HTTP/MCP fixtures prove the code contract; connected Discord acceptance remains
 a separately recorded test under the actual bot's permissions.
+
+## Native Discord multi-select submission
+
+`CMAEG_DISCORD_MULTISELECT_ENABLED` separately gates native `choice` blocks with
+`multi: true`; ordinary native-control and named-consumer gates still apply.
+A submission selects one whole set, including an explicit empty set. Its
+`InteractionResult` uses the authored choice block ID as `block_id` and
+`action_id`; `values.selected` contains saved option IDs in card order. The
+encrypted consumed-click record retains that canonical set under the same CAS
+as the callback identity. Missing, duplicate, noncanonical or cross-block
+indices cannot consume the card, and recovery cannot substitute a different set.
+Historical buttons and single-selects retain their existing serialized bytes
+and result shapes. Deploy compatible serving and rollback readers before enabling
+issuance; disabling it preserves retained callbacks. See the
+[native Discord control contract](CMAEG_Native_Discord_Interactions.md).
