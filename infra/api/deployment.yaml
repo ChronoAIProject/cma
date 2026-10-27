@@ -7,18 +7,18 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
   annotations:
-    cma.chronoai.dev/api-image-digest: "sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107"
+    cma.chronoai.dev/api-image-digest: "sha256:ad178e45654ecdb415f9ec2c1fad143db3778ecbac0e31ed4388769c16a185d0"
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48"
-    cma.chronoai.dev/ci-artifact: "12691412069"
+    cma.chronoai.dev/candidate: "8e22e700f6af15df26ae0c17520d493eaee55815"
+    cma.chronoai.dev/ci-artifact: "12706112102"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:994e0eb447eba7a816fceff6544c7967941720a194278a4617e3c580f48cf9ad"
-    cma.chronoai.dev/ci-run: "40401725379"
-    cma.chronoai.dev/image-digest: "sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107"
-    cma.chronoai.dev/image-source: "dc595e845658aa5f783f833310f949ca95269d99"
-    cma.chronoai.dev/source-tree: "66e33b9bb1e13048d2411267cbdf96e1231372b0"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:3e70c8c25061280f6d67feff427a7551e66f82123d561ee1e89a7505608dad3c"
+    cma.chronoai.dev/ci-head: "8e22e700f6af15df26ae0c17520d493eaee55815"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:96d4afa5553ab422620868cd317049d35ddb36d8e8a81585aa18d1e4c36a2930"
+    cma.chronoai.dev/ci-run: "40435881425"
+    cma.chronoai.dev/image-digest: "sha256:ad178e45654ecdb415f9ec2c1fad143db3778ecbac0e31ed4388769c16a185d0"
+    cma.chronoai.dev/image-source: "364c8053226ca5af2b9fc43eafe7572889937cfb"
+    cma.chronoai.dev/source-tree: "380514d87f7e6c7dfafeb254c44ed4401fef8c5b"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:5cf384843c496bcd67ff5da13bb21cccdcdb7595c095ddb1e4cd5030e3b5f440"
 spec:
   replicas: 1
   # Quota reservations and rate counters are process-local. Keep one replica
@@ -33,20 +33,20 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107"
+        cma.chronoai.dev/api-image-digest: "sha256:ad178e45654ecdb415f9ec2c1fad143db3778ecbac0e31ed4388769c16a185d0"
         cma.chronoai.dev/runtime-ci-artifact: "12331617434"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48"
-        cma.chronoai.dev/ci-artifact: "12691412069"
+        cma.chronoai.dev/candidate: "8e22e700f6af15df26ae0c17520d493eaee55815"
+        cma.chronoai.dev/ci-artifact: "12706112102"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "0ced1d6cf7d1c2a212b6daeca84aefa2e60d6c48"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:994e0eb447eba7a816fceff6544c7967941720a194278a4617e3c580f48cf9ad"
-        cma.chronoai.dev/ci-run: "40401725379"
-        cma.chronoai.dev/image-digest: "sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107"
-        cma.chronoai.dev/image-source: "dc595e845658aa5f783f833310f949ca95269d99"
+        cma.chronoai.dev/ci-head: "8e22e700f6af15df26ae0c17520d493eaee55815"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:96d4afa5553ab422620868cd317049d35ddb36d8e8a81585aa18d1e4c36a2930"
+        cma.chronoai.dev/ci-run: "40435881425"
+        cma.chronoai.dev/image-digest: "sha256:ad178e45654ecdb415f9ec2c1fad143db3778ecbac0e31ed4388769c16a185d0"
+        cma.chronoai.dev/image-source: "364c8053226ca5af2b9fc43eafe7572889937cfb"
         cma.chronoai.dev/runtime-image: "sha256:2634b16afd512281de38961f481909df2c7d186788c918dfe39896178e4cf52e"
-        cma.chronoai.dev/source-tree: "66e33b9bb1e13048d2411267cbdf96e1231372b0"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:3e70c8c25061280f6d67feff427a7551e66f82123d561ee1e89a7505608dad3c"
+        cma.chronoai.dev/source-tree: "380514d87f7e6c7dfafeb254c44ed4401fef8c5b"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:5cf384843c496bcd67ff5da13bb21cccdcdb7595c095ddb1e4cd5030e3b5f440"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -81,7 +81,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:bacc38df5ca7eb781ebe6e3d2daa0e811c11a8bc71a808b6eb2ce9bff1376107
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:ad178e45654ecdb415f9ec2c1fad143db3778ecbac0e31ed4388769c16a185d0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
