@@ -29,6 +29,7 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 /// Flags that admit writes of new stored shapes. Default off until explicitly enabled.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
+    pub native_lark: bool,
     /// Admits explicit native bot mention opt-ins after all readers support them.
     pub native_bot_mentions: bool,
     /// Admits verified native thread contracts after every reader supports them.
@@ -182,6 +183,26 @@ pub(crate) fn check(
             ));
         }
     }
+    let native_lark = |d: &ChannelDefinition| {
+        (
+            d.sources
+                .iter()
+                .filter(|s| matches!(s, Source::NativeLark(_)))
+                .cloned()
+                .collect::<Vec<_>>(),
+            d.secrets.native_lark.clone(),
+        )
+    };
+    let value = native_lark(next);
+    if (!value.0.is_empty() || value.1.is_some())
+        && !flags.native_lark
+        && !current.is_some_and(|old| native_lark(old) == value)
+    {
+        return Err(ValidationError::new(
+            "/sources/native_lark",
+            "native_lark_writes_disabled",
+        ));
+    }
     let whatsapp = |d: &ChannelDefinition| {
         (
             d.sources
@@ -265,9 +286,12 @@ pub(crate) fn check(
 
 fn dynamic_sources(definition: &ChannelDefinition) -> bool {
     let mut legacy = definition.clone();
-    legacy
-        .sources
-        .retain(|s| !matches!(s, Source::Discord { .. } | Source::Whatsapp { .. }));
+    legacy.sources.retain(|s| {
+        !matches!(
+            s,
+            Source::NativeLark(_) | Source::Discord { .. } | Source::Whatsapp { .. }
+        )
+    });
     if legacy.sources.is_empty() && !definition.sources.is_empty() {
         return definition.partition.custom_key.is_some();
     }

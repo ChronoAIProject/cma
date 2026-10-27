@@ -314,6 +314,14 @@ fn validate_delivery(
     current: &ResolvedChannel,
     target: &StoredTarget,
 ) -> Result<(), ExecutionError> {
+    if matches!(
+        target.launch.event.reply,
+        cmaeg_core::seal::ReplyAddress::NativeLark(_)
+    ) && crate::native_lark::credentials(&current.definition, &target.launch.event.reply)
+        .is_none()
+    {
+        return Err(ExecutionError::AuthorityChanged);
+    }
     let consumer = current
         .definition
         .consumer(Some(&target.launch.consumer))
@@ -352,6 +360,14 @@ pub(super) fn validate_current(
     plan: &AdmittedPlan,
     target: &StoredTarget,
 ) -> Result<(), ExecutionError> {
+    if matches!(
+        target.launch.event.reply,
+        cmaeg_core::seal::ReplyAddress::NativeLark(_)
+    ) && crate::native_lark::credentials(&current.definition, &target.launch.event.reply)
+        .is_none()
+    {
+        return Err(ExecutionError::AuthorityChanged);
+    }
     let consumer = current
         .definition
         .consumer(Some(&target.launch.consumer))

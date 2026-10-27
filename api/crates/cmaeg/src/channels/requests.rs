@@ -65,6 +65,8 @@ pub struct ProviderRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceRequest {
+    /// Requires a separate single-tenant native app; never replace a NyxID webhook.
+    NativeLark(cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
         app_id: String,
@@ -128,6 +130,8 @@ pub enum SourceRequest {
 #[serde(deny_unknown_fields)]
 pub struct CredentialsRequest {
     #[serde(default)]
+    pub native_lark: Option<cmaeg_core::channel::NativeLarkCredentials>,
+    #[serde(default)]
     pub whatsapp: Option<cmaeg_core::channel::WhatsappCredentials>,
     pub agent_key: Secret,
     #[serde(default)]
@@ -145,6 +149,8 @@ pub struct CredentialsRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialPatch {
+    #[serde(default)]
+    pub native_lark: Option<cmaeg_core::channel::NativeLarkCredentials>,
     #[serde(default)]
     pub whatsapp: Option<cmaeg_core::channel::WhatsappCredentials>,
     #[serde(default)]

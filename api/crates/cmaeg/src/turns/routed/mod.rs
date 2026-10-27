@@ -100,3 +100,6 @@ mod tool_operation_tests;
 mod telegram_http_retry_tests;
 #[cfg(test)]
 mod whatsapp_execution_tests;
+
+#[cfg(test)]
+mod native_lark_execution_tests;

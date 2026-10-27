@@ -73,6 +73,13 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.native_lark_intake_enabled = config.native_lark_intake_enabled;
+    state.native_lark_writes_enabled = config.native_lark_writes_enabled;
+    state.native_lark_admission_enabled =
+        config.routing.admission_enabled && config.routing.recovery_enabled;
+    state.native_lark = Some(std::sync::Arc::new(
+        crate::native_lark::Client::production()?
+    ));
     state.native_whatsapp_writes_enabled = config.native_whatsapp_writes_enabled;
     state.native_whatsapp_admission_enabled =
         config.routing.admission_enabled && config.routing.recovery_enabled;
@@ -124,6 +131,13 @@ pub(crate) async fn serve(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_native_lark(
+            crate::native_lark::Client::production()?,
+            std::sync::Arc::new(crate::native_lark::receipts::Store::new(
+                (*state.records).clone(),
+                state.master_keys.clone(),
+            )),
+        )
         .with_whatsapp(whatsapp, whatsapp_receipts.clone())
         .with_native_whatsapp_outbound_media(config.native_whatsapp_outbound_media_enabled)
         .with_complete_replies(complete_replies)
@@ -216,6 +230,7 @@ pub(crate) async fn serve(
     .with_telegram_effects(telegram_effects)
     .with_interactions(interactions)
     .with_media_enabled(config.media.enabled)
+    .with_native_lark_intake(config.native_lark_intake_enabled)
     .with_whatsapp_media(config.native_whatsapp_media_enabled)
     .with_routed(
         routed
@@ -302,6 +317,7 @@ pub(crate) async fn serve(
             resource_connections,
         ))
         .merge(http::connection_browser::router(connections))
+        .merge(http::native_lark::router(ingress.clone()))
         .merge(http::whatsapp::router(ingress.clone()))
         .merge(http::telegram::router(ingress.clone()))
         .merge(http::callbacks::router(ingress))

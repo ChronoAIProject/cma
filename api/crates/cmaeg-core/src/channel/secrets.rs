@@ -38,6 +38,8 @@ impl<'de> Deserialize<'de> for Secret {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSecrets {
+    #[serde(default, skip_serializing)]
+    pub native_lark: Option<super::NativeLarkCredentials>,
     pub agent_key_hash: String,
     #[serde(default, skip_serializing)]
     pub whatsapp: Option<super::WhatsappCredentials>,

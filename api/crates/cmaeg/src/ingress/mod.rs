@@ -19,3 +19,6 @@ pub use state::IngressState;
 
 #[cfg(test)]
 mod whatsapp_tests;
+
+#[cfg(test)]
+mod native_lark_tests;
