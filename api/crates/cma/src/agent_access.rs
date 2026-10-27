@@ -73,6 +73,9 @@ impl AgentAccessRequests for AgentAccessService {
     ) -> Result<AgentAccessRequest, AgentAccessError> {
         let authorization =
             retained_owner_authority(context, credential, self.authority.as_ref()).await?;
+        self.authority
+            .confirm_owner_service_scope(context, credential, &services)
+            .await?;
         let baseline = self
             .policy
             .current_sandbox_policy()
@@ -105,6 +108,9 @@ impl AgentAccessRequests for AgentAccessService {
     ) -> Result<AgentAccessRequest, AgentAccessError> {
         let authorization =
             retained_owner_authority(context, credential, self.authority.as_ref()).await?;
+        self.authority
+            .confirm_owner_service_scope(context, credential, &services)
+            .await?;
         let baseline = self
             .policy
             .current_sandbox_policy()
@@ -147,10 +153,15 @@ async fn retained_owner_authority(
     authority: &dyn PersonalCommandAdmissionAuthority,
 ) -> Result<AgentAuthorizationRevision, AgentAccessError> {
     require_owner_capability(&context.caller)?;
-    // Browser cookies project to direct API attribution. Retained custody and
-    // the exact current personal credential establish consent authority.
+    // Both transports require direct owner attribution and exact custody.
     if !context.validate_principal()
-        || context.credential_source != CredentialSource::Retained
+        || !matches!(
+            context.credential_source,
+            CredentialSource::Retained
+                | CredentialSource::Independent {
+                    expires_at: Some(_)
+                }
+        )
         || !matches!(
             &context.actor,
             ResourceActor::Human { subject }
@@ -161,10 +172,19 @@ async fn retained_owner_authority(
         return Err(AgentAccessError::Forbidden);
     }
     authority
-        .personal_command_authority(&context.caller, credential)
+        .owner_service_access_authority(context, credential)
         .await
         .map_err(|error| match error {
-            CommandAuthorizationError::Revoked => AgentAccessError::Forbidden,
+            CommandAuthorizationError::Revoked => {
+                if matches!(
+                    context.credential_source,
+                    CredentialSource::Independent { .. }
+                ) {
+                    AgentAccessError::OwnerAuthorityRequired
+                } else {
+                    AgentAccessError::Forbidden
+                }
+            }
             CommandAuthorizationError::Unavailable => AgentAccessError::Unavailable,
         })
 }

@@ -415,6 +415,9 @@ fn error(error: BindingError) -> Response {
         BindingError::NotFound => (StatusCode::NOT_FOUND, "binding_not_found"),
         BindingError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "invalid_binding"),
         BindingError::Conflict => (StatusCode::CONFLICT, "binding_not_ready"),
+        BindingError::ReconfigurationUnsupported => {
+            (StatusCode::CONFLICT, "binding_reconfiguration_unsupported")
+        }
         BindingError::ResourcesUnavailable => {
             (StatusCode::CONFLICT, "binding_resources_unavailable")
         }
@@ -433,6 +436,21 @@ fn error(error: BindingError) -> Response {
 #[cfg(test)]
 mod error_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unsupported_update_explains_that_retained_work_is_unchanged() {
+        let response = error(BindingError::ReconfigurationUnsupported);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "binding_reconfiguration_unsupported");
+        assert!(body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("have not been changed"));
+    }
 
     #[tokio::test]
     async fn storage_outage_remains_service_unavailable_with_sanitized_detail() {

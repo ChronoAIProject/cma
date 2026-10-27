@@ -1,16 +1,14 @@
-import Markdown, { type Components } from 'react-markdown';
+import { useContext } from 'react';
+import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MessageMedia } from './MessageMedia';
+import {
+  MessageMediaContext,
+  messageFilePath,
+  messageMediaType,
+  safeHttpUrl,
+} from './mediaSources';
 import './MessageContent.css';
-
-function safeHttpUrl(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const components: Components = {
   h1: ({ children }) => <h2>{children}</h2>,
@@ -18,7 +16,8 @@ const components: Components = {
   h3: ({ children }) => <h4>{children}</h4>,
   h4: ({ children }) => <h5>{children}</h5>,
   h5: ({ children }) => <h6>{children}</h6>,
-  a: ({ href, children }) => {
+  a: function MessageLink({ href, children }) {
+    const access = useContext(MessageMediaContext);
     let documentHref: string | undefined;
     if (href) {
       try {
@@ -49,6 +48,10 @@ const components: Components = {
         </a>
       );
     const safeHref = safeHttpUrl(href);
+    const path = messageFilePath(href, access?.workingDirectory);
+    if (href && (safeHref || (access && path)) && messageMediaType(safeHref ?? path ?? '')) {
+      return <MessageMedia src={href} label={typeof children === 'string' ? children : 'Media'} />;
+    }
     return safeHref === undefined ? (
       <span>{children}</span>
     ) : (
@@ -57,14 +60,7 @@ const components: Components = {
       </a>
     );
   },
-  img: ({ src, alt }) => {
-    const safeSrc = safeHttpUrl(src);
-    return safeSrc === undefined ? (
-      <span>{alt}</span>
-    ) : (
-      <img src={safeSrc} alt={alt ?? ''} loading="lazy" referrerPolicy="no-referrer" />
-    );
-  },
+  img: ({ src, alt }) => <MessageMedia src={src ?? ''} label={alt ?? ''} image />,
   table: ({ children }) => (
     <div className="agent-content__table-wrap">
       <table>{children}</table>
@@ -79,10 +75,19 @@ export function MessageContent({
   readonly content: string;
   readonly streaming?: boolean;
 }) {
+  const access = useContext(MessageMediaContext);
   return (
     <div className="agent-content" data-streaming={streaming ? '' : undefined}>
       {/* Default HTML handling preserves placeholders and markup as inert text. */}
-      <Markdown remarkPlugins={[remarkGfm]} components={components}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={components}
+        urlTransform={(url) =>
+          messageFilePath(url, access?.workingDirectory) === undefined
+            ? defaultUrlTransform(url)
+            : url
+        }
+      >
         {content}
       </Markdown>
     </div>

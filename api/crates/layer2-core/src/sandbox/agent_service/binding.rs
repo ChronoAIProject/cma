@@ -109,7 +109,7 @@ impl AgentService {
                     target: AgentControlTarget::from(&agent),
                     reason: agent
                         .requested_stop_reason
-                        .unwrap_or(AgentStopReason::Owner),
+                        .unwrap_or(AgentStopReason::BindingRetired),
                     requested_at: now_rfc3339(),
                 })
                 .await

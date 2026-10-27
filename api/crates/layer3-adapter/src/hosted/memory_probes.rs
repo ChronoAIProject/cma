@@ -5,6 +5,11 @@ use crate::wire::{RequestFrame, WireFailure, WireOperation};
 use crate::{AdapterError, AgentSlot, ConversationUpdate, RuntimeHandle};
 
 impl InMemoryHostedBackend {
+    /// Simulate a provider outage without implying that its runtimes are gone.
+    pub fn set_inventory_unavailable(&self, unavailable: bool) {
+        self.inventory_unavailable
+            .store(unavailable, Ordering::SeqCst);
+    }
     /// Simulate a supervisor replacement while retaining provider and disk identity.
     /// Filesystem receipts survive; credentials and live Agent processes do not.
     pub async fn restart_persistent_process(&self, handle: &RuntimeHandle) -> crate::Result<()> {

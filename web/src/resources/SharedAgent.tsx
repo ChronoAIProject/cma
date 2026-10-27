@@ -389,6 +389,15 @@ export function SharedAgent({
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
           <MessageStream
+            media={
+              web.files && can('view_files')
+                ? {
+                    agentId,
+                    files: web.files,
+                    workingDirectory: conversation.runtimeMetadata?.workingDirectory,
+                  }
+                : undefined
+            }
             unknownUserName="Participant"
             emptyMessage="No messages yet."
             conversation={conversation}
