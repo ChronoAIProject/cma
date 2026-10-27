@@ -1,10 +1,12 @@
-//! Bounded native image, PDF, audio, sticker and video uploads; media IDs are produced only by upload.
+//! Bounded native image, document, audio, sticker and video uploads.
 #[path = "outbound_audio.rs"]
 pub(crate) mod audio;
-use crate::media::outbound_profiles::bmff;
+#[path = "outbound_document.rs"]
+pub(crate) mod document;
 #[path = "outbound_sticker.rs"]
 pub(crate) mod sticker;
 use super::{Client, Error};
+use crate::media::outbound_profiles::bmff;
 use crate::media::outbound_profiles::image::image_header;
 pub(crate) use crate::media::outbound_profiles::video;
 use crate::media::{outbound::PreparedFile, sniff::sniff};
@@ -25,10 +27,17 @@ use serde_json::{json, Value};
 
 /// Meta documents 5 MB; use decimal bytes conservatively.
 pub(crate) const MAX_IMAGE_BYTES: usize = 5_000_000;
-pub(crate) const MIME_TYPES: [&str; 11] = [
+pub(crate) const MIME_TYPES: [&str; 18] = [
     "image/jpeg",
     "image/png",
     "application/pdf",
+    "text/plain",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "audio/aac",
     "audio/amr",
     "audio/mpeg",
@@ -76,7 +85,14 @@ impl Client {
         } else {
             None
         };
-        let mime = if let Some(video) = video {
+        let document = if item.kind == NativeMediaKind::File {
+            Some(document::inspect(&file.bytes).ok_or(Error::Invalid)?)
+        } else {
+            None
+        };
+        let mime = if let Some(document) = document {
+            document.mime()
+        } else if let Some(video) = video {
             video.mime()
         } else if let Some(audio) = audio {
             audio.mime()
@@ -99,7 +115,9 @@ impl Client {
         let (kind, extensions) = match (item.kind, mime) {
             (NativeMediaKind::Image, "image/jpeg") => ("image", &["jpg", "jpeg"][..]),
             (NativeMediaKind::Image, "image/png") => ("image", &["png"][..]),
-            (NativeMediaKind::File, "application/pdf") => ("document", &["pdf"][..]),
+            (NativeMediaKind::File, _) => {
+                ("document", document.ok_or(Error::Invalid)?.extensions())
+            }
             (NativeMediaKind::Audio, _) => ("audio", audio.ok_or(Error::Invalid)?.extensions()),
             (NativeMediaKind::Video, _) => ("video", video.ok_or(Error::Invalid)?.extensions()),
             (NativeMediaKind::Sticker, "image/webp") => ("sticker", &["webp"][..]),
