@@ -12,6 +12,7 @@ pub struct NativeMediaUpdate {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schema(nullable = false)]
     pub replacement: Option<NativeMediaReplacement>,
     /// Telegram visible caption; Discord attachment description (alt text).
     #[serde(
@@ -19,6 +20,7 @@ pub struct NativeMediaUpdate {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schema(nullable = false)]
     pub caption: Option<String>,
     /// Discord visible message content. Unsupported for Telegram media updates.
     #[serde(
@@ -26,6 +28,7 @@ pub struct NativeMediaUpdate {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "present"
     )]
+    #[schema(nullable = false)]
     pub text: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
