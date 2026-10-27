@@ -229,7 +229,7 @@ fn timeout_error() -> ProviderError {
     ProviderError::Unavailable("provider recovery deadline reached".into())
 }
 
-async fn bounded_body(
+pub(super) async fn bounded_body(
     mut response: reqwest::Response,
     limit: usize,
 ) -> Result<Vec<u8>, ProviderError> {

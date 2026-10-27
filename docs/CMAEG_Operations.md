@@ -327,6 +327,37 @@ For rollback, disable new thread-contract writes first and retain a gateway
 version that can read already stored contracts and sealed thread reply targets.
 Disabling the flag does not migrate those records for an older binary.
 
+## Lark resources and native Discord history rollout
+
+The binary defaults for `CMAEG_LARK_RESOURCE_WRITES_ENABLED` and
+`CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED` remain false. The deployment
+manifest enables these two opt-in capabilities only after the reader phase:
+deploy compatible gateway and consuming application images, wait for every old
+Pod including terminating/draining Pods to exit, and retain a compatible
+rollback image. Apply the two flags and roll the gateway through its normal
+drain procedure; environment values are captured at process startup.
+
+Authenticated `GET /v1/channel-capabilities` must then advertise both
+`relay_authoring.lark_resource_writes_enabled=true` and
+`relay_authoring.native_discord_thread_history_enabled=true`. Existing sources
+remain unchanged. Lark/Feishu needs an owner-authored exact `lark_resources`
+binding, independently pinned receiving bot and authorized connection. Native
+Discord needs source `thread_history:true` and an explicit
+`include_thread_history=true` request on its original event. Normal context
+reads make no history request. Enabling the flags performs no platform send.
+
+Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` during this activation. Its retained
+runtime proxy compatibility and complete-delivery verification are separate.
+The two source capabilities do not require replacing users' active Sandbox
+runtimes. Local authenticated contract tests cover these features; connected
+Lark/Discord acceptance remains a stated validation limit.
+
+To stop new opt-ins, disable both flags and roll the gateway again. Disabling
+native history also stops history reads. Disabling Lark writes preserves
+retained bindings; remove an exact binding or rotate its channel key to revoke
+old resource locators. Keep compatible readers for retained records and
+locators; flag rollback does not make them readable by older binaries.
+
 ## Native bot mention rollout
 
 Keep `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED=false` while deploying the new
