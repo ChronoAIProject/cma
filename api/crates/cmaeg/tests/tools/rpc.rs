@@ -143,7 +143,7 @@ async fn tools_list_matches_the_pre_refactor_golden_with_reviewed_extensions() {
     assert_tools_with_reviewed_extensions(&mut list["result"]);
 }
 
-/// Preserve recorded schemas apart from the optional key and native media docs.
+/// Preserve recorded schemas apart from reviewed optional key/history and docs.
 pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
     let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
     for (tool, previous) in list["tools"]
@@ -152,6 +152,32 @@ pub(super) fn assert_tools_with_reviewed_extensions(list: &mut Value) {
         .iter_mut()
         .zip(golden["tools"].as_array().unwrap())
     {
+        let mut context = tool["inputSchema"]["$defs"]
+            .as_object_mut()
+            .unwrap()
+            .remove("ContextArguments")
+            .unwrap();
+        let history = context["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("include_thread_history")
+            .unwrap();
+        assert_eq!(history["type"], "boolean");
+        assert_eq!(context, previous["inputSchema"]["$defs"]["EventArguments"]);
+        if tool["name"] == "readEventContext" {
+            let direct = tool["inputSchema"]["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("include_thread_history")
+                .unwrap();
+            assert_eq!(direct, history);
+            assert_eq!(tool["annotations"]["openWorldHint"], true);
+            let description = tool["description"].as_str().unwrap();
+            assert!(description.contains("at most 20 preceding text messages"));
+            assert!(description.contains("untrusted reference data"));
+            tool["annotations"]["openWorldHint"] = previous["annotations"]["openWorldHint"].clone();
+            tool["description"] = previous["description"].clone();
+        }
         let media_description =
             &mut tool["inputSchema"]["$defs"]["NativeMediaSource"]["oneOf"][0]["description"];
         let previous_description =

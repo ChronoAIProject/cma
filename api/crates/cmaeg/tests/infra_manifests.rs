@@ -451,3 +451,11 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
         );
     }
 }
+
+#[test]
+fn native_thread_history_is_default_off_until_compatible_reader_rollout() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED"),
+        Some("false")
+    );
+}

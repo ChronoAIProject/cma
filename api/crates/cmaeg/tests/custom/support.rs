@@ -120,6 +120,7 @@ impl App {
         .unwrap()
         .with_media_enabled(media_enabled);
         let tools = ToolsState {
+            discord_thread_history: None,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             whatsapp_interactions_enabled: false,

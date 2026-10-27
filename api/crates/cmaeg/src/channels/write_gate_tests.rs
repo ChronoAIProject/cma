@@ -512,3 +512,45 @@ fn lark_binding_requires_independent_bot_pin_regional_raw_source_and_credential(
         .get("lark_resources")
         .is_none());
 }
+
+#[test]
+fn native_thread_history_requires_its_gate_but_retention_and_removal_are_allowed() {
+    let mut next = definition(
+        json!([{"type":"discord","bot_id":"77","intents":37377,"admission":{"type":"all"},"thread_history":true}]),
+    );
+    next.secrets.discord_bot_token = Some(Secret::new("history-gate-fixture"));
+    let flags = WriteFlags {
+        native_discord: true,
+        ..Default::default()
+    };
+    let error = check(None, &next, flags).unwrap_err();
+    assert_eq!(
+        error,
+        ValidationError::new(
+            "/sources/0/thread_history",
+            "discord_thread_history_disabled"
+        )
+    );
+    check(
+        None,
+        &next,
+        WriteFlags {
+            discord_thread_history: true,
+            ..flags
+        },
+    )
+    .unwrap();
+    let mut renamed = next.clone();
+    renamed.name = "rename".into();
+    check(Some(&next), &renamed, flags).unwrap();
+    let cmaeg_core::channel::Source::Discord { thread_history, .. } = &mut renamed.sources[0]
+    else {
+        panic!()
+    };
+    *thread_history = false;
+    check(Some(&next), &renamed, flags).unwrap();
+    assert!(serde_json::to_value(&renamed.sources[0])
+        .unwrap()
+        .get("thread_history")
+        .is_none());
+}

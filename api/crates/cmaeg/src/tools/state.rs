@@ -21,6 +21,7 @@ use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
+    pub discord_thread_history: Option<Arc<super::DiscordThreadHistory>>,
     pub telegram_effects_issuance_enabled: bool,
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise templates only after the WhatsApp relay contract is verified.
