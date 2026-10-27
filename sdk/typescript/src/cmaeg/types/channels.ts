@@ -413,7 +413,17 @@ export const ProviderResponseSchema = object({
 });
 export type ProviderResponse = Output<typeof ProviderResponseSchema>;
 
+/** Native intake eligibility; selection is not a socket-health claim. */
+export const NativeDiscordActivationSchema = object({
+  state: text,
+  detail: text,
+  capacity: integer,
+  selected_records: integer,
+});
+export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;
+
 export const ChannelResponseSchema = object({
+  native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
   thread_contract_versions: optional(array(integer)),
   channel_id: text,
   definition: PublicChannelDefinitionSchema,
@@ -426,6 +436,7 @@ export type ChannelResponse = Output<typeof ChannelResponseSchema>;
 
 /** Owned channel metadata; legacy records omit an unrecoverable original ID and endpoints. */
 export const ChannelListItemSchema = object({
+  native_discord_activation: optional(nullable(NativeDiscordActivationSchema)),
   channel_id: optional(nullable(text)),
   definition: PublicChannelDefinitionSchema,
   endpoints: optional(nullable(EndpointResponseSchema)),

@@ -166,6 +166,7 @@ async fn a_replacement_keeps_its_consumer_and_refuses_a_reference_for_another() 
     let channel = cards.channel().await;
     let message: OutboundMessage = serde_json::from_value(json!({"text": "Done"})).unwrap();
     let foreign = MessageRefPayload {
+        discord_message: None,
         telegram_effect: None,
         consumer: None,
         ..payload.clone()

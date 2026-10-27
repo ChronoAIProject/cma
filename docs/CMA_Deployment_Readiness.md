@@ -1635,3 +1635,39 @@ Retained operator evidence SHA-256 values:
 - Publication: `994e0eb447eba7a816fceff6544c7967941720a194278a4617e3c580f48cf9ad`.
 - Initial canonical comparison: `11bca04d62f725888748d80c360461770ce0fd29efe8b6b3d33050b0ce8feb39`.
 - Activity probe result: `8999b72bacc219e2f34758b6a53a24f352de9e63a705509467820109c84bd3e7`.
+
+## Selected-channel live Activity Web publication from PR #1130 — 2026-10-27
+
+Production Web was updated from successful GitHub CI run `40422087892`, artifact
+`12698071958`, to immutable image digest
+`sha256:79761f0057951636baa88f796562758c386d9e62a97ca76e3c528defb5151f1e`.
+The original verified source was `265e613ff7d50c6dcb5b2afa8cdcd14d721e4dfb`.
+Selecting a channel now starts one live feed and displays its latest receipt above
+the map. The Activity dialog shares that feed; leaving the channel closes it.
+The Web deployment retains all preceding asset initializers and adds the prior
+`fd9e43d1cbad` image for existing tabs.
+
+An isolated Custom event reached Activity SSE in **413 ms** and the production
+page's receipt DOM in **420 ms**; the provider completed after **10,108 ms**.
+A fresh Activity GET already contained the event at **623 ms**. Reopening the
+channel after receipt displayed the latest record in **149–392 ms**; one entrance
+animation finished in **367 ms**. Opening and closing the Activity dialog retained
+one stream. The final Activity named the exact Agent returned by the authenticated
+response and its owned workspace. API reconnect retained one provider turn.
+
+Browser checks used production assets and real public API/SSE through a scoped
+saved-token test transport; ordinary OAuth cookie login was not exercised. The
+first monitor's final assertion timed out because it expected `Completed` rather
+than the actual `Agent completed` label. Its failed result and measured receipt
+were retained, and separate read-only browser checks verified the completed state.
+No event was resent. These individual measurements do not establish percentiles
+or live Telegram/WhatsApp/Lark/Discord delivery latency.
+
+The release changed only Web. API/Gateway deployment and configuration checks
+passed, all 7 sampled old entry assets remained available, and a bounded history
+sample retained 1,731 events across 24 owner Agents. Runtime/PVC identities were
+unchanged; the previously documented exit-2 crash loop continued independently
+and its exact restart differences were explicitly recorded, not hidden by a new
+baseline. The isolated test Channel was deleted through its versioned public
+lifecycle API, its provider sandbox retired and home released, and its exact
+temporary key revoked. No user runtime or external platform was modified.

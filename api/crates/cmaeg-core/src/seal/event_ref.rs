@@ -45,6 +45,7 @@ pub enum ReplyAddress {
         bot_id: String,
         channel_id: String,
         message_id: String,
+        thread_id: Option<String>,
     },
     Telegram {
         bot_id: String,
@@ -78,11 +79,13 @@ impl fmt::Debug for ReplyAddress {
                 bot_id,
                 channel_id,
                 message_id,
+                thread_id,
             } => formatter
                 .debug_struct("Discord")
                 .field("bot_id", bot_id)
                 .field("channel_id", channel_id)
                 .field("message_id", message_id)
+                .field("thread_id", thread_id)
                 .finish(),
             Self::NyxidRelay {
                 message_id,
@@ -131,6 +134,8 @@ enum ReplyAddressWire {
         bot_id: String,
         channel_id: String,
         message_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id: Option<String>,
     },
     Telegram {
         bot_id: String,
@@ -169,10 +174,12 @@ impl Serialize for ReplyAddress {
                 bot_id,
                 channel_id,
                 message_id,
+                thread_id,
             } => ReplyAddressWire::Discord {
                 bot_id: bot_id.clone(),
                 channel_id: channel_id.clone(),
                 message_id: message_id.clone(),
+                thread_id: thread_id.clone(),
             },
             Self::NyxidRelay {
                 message_id,
@@ -223,10 +230,12 @@ impl<'de> Deserialize<'de> for ReplyAddress {
                 bot_id,
                 channel_id,
                 message_id,
+                thread_id,
             } => Self::Discord {
                 bot_id,
                 channel_id,
                 message_id,
+                thread_id,
             },
             ReplyAddressWire::NyxidRelay {
                 message_id,
@@ -403,7 +412,14 @@ impl EventRefPayload {
                 bot_id,
                 channel_id,
                 message_id,
+                thread_id,
             } => {
+                if thread_id.as_ref().is_some_and(|id| id != channel_id) {
+                    return Err(ValidationError::new(
+                        "/reply/thread_id",
+                        "Discord thread must be the original channel",
+                    ));
+                }
                 for (field, id) in [
                     ("bot_id", bot_id),
                     ("channel_id", channel_id),

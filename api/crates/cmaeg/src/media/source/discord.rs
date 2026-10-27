@@ -52,7 +52,7 @@ impl DiscordFileSource {
         else {
             return Err(FetchError::NotRetrievable);
         };
-        if !matches!(&request.event.reply, ReplyAddress::Discord { bot_id: b, channel_id: c, message_id: m }
+        if !matches!(&request.event.reply, ReplyAddress::Discord { bot_id: b, channel_id: c, message_id: m, .. }
             if b == bot_id && c == channel_id && m == message_id)
             || request.activity.conversation.id != *channel_id
             || !request.event.verifies_activity(request.activity)

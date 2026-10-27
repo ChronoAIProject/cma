@@ -193,3 +193,59 @@ async fn rotated_token_is_bound_to_the_exact_bot_before_any_message_write() {
     );
     assert_eq!(f.memory.calls.lock().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn native_edit_cooldown_rejects_following_write_without_retry_or_retarget() {
+    let f = Fixture::new().await;
+    let token = Secret::new("native-edit-fixture");
+    f.respond(StatusCode::TOO_MANY_REQUESTS, json!({"retry_after":2.25}));
+    assert_eq!(
+        f.api.edit_text(&token, "77", "99", "800", "text").await,
+        Err(RestError::RateLimited(3))
+    );
+    assert!(matches!(
+        f.api.edit_text(&token, "77", "99", "800", "text").await,
+        Err(RestError::RateLimited(_))
+    ));
+    let calls = f.memory.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].method, "PATCH");
+    assert_eq!(calls[0].path, "/api/v10/channels/99/messages/800");
+}
+
+#[tokio::test]
+async fn native_edit_refuses_invalid_bounds_and_classifies_provider_refusal_or_uncertainty() {
+    let f = Fixture::new().await;
+    let token = Secret::new("native-edit-fixture");
+    for (channel, message, text) in [
+        ("../channels", "800", "x"),
+        ("99", "0800", "x"),
+        ("99", "800", ""),
+    ] {
+        assert_eq!(
+            f.api.edit_text(&token, "77", channel, message, text).await,
+            Err(RestError::Rejected)
+        );
+    }
+    assert_eq!(
+        f.api
+            .edit_text(&token, "77", "99", "800", &"😀".repeat(1001))
+            .await,
+        Err(RestError::Rejected)
+    );
+    assert!(f.memory.identities.lock().unwrap().is_empty());
+    assert!(f.memory.calls.lock().unwrap().is_empty());
+    for (status, expected) in [
+        (StatusCode::TEMPORARY_REDIRECT, RestError::Rejected),
+        (StatusCode::FORBIDDEN, RestError::Rejected),
+        (StatusCode::NOT_FOUND, RestError::NotFound),
+        (StatusCode::BAD_GATEWAY, RestError::Unknown),
+    ] {
+        f.respond(status, json!({}));
+        assert_eq!(
+            f.api.edit_text(&token, "77", "99", "800", "text").await,
+            Err(expected)
+        );
+    }
+    assert_eq!(f.memory.calls.lock().unwrap().len(), 4);
+}

@@ -144,8 +144,12 @@ applies with all media flags off.**
 | `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED` | `true` or `false` | `false` | Allows new scoped `bot_messages: native_mentions` policies and advertises `native_bot_mentions_v1` through authenticated channel capability discovery. Only exact `true`/`false` are accepted. Upgrade all gateway readers and consuming applications before enabling it. Turning it off prevents new opt-ins but retains existing policy execution; see [Native bot mention rollout](#native-bot-mention-rollout). |
 | `CMAEG_MULTI_CONSUMER_WRITES_ENABLED` | `true` or `false` | `false` | Allows policy-only routing edits after all replicas and rollback targets understand stored routing. Does not provision consumers or enable fanout execution. |
 | `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` | `true` or `false` | `false` | Allows new or changed Discord/WhatsApp raw verification independently from dynamic source topology. Enable only after all readers and rollback targets support it. Exact retained settings remain usable when disabled; no automatic trust downgrade. |
-| `CMAEG_NATIVE_DISCORD_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Discord source/credential writes after all readers and rollback images support them. Keep disabled until native inbox dispatch, REST delivery and source supervision are integrated; this flag does not activate sockets. |
-| `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for the explicit selected records. Off or an empty selection starts no native worker, scans or Discord requests. Authoring remains separately gated. |
+| `CMAEG_NATIVE_DISCORD_WRITES_ENABLED` | `true` or `false` | `false` | Allows native Discord source/credential writes after all readers and rollback images support them. Authoring alone does not activate sockets; the native runtime, routed execution and selection prerequisites remain required. |
+| `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` | `true` or `false` | `false` | Issue native Discord single-part text/link edit references after all readers and rollback images understand the optional exact destination. Disabling issuance preserves retained references. |
+| `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` | `true` or `false` | `false` | Issue 24-hour delete/reaction authority on confirmed native Discord single-part text/link replies; requires native edit issuance too. Deploy compatible readers before enabling. Retained references remain readable with issuance off. Reactions change only the bot’s own reaction; custom emoji IDs resolve in the destination guild. |
+| `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` | `true` or `false` | `false` | Persists verified native channel metadata in immutable inbox bodies and issues exact-thread reply evidence. Deploy compatible inbox and sealed-reference readers first. This uses one bounded authenticated channel read per new admitted message, with no per-channel cache; duplicate inbox messages reuse their original evidence. Disabling stops new metadata writes but retained evidence continues to replay. |
+| `CMAEG_NATIVE_DISCORD_ENABLED` | `true` or `false` | `false` | Enables supervised native source connections and durable inbox recovery for explicit canaries or bounded automatic discovery. Off starts no native worker, scans or Discord requests. Authoring remains separately gated. |
+| `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` | `true` or `false` | `false` | Discovers eligible ready native sources from the persisted channel index in pages of 32, with at most 64 selections/workers per process. Requires native runtime and routed recovery. Explicit canaries take precedence; dynamic selection authorizes verified native inbox admission only. It does not activate arbitrary HTTP, Custom or relay routing. |
 | `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` | comma-separated canonical UUID v4 IDs | empty | Initial bounded rollout selection, at most 64 records. When enabled, every selected record must also be in `CMAEG_ROUTED_CHANNEL_RECORDS` and routed recovery must be on. Sources need their original ready channel identity and an explicit routing snapshot. This staged allowlist is not automatic source discovery. |
 | `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED` | `true` or `false` | `false` | Allows extended source lists and partition shapes after all readers support them. Existing settings may carry through unchanged. Does not enable Discord/WhatsApp raw verification. |
 | `CMAEG_THREAD_CONTRACT_WRITES_ENABLED` | `true` or `false` | `false` | Advertises and permits new or changed native-thread contracts after all gateway readers and the NyxID native thread-reply endpoint support them. Keeping it false preserves ordinary channel writes and execution of retained contracts; removing a contract remains allowed. Only exact `true`/`false` are accepted. See [Native thread rollout](#native-thread-rollout). |
@@ -214,6 +218,7 @@ applies with all media flags off.**
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s tool deadline; ordinary text keeps its configured timeout and 8 s tool deadline. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
+| `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select, mixed native media and interactive edits remain unsupported. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
 | `CMAEG_WHATSAPP_INTERACTIONS_ENABLED` | boolean | `false` | Advertises and issues bounded WhatsApp reply buttons and single-choice lists for raw-verified private events; named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Enable only after every gateway reader supports the retained interaction record and NyxID preserves `reply.metadata.interactive` plus raw button/list selections. Disabling stops new issuance; retained callbacks stay readable. No editing, templates or initiated-send authority is implied. |
 | `CMAEG_WHATSAPP_TEMPLATES_ENABLED` | boolean | `false` | Advertises and accepts bounded approved WhatsApp template replies. Enable only after every serving NyxID replica honors `reply.metadata.template` and a controlled approved-template send has confirmed a platform message ID. Disabled refuses templates before credential claim; ordinary replies are unchanged. Only exact `true`/`false` are accepted. This enables neither interactive callbacks nor initiated sends. |
 | `CMAEG_RELAY_TEXT_EDITS_ENABLED` | boolean | `false` | Issues ordinary single-part relay text edit references and advertises Lark/Feishu/Discord editing only after every gateway reader understands the enriched reference. Telegram retains its existing interactive editing capability. Disabling stops new issuance; retained references remain readable/editable. Only exact `true`/`false` are accepted. See [Relay text edit rollout](#relay-text-edit-rollout). |
@@ -2367,8 +2372,9 @@ versions, all-parts platform observations and timing evidence before activation.
 
 ### Relay text edit rollout
 
-`CMAEG_RELAY_TEXT_EDITS_ENABLED` defaults to `false` in code and the deployment
-ConfigMap. Absent or exact `false` preserves the legacy serialized message
+`CMAEG_RELAY_TEXT_EDITS_ENABLED` defaults to `false` in code. The deployment
+ConfigMap records the desired enabled state after the compatible-reader rollout;
+it is not evidence of live activation. Absent or exact `false` preserves the legacy serialized message
 reference payload for both legacy chunking and complete replies. Empty, padded,
 non-Unicode or other boolean spellings fail startup. This flag is independent
 of complete replies and native media.
@@ -2587,3 +2593,34 @@ to evidence retained from authenticated ingress, including reply-to-bot facts.
 A revoked user/source/consumer/key therefore cannot reuse an old reference.
 External requests and pending intent outcomes are never logged with credentials
 or raw references. Existing sends incur no additional record reads when disabled.
+
+
+### Relay availability for authorized user testing (2026-10-27)
+
+The desired deployment configuration enables native relay uploads, ordinary text
+edits, Lark/Feishu cards and WhatsApp controls/templates after compatible gateway
+readers are deployed and predecessor Pods have drained. Existing saved source,
+owner, actor, destination, channel-key and provider-permission checks still apply;
+WhatsApp edits and native thread operations remain unsupported. Retained message
+references and callbacks require compatible readers even if issuance is disabled.
+
+Six uncached health observations identified NyxID `0.73.1` at
+`2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`. The authenticated platform catalog
+advertised image/file/audio/video on Telegram, WhatsApp, Lark, Feishu and Discord
+and text edits on all except WhatsApp. Matching source implements typed media,
+JSON2 cards and callbacks, WhatsApp buttons/lists and approved templates. This
+establishes the available integration contract for the user's testing rollout;
+it does not establish actual bot permissions, template approval, proxy limits,
+all-replica identity or successful external delivery. No NyxID change is needed.
+
+For this authorized testing rollout, the controlled platform checks described
+above remain outstanding acceptance work, rather than a prerequisite for making
+these implemented features available. Root verifies deployment and isolated
+Custom Channel behavior; external platform sends still require a designated
+test destination. Record platform acceptance separately from feature availability.
+
+`CMAEG_NYXID_COMPLETE_REPLIES` stays false. Its ordinary complete-request budget
+is currently five seconds while the upstream splitter sends parts sequentially.
+A valid multipart reply can exceed that budget even when individual sends fit
+the legacy per-part deadline. Coordinate its request and owning operation budgets
+before enabling it; do not widen the routed delivery window beyond its leases.

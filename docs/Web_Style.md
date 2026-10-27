@@ -3583,3 +3583,30 @@ Changing channel or identity closes the previous subscription and rejects its
 late responses. Opening Activity never sends an event or starts agent work.
 
 | 2026-10-27 | Standardize Event Gateway on Agent Manager primitives; introduce a full-area accessible React Flow workspace, expandable resource navigation, illustrative entry screens, retained centered node configuration with section navigation, and evidence-based live Channel Activity. |
+
+### Selected-channel Activity preview (2026-10-27)
+
+Keep the illustrative welcome diagram until a channel is explicitly selected.
+Selection opens one authenticated Activity subscription for that active channel;
+inactive retained channel views close their subscriptions. Returning starts a new
+subscription and receives its complete current snapshot. The map and retained
+Activity dialog share that feed and snapshot. Opening or closing the dialog
+never opens another subscription or starts work.
+
+Below the map heading, show a compact Latest activity region with connection
+status and the newest receipt from the authoritative snapshot: source, actor,
+received timestamp and each reported consumer state. With no consumer record,
+label the event Received. Do not synthesize a combined lifecycle state, traffic
+animation, event count or receipt time. Waiting for a snapshot differs from an
+authoritative empty history. Keep the last valid evidence visible during a
+reconnect, beside the current connection status. Native recoverable reconnects
+have no application retry limit; a terminal closed stream or malformed snapshot
+requires the existing explicit Reconnect activity action.
+
+The preview uses existing theme aliases, a level-2 border, 12px corner radius,
+12px insets, 8px wrapping gaps and 24px horizontal map margins (16px at narrow
+viewport widths). Use 13/20 primary text, medium headings and 12/18 secondary
+metadata. Each newly reported event uses the shared Presence arrival transition
+and reduced-motion behavior; updates to the same event do not restart it.
+
+| 2026-10-27 | Start one Activity stream on explicit channel selection; share its authoritative latest receipt with the map and retained dialog, close inactive streams and preserve native recoverable reconnects without an arbitrary error cap. |

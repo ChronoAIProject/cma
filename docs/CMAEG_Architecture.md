@@ -228,3 +228,7 @@ provenance and retention records remain readable so lifecycle operations cannot
 reinterpret old channel authority. New integrations use owner Bots and provider
 bindings. See [retired bridge compatibility](CMA_Operations.md#retired-bridge-compatibility)
 for the limited historical migration boundary.
+
+Native Discord supports an explicit, bounded self-service discovery mode. See
+[Self-service native Discord channels](CMAEG_Native_Discord_Self_Service.md) for
+its authoring gates, durable creation, selection limits and owner-visible status.

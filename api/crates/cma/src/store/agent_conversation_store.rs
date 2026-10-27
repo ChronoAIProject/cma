@@ -31,6 +31,9 @@ mod checkpoint_tests;
 mod cleanup_admission;
 mod contention;
 mod implementation;
+mod reopen;
+#[cfg(test)]
+mod reopen_tests;
 
 pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 

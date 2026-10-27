@@ -1,4 +1,5 @@
 //! NyxID relay transport. A lost response never proves that nothing was sent.
+mod discord;
 mod initiated;
 mod media;
 pub use media::supported as native_media_supported;
@@ -109,9 +110,12 @@ pub struct RelayClient {
     complete_replies: bool,
     native_media: bool,
     text_edits: bool,
+    native_discord_edits: bool,
+    native_discord_effects: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
+    discord_interactions: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
     pub telegram: crate::telegram::TelegramClient,
@@ -225,9 +229,12 @@ impl RelayClient {
             complete_replies: false,
             native_media: false,
             text_edits: false,
+            native_discord_edits: false,
+            native_discord_effects: false,
             lark_cards: false,
             whatsapp_templates: false,
             whatsapp_interactions: false,
+            discord_interactions: false,
             consumer_interactions: false,
             telegram_effects: false,
             interactions: None,

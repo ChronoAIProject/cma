@@ -47,6 +47,11 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
       source.type === 'custom' ? words(object(source.auth).type) : admissionSummary(admission),
     ],
   ];
+  if (source.type === 'discord') {
+    facts.push(['Connection', 'Direct Discord bot']);
+    if (channel.native_discord_activation)
+      facts.push(['Activation', channel.native_discord_activation.detail]);
+  }
   if (source.type === 'nyxid_relay')
     facts.push(
       ['Routes', readableList(source.route_ids, 'No routes attached')],
@@ -70,7 +75,7 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
   return (
     <>
       <Facts facts={facts} />
-      <ChannelEndpoints endpoints={endpoints} />
+      {source.type !== 'discord' ? <ChannelEndpoints endpoints={endpoints} /> : null}
     </>
   );
 }

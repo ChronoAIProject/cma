@@ -19,9 +19,13 @@ pub(crate) async fn serve(
     complete_replies: bool,
     native_media: bool,
     relay_text_edits: bool,
+    native_discord_edits: bool,
+    native_discord_effects: bool,
+    native_discord_threads: bool,
     lark_cards: bool,
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
+    discord_interactions: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -58,6 +62,8 @@ pub(crate) async fn serve(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.native_discord_writes_enabled = config.native_discord_writes_enabled;
+    state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
+    state.native_discord_admission_enabled = config.routing.admission_enabled;
     state.outbound_messages_writes_enabled = config.outbound_messages_writes_enabled;
     state.outbound_relay = Some(
         delivery::relay_client::RelayClient::new(
@@ -93,9 +99,12 @@ pub(crate) async fn serve(
         .with_complete_replies(complete_replies)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
+        .with_native_discord_edits(native_discord_edits)
+        .with_native_discord_effects(native_discord_effects)
         .with_lark_cards(lark_cards)
         .with_whatsapp_templates(whatsapp_templates)
         .with_whatsapp_interactions(whatsapp_interactions)
+        .with_discord_interactions(discord_interactions)
         .with_consumer_interactions(consumer_interactions)
         .with_telegram_effects(telegram_effects)
         .with_interactions(interactions.clone()),
@@ -183,10 +192,16 @@ pub(crate) async fn serve(
             telegram,
         ))),
         whatsapp_templates_enabled: whatsapp_templates,
+        discord_interactions_enabled: discord_interactions,
         whatsapp_interactions_enabled: whatsapp_interactions,
         consumer_interactions_enabled: consumer_interactions,
         native_media_enabled: native_media,
         relay_text_edits_enabled: relay_text_edits,
+        native_discord_edits_enabled: native_discord_edits,
+        discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
+        discord_effects: Some(std::sync::Arc::new(tools::DiscordEffectsClient::new(
+            crate::discord::DiscordRest::new()?,
+        ))),
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
@@ -211,6 +226,8 @@ pub(crate) async fn serve(
     });
     let mut native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
+        state.native_discord.clone(),
+        native_discord_threads,
         (*state.records).clone(),
         state.master_keys.clone(),
         ingress.clone(),

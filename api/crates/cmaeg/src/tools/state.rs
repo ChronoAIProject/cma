@@ -25,12 +25,17 @@ pub struct ToolsState {
     pub telegram_effects: Option<Arc<super::MessageEffectsClient>>,
     /// Advertise templates only after the WhatsApp relay contract is verified.
     pub whatsapp_templates_enabled: bool,
+    pub discord_interactions_enabled: bool,
     pub whatsapp_interactions_enabled: bool,
     pub consumer_interactions_enabled: bool,
     /// Advertise native relay media only after the deployed NyxID contract is verified.
     pub native_media_enabled: bool,
     /// Issue and advertise ordinary relay text edits after all readers are upgraded.
     pub relay_text_edits_enabled: bool,
+    /// Advertise newly issued native Discord edit references after reader rollout.
+    pub native_discord_edits_enabled: bool,
+    pub discord_effects_issuance_enabled: bool,
+    pub discord_effects: Option<Arc<super::DiscordEffectsClient>>,
     /// Native Lark/Feishu card issuance after compatible readers are deployed.
     pub lark_cards_enabled: bool,
     pub resolver: ChannelResolver,
@@ -94,11 +99,14 @@ impl ToolsState {
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
             .payload;
-        let channel = self
-            .resolver
-            .resolve(message.channel_id.as_str())
-            .await
-            .map_err(|error| error.problem())?;
+        let channel = if message.discord_message.is_some() {
+            self.resolver
+                .resolve_current(message.channel_id.as_str())
+                .await
+        } else {
+            self.resolver.resolve(message.channel_id.as_str()).await
+        }
+        .map_err(|error| error.problem())?;
         let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
         Ok((channel, message, matched))
     }
