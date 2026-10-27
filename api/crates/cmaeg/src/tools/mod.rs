@@ -8,7 +8,9 @@ mod context;
 #[path = "../../tests/fake_cma.rs"]
 mod fake_cma;
 mod thread_history;
+mod threads;
 pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessage};
+pub use threads::DiscordThreads;
 mod download_access;
 mod media_links;
 pub(crate) mod message_effects;

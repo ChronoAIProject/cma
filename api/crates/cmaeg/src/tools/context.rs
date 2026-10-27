@@ -56,6 +56,9 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Derived from retained native evidence; actual platform permissions are checked per call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_lifecycle: Option<cmaeg_core::thread_lifecycle::ThreadCapabilities>,
     /// A fixed 20-message prior window is available on explicit request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<bool>,
@@ -111,6 +114,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            thread_lifecycle: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -133,6 +137,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            thread_lifecycle: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -151,6 +156,7 @@ impl Capabilities {
             whatsapp_template_components: None,
             message_effects: None,
             thread_history: None,
+            thread_lifecycle: None,
         }
     }
     /// Legacy capabilities before ordinary relay text-edit issuance is enabled.

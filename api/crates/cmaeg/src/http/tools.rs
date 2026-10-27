@@ -34,6 +34,7 @@ pub fn router(state: ToolsState) -> Router {
         Router::new()
             .merge(super::reply_targets::routes())
             .merge(super::message_effects::routes())
+            .merge(super::threads::routes())
             .route("/v1/events/{event_ref}/replies", post(reply_to_event))
             .route("/v1/messages/{message_ref}/update", post(update_message))
             .route("/v1/events/{event_ref}/typing", post(send_typing))

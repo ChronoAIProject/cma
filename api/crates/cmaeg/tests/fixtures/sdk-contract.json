@@ -851,7 +851,19 @@
       "whatsapp_template_components": [
         "header",
         "body"
-      ]
+      ],
+      "thread_lifecycle": {
+        "create_from_original_message": true,
+        "list": "public_children_of_original_parent",
+        "manage_original_thread": false,
+        "actions": [
+          "archive",
+          "reopen",
+          "join",
+          "leave"
+        ],
+        "expires_at": 1800000600
+      }
     }
   ],
   "ChannelCreateRequest": [
@@ -3276,7 +3288,19 @@
         "whatsapp_template_components": [
           "header",
           "body"
-        ]
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave"
+          ],
+          "expires_at": 1800000600
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3463,7 +3487,19 @@
         "whatsapp_template_components": [
           "header",
           "body"
-        ]
+        ],
+        "thread_lifecycle": {
+          "create_from_original_message": true,
+          "list": "public_children_of_original_parent",
+          "manage_original_thread": false,
+          "actions": [
+            "archive",
+            "reopen",
+            "join",
+            "leave"
+          ],
+          "expires_at": 1800000600
+        }
       },
       "channel_id": "fixture",
       "consumer": {
@@ -4698,7 +4734,8 @@
       "admission": {
         "type": "all"
       },
-      "thread_history": true
+      "thread_history": true,
+      "thread_lifecycle": true
     },
     {
       "type": "whatsapp",
@@ -4886,7 +4923,8 @@
       "admission": {
         "type": "all"
       },
-      "thread_history": true
+      "thread_history": true,
+      "thread_lifecycle": true
     },
     {
       "type": "whatsapp",
@@ -5045,7 +5083,8 @@
         "native_whatsapp_writes_enabled": false,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false
       },
       "agent_tools": [
         {
@@ -5099,7 +5138,8 @@
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false
       },
       "agent_tools": [
         {
@@ -5162,7 +5202,8 @@
         "native_whatsapp_writes_enabled": true,
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
-        "native_whatsapp_groups_writes_enabled": true
+        "native_whatsapp_groups_writes_enabled": true,
+        "native_discord_thread_lifecycle_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6548,7 +6589,8 @@
       "native_whatsapp_writes_enabled": false,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6586,7 +6628,8 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6624,7 +6667,8 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6662,7 +6706,8 @@
       "native_telegram_message_events_enabled": true,
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
-      "native_whatsapp_groups_writes_enabled": true
+      "native_whatsapp_groups_writes_enabled": true,
+      "native_discord_thread_lifecycle_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -7005,6 +7050,127 @@
         "max_reactions": 1,
         "expires_at": 1800000000
       }
+    }
+  ],
+  "ThreadRef": [
+    "cmaeg1.tr.fixture"
+  ],
+  "ThreadListView": [
+    "active",
+    "archived"
+  ],
+  "CreateThreadRequest": [
+    {
+      "name": "Review",
+      "auto_archive_duration": 1440
+    }
+  ],
+  "ThreadAction": [
+    "archive",
+    "reopen",
+    "join",
+    "leave"
+  ],
+  "ThreadTarget": [
+    {
+      "type": "event",
+      "event_ref": "cmaeg1.ev.fixture"
+    },
+    {
+      "type": "thread",
+      "thread_ref": "cmaeg1.tr.fixture"
+    }
+  ],
+  "ManageThreadRequest": [
+    {
+      "target": {
+        "type": "thread",
+        "thread_ref": "cmaeg1.tr.fixture"
+      },
+      "action": "archive"
+    }
+  ],
+  "ThreadSummary": [
+    {
+      "thread_ref": "cmaeg1.tr.fixture",
+      "thread_id": "700",
+      "parent_id": "98",
+      "name": "Review",
+      "archived": false,
+      "locked": false,
+      "expires_at": 1800000600
+    }
+  ],
+  "ThreadListScope": [
+    "original_thread",
+    "public_children_of_original_parent"
+  ],
+  "ThreadList": [
+    {
+      "threads": [
+        {
+          "thread_ref": "cmaeg1.tr.fixture",
+          "thread_id": "700",
+          "parent_id": "98",
+          "name": "Review",
+          "archived": false,
+          "locked": false,
+          "expires_at": 1800000600
+        }
+      ],
+      "truncated": false,
+      "scope": "public_children_of_original_parent"
+    }
+  ],
+  "ThreadOutcome": [
+    {
+      "status": "confirmed"
+    },
+    {
+      "status": "unsupported",
+      "reason": "membership_requires_active_thread"
+    },
+    {
+      "status": "rejected",
+      "reason": "thread_permission_or_target_unavailable"
+    },
+    {
+      "status": "rate_limited",
+      "retry_after": 30
+    },
+    {
+      "status": "unknown",
+      "reason": "thread_write_unconfirmed"
+    }
+  ],
+  "ThreadReceipt": [
+    {
+      "outcome": {
+        "status": "confirmed"
+      },
+      "thread": {
+        "thread_ref": "cmaeg1.tr.fixture",
+        "thread_id": "700",
+        "parent_id": "98",
+        "name": "Review",
+        "archived": false,
+        "locked": false,
+        "expires_at": 1800000600
+      }
+    }
+  ],
+  "ThreadCapabilities": [
+    {
+      "create_from_original_message": true,
+      "list": "public_children_of_original_parent",
+      "manage_original_thread": false,
+      "actions": [
+        "archive",
+        "reopen",
+        "join",
+        "leave"
+      ],
+      "expires_at": 1800000600
     }
   ]
 }

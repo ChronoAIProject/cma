@@ -160,6 +160,9 @@ pub struct RelayAuthoringCapabilities {
     /// Opt-in native Discord thread history is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
+    /// Native Discord lifecycle opt-in and execution gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_discord_thread_lifecycle_enabled: Option<bool>,
     /// Whether native Discord incoming reaction events are enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_discord_reactions_enabled: Option<bool>,

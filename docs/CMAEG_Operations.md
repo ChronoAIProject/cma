@@ -2836,3 +2836,15 @@ and the selected CI publication receipt is
 `704641d15a07233396c40666ba7a36e9283ac61e647d4d6eba364f69460a4b1c`.
 The independent verifier recorded
 `bfde5ecef96ca12694ec1c4f0ac666c5e218d771d4883179dd36a23c6cf3ed40`.
+
+## Native Discord thread lifecycle rollout
+
+Native Discord lifecycle is separately gated by
+`CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED` (`true`/`false`, default `false`).
+The gate permits new source `thread_lifecycle:true` settings and executes bounded
+create/list/archive/reopen/current-bot join/leave operations. Turning it off
+revokes lifecycle execution, including retained references. Retained settings may
+be removed without enabling the gate. No runtime or infrastructure flag is
+activated by this source increment. See [thread lifecycle](CMAEG_Protocol.md#bounded-native-discord-thread-lifecycle)
+for authority boundaries, persistent uncertain-write fences, unsupported private
+and forum creation, and exact API semantics.

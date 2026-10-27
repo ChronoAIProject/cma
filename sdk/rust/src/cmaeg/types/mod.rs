@@ -36,4 +36,6 @@ mod outbound;
 pub use outbound::*;
 
 mod thread_history;
+mod thread_lifecycle;
 pub use thread_history::*;
+pub use thread_lifecycle::*;

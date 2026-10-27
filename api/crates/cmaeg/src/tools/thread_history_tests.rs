@@ -125,6 +125,7 @@ impl App {
             intents: 37377,
             admission: AdmissionPolicy::All {},
             thread_history: true,
+            thread_lifecycle: false,
         }];
         definition.secrets.discord_bot_token =
             Some(cmaeg_core::channel::Secret::new("thread-history-fixture"));
@@ -190,6 +191,7 @@ impl App {
         let (sender, _) = mpsc::channel(1);
         let state = ToolsState {
             complete_replies_enabled: false,
+            discord_threads: None,
             discord_thread_history: Some(Arc::new(DiscordThreadHistory::new(
                 crate::discord::DiscordRest::fixture(&format!("{platform_base}/api/v10/")),
             ))),
