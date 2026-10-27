@@ -83,7 +83,8 @@ impl ToolsState {
             .load(&a.original_sha256)
             .await?;
         authority::check(&channel, &message, &original, caller)?;
-        let enabled = self.native_media_edits.is_some() && a.revision == current.revision;
+        let enabled =
+            self.native_media_edits.is_some() && current.ready() && a.revision == current.revision;
         let effects = (message.telegram_effect.is_some() && self.telegram_effects.is_some())
             || (message
                 .discord_message

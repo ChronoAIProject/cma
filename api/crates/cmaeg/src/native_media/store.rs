@@ -1,6 +1,6 @@
 //! Immutable confirmed upload and CAS current state share the fixed authority expiry.
 use super::{
-    model::{Current, Original, Snapshot},
+    model::{Current, Original, RevisionStatus, Snapshot},
     unavailable,
 };
 use crate::{records::RecordClient, tools::message_effects::mutation::hash};
@@ -40,6 +40,7 @@ impl Store {
             revision: 0,
             snapshot: original.snapshot.clone(),
             last_operation: None,
+            status: None,
             expires_at: original.expires_at,
             version: 0,
         };
@@ -91,14 +92,90 @@ impl Store {
         snapshot: Snapshot,
         operation: &str,
     ) -> Result<Current, Problem> {
+        if !state.owns_attempt(operation) {
+            return Err(unavailable());
+        }
         let mut next = Current {
             original_sha256: state.original_sha256.clone(),
             revision: state.revision.checked_add(1).ok_or_else(unavailable)?,
             snapshot,
             last_operation: Some(operation.into()),
+            status: None,
             expires_at: state.expires_at,
             version: 0,
         };
+        next.version = self
+            .save(
+                "current",
+                &state.original_sha256,
+                &original.owner,
+                &next,
+                Some(state.version),
+                state.expires_at,
+            )
+            .await?;
+        Ok(next)
+    }
+    pub(crate) async fn begin(
+        &self,
+        original: &Original,
+        state: &Current,
+        operation: &str,
+    ) -> Result<Current, Problem> {
+        if !state.ready() {
+            return Err(unavailable());
+        }
+        self.transition(
+            original,
+            state,
+            Some(RevisionStatus::Attempting {
+                operation: operation.into(),
+                revision: state.revision,
+                snapshot_sha256: hash(&state.snapshot),
+            }),
+        )
+        .await
+    }
+    pub(crate) async fn restore(
+        &self,
+        original: &Original,
+        state: &Current,
+        operation: &str,
+    ) -> Result<(), Problem> {
+        if !state.owns_attempt(operation) {
+            return Err(unavailable());
+        }
+        self.transition(original, state, None).await.map(|_| ())
+    }
+    pub(crate) async fn retire(
+        &self,
+        original: &Original,
+        state: &Current,
+        operation: &str,
+        reason: &str,
+    ) -> Result<(), Problem> {
+        if !state.ready() && !state.owns_attempt(operation) {
+            return Err(unavailable());
+        }
+        self.transition(
+            original,
+            state,
+            Some(RevisionStatus::Retired {
+                operation: operation.into(),
+                reason: reason.into(),
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+    async fn transition(
+        &self,
+        original: &Original,
+        state: &Current,
+        status: Option<RevisionStatus>,
+    ) -> Result<Current, Problem> {
+        let mut next = state.clone();
+        next.status = status;
         next.version = self
             .save(
                 "current",
