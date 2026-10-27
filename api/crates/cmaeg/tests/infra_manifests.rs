@@ -455,6 +455,10 @@ fn staged_preview_enables_media_and_console_with_reserved_memory() {
 #[test]
 fn native_thread_history_allows_source_opt_in_while_complete_replies_stay_off() {
     assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_LARK_FORMS_ENABLED"),
+        Some("false")
+    );
+    assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_DISCORD_MULTISELECT_ENABLED"),
         Some("false")
     );

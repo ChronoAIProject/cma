@@ -32,11 +32,8 @@ pub(super) fn observe(
         return Err(INVALID);
     }
     let action = event.get("action").ok_or(INVALID)?;
-    if action.get("tag").and_then(Value::as_str) != Some("button")
-        || action
-            .get("form_value")
-            .is_some_and(|value| !value.is_null())
-    {
+    let tag = action.get("tag").and_then(Value::as_str);
+    if !matches!(tag, Some("button" | "form_submit")) {
         return Ok(Observation::Refused(Refusal::InteractiveActionUnsupported));
     }
     let Some(value) = action.get("value") else {
@@ -45,15 +42,35 @@ pub(super) fn observe(
     let Some(data) = value
         .get("cma_action")
         .and_then(Value::as_str)
-        .filter(|s| s.starts_with("cl1:") && s.len() <= 64)
+        .filter(|s| (s.starts_with("cl1:") || s.starts_with("clf1:")) && s.len() <= 64)
     else {
         return Ok(Observation::Refused(Refusal::InteractiveActionUnsupported));
     };
     if value.as_object().is_none_or(|v| v.len() != 1) {
         return Err(INVALID);
     }
+    let submitted = action.get("form_value").filter(|value| !value.is_null());
+    let form = if data.starts_with("clf1:") {
+        let Some(fields) = submitted
+            .and_then(Value::as_object)
+            .filter(|fields| fields.len() <= 12)
+        else {
+            return Ok(Observation::Refused(Refusal::InteractiveActionUnsupported));
+        };
+        if serde_json::to_vec(fields).map_err(|_| INVALID)?.len()
+            > crate::interactions::lark_form::MAX_SUBMITTED_BYTES
+        {
+            return Err(INVALID);
+        }
+        Some(fields.clone())
+    } else {
+        if submitted.is_some() || tag != Some("button") {
+            return Ok(Observation::Refused(Refusal::InteractiveActionUnsupported));
+        }
+        None
+    };
     let normalized =
-        json!({"tag":"button","value":value,"form_value":null,"open_message_id":message});
+        json!({"tag":tag,"value":value,"form_value":submitted,"open_message_id":message});
     if payload
         .content
         .text
@@ -71,11 +88,12 @@ pub(super) fn observe(
     Ok(Observation::Message(RelayFacts {
         thread: None,
         event: None,
-        callback: Some(CallbackFacts {
+        callback: Some(Box::new(CallbackFacts {
             id: callback.into(),
             data: data.into(),
             message_id: message.into(),
-        }),
+            form,
+        })),
         conversation,
         thread_id: None,
         mentioned: Some(true),
