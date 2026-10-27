@@ -19,7 +19,7 @@ pub use discord::valid_id as valid_discord_id;
 mod extensions;
 pub mod lark_resources;
 mod lookup;
-pub use lark_resources::{LarkResourceBinding, LarkResourceKind};
+pub use lark_resources::{LarkMessageEffectsBinding, LarkResourceBinding, LarkResourceKind};
 mod partition;
 mod platform;
 mod routing;
@@ -163,6 +163,9 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Explicit write authority; independent of resource reads.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
         admission: AdmissionPolicy,
     },
     Custom {

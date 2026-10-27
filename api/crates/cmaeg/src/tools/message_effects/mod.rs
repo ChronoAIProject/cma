@@ -12,6 +12,10 @@ mod discord_card_races;
 mod discord_card_tests;
 #[cfg(test)]
 mod discord_tests;
+mod lark;
+pub(crate) mod lark_authority;
+pub(crate) mod lark_ledger;
+pub mod lark_transport;
 use super::{reply_targets::receipts, state::owner, ToolsState};
 use crate::{
     auth::AgentCaller,
@@ -86,6 +90,26 @@ impl ToolsState {
             return self
                 .discord_card_capabilities(caller, reference, channel, message)
                 .await;
+        }
+        if message.lark_effect.is_some() {
+            lark_authority::check(&message, &channel, caller)?;
+            let cards = crate::interactions::InteractionStore::new(
+                self.resolver.record_client(),
+                self.keys.clone(),
+                self.providers.clone(),
+            );
+            if cards
+                .lark_effect_card(&channel, &message)
+                .await
+                .map_err(|_| invalid("lark_card_unavailable"))?
+                .is_some_and(|(card, _)| card.superseded)
+            {
+                return Ok(MessageEffectsCapabilities::new(
+                    false,
+                    message.lark_effect.as_ref().map(|a| a.expires_at),
+                ));
+            }
+            return lark::capabilities(&message, &channel, caller, self.lark_effects.is_some());
         }
         if message.discord_message.is_some() {
             return discord::capabilities(&message, &channel, self.discord_effects.is_some());
@@ -168,6 +192,11 @@ impl ToolsState {
         if message.discord_message.is_some() {
             return self
                 .discord_message_effect(caller, reference, request_id, effect, channel, message)
+                .await;
+        }
+        if message.lark_effect.is_some() {
+            return self
+                .lark_message_effect(caller, reference, request_id, effect, channel, message)
                 .await;
         }
         let (Some(authority), Some(client)) = (&message.telegram_effect, &self.telegram_effects)
@@ -261,3 +290,14 @@ fn invalid(detail: &str) -> Problem {
 fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
+
+#[cfg(test)]
+mod lark_fixture;
+#[cfg(test)]
+mod lark_tests;
+
+#[cfg(test)]
+mod lark_card_tests;
+
+#[cfg(test)]
+mod lark_custody_tests;

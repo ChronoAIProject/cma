@@ -151,6 +151,7 @@ pub struct Config {
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
     pub native_whatsapp_writes_enabled: bool,
+    pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
@@ -276,6 +277,9 @@ impl Config {
             )?,
             relay_raw_verification_writes_enabled: routing::write_flag(
                 "CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED",
+            )?,
+            lark_message_effects_writes_enabled: routing::write_flag(
+                "CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED",
             )?,
             lark_resource_writes_enabled: routing::write_flag(
                 "CMAEG_LARK_RESOURCE_WRITES_ENABLED",
