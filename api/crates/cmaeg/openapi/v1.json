@@ -2568,7 +2568,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ReceivedMessageContext",
-                "description": "Reaction-only reference to the exact received native WhatsApp message."
+                "description": "Reaction-only reference to the exact received native Telegram, Discord or WhatsApp message."
               },
               {
                 "type": "null"
