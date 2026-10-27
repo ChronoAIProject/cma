@@ -2213,6 +2213,23 @@ gateway's durable cursor. Recovery support grants no right to repeat a POST.
 See [recovery transport operations](CMAEG_Operations.md#provider-response-recovery-transport)
 for configuration, bounds and staged activation.
 
+### Updating a CMA profile binding without losing work
+
+CMA keeps the admitted Agent configuration, environment and conversation affinity
+pinned for the lifetime of a profile binding. A PUT that changes service scope,
+skills, system prompt, model, environment or affinity returns HTTP 409 with
+`binding_reconfiguration_unsupported`. It leaves the binding, credential, Agent,
+history, worktree and home unchanged; retrying or reconciling that request cannot
+schedule their retirement. Apply supported changes through the existing resource
+controls. CMA does not claim that a rejected profile was applied.
+
+Metadata-only updates preserve the conversation generation and resource IDs.
+Credential rotation with the original profile remains supported and uses the
+existing delivery workflow. Rotate a changed credential separately before a
+metadata update. Explicit binding/conversation retirement records
+`binding_retired` as the Agent stop cause, unless an earlier admitted stop already
+supplied a cause. This cause identifies binding cleanup, not a manual owner stop.
+
 ### Selecting the channel's Agent target
 
 A channel can ask its provider to provision an Agent from an EventWorkerProfile
