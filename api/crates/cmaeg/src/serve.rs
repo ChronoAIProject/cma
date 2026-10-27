@@ -29,6 +29,7 @@ pub(crate) async fn serve(
     discord_interactions: bool,
     discord_multiselect: bool,
     discord_card_edits: bool,
+    discord_card_effects: bool,
     consumer_interactions: bool,
     telegram_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -218,9 +219,10 @@ pub(crate) async fn serve(
         relay_text_edits_enabled: relay_text_edits,
         native_discord_edits_enabled: native_discord_edits || discord_card_edits,
         discord_effects_issuance_enabled: native_discord_effects && native_discord_edits,
-        discord_effects: Some(std::sync::Arc::new(tools::DiscordEffectsClient::new(
-            crate::discord::DiscordRest::new()?,
-        ))),
+        discord_effects: Some(std::sync::Arc::new(
+            tools::DiscordEffectsClient::new(crate::discord::DiscordRest::new()?)
+                .with_card_effects(discord_card_effects),
+        )),
         lark_cards_enabled: lark_cards,
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
