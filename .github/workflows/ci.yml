@@ -320,7 +320,7 @@ jobs:
           cargo nextest run --workspace --locked -E 'binary(=media_image_peak)'
           --test-threads 1 --success-output final
       - name: Tests
-        run: cargo nextest run --workspace --locked -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'
+        run: cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'
       - name: Gateway socket latency budget
         # Keep the real-socket 20 ms assertion, without concurrent workspace
         # test processes consuming the same hosted runner's CPU budget.
