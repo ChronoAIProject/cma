@@ -3,7 +3,6 @@ use super::{
     delivery_tests::{accepted, lane},
     test_support::*,
 };
-use crate::native_lark::Transport as _;
 use crate::{
     auth::AgentCaller,
     delivery::{

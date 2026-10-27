@@ -137,7 +137,10 @@ async fn native_lark_preflight_and_independent_gate_refuse_without_platform_writ
                 m.native_attachments.push(bad);
             }
             "receipts" => sender.relay.native_lark_receipts = None,
-            "consumer" => event.consumer = Some("csm_0000000000ff".parse().unwrap()),
+            "consumer" => {
+                event.consumer =
+                    Some(cmaeg_core::ids::ConsumerId::parse("csm_0000000000ff").unwrap())
+            }
             "revision" => {
                 Arc::make_mut(&mut channel)
                     .definition
