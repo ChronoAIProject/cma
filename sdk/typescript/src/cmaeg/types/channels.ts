@@ -133,7 +133,6 @@ export const LarkResourceBindingSchema = object({
   app_id: text,
 });
 export type LarkResourceBinding = Output<typeof LarkResourceBindingSchema>;
-
 export const SourceRequestSchema = tagged(
   {
     discord: object({
@@ -344,7 +343,6 @@ export type RoutingPolicy = Output<typeof RoutingPolicySchema>;
 
 export const PublicSecretsSchema = object({ agent_key_hash: text });
 export type PublicSecrets = Output<typeof PublicSecretsSchema>;
-
 export const SourceSchema = tagged(
   {
     discord: object({
