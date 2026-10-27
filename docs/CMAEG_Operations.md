@@ -2372,8 +2372,9 @@ versions, all-parts platform observations and timing evidence before activation.
 
 ### Relay text edit rollout
 
-`CMAEG_RELAY_TEXT_EDITS_ENABLED` defaults to `false` in code and the deployment
-ConfigMap. Absent or exact `false` preserves the legacy serialized message
+`CMAEG_RELAY_TEXT_EDITS_ENABLED` defaults to `false` in code. The deployment
+ConfigMap records the desired enabled state after the compatible-reader rollout;
+it is not evidence of live activation. Absent or exact `false` preserves the legacy serialized message
 reference payload for both legacy chunking and complete replies. Empty, padded,
 non-Unicode or other boolean spellings fail startup. This flag is independent
 of complete replies and native media.
@@ -2592,3 +2593,34 @@ to evidence retained from authenticated ingress, including reply-to-bot facts.
 A revoked user/source/consumer/key therefore cannot reuse an old reference.
 External requests and pending intent outcomes are never logged with credentials
 or raw references. Existing sends incur no additional record reads when disabled.
+
+
+### Relay availability for authorized user testing (2026-10-27)
+
+The desired deployment configuration enables native relay uploads, ordinary text
+edits, Lark/Feishu cards and WhatsApp controls/templates after compatible gateway
+readers are deployed and predecessor Pods have drained. Existing saved source,
+owner, actor, destination, channel-key and provider-permission checks still apply;
+WhatsApp edits and native thread operations remain unsupported. Retained message
+references and callbacks require compatible readers even if issuance is disabled.
+
+Six uncached health observations identified NyxID `0.73.1` at
+`2ab239cecbda8e3fb9f69ae4fa84fd7a801d7e4f`. The authenticated platform catalog
+advertised image/file/audio/video on Telegram, WhatsApp, Lark, Feishu and Discord
+and text edits on all except WhatsApp. Matching source implements typed media,
+JSON2 cards and callbacks, WhatsApp buttons/lists and approved templates. This
+establishes the available integration contract for the user's testing rollout;
+it does not establish actual bot permissions, template approval, proxy limits,
+all-replica identity or successful external delivery. No NyxID change is needed.
+
+For this authorized testing rollout, the controlled platform checks described
+above remain outstanding acceptance work, rather than a prerequisite for making
+these implemented features available. Root verifies deployment and isolated
+Custom Channel behavior; external platform sends still require a designated
+test destination. Record platform acceptance separately from feature availability.
+
+`CMAEG_NYXID_COMPLETE_REPLIES` stays false. Its ordinary complete-request budget
+is currently five seconds while the upstream splitter sends parts sequentially.
+A valid multipart reply can exceed that budget even when individual sends fit
+the legacy per-part deadline. Coordinate its request and owning operation budgets
+before enabling it; do not widen the routed delivery window beyond its leases.

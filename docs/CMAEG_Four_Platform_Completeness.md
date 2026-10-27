@@ -98,9 +98,14 @@ These desired values are not evidence of production activation. Deploy the new
 images with the previous live configuration first, let predecessor Pods drain,
 then apply the reviewed activation values and roll only the Gateway. Existing
 outbound-message authoring, raw relay verification, thread-contract authoring and
-inbound media stay enabled. Relay native uploads, complete-reply attestation,
-relay text edits, Lark cards and WhatsApp interactions/templates remain disabled
-until the actual serving relay contract and its required acceptance are verified.
+inbound media stay enabled. The desired user-testing activation also enables
+relay native uploads, relay text edits, Lark cards and WhatsApp interactions/templates.
+The observed NyxID catalog and matching serving source implement these wire
+contracts; actual platform delivery/callback acceptance remains unverified until
+an authorized test uses each bot. Enabling these features does not authorize test
+messages to external recipients. Complete replies remain disabled: the current
+five-second whole-request budget can expire during a valid multipart send, so
+its timeout ownership must be corrected before switching existing replies.
 
 Activation requires the following release sequence:
 
