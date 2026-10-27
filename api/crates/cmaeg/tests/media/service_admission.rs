@@ -233,6 +233,8 @@ fn config(media: MediaConfig) -> Config {
     Config {
         native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
+        native_lark_controls_enabled: false,
+        native_lark_forms_enabled: false,
         native_lark_media_enabled: false,
         native_telegram_media_edits_enabled: false,
         native_discord_media_edits_enabled: false,

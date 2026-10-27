@@ -52,6 +52,12 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if crate::interactions::native_lark::is_reference(reference) {
+            return (
+                self.native_lark_card_update(ctx, reference, message).await,
+                SendEffects::default(),
+            );
+        }
         // A replacement answers no event, so it never marks a first send.
         let effects = SendEffects::default();
         if message.native_media_update.is_some()

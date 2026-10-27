@@ -43,6 +43,7 @@ impl InteractionStore {
                 .as_ref()
                 .and_then(|identity| identity.form.as_ref())
                 .is_some_and(|form| !form.current_source(&old, channel))
+            || old.native_lark.is_some()
             || old.whatsapp.is_some()
             || old.discord.is_some()
             || old.route_id != reference.route_id

@@ -37,6 +37,12 @@ impl Sender {
         let ReplyAddress::NativeLark(reply) = &event.reply else {
             return (unsupported(), effects);
         };
+        if self.relay.native_lark_controls
+            && (crate::interactions::lark::requested(message)
+                || crate::interactions::lark_form::requested(message))
+        {
+            return self.native_lark_controls_reply(ctx, event, message).await;
+        }
         let media = !message.native_attachments.is_empty();
         if message.validate().is_err()
             || (media && !self.relay.native_lark_outbound_media_enabled())
