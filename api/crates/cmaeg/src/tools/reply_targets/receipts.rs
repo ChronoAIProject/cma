@@ -50,6 +50,12 @@ impl Store {
             keys,
         }
     }
+    pub(crate) fn whatsapp_reaction(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            records: records.whatsapp_reaction_records(),
+            keys,
+        }
+    }
     pub async fn claim(
         &self,
         target: &ReplyTargetPayload,
