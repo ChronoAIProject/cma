@@ -42,3 +42,8 @@ Optional pre-send metadata outages omit edit enrichment while ordinary send
 checks still apply. A verified custody contradiction refuses the send. Discord's
 shared provider cooldown remains authoritative when an optional read observes a
 real rate limit; skipping enrichment does not bypass that throttle.
+
+Pending expansion includes editable Telegram captions with automatic entities,
+Discord messages with automatic embeds or spoiler decorations, and individual
+references for each message in a multipart send. Preserving confirmed delivery
+for these uploads does not grant edit capability or complete those follow-ups.
