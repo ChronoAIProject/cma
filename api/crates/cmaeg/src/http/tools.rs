@@ -80,12 +80,13 @@ pub async fn reply_to_event(
     )
 }
 #[utoipa::path(post,path="/v1/messages/{message_ref}/update",operation_id="updateMessage",tag="tools",
-    security(("agentBearer"=[])),params(("message_ref"=String,Path)),request_body=OutboundMessage,
+    security(("agentBearer"=[])),params(("message_ref"=String,Path),("Idempotency-Key"=Option<String>,Header,description="Required for native_media_update; retain the same key and patch on retry.")),request_body=OutboundMessage,
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn update_message(
     State(state): State<ToolsState>,
     caller: AgentCaller,
     Path(reference): Path<String>,
+    headers: HeaderMap,
     body: Result<Json<OutboundMessage>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     let message = match json(body) {
@@ -102,7 +103,15 @@ pub async fn update_message(
             )))
         }
     };
-    result(state.update(caller, &reference, message).await)
+    let key = match reply_key(&headers) {
+        Ok(key) => key,
+        Err(error) => return result::<IntentReceipt>(Err(error)),
+    };
+    result(
+        state
+            .update_with_idempotency(caller, &reference, message, key)
+            .await,
+    )
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/typing",operation_id="sendTyping",tag="tools",
     security(("agentBearer"=[])),params(("event_ref"=String,Path)),

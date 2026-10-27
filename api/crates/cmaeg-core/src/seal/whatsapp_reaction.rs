@@ -36,6 +36,7 @@ impl WhatsappReactionAuthority {
         .iter()
         .any(|id| !valid_meta_id(id))
             || !valid_message_id(&message.platform_message_id)
+            || message.native_media_edit.is_some()
             || message.route_id != self.route()
             || self.authority_sha256.len() != 64
             || !self.authority_sha256.bytes().all(|b| b.is_ascii_hexdigit())

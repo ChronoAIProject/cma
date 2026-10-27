@@ -1669,6 +1669,12 @@
           "edit": {
             "type": "boolean"
           },
+          "forms": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "inbound_media": {
             "oneOf": [
               {
@@ -1701,6 +1707,16 @@
               {
                 "$ref": "#/components/schemas/NativeMediaCapabilities",
                 "description": "Explicit native attachments; relay sources require deployment attestation."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "native_media_edits": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaEditCapabilities"
               },
               {
                 "type": "null"
@@ -3652,6 +3668,16 @@
             "minimum": 0,
             "type": "integer"
           },
+          "media_edit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeMediaEditCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reaction": {
             "type": "boolean"
           },
@@ -3942,6 +3968,52 @@
         ],
         "type": "object"
       },
+      "NativeMediaEditCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "idempotency_key_required": {
+            "type": "boolean"
+          },
+          "max_attachments": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replacement_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/NativeMediaKind"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "caption",
+          "content",
+          "replacement_kinds",
+          "max_attachments",
+          "max_bytes",
+          "idempotency_key_required"
+        ],
+        "type": "object"
+      },
       "NativeMediaKind": {
         "enum": [
           "image",
@@ -3951,6 +4023,34 @@
           "sticker"
         ],
         "type": "string"
+      },
+      "NativeMediaReplacement": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NativeMediaKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/NativeMediaSource"
+          }
+        },
+        "required": [
+          "kind",
+          "source"
+        ],
+        "type": "object"
       },
       "NativeMediaSource": {
         "oneOf": [
@@ -3993,6 +4093,23 @@
             "type": "object"
           }
         ]
+      },
+      "NativeMediaUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "description": "Telegram visible caption; Discord attachment description (alt text).",
+            "type": "string"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/NativeMediaReplacement"
+          },
+          "text": {
+            "description": "Discord visible message content. Unsupported for Telegram media updates.",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "NativeStickerCapabilities": {
         "properties": {
@@ -4158,6 +4275,10 @@
               "$ref": "#/components/schemas/NativeAttachment"
             },
             "type": "array"
+          },
+          "native_media_update": {
+            "$ref": "#/components/schemas/NativeMediaUpdate",
+            "description": "Explicit single-media update; accepted only by updateMessage."
           },
           "reply_to": {
             "oneOf": [
@@ -4911,6 +5032,18 @@
             ]
           },
           "native_discord_writes_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_controls_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_lark_forms_enabled": {
             "type": [
               "boolean",
               "null"
@@ -9026,6 +9159,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Required for native_media_update; retain the same key and patch on retry.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],

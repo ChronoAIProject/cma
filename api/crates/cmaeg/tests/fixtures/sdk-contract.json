@@ -845,7 +845,18 @@
         "expires_at": 1800000000,
         "max_reactions": 1,
         "reaction": true,
-        "scope": "confirmed_native_bot_message"
+        "scope": "confirmed_native_bot_message",
+        "media_edit": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        }
       },
       "thread_history": true,
       "whatsapp_template_components": [
@@ -863,7 +874,19 @@
           "leave"
         ],
         "expires_at": 1800000600
-      }
+      },
+      "native_media_edits": {
+        "caption": true,
+        "content": true,
+        "expires_at": 1800000000,
+        "idempotency_key_required": true,
+        "max_attachments": 1,
+        "max_bytes": 8388608,
+        "replacement_kinds": [
+          "file"
+        ]
+      },
+      "forms": false
     }
   ],
   "ChannelCreateRequest": [
@@ -3282,7 +3305,18 @@
           "expires_at": 1800000000,
           "max_reactions": 1,
           "reaction": true,
-          "scope": "confirmed_native_bot_message"
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         },
         "thread_history": true,
         "whatsapp_template_components": [
@@ -3300,7 +3334,19 @@
             "leave"
           ],
           "expires_at": 1800000600
-        }
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3341,7 +3387,18 @@
           "reaction": true,
           "scope": "received_native_user_message",
           "max_reactions": 1,
-          "expires_at": 1800000000
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         }
       }
     },
@@ -3481,7 +3538,18 @@
           "expires_at": 1800000000,
           "max_reactions": 1,
           "reaction": true,
-          "scope": "confirmed_native_bot_message"
+          "scope": "confirmed_native_bot_message",
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         },
         "thread_history": true,
         "whatsapp_template_components": [
@@ -3499,7 +3567,19 @@
             "leave"
           ],
           "expires_at": 1800000600
-        }
+        },
+        "native_media_edits": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        },
+        "forms": false
       },
       "channel_id": "fixture",
       "consumer": {
@@ -3540,7 +3620,18 @@
           "reaction": true,
           "scope": "received_native_user_message",
           "max_reactions": 1,
-          "expires_at": 1800000000
+          "expires_at": 1800000000,
+          "media_edit": {
+            "caption": true,
+            "content": true,
+            "expires_at": 1800000000,
+            "idempotency_key_required": true,
+            "max_attachments": 1,
+            "max_bytes": 8388608,
+            "replacement_kinds": [
+              "file"
+            ]
+          }
         }
       }
     }
@@ -3981,6 +4072,19 @@
             ]
           }
         ]
+      },
+      "native_media_update": {
+        "caption": "",
+        "replacement": {
+          "filename": "report.bin",
+          "kind": "file",
+          "mime_type": "application/octet-stream",
+          "source": {
+            "data": "AQIDBA==",
+            "type": "base64"
+          }
+        },
+        "text": "Updated visible content"
       }
     }
   ],
@@ -5084,7 +5188,9 @@
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
-        "native_discord_thread_lifecycle_enabled": false
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "agent_tools": [
         {
@@ -5139,7 +5245,9 @@
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
-        "native_discord_thread_lifecycle_enabled": false
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "agent_tools": [
         {
@@ -5203,7 +5311,9 @@
         "native_lark_writes_enabled": false,
         "native_lark_intake_enabled": false,
         "native_whatsapp_groups_writes_enabled": true,
-        "native_discord_thread_lifecycle_enabled": false
+        "native_discord_thread_lifecycle_enabled": false,
+        "native_lark_controls_enabled": false,
+        "native_lark_forms_enabled": false
       },
       "source_features": [
         "native_bot_mentions_v1"
@@ -6590,7 +6700,9 @@
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
-      "native_discord_thread_lifecycle_enabled": false
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6629,7 +6741,9 @@
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
-      "native_discord_thread_lifecycle_enabled": false
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6668,7 +6782,9 @@
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
-      "native_discord_thread_lifecycle_enabled": false
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     },
     {
       "dynamic_sources_writes_enabled": false,
@@ -6707,7 +6823,9 @@
       "native_lark_writes_enabled": false,
       "native_lark_intake_enabled": false,
       "native_whatsapp_groups_writes_enabled": true,
-      "native_discord_thread_lifecycle_enabled": false
+      "native_discord_thread_lifecycle_enabled": false,
+      "native_lark_controls_enabled": false,
+      "native_lark_forms_enabled": false
     }
   ],
   "PrepareOutboundMessage": [
@@ -6752,6 +6870,19 @@
               ]
             }
           ]
+        },
+        "native_media_update": {
+          "caption": "",
+          "replacement": {
+            "filename": "report.bin",
+            "kind": "file",
+            "mime_type": "application/octet-stream",
+            "source": {
+              "data": "AQIDBA==",
+              "type": "base64"
+            }
+          },
+          "text": "Updated visible content"
         }
       }
     }
@@ -6834,7 +6965,18 @@
       "expires_at": 1800000000,
       "max_reactions": 1,
       "reaction": true,
-      "scope": "confirmed_native_bot_message"
+      "scope": "confirmed_native_bot_message",
+      "media_edit": {
+        "caption": true,
+        "content": true,
+        "expires_at": 1800000000,
+        "idempotency_key_required": true,
+        "max_attachments": 1,
+        "max_bytes": 8388608,
+        "replacement_kinds": [
+          "file"
+        ]
+      }
     }
   ],
   "MessageReactionRequest": [
@@ -7048,7 +7190,18 @@
         "reaction": true,
         "scope": "received_native_user_message",
         "max_reactions": 1,
-        "expires_at": 1800000000
+        "expires_at": 1800000000,
+        "media_edit": {
+          "caption": true,
+          "content": true,
+          "expires_at": 1800000000,
+          "idempotency_key_required": true,
+          "max_attachments": 1,
+          "max_bytes": 8388608,
+          "replacement_kinds": [
+            "file"
+          ]
+        }
       }
     }
   ],
@@ -7171,6 +7324,45 @@
         "leave"
       ],
       "expires_at": 1800000600
+    }
+  ],
+  "NativeMediaUpdate": [
+    {
+      "caption": "",
+      "replacement": {
+        "filename": "report.bin",
+        "kind": "file",
+        "mime_type": "application/octet-stream",
+        "source": {
+          "data": "AQIDBA==",
+          "type": "base64"
+        }
+      },
+      "text": "Updated visible content"
+    }
+  ],
+  "NativeMediaReplacement": [
+    {
+      "filename": "report.bin",
+      "kind": "file",
+      "mime_type": "application/octet-stream",
+      "source": {
+        "data": "AQIDBA==",
+        "type": "base64"
+      }
+    }
+  ],
+  "NativeMediaEditCapabilities": [
+    {
+      "caption": true,
+      "content": true,
+      "expires_at": 1800000000,
+      "idempotency_key_required": true,
+      "max_attachments": 1,
+      "max_bytes": 8388608,
+      "replacement_kinds": [
+        "file"
+      ]
     }
   ]
 }

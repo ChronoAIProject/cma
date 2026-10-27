@@ -59,6 +59,8 @@ pub struct Capabilities {
     /// Derived from retained native evidence; actual platform permissions are checked per call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_lifecycle: Option<cmaeg_core::thread_lifecycle::ThreadCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_media_edits: Option<crate::native_media::Capabilities>,
     /// A fixed 20-message prior window is available on explicit request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_history: Option<bool>,
@@ -73,6 +75,8 @@ pub struct Capabilities {
     pub whatsapp_template_components: Option<Vec<String>>,
     pub edit: bool,
     pub typing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forms: Option<bool>,
     pub buttons: String,
     pub cards: String,
     pub attachments: String,
@@ -104,12 +108,14 @@ impl Capabilities {
         Self {
             edit: false,
             typing: false,
+            forms: None,
             buttons: "json".into(),
             cards: "json".into(),
             attachments: "reference".into(),
             max_text_chars: 32768,
             inbound_media: None,
             native_media: None,
+            native_media_edits: None,
             whatsapp_templates: None,
             whatsapp_template_components: None,
             message_effects: None,
@@ -127,12 +133,14 @@ impl Capabilities {
         Self {
             edit: true,
             typing: false,
+            forms: None,
             buttons: "inline_keyboard".into(),
             cards: "text".into(),
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
             native_media: None,
+            native_media_edits: None,
             whatsapp_templates: None,
             whatsapp_template_components: None,
             message_effects: None,
@@ -146,12 +154,14 @@ impl Capabilities {
         Self {
             edit: false,
             typing: false,
+            forms: None,
             buttons: "numbered_text".into(),
             cards: "text".into(),
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
             native_media: None,
+            native_media_edits: None,
             whatsapp_templates: None,
             whatsapp_template_components: None,
             message_effects: None,
@@ -290,6 +300,9 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        native_media_edits: crate::native_media::Capabilities::context(
+            state, channel, event, &activity,
+        ),
         thread_history: (state.discord_thread_history.is_some()
             && super::thread_history::eligible(channel, event, &activity))
         .then_some(true),
@@ -364,6 +377,7 @@ pub(super) fn project(
             }) = channel.definition.relay_source_for_route(route_id)
             {
                 capabilities.message_effects = Some(super::MessageEffectsCapabilities {
+                    media_edit: None,
                     delete: binding.delete,
                     reaction: binding.reaction,
                     scope: "confirmed_native_bot_message".into(),
@@ -381,7 +395,9 @@ pub(super) fn project(
         activity_verified,
         &mut capabilities,
     );
-    let consumer_controls = event.consumer.is_none()
+    let consumer_controls = (activity_verified
+        && crate::interactions::native_lark::eligible(channel, event, &activity))
+        || event.consumer.is_none()
         || (state.consumer_interactions_enabled
             && activity_verified
             && crate::interactions::owner::eligible(channel, event, &activity));

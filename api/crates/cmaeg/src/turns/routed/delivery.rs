@@ -27,7 +27,7 @@ use std::sync::Arc;
 #[serde(rename_all = "snake_case", tag = "effect", content = "message")]
 pub enum ReplayEffect {
     NoEffect,
-    Reply(OutboundMessage),
+    Reply(Box<OutboundMessage>),
     Custom(crate::delivery::local_stream::CustomStreamEffect),
 }
 pub enum FrameDelivery {
@@ -400,7 +400,7 @@ impl RoutedDelivery {
                                     .reply_default(
                                         current,
                                         event,
-                                        message,
+                                        *message,
                                         reply_gate,
                                         destination,
                                         operation,
@@ -409,7 +409,7 @@ impl RoutedDelivery {
                             }
                             None => {
                                 self.coordinator
-                                    .reply(current, event, message, reply_gate)
+                                    .reply(current, event, *message, reply_gate)
                                     .await
                             }
                         }
