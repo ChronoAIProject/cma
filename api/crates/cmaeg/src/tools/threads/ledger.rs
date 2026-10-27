@@ -14,7 +14,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::Arc;
 
 pub(super) struct Store {
-    records: RecordClient,
+    claims: RecordClient,
+    fences: RecordClient,
     keys: Arc<MasterKeyRing>,
 }
 #[derive(Serialize, Deserialize)]
@@ -48,7 +49,8 @@ pub(super) struct Fence {
 impl Store {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
-            records: records.interactions(),
+            claims: records.clone().interactions(),
+            fences: records.thread_fences(),
             keys,
         }
     }
@@ -70,11 +72,18 @@ impl Store {
             receipt: None,
             version: 0,
         };
-        if let Some((saved, _)) = self.read::<Claim>(&claim.id).await? {
+        if let Some((saved, _)) = self.read::<Claim>(&self.claims, &claim.id).await? {
             return replay(&claim, saved);
         }
         match self
-            .save(&claim.id, owner, &claim, None, Some(expires_at))
+            .save(
+                &self.claims,
+                &claim.id,
+                owner,
+                &claim,
+                None,
+                Some(expires_at),
+            )
             .await
         {
             Ok(version) => {
@@ -83,7 +92,7 @@ impl Store {
             }
             Err(RecordError::Conflict { .. }) => {
                 let (saved, _) = self
-                    .read::<Claim>(&claim.id)
+                    .read::<Claim>(&self.claims, &claim.id)
                     .await?
                     .ok_or_else(unavailable)?;
                 replay(&claim, saved)
@@ -94,6 +103,7 @@ impl Store {
     pub async fn finish(&self, mut claim: Claim, receipt: &ThreadReceipt) -> Result<(), Problem> {
         claim.receipt = Some(receipt.clone());
         self.save(
+            &self.claims,
             &claim.id,
             &claim.owner,
             &claim,
@@ -119,7 +129,7 @@ impl Store {
             held: true,
             version: 0,
         };
-        let expected = match self.read::<Fence>(&fence.id).await? {
+        let expected = match self.read::<Fence>(&self.fences, &fence.id).await? {
             None => None,
             Some((saved, version)) => {
                 if saved.kind != fence.kind
@@ -136,7 +146,10 @@ impl Store {
             }
         };
         // A future event must not erase an ambiguous write simply because the old event expired.
-        match self.save(&fence.id, owner, &fence, expected, None).await {
+        match self
+            .save(&self.fences, &fence.id, owner, &fence, expected, None)
+            .await
+        {
             Ok(version) => {
                 fence.version = version;
                 Ok(Some(fence))
@@ -147,14 +160,25 @@ impl Store {
     }
     pub async fn release(&self, mut fence: Fence) -> Result<(), Problem> {
         fence.held = false;
-        self.save(&fence.id, &fence.owner, &fence, Some(fence.version), None)
-            .await
-            .map_err(|_| unavailable())?;
+        self.save(
+            &self.fences,
+            &fence.id,
+            &fence.owner,
+            &fence,
+            Some(fence.version),
+            None,
+        )
+        .await
+        .map_err(|_| unavailable())?;
         Ok(())
     }
-    async fn read<T: DeserializeOwned>(&self, id: &str) -> Result<Option<(T, u64)>, Problem> {
-        let url = self.records.record_url(id).map_err(|_| unavailable())?;
-        let row = match self.records.get(url.as_str()).await {
+    async fn read<T: DeserializeOwned>(
+        &self,
+        records: &RecordClient,
+        id: &str,
+    ) -> Result<Option<(T, u64)>, Problem> {
+        let url = records.record_url(id).map_err(|_| unavailable())?;
+        let row = match records.get(url.as_str()).await {
             Ok(row) => row,
             Err(RecordError::NotFound) => return Ok(None),
             Err(_) => return Err(unavailable()),
@@ -163,8 +187,10 @@ impl Store {
         let value = serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
         Ok(Some((value, row.version)))
     }
+    #[allow(clippy::too_many_arguments)]
     async fn save(
         &self,
+        records: &RecordClient,
         id: &str,
         owner: &str,
         value: &impl Serialize,
@@ -175,7 +201,7 @@ impl Store {
             .map_err(|_| RecordError::Malformed("thread ledger encoding".into()))?;
         let blob = seal_interaction(&self.keys, id, &bytes)
             .map_err(|_| RecordError::Malformed("thread ledger sealing".into()))?;
-        self.records
+        records
             .put_expiring(
                 &RecordId::new(id)
                     .map_err(|_| RecordError::Malformed("thread ledger identity".into()))?,
@@ -210,3 +236,7 @@ fn replay(expected: &Claim, saved: Claim) -> Result<Admission, Problem> {
         }
     })))
 }
+
+#[cfg(test)]
+#[path = "ledger_mongo_tests.rs"]
+mod mongo_tests;
