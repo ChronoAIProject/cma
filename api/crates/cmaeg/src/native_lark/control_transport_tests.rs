@@ -72,27 +72,28 @@ async fn direct_cards_use_regional_create_or_exact_thread_reply_and_patch_string
                 client.send_card(&token, &reply, &card()).await.unwrap(),
                 "om_sent"
             );
-            let calls = io.calls.lock().unwrap();
-            let (method, url, body) = &calls[0];
-            assert_eq!(*method, Method::POST);
-            assert_eq!(url.origin().ascii_serialization(), region.origin());
-            assert_eq!(
-                url.path(),
+            {
+                let calls = io.calls.lock().unwrap();
+                let (method, url, body) = &calls[0];
+                assert_eq!(*method, Method::POST);
+                assert_eq!(url.origin().ascii_serialization(), region.origin());
+                assert_eq!(
+                    url.path(),
+                    if thread {
+                        "/open-apis/im/v1/messages/om_original/reply"
+                    } else {
+                        "/open-apis/im/v1/messages"
+                    }
+                );
+                assert_eq!(body["msg_type"], "interactive");
+                assert_eq!(
+                    serde_json::from_str::<Value>(body["content"].as_str().unwrap()).unwrap(),
+                    card()
+                );
                 if thread {
-                    "/open-apis/im/v1/messages/om_original/reply"
-                } else {
-                    "/open-apis/im/v1/messages"
+                    assert_eq!(body["reply_in_thread"], true);
                 }
-            );
-            assert_eq!(body["msg_type"], "interactive");
-            assert_eq!(
-                serde_json::from_str::<Value>(body["content"].as_str().unwrap()).unwrap(),
-                card()
-            );
-            if thread {
-                assert_eq!(body["reply_in_thread"], true);
             }
-            drop(calls);
             let (client, io) = self::client(json!({"code":0,"data":{}}));
             client.patch_card(&token, &reply, &card()).await.unwrap();
             let calls = io.calls.lock().unwrap();
