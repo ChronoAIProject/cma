@@ -7,11 +7,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AttachmentSource {
+    /// Exact native Lark/Feishu resource, fetched through current bot custody.
     #[serde(rename = "native_lark")]
     NativeLark {
+        /// Original authenticated native message ID (`om_…`).
         message_id: String,
+        /// Exact image or file resource key from that message.
         resource_key: String,
+        /// Regional message resource API type.
         resource_kind: LarkResourceKind,
+        /// Digest of the exact native source and its credential revision.
         source_revision: String,
     },
     /// Signed native WhatsApp media, fetched through current Meta custody.
