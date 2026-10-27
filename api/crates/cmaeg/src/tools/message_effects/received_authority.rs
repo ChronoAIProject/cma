@@ -129,6 +129,7 @@ pub(super) fn issue(
     };
     let mut message = MessageRefPayload {
         route_id: a.route(),
+        native_lark_effect: None,
         received_reaction: Some(Box::new(a)),
         channel_id: event.channel_id.clone(),
         event_id: event.event_id.clone(),

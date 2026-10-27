@@ -48,6 +48,7 @@ async fn lark_replies_are_plain_text_without_reply_markup_even_with_interactions
             message_ref: MessageRefPayload {
                 discord_message: None,
                 received_reaction: None,
+                native_lark_effect: None,
                 whatsapp_reaction: None,
                 lark_effect: None,
                 telegram_effect: None,

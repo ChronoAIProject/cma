@@ -75,7 +75,7 @@ impl Client {
         self.transport = transport;
         self
     }
-    async fn call(
+    pub(super) async fn call(
         &self,
         identity: &NativeLarkIdentity,
         method: Method,

@@ -195,6 +195,7 @@ impl App {
             ))),
             discord_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
             telegram_effects: None,

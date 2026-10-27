@@ -30,6 +30,9 @@ async fn media_setup(
     let definition = &mut Arc::make_mut(&mut channel).definition;
     definition.sources = vec![native::source()];
     definition.secrets.native_lark = Some(native::credentials());
+    definition.secrets.provider_credential = Some(cmaeg_core::channel::Secret::new(
+        "native-effects-test-agent",
+    ));
     event.reply = ReplyAddress::NativeLark(reply());
     (sender, channel, event, io, server)
 }
@@ -37,6 +40,63 @@ fn media_message() -> OutboundMessage {
     let mut m = message("Explanation".into());
     m.native_attachments = vec![attachment("application/pdf")];
     m
+}
+#[tokio::test]
+async fn native_lark_effect_reference_issuance_requires_one_confirmed_retained_message() {
+    for (enabled, media, multipart) in [
+        (false, false, false),
+        (true, false, false),
+        (true, true, false),
+        (true, true, true),
+    ] {
+        let mut responses = vec![];
+        if !media || multipart {
+            responses.push(confirmed("om_text", false));
+        }
+        if media {
+            responses.push(uploaded(false));
+            responses.push(confirmed("om_pdf", false));
+        }
+        let (mut sender, channel, event, io, _server) = media_setup(responses).await;
+        sender.relay = sender.relay.with_native_lark_effects(enabled);
+        let mut outbound = message("reply".into());
+        if media {
+            outbound.native_attachments = vec![attachment("application/pdf")];
+        }
+        if media && !multipart {
+            outbound.text = None;
+        }
+        let receipt = send_media(
+            &sender,
+            &channel,
+            &event,
+            &outbound,
+            &RecordingGate::new(true),
+        )
+        .await;
+        assert_eq!(receipt.delivery.kind(), "confirmed");
+        if enabled && !multipart {
+            let reference = receipt
+                .message_ref
+                .expect("single retained message authority");
+            let payload = reference.open(&sender.keys).unwrap().payload;
+            let authority = payload.native_lark_effect.unwrap();
+            assert!(authority.confirmed());
+            assert_eq!(authority.editable(), !media);
+            assert_eq!(
+                authority.reply.message_id,
+                if media { "om_pdf" } else { "om_text" }
+            );
+            assert!(io
+                .reads
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|url| url.path().ends_with("/bot/v3/info")));
+        } else {
+            assert!(receipt.message_ref.is_none());
+        }
+    }
 }
 #[tokio::test]
 async fn native_lark_media_confirms_each_message_and_checks_custody_and_gate_for_every_write() {
