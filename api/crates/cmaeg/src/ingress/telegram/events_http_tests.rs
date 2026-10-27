@@ -37,8 +37,7 @@ impl Server {
 }
 
 #[tokio::test]
-async fn telegram_message_events_http_authentication_precedes_state_and_index_failure_preserves_ordinary_acceptance(
-) {
+async fn telegram_message_events_http_index_failure_requests_retry_before_acknowledging_original() {
     let f = Fixture::new(false).await;
     let server = Server::new(&f).await;
     assert_eq!(server.send(&f.edit(), "wrong-secret").await.0, 401);
@@ -49,18 +48,18 @@ async fn telegram_message_events_http_authentication_precedes_state_and_index_fa
     );
     f.server.fault(context, false, false);
     let (status, body) = server.send(&f.raw, "fixture-webhook").await;
-    assert_eq!(status, 202, "{body}");
-    assert_eq!(body["status"], "accepted");
-    assert!(f.plan("telegram:77:101").await.is_some());
+    assert_eq!(status, 503, "{body}");
+    let original = f.plan("telegram:77:101").await.unwrap();
     let (status, body) = server.send(&f.edit(), "fixture-webhook").await;
     assert_eq!(status, 202);
     assert_eq!(
         body,
         json!({"status":"refused","reason":"message_context_unavailable"})
     );
-    // An exact ordinary retry restores its original plan and may repair the
-    // optional locator; neither step issues another provider turn.
+    // Telegram retries because the first request failed. The committed admission
+    // remains identical while this retry durably repairs its required locator.
     assert_eq!(server.send(&f.raw, "fixture-webhook").await.0, 202);
+    assert_eq!(f.plan("telegram:77:101").await.unwrap(), original);
     let (status, body) = server.send(&f.edit(), "fixture-webhook").await;
     assert_eq!(status, 202, "{body}");
     assert_eq!(body["status"], "accepted");
@@ -120,4 +119,43 @@ async fn telegram_message_events_opt_in_is_required_and_missing_durable_runtime_
     let server = Server::new(&f).await;
     assert_eq!(server.send(&f.raw, "fixture-webhook").await.0, 503);
     assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn telegram_message_events_locator_conflicts_require_exact_identity_revision_and_version() {
+    for field in ["original", "revision", "version"] {
+        let f = Fixture::new(false).await;
+        let server = Server::new(&f).await;
+        assert_eq!(server.send(&f.raw, "fixture-webhook").await.0, 202);
+        let context = crate::connections::store::index_id(
+            "telegram-message-context-v1",
+            &[f.channel.definition.record_id.as_str(), "77", "42", "5"],
+        );
+        if field == "version" {
+            f.server
+                .memory
+                .rows
+                .lock()
+                .unwrap()
+                .get_mut(&context)
+                .unwrap()
+                .version = 2;
+        } else {
+            f.server.change(&context, |value| {
+                if field == "original" {
+                    value["original"]["event_id"] = "telegram:77:99".into();
+                } else {
+                    value["revision"] = "different-source-revision".into();
+                }
+            });
+        }
+        let retained = f.server.memory.rows.lock().unwrap()[&context].blob.clone();
+        let (status, body) = server.send(&f.raw, "fixture-webhook").await;
+        assert_eq!(status, 503, "{field}: {body}");
+        assert_eq!(
+            f.server.memory.rows.lock().unwrap()[&context].blob,
+            retained
+        );
+        assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+    }
 }

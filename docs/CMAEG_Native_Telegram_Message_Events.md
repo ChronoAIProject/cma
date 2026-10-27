@@ -19,11 +19,18 @@ existing behavior; this opt-in is available through direct native source authori
 This path requires durable routed ingress and a retained original message.
 It never falls back to an ordinary message or the legacy launcher.
 Channels without the opt-in retain their ordinary admission and latency, with no
-locator reads or writes. For an opted-in channel, after successful admission the
-gateway makes a bounded, best-effort write of an encrypted message locator.
-Failure of that write does not fail or retry the ordinary message. The locator
-contains no message body or credential and grants no authority on its own; the
-complete committed original routing manifest must still exist and validate.
+locator reads or writes. For an opted-in channel, the gateway acknowledges the
+original webhook with `202` only after both its admission and encrypted message
+locator are durable. Locator writes and conflict verification have a 250 ms
+budget. An unconfirmed write or readback returns `503`, causing Telegram to retry
+that same update; the already committed admission reuses the exact agent turn
+instead of creating another one. A create conflict is accepted only when the
+saved version-one locator exactly matches the original identity, source revision,
+target and expiry. Conflicting context is never overwritten.
+
+The locator contains no message body or credential and grants no authority on
+its own; the complete committed original routing manifest must still exist and
+validate.
 
 The native webhook secret authenticates the update before interpretation or
 lookup. The locator binds the channel record, owner, bot, chat, platform message,
