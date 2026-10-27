@@ -3,7 +3,7 @@ import {
   nativeDiscordUnavailable,
   type RelayDiscovery,
 } from '../RelayCapabilities';
-import { credentialsPatch, object, records, type Fields } from './model';
+import { credentialsPatch, object, records, text, type Fields } from './model';
 
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -45,6 +45,17 @@ export function validateRelayAuthoring(
       continue;
     }
     if (source.type !== 'nyxid_relay') continue;
+    if (source.lark_resources != null && !unchanged) {
+      const binding = object(source.lark_resources);
+      if (
+        ['user_service_id', 'catalog_service_id', 'app_id'].some(
+          (field) => !text(binding[field]).trim(),
+        )
+      )
+        throw new Error(
+          'Choose a bot API connection or enter both connection IDs, and confirm the receiving app ID. Your draft has been retained.',
+        );
+    }
     if (
       source.lark_resources != null &&
       discovery.authoring?.lark_resource_writes_enabled !== true &&

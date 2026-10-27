@@ -6,12 +6,17 @@ pub mod custom;
 mod default_reply;
 pub mod destination;
 mod discord;
+mod discord_card_edit;
+#[cfg(test)]
+mod discord_card_edit_tests;
 mod discord_controls;
 #[cfg(test)]
 mod discord_controls_tests;
 pub(crate) mod discord_edit;
 #[cfg(test)]
 mod discord_edit_tests;
+#[cfg(test)]
+mod discord_form_tests;
 #[cfg(test)]
 mod discord_tests;
 pub mod durable;

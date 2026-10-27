@@ -43,8 +43,20 @@ pub struct Card {
     /// Native Discord identity is absent from every historical card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discord: Option<super::discord::Identity>,
+    /// Native replacement claim and result; omitted on all historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_edit: Option<super::discord_edit::Edit>,
+    /// Latest non-consuming native modal attempt; absent on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_form_launch: Option<super::discord_form::Launch>,
+    /// Retained native effect capability and deletion fence; absent on historical cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_effect: Option<super::discord_effect::State>,
 }
 impl Card {
+    pub(crate) fn chat_id(&self) -> &str {
+        &self.chat
+    }
     pub(crate) fn consumed_at(&self) -> Option<&str> {
         self.consumed
             .as_ref()
@@ -69,6 +81,8 @@ impl WhatsappKind {
 pub struct LarkIdentity {
     pub platform: Platform,
     pub conversation: ConversationKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<super::lark_form_authority::FormAuthority>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Destination {
@@ -84,6 +98,11 @@ pub struct Click {
     /// Absent on historical clicks, buttons, single-selects and other transports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) selection: Option<Vec<usize>>,
+    /// Canonical whole-form result; absent on every pre-form click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) submitted: Option<super::lark_form::Submitted>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) form_launch: Option<String>,
     pub(super) occurred_at: String,
 }
 pub struct PreparedCard {
@@ -111,7 +130,7 @@ pub(super) fn decode(value: &str) -> Result<(String, usize, Option<u64>), Error>
     }
     let mut parts = value.split(':');
     let kind = parts.next();
-    if !matches!(kind, Some("ce1" | "cl1" | "cw1b" | "cw1l" | "cd1")) {
+    if !matches!(kind, Some("ce1" | "cl1" | "clf1" | "cw1b" | "cw1l" | "cd1")) {
         return Err(Error::Denied);
     }
     let id =

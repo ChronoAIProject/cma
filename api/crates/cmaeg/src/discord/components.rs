@@ -64,10 +64,11 @@ impl super::DiscordApi {
     }
     /// No Bot header: the short-lived interaction token is valid only at this
     /// exact official endpoint. Never retry a write whose result is uncertain.
-    async fn acknowledge_component(
+    pub(super) async fn acknowledge_interaction(
         &self,
         id: &str,
         token: &str,
+        body: &Value,
         budget: Duration,
     ) -> Result<(), GatewayError> {
         if budget.is_zero()
@@ -87,7 +88,7 @@ impl super::DiscordApi {
             .client
             .post(url)
             .timeout(budget)
-            .json(&json!({"type":6}))
+            .json(body)
             .send()
             .await
             .map_err(|_| GatewayError::Unavailable)?;
@@ -107,6 +108,14 @@ impl DurableJournal {
         let Some(runtime) = &self.api.components else {
             return Ok(());
         };
+        if event.data["type"] == 5
+            || (event.data["type"] == 3
+                && event.data["data"]["custom_id"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("cdf1:")))
+        {
+            return self.persist_modal(authority, event).await;
+        }
         if event.data["type"].as_u64() != Some(3) {
             return Ok(());
         }
@@ -267,7 +276,7 @@ impl DurableJournal {
         if let Some(token) = event.data["token"].as_str() {
             if self
                 .api
-                .acknowledge_component(id, token, remaining)
+                .acknowledge_interaction(id, token, &json!({"type":6}), remaining)
                 .await
                 .is_err()
             {
@@ -278,7 +287,11 @@ impl DurableJournal {
     }
 }
 
-fn parse(raw: &Value, bot: &str, created: i64) -> Result<(Activity, Vec<String>), GatewayError> {
+pub(super) fn parse(
+    raw: &Value,
+    bot: &str,
+    created: i64,
+) -> Result<(Activity, Vec<String>), GatewayError> {
     let id = snowflake(&raw["id"])?;
     let chat = snowflake(&raw["channel_id"])?;
     let message = &raw["message"];

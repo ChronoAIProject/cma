@@ -4657,6 +4657,63 @@
         ],
         "type": "object"
       },
+      "ResourceConnection": {
+        "description": "Metadata only. Selection does not grant a channel key access to this connection.",
+        "properties": {
+          "catalog_service_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/ResourcePlatform"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ResourceConnectionSource"
+          },
+          "user_service_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_service_id",
+          "catalog_service_id",
+          "name",
+          "platform",
+          "source"
+        ],
+        "type": "object"
+      },
+      "ResourceConnectionList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceConnection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ResourceConnectionSource": {
+        "description": "Provenance of an existing connection, never an assertion about channel-key scope.",
+        "enum": [
+          "personal",
+          "organization"
+        ],
+        "type": "string"
+      },
+      "ResourcePlatform": {
+        "enum": [
+          "lark",
+          "feishu"
+        ],
+        "type": "string"
+      },
       "RouteResolution": {
         "description": "How an event's targets were resolved.",
         "enum": [
@@ -8270,6 +8327,51 @@
         ],
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/relay-resource-connections": {
+      "get": {
+        "operationId": "listRelayResourceConnections",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "platform",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ResourcePlatform"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceConnectionList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
         ]
       }
     },

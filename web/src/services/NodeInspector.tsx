@@ -148,12 +148,15 @@ export function NodeInspector({
   const panel = useRef<HTMLElement>(null);
   const { sections: settings, register } = useConfigurationSections();
   const [activeSection, setActiveSection] = useState(`${id}-overview`);
+  const requestedSection = useRef<string | undefined>(`${id}-overview`);
   const selectionId = selectionKey(selection);
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() =>
-      scrollToConfiguration(`${id}-${initialSection}`, false, false),
-    );
+    requestedSection.current = `${id}-${initialSection}`;
+    const frame = requestAnimationFrame(() => {
+      scrollToConfiguration(`${id}-${initialSection}`, false, false);
+      setActiveSection(`${id}-${initialSection}`);
+    });
     return () => cancelAnimationFrame(frame);
   }, [id, open, initialSection, selectionId]);
   const { producers, consumers, toolsets } = channelNodes(channel);
@@ -206,15 +209,44 @@ export function NodeInspector({
           .split(',')
           .map((key) => document.getElementById(key))
           .filter((el) => el !== null);
+        const requested = targets.find((el) => el.id === requestedSection.current);
+        const maximum = root.scrollHeight - root.clientHeight;
+        const atBottom = maximum > 1 && root.scrollTop >= maximum - 1;
         const current =
-          targets.filter((el) => el.getBoundingClientRect().top <= top).at(-1) ?? targets[0];
+          requested ??
+          (atBottom
+            ? targets.at(-1)
+            : targets.filter((el) => el.getBoundingClientRect().top <= top).at(-1)) ??
+          targets[0];
         if (current) setActiveSection(current.id);
       });
     };
+    // Keep an explicit destination highlighted through smooth scrolling and
+    // bottom clamping. Actual user scrolling resumes position-based tracking.
+    const releaseSelection = () => {
+      requestedSection.current = undefined;
+    };
+    const keyboardScroll = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') return releaseSelection();
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.closest('input, textarea, select') || target.isContentEditable)
+      )
+        return;
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key))
+        releaseSelection();
+    };
     root.addEventListener('scroll', update, { passive: true });
+    root.addEventListener('wheel', releaseSelection, { passive: true });
+    root.addEventListener('pointerdown', releaseSelection, { passive: true });
+    root.addEventListener('keydown', keyboardScroll);
     update();
     return () => {
       root.removeEventListener('scroll', update);
+      root.removeEventListener('wheel', releaseSelection);
+      root.removeEventListener('pointerdown', releaseSelection);
+      root.removeEventListener('keydown', keyboardScroll);
       cancelAnimationFrame(frame);
     };
   }, [open, navigationIds]);
@@ -231,6 +263,7 @@ export function NodeInspector({
               key={entry.id}
               aria-current={activeSection === entry.id ? 'location' : undefined}
               onClick={() => {
+                requestedSection.current = entry.id;
                 setActiveSection(entry.id);
                 scrollToConfiguration(entry.id);
               }}
