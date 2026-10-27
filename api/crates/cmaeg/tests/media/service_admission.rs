@@ -240,6 +240,8 @@ fn config(media: MediaConfig) -> Config {
         native_whatsapp_outbound_media_enabled: false,
         native_whatsapp_interactions_enabled: false,
         native_whatsapp_reactions_enabled: false,
+        native_telegram_received_reactions_enabled: false,
+        native_discord_received_reactions_enabled: false,
         native_whatsapp_templates_enabled: false,
         native_whatsapp_groups_enabled: false,
         native_bot_mentions_writes_enabled: false,
