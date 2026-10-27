@@ -61,3 +61,9 @@ all five status values, read-without-delivered optimization and group
 Local HTTP/storage tests prove authentication, binding, replay, restart and
 reordered callback handling. They do not establish live Meta delivery or client
 presentation; those remain owner platform acceptance checks.
+
+Mixed signed batches admit ordinary incoming messages before waiting for status
+receipt persistence. A transient status failure can request a retry of the batch,
+but its already admitted incoming messages keep their original identities and
+are not launched again. Unrelated pending status receipts cannot delay admission
+of a new user message.
