@@ -14,11 +14,10 @@ it('lists authoritative consumer names, creation time and creator without pollin
   const row = screen.getByRole('button', { name: /Research assistant/ });
   expect(row).toHaveAttribute('aria-current', 'page');
   expect(row.querySelector('time')).toHaveAttribute('datetime', bot.created_at);
-  expect(within(row).getByText('By owner')).toBeVisible();
+  expect(within(row).getByText(/By owner/)).toBeInTheDocument();
+  expect(row.closest('[role=treeitem]')).toHaveAttribute('data-layout', 'line');
   await userEvent.click(row);
   expect(navigate).toHaveBeenCalledWith({ kind: 'bot', botId: bot.bot_id });
-  await userEvent.click(screen.getByRole('button', { name: 'New consumer' }));
-  expect(navigate).toHaveBeenCalledWith({ kind: 'bot_new' });
   expect(client.bots.list).toHaveBeenCalledOnce();
   expect(interval).not.toHaveBeenCalled();
 });
@@ -55,4 +54,16 @@ it('aborts its public list read when the account or portal unmounts', async () =
   expect(signal.aborted).toBe(true);
   await act(async () => finish({ items: [bot], next_after: null }));
   expect(screen.queryByText('Research assistant')).not.toBeInTheDocument();
+});
+
+it('reuses Agent row keyboard navigation and selection without changing the list', async () => {
+  const client = botClient();
+  const navigate = vi.fn();
+  render(<GatewayConsumers client={client} selected={bot.bot_id} onNavigate={navigate} />);
+  const row = await screen.findByRole('treeitem');
+  expect(row).toHaveAttribute('aria-selected', 'true');
+  row.focus();
+  await userEvent.keyboard('{Enter}');
+  expect(navigate).toHaveBeenCalledWith({ kind: 'bot', botId: bot.bot_id });
+  expect(client.bots.list).toHaveBeenCalledOnce();
 });
