@@ -44,6 +44,7 @@ pub struct WriteFlags {
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
     pub discord_thread_history: bool,
+    pub discord_reactions: bool,
 }
 
 /// Decide whether a management write may store `next`, replacing `current`
@@ -93,6 +94,15 @@ pub(crate) fn check(
         return Err(ValidationError::new(
             format!("/sources/{index}/thread_history"),
             "discord_thread_history_disabled",
+        ));
+    }
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(source, Source::Discord { intents, .. } if intents & crate::discord::REACTION_INTENTS != 0)
+            && !flags.discord_reactions
+            && !current.is_some_and(|old| old.sources.contains(source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/intents"), "discord_reactions_disabled",
         ));
     }
     if next.reply.thread_contract.is_some()

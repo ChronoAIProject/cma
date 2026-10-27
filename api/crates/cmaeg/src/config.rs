@@ -152,6 +152,7 @@ pub struct Config {
     pub lark_resource_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_reactions_enabled: bool,
     pub native_discord: NativeDiscordConfig,
     pub outbound_messages_writes_enabled: bool,
     pub ingress: IngressConfig,
@@ -255,6 +256,9 @@ impl Config {
             )?,
             dynamic_sources_writes_enabled: routing::write_flag(
                 "CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED",
+            )?,
+            native_discord_reactions_enabled: routing::write_flag(
+                "CMAEG_DISCORD_REACTIONS_ENABLED",
             )?,
             native_discord_thread_history_enabled: routing::write_flag(
                 "CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED",

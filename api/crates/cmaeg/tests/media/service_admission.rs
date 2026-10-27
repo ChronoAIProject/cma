@@ -239,6 +239,7 @@ fn config(media: MediaConfig) -> Config {
         lark_resource_writes_enabled: false,
         native_discord_writes_enabled: false,
         native_discord_thread_history_enabled: false,
+        native_discord_reactions_enabled: false,
         native_discord: Default::default(),
         outbound_messages_writes_enabled: false,
         listen: "127.0.0.1:0".parse().unwrap(),

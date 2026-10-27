@@ -84,6 +84,15 @@ impl Sender {
             receipt.delivery = outcome(error);
             return (receipt, effects);
         }
+        let target_receipt = match self.discord_reaction_receipt(ctx.channel, event).await {
+            Ok(receipt) => receipt,
+            Err(_) => {
+                receipt.delivery = DeliveryOutcome::Rejected {
+                    reason: "reaction_target_custody_unavailable".into(),
+                };
+                return (receipt, effects);
+            }
+        };
         let files = match outbound_media::prepare(&message.native_attachments).await {
             Ok(files) => files,
             Err(_) => {
@@ -143,6 +152,14 @@ impl Sender {
             match sent {
                 Ok(id) => {
                     confirmed += 1;
+                    if let Some(target) = &target_receipt {
+                        if target.confirm(&id).await.is_err() {
+                            receipt.delivery = DeliveryOutcome::Unknown {
+                                reason: "reaction_target_receipt_unconfirmed".into(),
+                            };
+                            break;
+                        }
+                    }
                     if first.is_none() {
                         first = Some(id);
                     }

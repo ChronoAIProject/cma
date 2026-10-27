@@ -24,6 +24,15 @@ export function validateRelayAuthoring(
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
     if (source.type === 'discord') {
       if (
+        typeof source.intents === 'number' &&
+        (source.intents & (1024 | 8192)) !== 0 &&
+        !unchanged &&
+        discovery.authoring?.native_discord_reactions_enabled !== true
+      )
+        throw new Error(
+          'New or changed reaction access is disabled on this gateway. Your draft has been retained.',
+        );
+      if (
         source.thread_history === true &&
         !unchanged &&
         discovery.authoring?.native_discord_thread_history_enabled !== true

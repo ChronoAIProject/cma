@@ -42,6 +42,7 @@ pub struct ManagementState {
     pub lark_resource_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
+    pub native_discord_reactions_enabled: bool,
     pub native_discord: crate::discord::selection::Selection,
     pub native_discord_admission_enabled: bool,
     pub outbound_messages_writes_enabled: bool,
@@ -71,6 +72,7 @@ impl ManagementState {
             lark_resources: self.lark_resource_writes_enabled,
             native_discord: self.native_discord_writes_enabled,
             discord_thread_history: self.native_discord_thread_history_enabled,
+            discord_reactions: self.native_discord_reactions_enabled,
         }
     }
 
@@ -141,6 +143,7 @@ impl ManagementState {
             lark_resource_writes_enabled: false,
             native_discord_writes_enabled: false,
             native_discord_thread_history_enabled: false,
+            native_discord_reactions_enabled: false,
             native_discord: Default::default(),
             native_discord_admission_enabled: false,
             outbound_messages_writes_enabled: false,

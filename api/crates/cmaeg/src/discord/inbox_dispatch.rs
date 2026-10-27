@@ -104,6 +104,50 @@ impl InboxDispatcher {
         {
             return Err(GatewayError::Authority);
         }
+        if entry.inbox.kind == "discord_reaction_pending_v1"
+            && now >= entry.inbox.received_at + super::reaction_pending::TARGET_WAIT_SECONDS
+        {
+            let identity = crate::ingress::routing_store::EventIdentity {
+                owner: entry.owner.clone(),
+                channel_id: current.channel.id.clone(),
+                record_id: current.channel.definition.record_id.clone(),
+                event_id: cmaeg_core::ids::EventId::new(
+                    entry
+                        .inbox
+                        .change_id
+                        .as_deref()
+                        .ok_or(GatewayError::Protocol)?,
+                )
+                .map_err(|_| GatewayError::Protocol)?,
+            };
+            // A lost acknowledgement cannot relabel a committed admission as a timeout.
+            let plans = crate::ingress::routing_store::PlanStore::new(
+                self.records.clone(),
+                self.keys.clone(),
+            );
+            let disposition = match plans
+                .load(&identity)
+                .await
+                .map_err(|_| GatewayError::Unavailable)?
+            {
+                Some(plan) => Disposition::Admitted {
+                    admission_id: plan.admission_id,
+                },
+                None => {
+                    self.ingress.activity.refused(
+                        &identity.record_id,
+                        "discord",
+                        Some(&identity.event_id),
+                        "discord_reaction_target_confirmation_timed_out",
+                    );
+                    Disposition::Refused {
+                        reason: "discord_reaction_target_confirmation_timed_out".into(),
+                    }
+                }
+            };
+            self.store.acknowledge(entry, disposition).await?;
+            return Ok(true);
+        }
         // Repair a crash between inbox commit and Activity persistence before
         // checking launch capacity or expiring the original reply authority.
         self.reader
@@ -126,6 +170,18 @@ impl InboxDispatcher {
                         .into(),
                 },
                 InboxLaunch::Launch(verified) => {
+                    if entry.inbox.kind == "discord_reaction_pending_v1" {
+                        self.ingress
+                            .activity
+                            .receive_at(
+                                &entry.owner,
+                                &verified.request.channel.definition.record_id,
+                                &verified.request.activity,
+                                entry.inbox.received_at,
+                            )
+                            .await
+                            .map_err(|_| GatewayError::Unavailable)?;
+                    }
                     let permit = self
                         .ingress
                         .inflight
@@ -140,6 +196,7 @@ impl InboxDispatcher {
                                     source_bytes: verified.source_bytes,
                                     received_at: verified.received_at,
                                     original,
+                                    outbound_consumer: verified.outbound_consumer,
                                 },
                                 permit,
                             )

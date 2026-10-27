@@ -18,6 +18,9 @@ mod discord_edit_tests;
 #[cfg(test)]
 mod discord_form_tests;
 #[cfg(test)]
+mod discord_reaction_tests;
+mod discord_receipts;
+#[cfg(test)]
 mod discord_tests;
 pub mod durable;
 mod edit;

@@ -20,10 +20,9 @@ use std::{sync::Arc, time::Duration};
 
 /// The largest relay receipt the client reads.
 const RECEIPT_MAX_BYTES: usize = 4096;
-/// Complete ordinary delivery's serialized request limit, including identifiers,
-/// metadata and JSON escaping. Automatic output is bounded at 256 KiB and sanitization plus JSON
-/// expands at most fourfold; tool requests arrive within 128 KiB. Two MiB
-/// accommodates both with envelope headroom, independently of platform limits.
+/// Complete ordinary delivery limit, including identifiers, metadata and JSON escaping.
+/// Automatic output is bounded at 256 KiB with at most fourfold expansion; tools at
+/// 128 KiB. Two MiB accommodates both with envelope headroom, independently of platform limits.
 /// Low-level `send` and `send_rich` do not impose this limit.
 pub const REQUEST_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// NyxID sends a complete ordinary reply's parts sequentially. Leave room for
@@ -122,6 +121,7 @@ pub struct RelayClient {
     whatsapp_templates: bool,
     whatsapp_interactions: bool,
     discord_interactions: bool,
+    discord_reactions: bool,
     discord_forms: bool,
     discord_multiselect: bool,
     discord_card_edits: bool,
@@ -245,6 +245,7 @@ impl RelayClient {
             whatsapp_templates: false,
             whatsapp_interactions: false,
             discord_interactions: false,
+            discord_reactions: false,
             discord_forms: false,
             discord_multiselect: false,
             discord_card_edits: false,
