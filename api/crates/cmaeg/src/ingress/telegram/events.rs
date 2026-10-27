@@ -120,6 +120,7 @@ pub(crate) async fn prepare(
     )
     .map_err(|_| Error::Invalid)?;
     Ok(VerifiedMessageEvent {
+        outbound_consumer: None,
         request: LaunchRequest {
             timing: None,
             consumer: None,
